@@ -1,0 +1,22 @@
+reports/
+
+# Real Claude Code session transcripts — PRIVATE (real conversations/paths) + huge, never commit.
+# Tests bind-mount these locally in the devcontainer; a fresh clone uses the plan's E2E fallback.
+fixtures/
+
+references/deep-research-sources/*.txt
+
+node_modules/
+*.log
+.DS_Store
+
+# Playwright default output dirs — regenerated on each E2E run, never commit
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# 本机专用的 devcontainer 配置（Bedrock profile、OrbStack、本机路径），不入库
+.devcontainer/
+
+# Local Claude Code settings — per-machine permission allowlist with host paths, not shared
+.claude/settings.local.json

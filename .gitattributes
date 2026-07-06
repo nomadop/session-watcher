@@ -1,0 +1,3 @@
+# Force LF on shell scripts so a Windows checkout can't break their shebang
+# (project ships statusline.sh, run inside the Linux container).
+*.sh              text eol=lf
