@@ -20,3 +20,26 @@ playwright-report/
 
 # Local Claude Code settings — per-machine permission allowlist with host paths, not shared
 .claude/settings.local.json
+
+# LaTeX build artifacts — never commit
+*.aux
+*.blg
+*.out
+*.bbl
+*.log
+
+# Development scripts and archived data — not part of the release
+_archive/
+scripts/
+
+# LaTeX build artifacts — never commit
+*.aux
+*.blg
+*.out
+*.bbl
+*.log
+
+# Development scripts and archived data — not part of the release
+_archive/
+scripts/
+arxiv-submit/
