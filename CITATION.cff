@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the paper."
+title: "Session Watcher"
+abstract: "An EOQ-optimal session restart companion for LLM context windows. Computes the optimal restart threshold L* from Claude Code transcripts and displays it in a browser dashboard and statusline, without re-entering any metric into the model's context."
+authors:
+  - given-names: Longju
+    family-names: Cheng
+repository-code: "https://github.com/nomadop/session-watcher"
+license: MIT
+keywords:
+  - LLM
+  - prompt-caching
+  - inventory-theory
+  - EOQ
+  - Claude-Code
+  - MCP-server
+type: software
+preferred-citation:
+  type: unpublished
+  title: "Context Is Inventory: A Rent-or-Buy Model for Prompt-Cached LLM Sessions"
+  authors:
+    - given-names: Longju
+      family-names: Cheng
+  year: 2026
+  doi: 10.5281/zenodo.21236704
+  url: "https://doi.org/10.5281/zenodo.21236704"

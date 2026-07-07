@@ -1,10 +1,11 @@
+# Local tool config and reference data — per-machine, never commit
+.serena/
+references/
 reports/
 
 # Real Claude Code session transcripts — PRIVATE (real conversations/paths) + huge, never commit.
 # Tests bind-mount these locally in the devcontainer; a fresh clone uses the plan's E2E fallback.
 fixtures/
-
-references/deep-research-sources/*.txt
 
 node_modules/
 *.log
@@ -20,17 +21,6 @@ playwright-report/
 
 # Local Claude Code settings — per-machine permission allowlist with host paths, not shared
 .claude/settings.local.json
-
-# LaTeX build artifacts — never commit
-*.aux
-*.blg
-*.out
-*.bbl
-*.log
-
-# Development scripts and archived data — not part of the release
-_archive/
-scripts/
 
 # LaTeX build artifacts — never commit
 *.aux
