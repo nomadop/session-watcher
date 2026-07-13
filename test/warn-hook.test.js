@@ -159,3 +159,34 @@ test('warn.sh (traversal): metachar / .. sids → exit 0, no curl, no fs touch, 
     }
   }
 });
+
+// C3-1 (spec §3.4a, red line #1): the Stop-hook POST body must carry a CLIENT-side hook_event_id,
+// generated ONCE per invocation and reused across curl retries. Without it the server mints a fresh id
+// per receipt, so a duplicate POST of one Stop becomes two watermark-identical pending → drain 串轮.
+// Harness adaptation (brief's runWarnHook({captureCurl}) → this file's makeSandbox/runHook): the fake
+// curl appends its full argv one-arg-per-line to sb.curlArgs; we recover each POST body as the arg
+// following every `--data` token (N curl invocations → N bodies) and assert on bodies[0]. B14: the id
+// carries SECONDS not %3N ms — `date +%s%3N` is a GNU-ism that on macOS/BSD emits a literal `%3N`,
+// breaking the all-digits id + this regex; the urandom nonce already guarantees uniqueness.
+test('warn.sh (C3-1): POST body carries a client hook_event_id, reused across retries', async () => {
+  const sb = makeSandbox();
+  try {
+    const sid = 'sess-C3';
+    writeState(sb, sid, { sessionId: sid, port: 54321 });
+    const { code, out } = await runHook(JSON.stringify({ session_id: sid }), sb);
+    assert.equal(code, 0);
+    assert.equal(out, '', 'Stop-hook must emit NOTHING to stdout');
+    assert.ok(existsSync(sb.curlArgs), 'the hook should have POSTed via curl');
+    const argv = readFileSync(sb.curlArgs, 'utf8').split('\n');
+    const bodies = argv.filter((line, i) => i > 0 && argv[i - 1] === '--data');
+    assert.equal(bodies.length >= 1, true, 'at least one POST body captured');
+    const b = JSON.parse(bodies[0]);
+    assert.equal(b.session_id, 'sess-C3');
+    assert.match(b.hook_event_id, /^sess-C3:stop:\d+:\d+:[0-9a-f]+$/,
+      'client id: sid:stop:pid:seconds:nonce (B14 — no %3N ms)');
+    // reused across retries: the body is pre-assembled ONCE into $body, so every captured body is identical.
+    for (const raw of bodies) assert.equal(raw, bodies[0], 'same body reused across curl retries');
+  } finally {
+    rmSync(sb.root, { recursive: true, force: true });
+  }
+});

@@ -97,8 +97,9 @@ test('restart fires with a reason once past the gate; empty data does NOT restar
   else assert.ok(st.calibratingReason, 'if not restarting, a calibratingReason explains why');
 });
 
-test('metricsReliable=false when Claude cache_creation is zeroed (field moved away)', () => {
+test('metricsReliable always true in status output (v2.2: retired from gate, diagnostic only)', () => {
   // Claude model but cache_creation forced to 0 and input≈2 → gField collapses, residual explodes.
+  // Pre-v2.2 this would produce metricsReliable=false; now it's hardcoded true for API compat.
   let s = ''; let cr = 42000; let id = 0;
   for (let i = 0; i < 30; i++) {
     cr += 2446;
@@ -108,7 +109,9 @@ test('metricsReliable=false when Claude cache_creation is zeroed (field moved aw
   }
   const w = new SessionWatcher(tmp(s), 42000);
   w.poll();
-  assert.equal(w.getStatus().metricsReliable, false);
+  assert.equal(w.getStatus().metricsReliable, true, 'always true in API output (v2.2 backward compat)');
+  // The internal diagnostic method still detects the mismatch
+  assert.equal(w._metricsReliable(w._currentSegmentCalls()), false, 'internal diagnostic still reports false');
 });
 
 test('getHistory returns one point per folded call with segment tags', () => {

@@ -105,7 +105,7 @@ async function refresh() {
   // #6-frontend: ONE calibrating flag drives lline/lbar/statusbar so the three can never disagree.
   // metricsReliable can be TRUE during warmup (kAvg=0 → Lthreshold≈baseline.total → pct≈100%), so we
   // must also branch on calibratingReason — mirrors the server statusline (server.js formatLine).
-  const calibrating = s.calibratingReason != null || s.metricsReliable === false;
+  const calibrating = s.calibratingReason != null;
   const note = calibrating ? ' <span class="estimated">(指标校准中)</span>' : '';
   document.getElementById('lline').innerHTML =
     `L: ${k(s.L)} / L*: ${calibrating ? '<span class="estimated">校准中</span>' : k(s.Lstar)}${note}`;

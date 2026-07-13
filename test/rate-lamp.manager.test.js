@@ -12,7 +12,7 @@ process.env.CLAUDE_PLUGIN_DATA = TMP;
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
 
 import { resolveLedgerForKey, mergeLedgerIntoStatus, recordBillEvent,
-  advanceRateLampToCurrent, setLiveLedger, _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
+  advanceRateLampToCurrent, setLiveLedger, _resetRateLampManagerForTest, flushPendingPersistsSync } from '../lib/rate-lamp-manager.js';
 import { freshLedger, saveRateLampState, stateKeyOf, applyFoldedCallSample } from '../lib/rate-lamp-store.js';
 
 // KEY is the real state key the fakeWatcher's snapshot computes (segment/model/cRatio/fingerprint/cap).
@@ -54,13 +54,30 @@ test('R2-3: fresh ledger (no persisted) anchors at CURRENT seq, does NOT catch u
   assert.equal(led.kStableFrozen, 940);
 });
 
-test('R2-1: same key + watcher seq ≥ lastApplied → reuse (continue integrating)', () => {
+test('R2-1: same key + watcher seq ≥ lastApplied → reuse (continue integrating); cursor synced AFTER the advance', () => {
+  // C2-1/Option-1: the reuse branch no longer PRE-JUMPS currentTurnSeq to the watcher turn — currentTurnSeq
+  // now means "last-integrated/open turn" so the edge-settle loop can walk it forward and settle the ended
+  // turn from the persisted cursor. The pure resolve therefore leaves currentTurnSeq at the persisted value.
   const persisted = { ...freshLedger(KEY, 940), lastAppliedFoldedCallSeq: 12, billProgress: 0.4, currentTurnSeq: 3 };
   const led = resolveLedgerForKey(persisted, { currentKey: KEY, watcherFoldedSeq: 12, watcherTurnSeq: 5, kStableFrozen: 940, lReadNow: 300000 });
   assert.equal(led.billProgress, 0.4, 'reused, not reset');
   assert.equal(led.lastAppliedFoldedCallSeq, 12);
   assert.equal(led.pausedReason, null);
-  assert.equal(led.currentTurnSeq, 5, 'round-6 gemini#1: reuse SYNCS currentTurnSeq to the watcher turn even with no integration');
+  assert.equal(led.currentTurnSeq, 3, 'C2-1: reuse does NOT pre-jump currentTurnSeq (was 5) — it stays at the persisted open turn');
+
+  // R2-1 must STILL protect the TTL/pulse cursor: at the END of an advance the trailing syncLedgerTurn
+  // brings currentTurnSeq up to the watcher turn (so mergeLedgerIntoStatus's lastBillEvent.turnSeq ===
+  // currentTurnSeq TTL read can be evaluated) AND zeros ΔW on the real advance. Prove it through the full
+  // advance path with NO new eligible samples (the exact zero-integration case the old pre-jump covered).
+  _resetRateLampManagerForTest();
+  const SIDR = 'sid-r2-1-trailing-sync';
+  setLiveLedger(SIDR, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 3,
+    currentTurnDeltaW: 1.5, billProgress: 0.4 });
+  const w = fakeWatcher({ turnSeq: 5, foldedSeq: 12, samples: [] });
+  const { ledger } = advanceRateLampToCurrent(w, SIDR, { forcePoll: false });
+  assert.equal(ledger.currentTurnSeq, 5, 'TTL/pulse cursor reaches the watcher turn at the END of the advance (trailing sync)');
+  assert.equal(ledger.currentTurnDeltaW, 0, 'ΔW zeroed on the real turn advance (no leaked dw_backstop) — R7-1 preserved');
+  assert.equal(ledger.billProgress, 0.4, 'no integration happened — billProgress untouched');
 });
 
 test('New#3: same key but watcher seq < lastApplied → in-place re-anchor (NOT a stuck seq_history_mismatch pause)', () => {
@@ -246,11 +263,13 @@ test('#6: an advance that DOES change the ledger still writes (gate never suppre
   const wIdle = fakeWatcher({ turnSeq: 5, foldedSeq: 12, samples: [] });
   setLiveLedger(SID6, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 5, billProgress: 0.4, lastBurnRate: 0.5 });
   advanceRateLampToCurrent(wIdle, SID6, { forcePoll: false });
+  flushPendingPersistsSync(); // C5a: write-behind flush so the file exists before we delete it
   rmSync(LEDGER_FILE(SID6), { force: true });                  // sentinel
   // Now a genuinely new folded call (seq 13) arrives → the ledger integrates and MUST be persisted.
   const wNew = fakeWatcher({ turnSeq: 6, foldedSeq: 13,
     samples: [{ seq: 13, reliable: true, burnRate: 0.9, L_read: 320000, turnSeq: 6 }] });
   const { ledger } = advanceRateLampToCurrent(wNew, SID6, { forcePoll: false });
+  flushPendingPersistsSync(); // C5a: write-behind → flush to verify the write happens
   assert.ok(existsSync(LEDGER_FILE(SID6)), 'a real ledger change wrote the checkpoint (gate did not suppress it)');
   assert.equal(ledger.lastAppliedFoldedCallSeq, 13, 'the new call was integrated (cursor advanced)');
 });

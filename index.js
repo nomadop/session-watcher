@@ -5,12 +5,13 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { get as httpGet } from 'node:http';
+import { safeSessionId } from './lib/atomic-store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT_DIR = join(homedir(), '.session-watcher');
 // State is scoped by session_id (server↔transcript is 1:1; session_id disambiguates two windows
 // on the same project — a project-path hash would still collide there).
-export const stateFileFor = (sessionId) => join(PORT_DIR, `${sessionId || 'default'}.json`);
+export const stateFileFor = (sessionId) => join(PORT_DIR, `${safeSessionId(sessionId || 'default')}.json`);
 
 export function resolveProjectDir(env = process.env) {
   if (env.CLAUDE_PROJECT_DIR) return env.CLAUDE_PROJECT_DIR;

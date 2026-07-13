@@ -1,0 +1,53 @@
+{
+  "script": [
+    {
+      "sample": [
+        1,
+        0.2,
+        1000,
+        1
+      ]
+    },
+    {
+      "sample": [
+        2,
+        0.4,
+        2000,
+        1
+      ]
+    },
+    {
+      "boundary": {
+        "L_readNow": 2000,
+        "kStable": 500,
+        "inDeepWater": false,
+        "foldedSeqNow": 2,
+        "turnSeqNow": 2
+      }
+    }
+  ],
+  "captures": [
+    [
+      0,
+      0.3,
+      null
+    ]
+  ],
+  "meter": [
+    {
+      "billProgress": 0.3,
+      "billCycleCount": 0,
+      "currentTurnDeltaW": 0.3,
+      "billAnchorLRead": 1000
+    }
+  ],
+  "bills": [
+    null
+  ],
+  "alerts": [
+    null
+  ],
+  "stopEvents": [
+    null
+  ]
+}

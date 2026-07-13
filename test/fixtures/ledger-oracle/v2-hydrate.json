@@ -1,0 +1,108 @@
+{
+  "script": [
+    {
+      "sample": [
+        1,
+        1.2,
+        1000,
+        1
+      ]
+    },
+    {
+      "sample": [
+        2,
+        1.2,
+        5000,
+        1
+      ]
+    },
+    {
+      "boundary": {
+        "L_readNow": 5000,
+        "kStable": 940,
+        "inDeepWater": false,
+        "foldedSeqNow": 2,
+        "turnSeqNow": 1
+      }
+    },
+    {
+      "sample": [
+        3,
+        0.8,
+        5100,
+        2
+      ]
+    },
+    {
+      "sample": [
+        4,
+        0.2,
+        5150,
+        2
+      ]
+    },
+    {
+      "boundary": {
+        "L_readNow": 5150,
+        "kStable": 940,
+        "inDeepWater": false,
+        "foldedSeqNow": 4,
+        "turnSeqNow": 2
+      }
+    },
+    {
+      "sample": [
+        5,
+        0.5,
+        8000,
+        3
+      ]
+    },
+    {
+      "sample": [
+        6,
+        0.5,
+        12000,
+        3
+      ]
+    },
+    {
+      "boundary": {
+        "L_readNow": 12000,
+        "kStable": 940,
+        "inDeepWater": false,
+        "foldedSeqNow": 6,
+        "turnSeqNow": 3
+      }
+    }
+  ],
+  "persisted": {
+    "schemaVersion": 2,
+    "stateKey": "[0,\"opus\",10,\"f\",1000000,2]",
+    "billingBasis": "fullCarry",
+    "billProgress": 0.549999,
+    "billCycleCount": 3,
+    "billAnchorLRead": 12000,
+    "billAnchorTurnSeq": 3,
+    "billAnchorFoldedCallSeq": 6,
+    "lastBurnRate": 0.5,
+    "lastAppliedFoldedCallSeq": 6,
+    "lastAppliedLRead": 12000,
+    "currentTurnSeq": 3,
+    "currentTurnDeltaW": 0.85,
+    "pendingBillCountSinceBoundary": 0,
+    "pausedReason": null,
+    "cacheExpiryCount": 0,
+    "kStableFrozen": 0,
+    "lastBillEvent": null,
+    "lastStopEvent": null,
+    "settledThroughTurnSeq": 0,
+    "alertEvaluatedThroughTurnSeq": 0,
+    "ledgerRevision": 0,
+    "pendingStopEvaluations": [],
+    "settledTurnSummaries": [],
+    "recentStopEvents": [],
+    "recentProcessedHookEventIds": [],
+    "deepWaterDisplayLatched": false
+  }
+}

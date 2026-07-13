@@ -29,11 +29,10 @@ function healthy(n, startCr = 42000, idPrefix = 'm') {
 }
 
 test('computeCalibrationGate: passes only when all criteria hold', () => {
-  assert.deepEqual(computeCalibrationGate({ metricsReliable: true, confidence: 0.92, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 90000 }), { passed: true, reason: null });
-  assert.deepEqual(computeCalibrationGate({ metricsReliable: false, confidence: 0.92, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 90000 }), { passed: false, reason: 'metrics_unreliable' });
-  assert.deepEqual(computeCalibrationGate({ metricsReliable: true, confidence: 0.6, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 90000 }), { passed: false, reason: 'low_confidence' });
-  assert.deepEqual(computeCalibrationGate({ metricsReliable: true, confidence: 0.92, postKneeGrowthCalls: 2, baselineTotal: 50000, L: 90000 }), { passed: false, reason: 'insufficient_data' });
-  assert.deepEqual(computeCalibrationGate({ metricsReliable: true, confidence: 0.92, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 40000 }), { passed: false, reason: 'insufficient_data' });
+  assert.deepEqual(computeCalibrationGate({ confidence: 0.92, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 90000 }), { passed: true, reason: null });
+  assert.deepEqual(computeCalibrationGate({ confidence: 0.6, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 90000 }), { passed: false, reason: 'low_confidence' });
+  assert.deepEqual(computeCalibrationGate({ confidence: 0.92, postKneeGrowthCalls: 2, baselineTotal: 50000, L: 90000 }), { passed: false, reason: 'insufficient_data' });
+  assert.deepEqual(computeCalibrationGate({ confidence: 0.92, postKneeGrowthCalls: 5, baselineTotal: 50000, L: 40000 }), { passed: false, reason: 'insufficient_data' });
 });
 
 test('refactor is behavior-preserving: getStatus calibratingReason unchanged on empty + healthy data', () => {

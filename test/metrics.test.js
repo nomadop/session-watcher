@@ -47,6 +47,18 @@ test('regret is (u+1/u)/2 - 1: 0 at optimum, +25% at u=2', () => {
   close(regret(38, 76), 0.25); // symmetric
 });
 
+test('H5: regret returns 0 when nStar is Infinity (g=0 → nStar=Infinity)', () => {
+  const nStarVal = nStar(10, 55000, 0); // g=0 → Infinity
+  assert.equal(nStarVal, Infinity);
+  assert.equal(regret(5, nStarVal), 0, 'Infinity nStar must not produce Infinity regret');
+});
+
+test('H5: regret returns 0 for NaN inputs', () => {
+  assert.equal(regret(5, NaN), 0);
+  assert.equal(regret(NaN, 10), 0);
+  assert.equal(regret(Infinity, 10), 0);
+});
+
 test('etaCalls: null on non-positive slope, frozen 0 past the line, else rounds up', () => {
   assert.equal(etaCalls(180000, 137000, 0), null);
   assert.equal(etaCalls(180000, 137000, -5), null);

@@ -14,11 +14,17 @@ process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); 
 
 import { createServer, stateFileFor, PORT_DIR } from '../server.js';
 import { loadGateState } from '../lib/gate-store.js';
+import { landmarks } from '../lib/landmarks.js';
+import { rawTierFor } from '../lib/notify-gate.js';
 
 // A deterministic stub watcher: L / reliability / turnSeq are directly controllable so the gate math
 // (landmarks(cRatio=10, kAvg=940, total=55000, dead=30000, L)) lands on a known tier. With those
 // params xStar≈2.169, dhat≈0.585 → tier2 fires at L≥~151.5k, tier1 in ~119.3k..151.5k, else below.
-function gateWatcher({ L = 0, reliable = true, turnSeq = 1 } = {}) {
+// D4/RV-C15: `model` is optional (default '' — existing reliable callers carry C_RATIO:10 on the frame,
+// so gateSnapshotFor's `?? cRatioFor(st.model)` fallback is never reached and their status stays
+// behavior-identical). The D4 test drives a deepseek UNRELIABLE frame (C_RATIO omitted, mirroring the
+// real getStatus unreliable branch) with model:'deepseek-chat' so the fallback must resolve via cRatioFor.
+function gateWatcher({ L = 0, reliable = true, turnSeq = 1, model = '' } = {}) {
   return {
     _turnSeq: turnSeq, _L: L, _reliable: reliable, _foldedCallSeq: 0,
     poll() { return { changed: false, newCalls: 0 }; },
@@ -31,7 +37,7 @@ function gateWatcher({ L = 0, reliable = true, turnSeq = 1 } = {}) {
     _currentSegmentCalls() { return []; },
     getStatus() {
       return {
-        segment: 0, kAvg: 940, L: this._L,
+        segment: 0, model, kAvg: 940, L: this._L,
         baseline: { total: 55000, dead: 30000 },
         rateLamp: this._reliable
           ? { reliable: true, C_RATIO: 10 }
@@ -83,6 +89,27 @@ test('66: POST advances+persists the ratchet; GET /peek reports the would-be tie
     assert.equal(post2.notify, false, 'the ratchet suppresses a repeat at the same tier');
     assert.equal(loadGateState(sid).turnSeq, 2, 'turnSeq advanced even on the suppressed turn');
   });
+});
+
+// ── D3 (#8): one POST does exactly one getStatus (gateSnapshotFor reuses the advance's status) ───────
+test('D3: one POST /api/notify-gate calls watcher.getStatus exactly once', async () => {
+  // #8: today the POST computes getStatus twice — once inside advanceRateLampToCurrent (manager) and
+  // again inside gateSnapshotFor (route). Passing the already-computed status into gateSnapshotFor makes
+  // it ONE per POST. gateWatcher is this file's fake watcher (test 66 drives the same full POST path).
+  let getStatusCalls = 0;
+  const watcher = gateWatcher({ L: 160000, reliable: true, turnSeq: 1 });
+  const realGetStatus = watcher.getStatus.bind(watcher);
+  watcher.getStatus = (...a) => { getStatusCalls++; return realGetStatus(...a); };
+  const srv = createServer({ watcher, pollIntervalMs: 0, sessionId: 'sess-D3' });
+  await new Promise(r => srv.server.listen(0, '127.0.0.1', r));
+  const port = srv.server.address().port;
+  getStatusCalls = 0; // reset after the createServer initial poll (poll() only; not getStatus, but be safe)
+  await fetch(`http://127.0.0.1:${port}/api/notify-gate`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session_id: 'sess-D3' }) });
+  srv.stopTimers();
+  await new Promise(r => srv.server.close(r));
+  assert.equal(getStatusCalls, 1, '#8: gateSnapshotFor must reuse advanceRateLampToCurrent’s status');
 });
 
 // ── session-mismatch 409 + fail-open guard (round-6 GPT#3a + round-7 gemini#2) ──────────────────────
@@ -162,4 +189,28 @@ test('stateFileFor sanitizes a traversal sessionId: resolved path stays inside P
 test('server.js bootstrap binds 127.0.0.1 (loopback-only, verify)', () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'server.js'), 'utf8');
   assert.match(src, /server\.listen\(\s*wantPort\s*,\s*'127\.0\.0\.1'/, 'the bootstrap listen binds 127.0.0.1');
+});
+
+// ── D4 (RV-C15): gateSnapshotFor C_RATIO fallback is model-derived (cRatioFor), not a hardcoded 10 ────
+// ROUTE-LEVEL, not a tautological cRatioFor unit assertion: drive /peek with a deepseek UNRELIABLE frame
+// that OMITS rateLamp.C_RATIO (the real getStatus omits it on the unreliable branch). Bug: `?? 10` computes
+// landmarks with ratio 10; fix: `?? cRatioFor(st.model)` computes with 50 for deepseek-chat. The only
+// landmark-derived value the read-only /peek exposes is `rawTier` (= rawTierFor(x, fullCarry)), so we assert
+// on that. With L/total/kAvg/dead below, x=2.5: ratio-10 xStar≈2.17 → rawTier 1, ratio-50 xStar≈3.61 →
+// rawTier 0. The `reliable:false` frame does NOT gate /peek (peek reports the would-be raw tier regardless
+// of reliability — test 'an unreliable getStatus' above confirms /peek still answers), so the tier flips
+// purely on the ratio the fallback picks. Expected is computed from landmarks(50,…), never a literal.
+test('D4/RV-C15: peek gate snapshot uses cRatioFor(model)=50 for a deepseek unreliable frame, not 10', async () => {
+  const sid = `gate-${randomUUID()}`;
+  // Match the gateWatcher status shape (kAvg 940, total 55000, dead 30000); x = 137500/55000 = 2.5.
+  const L = 137500, total = 55000, dead = 30000, kAvg = 940;
+  const watcher = gateWatcher({ L, reliable: false, turnSeq: 1, model: 'deepseek-chat' }); // no C_RATIO on the frame
+  await withGateServer({ sessionId: sid, watcher }, async ({ port }) => {
+    const res = await (await fetch(`http://127.0.0.1:${port}/api/notify-gate/peek`)).json();
+    const x = L / total;
+    const expected = rawTierFor(x, landmarks(50, kAvg, total, dead, L).fullCarry); // cRatioFor('deepseek-chat')=50
+    const wrong = rawTierFor(x, landmarks(10, kAvg, total, dead, L).fullCarry);     // the `?? 10` bug's tier
+    assert.notEqual(expected, wrong, 'guard: params must make ratio 50 vs 10 yield different raw tiers');
+    assert.equal(res.rawTier, expected, 'fallback is model-derived (cRatioFor=50), not the hardcoded 10');
+  });
 });

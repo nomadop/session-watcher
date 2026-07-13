@@ -5,7 +5,10 @@ reports/
 
 # Real Claude Code session transcripts — PRIVATE (real conversations/paths) + huge, never commit.
 # Tests bind-mount these locally in the devcontainer; a fresh clone uses the plan's E2E fallback.
-fixtures/
+# ROOT-ANCHORED (/) so it targets ONLY the top-level private-transcript dir — an unanchored `fixtures/`
+# also shadowed test/fixtures/ (e.g. the C0 ledger-oracle safety net), silently un-tracking regenerated
+# or newly-added committed fixtures. Anchoring un-shadows test/fixtures/ while keeping this dir ignored.
+/fixtures/
 
 node_modules/
 *.log
