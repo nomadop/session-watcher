@@ -2,9 +2,9 @@
 
 # Session Watcher
 
-**The EOQ-optimal restart companion for Claude Code.**
+**LLM context economics, in your terminal.**
 
-Most tools count tokens you *spent*. Session Watcher tells you whether the current context is still *worth carrying* — and when to restart.
+Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory to tell you whether the current context is still *worth carrying*, and when to restart. Works with any session-based coding agent.
 
 <img src="assets/dashboard.png" alt="Session Watcher dashboard" width="820">
 
@@ -21,6 +21,7 @@ Most tools count tokens you *spent*. Session Watcher tells you whether the curre
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How It Works</a> ·
   <a href="#mcp-tools">MCP Tools</a> ·
+  <a href="#agent-support">Agents</a> ·
   <a href="#paper">Paper</a> ·
   <a href="#citation">Cite</a>
 </p>
@@ -29,18 +30,18 @@ Most tools count tokens you *spent*. Session Watcher tells you whether the curre
 
 ## What it does
 
-Session Watcher tails your Claude Code JSONL transcript in real time and answers one question: **should I restart this session?**
+Session Watcher monitors your agent's session transcript in real time and answers one question: **should I restart this session?**
 
 - **Real-time dashboard** — Chart.js SPA with SSE streaming: token stock `L`, exit line `L*`, per-turn cost, bill progress, rate-lamp interrupt meter
-- **Statusline widget** — one-line shell command for your Claude Code status bar: lamp · progress bar · turn counter · cost rate · `L/b` · model
+- **Statusline widget** — one-line shell command for your terminal status bar: lamp · progress bar · turn counter · cost rate · `L/b` · model
 - **Zero context pollution** — the MCP tools return only a URL. No metric number, no transcript content, no session state ever re-enters the model's context
 - **Fully local** — all state lives in a sidecar JSON file; no cloud, no telemetry, no API calls
 
 ## How it works
 
 ```
-Your Claude Code session
-        │  writes JSONL transcript
+Your coding agent (Claude Code, OpenCode, OpenClaw, etc.)
+        │  writes session transcripts
         ▼
 ┌──────────────────────────────────────────┐
 │  Session Watcher (local sidecar daemon)   │
@@ -54,7 +55,7 @@ Your Claude Code session
 └──────────────────────────────────────────┘
         │  dashboard :31393  ·  statusline  ·  MCP
         ▼
-   Your browser / Claude Code status bar
+   Your browser / terminal status bar
 ```
 
 **Core model:** `L = cache_read_input_tokens` (your context stock, rent-free while cached). When `L` crosses the EOQ-optimal restart line `L*`, the dashboard and statusline signal restart. See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
@@ -110,7 +111,7 @@ npm install
 node server.js --project ~/.claude/projects/<project> --ratio 50 --open
 ```
 
-Then open `http://localhost:31393` in your browser. The dashboard updates in real time as you use Claude Code.
+Then open `http://localhost:31393` in your browser. The dashboard updates in real time as your agent runs.
 
 ## MCP tools
 
@@ -121,6 +122,20 @@ Then open `http://localhost:31393` in your browser. The dashboard updates in rea
 | `watcher_status` | Report whether the server is running and its URL |
 
 All three are read-only — they never return metric values or session content into the model's context.
+
+## Agent support
+
+Session Watcher is agent-agnostic. The measurement pipeline (fold, baseline, `L*`, rate-lamp) only needs `cache_read_input_tokens` from each turn — it doesn't care which agent produced the transcript.
+
+| Agent | Driver | Status |
+|-------|--------|--------|
+| Claude Code | JSONL tail (native) | ✅ |
+| OpenCode | adapter-ready | pending |
+| OpenClaw | adapter-ready | pending |
+| Hermes | adapter-ready | pending |
+| Aider | adapter-ready | pending |
+
+Adding a new agent requires implementing one interface: extract `cache_read_input_tokens` from the agent's session transcript. See [`lib/extract.js`](lib/extract.js) for the Claude Code reference driver. PRs welcome.
 
 ## Paper
 
