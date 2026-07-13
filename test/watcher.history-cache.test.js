@@ -115,7 +115,12 @@ test('H1 cache: changing fitWindow rebuilds; each fitWindow equals a fresh watch
   assert.deepEqual(h10, fresh(10), 'fitWindow=10 equals a fresh fw=10 recompute');
   assert.deepEqual(h40, fresh(40), 'fitWindow=40 equals a fresh fw=40 recompute');
   assert.deepEqual(h10again, fresh(10), 'flipping fitWindow back rebuilds correctly');
-  assert.notDeepEqual(h10, h40, 'the two windows genuinely differ (kFitSlope tail width)');
+  // Task 10 (ER-2): kFitSlope was the ONLY fitWindow-dependent EMITTED history field; it is retired
+  // with the kFit chain. The display fitWindow no longer changes ANY emitted history value (v1.2 §4.3:
+  // pure front-end smoothing), so the two windows now emit IDENTICAL points. The cache still REBUILDS on
+  // a fitWindow change — guarded by the fresh(10)/fresh(40)/flip-back equalities above (NOT weakened) —
+  // it simply produces the same bytes. (Was notDeepEqual on the kFitSlope tail width; now provably equal.)
+  assert.deepEqual(h10, h40, 'post-kFit-retirement: display fitWindow no longer changes emitted history');
 });
 
 // ── (4a) Rotation/truncation via the public poll() API ───────────────────────────────────────────
@@ -182,8 +187,11 @@ test('H1 cache: after appending ONE call, getHistory does O(tail) baseline work,
 
   // Count _baselineAndKavg invocations for the NEXT getHistory only.
   let count = 0;
+  // ER-8: forward opts (latchStore) so the patched path keeps the SAME latch behavior as production;
+  // the fixture uses a carried baseline (42000) that never latches, so this is currently inert, but
+  // forwarding prevents a future cold-start fixture from silently comparing non-latched vs latched.
   const orig = w._baselineAndKavg.bind(w);
-  w._baselineAndKavg = (arr) => { count++; return orig(arr); };
+  w._baselineAndKavg = (arr, opts) => { count++; return orig(arr, opts); };
   w.getHistory();
 
   assert.ok(count < 47, `steady-state getHistory must be O(tail), not O(n); got ${count} baseline calls`);

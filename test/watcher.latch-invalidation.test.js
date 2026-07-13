@@ -5,6 +5,7 @@ import { writeFileSync, appendFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionWatcher } from '../lib/watcher.js';
+import { baselineFingerprint } from '../lib/latch.js';
 
 function line(o) { return JSON.stringify(o) + '\n'; }
 // Default model DEEPSEEK (GPT-plan-review #3): deepseek's lag-aligned input+output≈ΔL keeps
@@ -123,16 +124,21 @@ test('in-place fold (even output-only) clears+rescans the latch so both stores s
   const stateBefore = w._latchedBaseline.get(w._segment);
   assert.ok(stateBefore?.entry, 'precondition: segment is latched before the output-only fold');
   const entryBefore = stateBefore.entry;
+  const fpBefore = baselineFingerprint(entryBefore);
   const target = w._calls[4];
   appendFileSync(p, asst(target.messageId, target.cacheRead, target.input, target.output + 500)); // only output grows
   w.poll();
   const after = w.getStatus().baseline;
   assert.equal(after.dead, before.dead, 'output-only re-scan re-derives identical dead (unchanged cacheRead seq)');
   assert.equal(after.task, before.task, 'output-only re-scan re-derives identical taskCtx');
-  // The load-bearing discrimination, now INVERTED: a fresh entry ⟹ the scoped clear+rescan fired.
+  // FU-B1-coupling: assert the re-scan produced a baseline-EQUIVALENT entry by VALUE (fingerprint),
+  // not by object identity — an output-only fold clears+rescans but must re-derive the SAME baseline.
+  // Value-level survives a future mutate-and-reuse optimization (same object mutated in place), which
+  // an object-identity `notStrictEqual` discriminator would spuriously fail.
   const stateAfter = w._latchedBaseline.get(w._segment);
   assert.ok(stateAfter?.entry, 're-latched after the scoped clear (segment still latched)');
-  assert.notStrictEqual(stateAfter.entry, entryBefore, 'output-only fold now clears+rescans (ER-1) → fresh entry');
+  assert.equal(baselineFingerprint(stateAfter.entry), fpBefore,
+    'output-only fold re-scans but re-derives the SAME baseline (value-level, not identity)');
 });
 
 test('ER-1 QF1: output-only fold into early calls keeps getStatus + getHistory latch stores in sync', () => {

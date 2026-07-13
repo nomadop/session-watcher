@@ -12,12 +12,25 @@
 export function computeYMax(hist) {
   let yMax = 1;
   for (const p of hist) {
-    const eL = Number.isFinite(p.L) ? p.L : (p.cacheRead ?? 0);
+    // ER-5: server already resolved effectiveL into p.L; client must not re-derive the miss rule.
+    const eL = Number.isFinite(p.L) ? p.L : 0;
     if (eL > yMax) yMax = eL;
     const lt = p.Lthreshold ?? 0;
     if (lt > yMax) yMax = lt;
   }
   return yMax;
+}
+
+// R5-1: sticky deep-water latch for the dashboard lamp (spec §10.9). Enter at the exit line; leave only
+// after dropping a full RATE_EXIT_HYST below it, so a sub-hysteresis cache-expiry dip does not flicker
+// the lamp. PURE — the caller persists prevLatched across polls. DISPLAY ONLY: never gates settlement
+// (empty_burn stop_hook routing still uses the instantaneous inDeepWater; the cross-turn routing latch
+// is deferred, RV-C10). RATE_EXIT_HYST = max(2048, 0.02·C_RATIO·B_rebuild).
+export function deepWaterDisplay(prevLatched, { L_read, L_exit_fullCarry, cRatio, B_rebuild }) {
+  if (!(L_exit_fullCarry > 0) || !Number.isFinite(L_read)) return false;
+  const hyst = Math.max(2048, 0.02 * cRatio * B_rebuild);
+  if (prevLatched) return L_read >= L_exit_fullCarry - hyst; // leave only past the deadband
+  return L_read >= L_exit_fullCarry;                          // enter at the exit line
 }
 
 // Three points per miss row: bottom (y:0), top (y:yMax), and a null separator so Chart.js does NOT

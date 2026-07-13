@@ -82,6 +82,24 @@ test('detectKnee flags the fallback ladder as isRealKnee=false', () => {
   assert.equal(isRealKnee, false, 'oscillating deltas → no stable window → fallback → isRealKnee false');
 });
 
+test('detectKnee returns stableMedian on the real-knee branch (spec §3.4 / A2)', () => {
+  const seq = syntheticSeq(); // warmup then ~940/round stable climb
+  const r = detectKnee(seq);
+  assert.equal(r.isRealKnee, true);
+  assert.ok(Number.isFinite(r.stableMedian) && r.stableMedian > 0,
+    'stableMedian exposed and positive');
+  // it equals kneeBgMult-free median of back-half deltas → in the stable ~940 band
+  assert.ok(r.stableMedian > 500 && r.stableMedian < 1500, 'stableMedian tracks the stable delta band');
+});
+
+test('detectKnee returns stableMedian on the fallback (no-knee) branch too', () => {
+  const steep = [1000, 20000, 45000, 80000]; // never stabilizes → fallback
+  const r = detectKnee(steep);
+  assert.equal(r.isRealKnee, false);
+  assert.ok(Number.isFinite(r.stableMedian) && r.stableMedian > 0,
+    'fallback branch also carries a finite stableMedian (never undefined)');
+});
+
 test('detectKnee kneeTurn/taskCtx are unchanged by adding the flag (regression)', () => {
   const seq = syntheticSeq();
   const { kneeTurn, taskCtx } = detectKnee(seq);

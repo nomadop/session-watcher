@@ -10,7 +10,7 @@
     "start": "node server.js",
     "e2e": "playwright test"
   },
-  "engines": { "node": ">=21" },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "express": "^4.19.2",
     "@modelcontextprotocol/sdk": "^1.0.0",

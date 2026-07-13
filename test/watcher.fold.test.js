@@ -21,6 +21,14 @@ function tmpJsonl(content) {
   return p;
 }
 
+// A real human turn boundary: a `type:'user'` line with a STRING content (no tool_result block),
+// non-sidechain — exactly what isUserTurnBoundary (lib/extract.js) treats as a new turn. Used by the
+// v2.1 sample-builder test to prove two real turns in one poll yield two distinct per-record turnSeqs.
+function user(text) {
+  return { type: 'user', uuid: 'u_' + text, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
+    message: { role: 'user', content: text } };
+}
+
 // Id-less assistant row: message.id OMITTED (→ extractUsage messageId === null), carrying a
 // top-level `requestId` (sibling to type/message, per lib/extract.js:58). Models a provider that
 // streams snapshots of one call without a message.id — the H4 defensive path.
@@ -194,4 +202,18 @@ test('H4: fully id-less AND requestId-less rows (both null) never fold → 2 cal
   assert.equal(w._calls.length, 2, 'null foldKey rows stay separate (no null-key collapse)');
   assert.equal(w._calls[0].messageId, null);
   assert.equal(w._calls[1].messageId, null);
+});
+
+// ── v2.1 (RV-C7): sample builder threads each call's REAL per-record turnSeq (A3) ──────────────────
+test('round-6 RV-C7: sample builder carries each call\'s REAL turnSeq (two turns in one poll → two turnSeqs)', () => {
+  // user#1 → asst(call A) ; user#2 → asst(call B), all written before ONE poll. Task 2.7 stamps callA
+  // turnSeq=1, callB turnSeq=2. The sample builder must reflect that (NOT collapse both to one turn).
+  const p = tmpJsonl(
+    line(user('first task')) + line(asst('msg_1', 'uuidA', 60000, 10)) +
+    line(user('second task')) + line(asst('msg_2', 'uuidB', 90000, 10))
+  );
+  const w = new SessionWatcher(p, 42000); w.poll();
+  const samples = w.rateLampSamplesSince(0, { B_post: 55000, B_rebuild: 55000, cRatio: 10, reliable: true });
+  const turns = new Set(samples.map(s => s.turnSeq));
+  assert.equal(turns.size, 2, 'two real turns in one poll produce two distinct sample turnSeqs (not collapsed)');
 });

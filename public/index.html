@@ -18,6 +18,10 @@
 </style>
 </head>
 <body>
+  <!-- Step 3b: lastStopEvent banner. FIRST child of <body>, a sticky overlay that reserves NO layout
+       space when `hidden` (so it never overlaps the chart / pushes the console out of view). With no OS
+       popup, this is the dashboard's only surface for a stop_hook-grade alert (wall/gate/empty_burn). -->
+  <div id="stop-banner" hidden style="position:sticky;top:0;z-index:9999;background:var(--red);color:#fff;font-weight:bold;padding:10px 16px;border-radius:8px;margin-bottom:12px;"></div>
   <div class="card"><b>Session Watcher</b> <span id="dot">●</span> <span class="dim" id="project"></span></div>
   <div class="card">
     <div id="lline">L: — / L*: —</div>
@@ -25,7 +29,7 @@
     <div id="eta" class="dim"></div>
   </div>
   <div class="card"><canvas id="decisionChart"></canvas>
-    <div class="row"><label><input type="checkbox" id="auxToggle"> 辅助 L*</label>
+    <div class="row">
       <label>平滑度:
         <select id="smooth"><option value="10">灵敏</option><option value="20" selected>均衡</option><option value="40">平滑</option></select>
       </label></div>
@@ -36,19 +40,26 @@
   <div class="card dim" id="regret"></div>
 
 <script type="module">
-import { computeYMax, buildMissMarkers } from './chart-helpers.js';
+import { computeYMax, buildMissMarkers, deepWaterDisplay } from './chart-helpers.js';
 const k = n => n == null ? '—' : (Math.abs(n) >= 1000 ? (n/1000).toFixed(0)+'k' : Math.round(n));
 let decisionChart, paybackChart;
 let lastHist = [];
+// R5-1: display-only sticky deep-water latch, held in the tab's VOLATILE module scope. A browser refresh
+// resets it to false — if the user reloads while L_read sits in the deadband (just below L_exit), the lamp
+// momentarily drops out of deep-water until the next real re-entry. This is INTENTIONAL for a display-only
+// feature: do NOT persist it to localStorage or push it to the server (that re-introduces the cross-turn /
+// cross-process display state R5-1 deliberately avoids; the routing-level latch is deferred to RV-C10).
+let deepWaterDisplayLatched = false;
 
 function initCharts() {
   decisionChart = new Chart(document.getElementById('decisionChart'), {
     type: 'line',
+    // ER-2 (Task 10): the 外推 (kFit extrapolation) dataset[2] and the 辅助 L* (LstarFit) dataset[3] are
+    // retired — burnRate/hBreak own the projection role now (§17.3), so the chart plots only L, the capped
+    // decision line (Lthreshold), and the cache-miss markers. The miss dataset moved [4]→[2] accordingly.
     data: { datasets: [
       { label:'L', borderColor:'#58a6ff', data:[], pointRadius:0 },
       { label:'L* (阈值)', borderColor:'#f85149', data:[], pointRadius:0 },
-      { label:'外推', borderColor:'#8a8f98', borderDash:[5,5], data:[], pointRadius:0, hidden:false, historyAligned:false },
-      { label:'辅助 L*', borderColor:'#e3b341', borderDash:[3,3], data:[], pointRadius:0, hidden:true },
       { label:'缓存 miss', borderColor:'#f85149', borderWidth:1, data:[], pointRadius:0,
         showLine:true, spanGaps:false, fill:false },
     ]},
@@ -56,18 +67,17 @@ function initCharts() {
       plugins: { tooltip: { callbacks: { afterBody: (items) => {
         const item = items[0];
         if (!item) return '';
-        // A1 (surgical): the 外推 (extrapolation) dataset is NOT index-aligned to `hist` — its 2 points map to
-        // projection x-positions, not history rows — so it is tagged `historyAligned:false` and gets NO raw-field
-        // tooltip (the old dataIndex fallback mapped its points to lastHist[0]/[1] = a WRONG row). Every other
-        // decision-chart dataset IS history-aligned: the miss-marker points carry an explicit historyIndex
-        // (their own dataIndex is the marker-array position, not a hist row); L / Lthreshold / aux-L* points map
-        // 1:1 to hist by dataIndex. Those all KEEP their per-point cacheRead/cacheCreation breakdown.
-        if (item.dataset?.historyAligned === false) return '';
+        // Every remaining decision-chart dataset IS history-aligned: the miss-marker points carry an
+        // explicit historyIndex (their own dataIndex is the marker-array position, not a hist row);
+        // L / Lthreshold points map 1:1 to hist by dataIndex. All KEEP their per-point
+        // cacheRead/cacheCreation breakdown. (ER-2/Task 10 removed the 外推 dataset that alone needed the
+        // historyAligned:false opt-out — no dataset is history-UNaligned any more.)
         const raw = item.raw;
         const hi = Number.isInteger(raw?.historyIndex) ? raw.historyIndex : item.dataIndex;
         const p = lastHist[hi];
         if (!p) return '';
-        const eL = Number.isFinite(p.L) ? p.L : p.cacheRead;
+        // ER-5: server already resolved effectiveL into p.L; client must not re-derive the miss rule.
+        const eL = p.L;
         return [ `L(有效): ${eL}`, `cacheRead: ${p.cacheRead}`, `cacheCreation: ${p.cacheCreation}`,
                  p.miss ? '⚠ 缓存 miss（stock 已重建）' : '' ].filter(Boolean);
       } } } } }
@@ -102,29 +112,19 @@ async function refresh() {
   // Don't render a misleading ~100% fill while calibrating — collapse the bar to 0%.
   const pct = calibrating ? 0 : (s.Lthreshold > 0 ? Math.min(100, Math.round(s.L/s.Lthreshold*100)) : 0);
   document.getElementById('lbar').style.width = pct + '%';
-  // eta gated on `calibrating` too, so the card can't show "预计 ~N 轮后撞线" while the rest says 校准中.
-  document.getElementById('eta').textContent = calibrating ? '外推: 校准中'
-    : (s.etaCalls == null ? '外推: —' : (s.etaCalls === 0 ? '已过线' : `预计 ~${s.etaCalls} 轮后撞线 (估计)`));
+  // ER-2 (Task 10): the eta card (`预计 ~N 轮后撞线` / `已过线` / `外推: —`) is retired with the kFit chain
+  // (§17.3 — never surface rounds-remaining on a plateau). The break-even from burnRate/hBreak (statusline)
+  // owns that role. Show only whether we're calibrating.
+  document.getElementById('eta').textContent = calibrating ? '指标校准中' : '';
 
   const pts = (arr, key) => arr.map((p, i) => ({ x: i, y: p[key] }));
   decisionChart.data.datasets[0].data = pts(hist, 'L');
   // #9-plot: decision line is the CAPPED Lthreshold (min(Lstar,Lcap)) so it matches the restart
-  // signal in the context-cap regime. (The aux dataset[3] shows the fit-based LstarFit, a DIFFERENT
-  // quantity — the uncapped per-point Lstar curve is intentionally no longer plotted.)
+  // signal in the context-cap regime. (ER-2/Task 10 retired the 外推 extrapolation + 辅助 L* datasets;
+  // the uncapped per-point Lstar curve is intentionally no longer plotted.)
   decisionChart.data.datasets[1].data = pts(hist, 'Lthreshold');
-  // extrapolation from last L along kFitSlope to the threshold.
-  // #2: guard on etaCalls != null (not truthiness) — etaCalls===0 means "already over the line"
-  // (a finite eta), and 0 is falsy, so the old guard dropped the projection exactly at the crossing.
-  // At etaCalls===0 the endpoint x is n+0, so the segment collapses to a single point at (n, s.L),
-  // which sits on/above Lthreshold — a non-misleading "over the line" marker, never a bogus dip.
-  if (s.kFitSlope > 0 && s.etaCalls != null) {
-    const n = hist.length - 1;
-    decisionChart.data.datasets[2].data = [{x:n, y:s.L}, {x:n + s.etaCalls, y:s.Lthreshold}];
-  } else decisionChart.data.datasets[2].data = [];
-  decisionChart.data.datasets[3].hidden = !document.getElementById('auxToggle').checked;
-  decisionChart.data.datasets[3].data = s.LstarFit ? pts(hist, 'Lstar').map(p => ({x:p.x, y:s.LstarFit})) : [];
   const yMax = computeYMax(hist);
-  decisionChart.data.datasets[4].data = buildMissMarkers(hist, yMax);
+  decisionChart.data.datasets[2].data = buildMissMarkers(hist, yMax); // ER-2: miss markers moved [4]→[2]
   decisionChart.update();
 
   paybackChart.data.datasets[0].data = pts(hist, 'paybackP').map(p => ({x:p.x, y:p.y*100}));
@@ -153,6 +153,24 @@ async function refresh() {
 
   document.getElementById('regret').textContent = !calibrating && s.regret != null
     ? `当前节奏比成本最优多花约 ${Math.round(s.regret*100)}%` : '';
+
+  // Step 3b: lastStopEvent banner — mirror formatLine's STRICT priority + TTL. The stop_hook alert wins
+  // the turn when its turnSeq === currentTurnSeq; else the banner is hidden (the bill pulse is a
+  // statusline-only concern — the banner is stop_hook-grade only, consistent with recordStopEvent).
+  const rl = s.rateLamp || {};
+  const stop = rl.lastStopEvent, cur = rl.currentTurnSeq;
+  const banner = document.getElementById('stop-banner');
+  if (stop && stop.turnSeq === cur) { banner.textContent = stop.message; banner.hidden = false; }
+  else { banner.hidden = true; banner.textContent = ''; }   // TTL: clears next turn / when none
+
+  // R5-1 (display-only): update the sticky deep-water latch off the reliable instant bundle. DISPLAY ONLY —
+  // it drives lamp/banner styling, never settleBatchAtBoundary (routing keeps the instantaneous inDeepWater).
+  if (rl.reliable) {
+    deepWaterDisplayLatched = deepWaterDisplay(deepWaterDisplayLatched, {
+      L_read: rl.L_read, L_exit_fullCarry: rl.L_exit_fullCarry, cRatio: rl.C_RATIO, B_rebuild: rl.B_rebuild });
+  } else {
+    deepWaterDisplayLatched = false; // unreliable frame → no deep-water claim
+  }
 }
 
 let pollTimer = null;
@@ -167,7 +185,6 @@ function connect() {
 
 initCharts();
 window.__SW_decisionChart = decisionChart; // e2e/debug handle only (see test/e2e/dashboard.spec.js)
-document.getElementById('auxToggle').addEventListener('change', refresh);
 document.getElementById('smooth').addEventListener('change', refresh); // smoothing selector now drives fitWindow
 refresh(); connect();
 </script>

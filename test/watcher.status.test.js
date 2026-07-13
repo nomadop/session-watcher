@@ -57,6 +57,20 @@ test('getStatus emits full Status JSON with correct L and L* relationship', () =
   assert.equal(s.metricsReliable, true, 'deepseek input+output≈ΔL → reliable');
 });
 
+// Task 10 (ER-2): the kFit extrapolation chain is retired. getStatus MUST NO LONGER emit
+// LstarFit / kFitSlope / etaCalls — burnRate/hBreak (rate-lamp) own the "rounds-remaining /
+// extrapolation" role now, and §17.3 forbids surfacing rounds-remaining on a plateau. RED before
+// the production deletion (all three fields present today), GREEN after.
+test('Task 10 (ER-2): getStatus no longer emits LstarFit / kFitSlope / etaCalls', () => {
+  const w = new SessionWatcher(tmp(buildSession().text), 42000);
+  w.poll();
+  const s = w.getStatus();
+  assert.equal('LstarFit' in s, false, 'LstarFit retired from the Status contract');
+  assert.equal('kFitSlope' in s, false, 'kFitSlope retired from the Status contract');
+  assert.equal('etaCalls' in s, false, 'etaCalls retired from the Status contract');
+  assert.equal(s.etaCalls, undefined, 'etaCalls is undefined (not just null)');
+});
+
 test('phi = 1 + paybackP/(1+rho) holds in assembled status', () => {
   const w = new SessionWatcher(tmp(buildSession().text), 42000);
   w.poll();
