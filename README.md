@@ -1,42 +1,63 @@
+<div align="center">
+
 # Session Watcher
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21236704.svg)](https://doi.org/10.5281/zenodo.21236704)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**The EOQ-optimal restart companion for Claude Code.**
 
-Most tools tell you how many tokens you spent. **Session Watcher tells you whether the current context is still worth carrying** — it computes the EOQ-optimal restart line `L*` from your Claude Code transcripts and shows it in a browser dashboard and a statusline. Nothing it computes ever re-enters the model's context.
+Most tools count tokens you *spent*. Session Watcher tells you whether the current context is still *worth carrying* — and when to restart.
 
-> **Status: work in progress.** The paper describes the full theoretical specification. This README documents what the current code actually implements. See [§ Gap from paper](#gap-from-paper) below.
+<img src="assets/dashboard.png" alt="Session Watcher dashboard" width="820">
 
-## Paper
+</div>
 
-> **Context Is Inventory: A Rent-or-Buy Model for Prompt-Cached LLM Sessions**
-> Longju Cheng (2026)
-> DOI: [`10.5281/zenodo.21236704`](https://doi.org/10.5281/zenodo.21236704)
+<p align="center">
+  <a href="https://doi.org/10.5281/zenodo.21236704"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21236704.svg" alt="DOI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platform-node.js%20%E2%89%A518-green.svg" alt="Platform: Node.js ≥18"></a>
+</p>
 
-See [`paper/paper.pdf`](paper/paper.pdf) for the full derivation of the EOQ→LLM mapping, the 41.4% movable-cost bound, the ski-rental restart strategy, and preliminary measurements on 1,016 real session transcripts (single operator, in-sample).
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#mcp-tools">MCP Tools</a> ·
+  <a href="#paper">Paper</a> ·
+  <a href="#citation">Cite</a>
+</p>
 
-## What's implemented
+---
 
-| Feature | Status |
-|---------|--------|
-| JSONL transcript tailing with message-ID folding | done |
-| Miss denoising (structural criteria) | done |
-| Knee detection with Schmitt-trigger latching | done |
-| Fold-jump detection and baseline re-latching | done |
-| EOQ exit line `L*` and per-turn cost multiple `φ` | done |
-| Web dashboard (Chart.js, SSE) | done |
-| Statusline widget (bash + curl) | done |
-| Zero-pollution invariant (MCP guard) | done |
+## What it does
 
-## MCP tools
+Session Watcher tails your Claude Code JSONL transcript in real time and answers one question: **should I restart this session?**
 
-| Tool | Description |
-|------|-------------|
-| `start_watcher` | Start (or reuse) the Session Watcher dashboard server; returns its URL |
-| `stop_watcher` | Stop the managed Session Watcher server |
-| `watcher_status` | Report whether the server is running and its URL |
+- **Real-time dashboard** — Chart.js SPA with SSE streaming: token stock `L`, exit line `L*`, per-turn cost, bill progress, rate-lamp interrupt meter
+- **Statusline widget** — one-line shell command for your Claude Code status bar: lamp · progress bar · turn counter · cost rate · `L/b` · model
+- **Zero context pollution** — the MCP tools return only a URL. No metric number, no transcript content, no session state ever re-enters the model's context
+- **Fully local** — all state lives in a sidecar JSON file; no cloud, no telemetry, no API calls
 
-All three tools are read-only (`readOnlyHint: true`) — they never return metric values or session content into the model's context.
+## How it works
+
+```
+Your Claude Code session
+        │  writes JSONL transcript
+        ▼
+┌──────────────────────────────────────────┐
+│  Session Watcher (local sidecar daemon)   │
+│  ─────────────────────────────────────── │
+│  fold.js     — tail JSONL, fold usage    │
+│  baseline.js — detect cold-start L_base  │
+│  metrics.js  — compute L* (EOQ-optimal)  │
+│  rate-lamp.js — interrupt meter (burn)   │
+│  server.js   — Express + SSE dashboard   │
+│  statusline.sh — one-line shell client   │
+└──────────────────────────────────────────┘
+        │  dashboard :31393  ·  statusline  ·  MCP
+        ▼
+   Your browser / Claude Code status bar
+```
+
+**Core model:** `L = cache_read_input_tokens` (your context stock, rent-free while cached). When `L` crosses the EOQ-optimal restart line `L*`, the dashboard and statusline signal restart. See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
 
 ## Install
 
@@ -50,11 +71,9 @@ All three tools are read-only (`readOnlyHint: true`) — they never return metri
 }
 ```
 
-Then call the `start_watcher` tool — it opens a localhost dashboard and returns its URL.
+Call `start_watcher` — it launches the dashboard and returns its URL.
 
-### Auto-launch hook
-
-Add to `~/.claude/settings.json`:
+### Auto-launch with every session
 
 ```json
 {
@@ -62,7 +81,7 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-The watcher starts automatically with every Claude Code session.
+Add to `~/.claude/settings.json`. The watcher starts automatically, fire-and-forget.
 
 ### Standalone (no MCP)
 
@@ -70,39 +89,56 @@ The watcher starts automatically with every Claude Code session.
 node server.js --project ~/.claude/projects/<project> --ratio 50 --open
 ```
 
+Omit `--lbase` to auto-detect the cold-start baseline. Pass `--lbase <n>` only when the transcript has no cold start (a carried baseline stays in calibrating mode until enough data accumulates).
+
 ### Statusline
 
 ```json
 { "statusLine": { "type": "command", "command": "<path>/statusline.sh" } }
 ```
 
-## Gap from paper
+One compact line:
 
-The paper (§6) describes the full model specification; the current release implements a working subset. These features are specified but not yet shipped:
+<img src="assets/statusline.png" alt="Statusline example" width="820">
 
-| Feature | Paper ref | Current state |
-|---------|-----------|---------------|
-| Billing gauge `billProgress = u²` | §3.7 (billing-gauge remark), §6.1 | not yet implemented — dashboard currently shows a linear `L/L*` bar |
-| TTL-aware `Reff` auto-adjustment | `Reff` identity §4.2.3, §6.1 | not yet implemented — uses static per-family ratios (see below) |
-| Wall position `x_wall = 1 + Reff` | §3.7 (two scaling laws), §6.1 | not yet implemented |
-| Ski-rental policy recommendation engine | §3.5–3.6, §6.2 | not yet implemented — specified but the operational loop has not been tested end-to-end |
+## Quick Start
 
-**Ratio table note:** The current release uses simplified per-family static ratios:
+```bash
+git clone https://github.com/nomadop/session-watcher.git
+cd session-watcher
+npm install
+node server.js --project ~/.claude/projects/<project> --ratio 50 --open
+```
 
-| Model family | Code `C_RATIO` | Paper value |
-|-------------|----------------|-------------|
-| Claude (Anthropic) | 10 | 12.5 (5-min TTL) / 20 (1-hr TTL) |
-| DeepSeek (all tiers) | 50 | 50 (Flash) / 120 (Pro) |
+Then open `http://localhost:31393` in your browser. The dashboard updates in real time as you use Claude Code.
 
-The per-tier distinction (Flash vs. Pro) and automatic TTL-aware adjustment are pending implementation. If you need accurate tier-specific ratios today, pass `--ratio` explicitly on the CLI or set `ratioOverride` via the MCP tool.
+## MCP tools
 
-## Core model
+| Tool | Description |
+|------|-------------|
+| `start_watcher` | Start (or reuse) the dashboard server; returns its URL |
+| `stop_watcher` | Stop the managed server |
+| `watcher_status` | Report whether the server is running and its URL |
 
-`L = cache_read_input_tokens` (context stock). `g ≡ ΔL` (differenced stock, provider-independent). `L* = L_base + 2·√(2·C_RATIO·L_base·k_avg)`. Restart when `L ≥ min(L*, L_cap)`.
+All three are read-only — they never return metric values or session content into the model's context.
+
+## Paper
+
+> **Context Is Inventory: A Rent-or-Buy Model for Prompt-Cached LLM Sessions**
+> Longju Cheng (2026) · DOI: [`10.5281/zenodo.21236704`](https://doi.org/10.5281/zenodo.21236704)
+
+The paper derives the full theoretical specification: EOQ→LLM mapping, the 41.4% movable-cost bound, the ski-rental restart strategy, and measurements on 1,016 real session transcripts. See [`paper/paper.pdf`](paper/paper.pdf).
+
+The current release implements the full paper specification: the measurement pipeline (fold, baseline, `L*`, `φ`), the billing gauge (`billProgress`), the rate-lamp interrupt meter with wall-position scaling, model-tier-specific pricing ratios, deep-water latching, and the restart recommendation signal via dashboard and statusline.
+
+## Test
+
+```bash
+npm test                 # unit + integration (node:test, 540+ tests)
+npx playwright test      # E2E
+```
 
 ## Citation
-
-The DOI resolves to the preprint; cite the paper:
 
 ```bibtex
 @unpublished{cheng2026context,
@@ -113,13 +149,6 @@ The DOI resolves to the preprint; cite the paper:
   url    = {https://doi.org/10.5281/zenodo.21236704},
   note   = {Preprint}
 }
-```
-
-## Test
-
-```bash
-npm test                 # unit + integration (node:test)
-npx playwright test      # E2E
 ```
 
 ## License
