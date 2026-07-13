@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   renderReliability,
+  renderCountdown,
+  renderLB,
   formatLine,
   _resetRenderState,
   _resetCarousel,
@@ -18,6 +20,7 @@ const base = {
   restartReason: null,
   phi: 1.4,
   paybackP: 0.2,
+  kAvg: 3000,
   rateLamp: {
     reliable: true,
     hBreak: 8,
@@ -52,7 +55,7 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
       deepWaterDisplayLatched: false,
       inDeepWater: false,
       targetL: 200000,
-      deltaLPerTurn: 3000,
+      kAvg: 3000,
       currentTurnSeq: 5,
     },
     baseline: { total: 80000 },
@@ -145,7 +148,7 @@ test("B2: post-latch metricsReliable===false renders the v3 meter, not 校准中
       inDeepWater: false,
       deepWaterDisplayLatched: false,
       targetL: 150000,
-      deltaLPerTurn: 3000,
+      kAvg: 3000,
       currentTurnSeq: 1,
     },
   };
@@ -210,7 +213,7 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
       inDeepWater: false,
       deepWaterDisplayLatched: false,
       targetL: 200000,
-      deltaLPerTurn: 3000,
+      kAvg: 3000,
       currentTurnSeq: 1,
       lastStopEvent: null,
     },
@@ -222,8 +225,8 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
   assert.ok(out.includes("42%"), "billProgress");
   assert.ok(out.includes("opus"), "model tag");
   assert.ok(!out.includes(":38017"), "port not in formatLine");
-  assert.ok(out.includes("L 168k"), "L value with space");
-  assert.ok(out.includes("b 80k"), "baseline value with space");
+  assert.ok(out.includes("L168k"), "L value");
+  assert.ok(out.includes("b80k"), "baseline value");
   assert.ok(!out.includes("\n"), "single line (no alert)");
 });
 
@@ -250,15 +253,15 @@ test("A2: deep band shows 🟡 in v3 layout", () => {
       inDeepWater: true,
       deepWaterDisplayLatched: true,
       targetL: 600000,
-      deltaLPerTurn: 5000,
+      kAvg: 5000,
       currentTurnSeq: 1,
     },
   };
   const out = formatLine(s);
   assert.ok(out.includes("🟡"), "deep water lamp");
   assert.ok(out.includes("88%"), "billProgress");
-  assert.ok(out.includes("L 512k"), "L value with space");
-  assert.ok(out.includes("b 55k"), "baseline value with space");
+  assert.ok(out.includes("L512k"), "L value");
+  assert.ok(out.includes("b55k"), "baseline value");
 });
 
 test("A2: alert on the hook turn renders on second line (no verdict word)", () => {
@@ -284,7 +287,7 @@ test("A2: alert on the hook turn renders on second line (no verdict word)", () =
       inDeepWater: true,
       deepWaterDisplayLatched: true,
       targetL: 600000,
-      deltaLPerTurn: 5000,
+      kAvg: 5000,
       currentTurnSeq: 3,
       lastStopEvent: {
         message: "空烧一个重启周期",
@@ -330,7 +333,7 @@ test("A2/RV-C17: the new statusline layout never reads fitWindow (ER-2 retired t
       inDeepWater: false,
       deepWaterDisplayLatched: false,
       targetL: 200000,
-      deltaLPerTurn: 3000,
+      kAvg: 3000,
       currentTurnSeq: 1,
     },
   };
@@ -340,4 +343,77 @@ test("A2/RV-C17: the new statusline layout never reads fitWindow (ER-2 retired t
   _resetRenderState();
   const b = formatLine({ ...s, fitWindow: 40 });
   assert.equal(a, b);
+});
+
+// ── renderCountdown: Nt countdown scenarios ──────────────────────────────────────────────────────
+
+test("Nt: typical mid-session — turns remaining matches (target-L)/rate", () => {
+  // L=80k, target=110k, rate=3k/turn → (110k-80k)/3k = 10 turns
+  const out = renderCountdown({ targetL: 110000, kAvg: 3000 }, 80000);
+  assert.equal(out, "~10t");
+});
+
+test("Nt: rate includes zero-growth turns (lower effective rate → more turns)", () => {
+  // If 10 turns produced: 5 turns × 6k growth + 5 turns × 0 growth
+  // Old EMA (positive-only) would estimate ~6k/turn → ceil(30k/6k) = 5 turns
+  // New EMA decays: effective rate ≈ 3k/turn → ceil(30k/3k) = 10 turns
+  // This test just verifies the formula at the lower rate:
+  const out = renderCountdown({ targetL: 110000, kAvg: 3000 }, 80000);
+  assert.equal(out, "~10t");
+  // Contrast: same gap at inflated rate gives fewer turns (the old bug)
+  const inflated = renderCountdown({ targetL: 110000, kAvg: 6000 }, 80000);
+  assert.equal(inflated, "~05t");
+});
+
+test("Nt: already at or past target → ~00t", () => {
+  assert.equal(renderCountdown({ targetL: 100000, kAvg: 3000 }, 100000), "~00t");
+  assert.equal(renderCountdown({ targetL: 100000, kAvg: 3000 }, 120000), "~00t");
+});
+
+test("Nt: very far away (>99 turns) → +99t cap", () => {
+  // target=960k, L=80k, rate=2k → ceil(880k/2k) = 440 >> 99
+  assert.equal(renderCountdown({ targetL: 960000, kAvg: 2000 }, 80000), "+99t");
+});
+
+test("Nt: missing or invalid inputs → ---t fallback", () => {
+  assert.equal(renderCountdown({ targetL: null, kAvg: 3000 }, 80000), "---t");
+  assert.equal(renderCountdown({ targetL: 110000, kAvg: null }, 80000), "---t");
+  assert.equal(renderCountdown({ targetL: 110000, kAvg: 0 }, 80000), "---t");
+  assert.equal(renderCountdown({ targetL: 110000, kAvg: -1 }, 80000), "---t");
+  assert.equal(renderCountdown(null, 80000), "---t");
+  assert.equal(renderCountdown({ targetL: 110000, kAvg: 3000 }, NaN), "---t");
+});
+
+test("Nt: small fractional result rounds up (ceil)", () => {
+  // target=81k, L=80k, rate=3k → ceil(1k/3k) = ceil(0.333) = 1
+  assert.equal(renderCountdown({ targetL: 81000, kAvg: 3000 }, 80000), "~01t");
+});
+
+test("Nt: exactly 99 turns → ~99t (not capped)", () => {
+  // target - L = 99 * rate
+  const rate = 1000;
+  const L = 10000;
+  const target = L + 99 * rate;
+  assert.equal(renderCountdown({ targetL: target, kAvg: rate }, L), "~99t");
+});
+
+// ── renderLB: fixed-width L/b formatting ─────────────────────────────────────────────────────────
+
+test("renderLB: both values >= 100k → 4-char each, no extra spaces", () => {
+  assert.equal(renderLB(180000, 180000), "L180k/b180k");
+});
+
+test("renderLB: small L tight-coupled, right-padded to 11", () => {
+  assert.equal(renderLB(1000, 180000), "L1k/b180k  ");
+});
+
+test("renderLB: sub-1000 token values tight-coupled", () => {
+  assert.equal(renderLB(500, 80000), "L500/b80k  ");
+});
+
+test("renderLB: non-finite values render as em-dash, right-padded", () => {
+  const out = renderLB(NaN, 80000);
+  assert.ok(out.startsWith("L"), "starts with L");
+  assert.ok(out.includes("—"), "em-dash for NaN");
+  assert.equal(out, "L—/b80k    ");
 });

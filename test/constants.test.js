@@ -13,6 +13,7 @@ test('constants match spec values exactly', () => {
 
 test('C_RATIO table has claude and deepseek, default is 10', () => {
   assert.equal(DEFAULT_C_RATIO, 10);
-  assert.ok(C_RATIO_TABLE.some(r => r.match.test('claude-opus-4-8') && r.ratio === 10));
-  assert.ok(C_RATIO_TABLE.some(r => r.match.test('deepseek-v4-pro') && r.ratio === 50));
+  assert.ok(C_RATIO_TABLE.some(r => r.match.test('claude-opus-4-8') && r.ratio === 12.5));
+  assert.ok(C_RATIO_TABLE.some(r => r.match.test('deepseek-v4-pro') && r.ratio === 120));
+  assert.ok(C_RATIO_TABLE.some(r => r.match.test('deepseek-v4-flash') && r.ratio === 50));
 });

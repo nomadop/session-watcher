@@ -15,8 +15,8 @@ function asst(id, cr, input, out) {
       input_tokens: input, output_tokens: out, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } });
 }
 // Same row shape as asst() but with an explicit model — used by the #9 cap tests, which pick a
-// small-window vehicle (claude-sonnet-4-6, Lcap 160000) to exercise the context cap binding
-// WITHOUT coupling to any model whose window constant might change (e.g. deepseek is now 1M).
+// small-window vehicle (test-short-window, Lcap 160000) to exercise the context cap binding
+// via a fictitious model entry in constants.js CONTEXT_WINDOW_TABLE.
 function asstM(id, cr, input, out, model) {
   return line({ type: 'assistant', uuid: id + '_' + cr, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
     message: { id, model, usage: {
@@ -51,7 +51,7 @@ test('getStatus emits full Status JSON with correct L and L* relationship', () =
   assert.ok(s.baseline.total > 42000, 'task ctx folded into baseline');
   assert.ok(s.kAvg > 0);
   // L* uses k_avg post-knee; recompute and compare
-  assert.ok(Math.abs(s.Lstar - lStar(s.baseline.total, 50, s.kAvg)) < 1);
+  assert.ok(Math.abs(s.Lstar - lStar(s.baseline.total, 120, s.kAvg)) < 1);
   assert.equal(s.Lthreshold, Math.min(s.Lstar, s.Lcap));
   assert.equal(typeof s.restart, 'boolean');
   assert.equal(s.metricsReliable, true, 'deepseek input+output≈ΔL → reliable');
@@ -138,8 +138,8 @@ test('getHistory last point AGREES with getStatus on Lstar and kAvg (shared pipe
 });
 
 // QF1 drift proof: C_RATIO is LOCKED at segment creation. A mid-segment model switch (deepseek→claude,
-// ratio 50→10) must NOT change the ratio the chart uses — getHistory must use the model locked at the
-// segment's first call (deepseek/50), matching getStatus. The old per-call cRatioFor(c.model) would
+// ratio 120→12.5) must NOT change the ratio the chart uses — getHistory must use the model locked at the
+// segment's first call (deepseek/120), matching getStatus. The old per-call cRatioFor(c.model) would
 // have used claude/10 for the tail, making the final history L* diverge from the status L*.
 test('getHistory uses the SEGMENT-LOCKED model for cRatio, not the per-call model', () => {
   function asstM(id, cr, input, out, model) {
@@ -150,7 +150,7 @@ test('getHistory uses the SEGMENT-LOCKED model for cRatio, not the per-call mode
   const deltas = [9000, 8000, 7000, 3000, 1500, 900];
   for (let i = 0; i < 40; i++) deltas.push(940);
   let s = ''; let cr = 42000; let id = 0;
-  // Single segment (cacheRead only ever grows). First call = deepseek (locks ratio 50); switch the
+  // Single segment (cacheRead only ever grows). First call = deepseek (locks ratio 120); switch the
   // model to claude at the halfway mark — same rising cacheRead, only the reported model changes.
   const modelAt = (t) => (t < deltas.length / 2 ? 'deepseek-v4-pro' : 'claude-opus-4-8');
   s += asstM('m' + id++, cr, Math.round(deltas[0] * 0.6), Math.round(deltas[0] * 0.4), modelAt(0));
@@ -165,28 +165,28 @@ test('getHistory uses the SEGMENT-LOCKED model for cRatio, not the per-call mode
   const last = w.getHistory().at(-1);
   assert.equal(new Set(w._calls.map(c => c.segment)).size, 1, 'all one segment (no L-drop)');
   assert.equal(st.model, 'deepseek-v4-pro', 'status locked the first-call model');
-  // Segment-locked ratio (deepseek=50) → the two must still agree despite the mid-segment switch.
+  // Segment-locked ratio (deepseek=120) → the two must still agree despite the mid-segment switch.
   assert.ok(Math.abs(last.Lstar - st.Lstar) < 1, `segment-locked history L* ${last.Lstar} ≈ status L* ${st.Lstar}`);
-  // Prove it is NOT the per-call (claude=10) ratio: that would give a strictly smaller L*.
-  assert.ok(Math.abs(last.Lstar - lStar(st.baseline.total, 10, last.kAvg)) > 1,
-    'history L* is NOT computed with the per-call claude ratio (10)');
+  // Prove it is NOT the per-call (claude=12.5) ratio: that would give a strictly smaller L*.
+  assert.ok(Math.abs(last.Lstar - lStar(st.baseline.total, 12.5, last.kAvg)) > 1,
+    'history L* is NOT computed with the per-call claude ratio (12.5)');
 });
 
 // ── #9: getHistory must emit Lthreshold = min(Lstar, Lcap) per point ───────────────────────────
-// claude-sonnet-4-6 window = 200k → Lcap = 200000 - RESERVED_OUTPUT - CTX_SAFETY_MARGIN = 160000.
+// test-short-window = 200k → Lcap = 200000 - RESERVED_OUTPUT - CTX_SAFETY_MARGIN = 160000.
 // A steep, long-growth segment drives Lstar above 160000, so the CONTEXT CAP binds (Lcap < Lstar)
 // and Lthreshold must equal Lcap, NOT Lstar. This is the whole point of #9: the chart's decision
-// line has to match the capped statusbar decision. Vehicle is claude-sonnet-4-6 (a small-window
-// model, NOT a constant we ever change) so the test never re-couples to a mutable window value.
+// line has to match the capped statusbar decision. Vehicle is test-short-window (a fictitious
+// small-window model in constants.js) so the test never re-couples to a real model's window.
 test('#9 getHistory emits Lthreshold=min(Lstar,Lcap) per point; cap binds so Lthreshold<Lstar', () => {
   // Steep growth (30k/call) over many calls on a 200k-window model → Lstar > Lcap once past warmup.
   let s = ''; let cr = 10000; let id = 0;
-  for (let i = 0; i < 30; i++) { cr += 30000; s += asstM('m' + id++, cr, 12000, 8000, 'claude-sonnet-4-6'); }
+  for (let i = 0; i < 30; i++) { cr += 30000; s += asstM('m' + id++, cr, 12000, 8000, 'test-short-window'); }
   const w = new SessionWatcher(tmp(s), 10000);
   w.poll();
   const h = w.getHistory();
-  const Lcap = contextWindowFor('claude-sonnet-4-6') - RESERVED_OUTPUT - CTX_SAFETY_MARGIN;
-  assert.equal(Lcap, 160000, 'claude-sonnet-4-6 Lcap = 200000-32000-8000');
+  const Lcap = contextWindowFor('test-short-window') - RESERVED_OUTPUT - CTX_SAFETY_MARGIN;
+  assert.equal(Lcap, 160000, 'test-short-window Lcap = 200000-32000-8000');
   // Every point: Lthreshold field present and exactly min(Lstar, Lcap).
   for (const p of h) {
     assert.equal(typeof p.Lthreshold, 'number', 'each history point carries a numeric Lthreshold');
@@ -205,7 +205,7 @@ test('#9 getHistory emits Lthreshold=min(Lstar,Lcap) per point; cap binds so Lth
 // current segment must equal getStatus().Lthreshold exactly, in the capped regime.
 test('#9 history last-point Lthreshold === getStatus().Lthreshold (capped regime)', () => {
   let s = ''; let cr = 10000; let id = 0;
-  for (let i = 0; i < 30; i++) { cr += 30000; s += asstM('m' + id++, cr, 12000, 8000, 'claude-sonnet-4-6'); }
+  for (let i = 0; i < 30; i++) { cr += 30000; s += asstM('m' + id++, cr, 12000, 8000, 'test-short-window'); }
   const w = new SessionWatcher(tmp(s), 10000);
   w.poll();
   const st = w.getStatus();
@@ -216,29 +216,29 @@ test('#9 history last-point Lthreshold === getStatus().Lthreshold (capped regime
 });
 
 // #9 uses the SEGMENT-LOCKED model for Lcap (same model getHistory uses for cRatio). The segment's
-// first call is claude-sonnet-4-6 (window 200k → Lcap 160000); a mid-segment switch to a LARGER
+// first call is test-short-window (window 200k → Lcap 160000); a mid-segment switch to a LARGER
 // window model, claude-opus-4-8 (window 1M), must NOT lift the cap. If getHistory wrongly used the
 // per-call model, the opus tail would compute Lcap = 960000 (never binding) and Lthreshold would
 // jump to Lstar. (Small→large window pair; the locked small window must win.)
 test('#9 Lcap uses the segment-locked model, not the per-call model', () => {
   let s = ''; let cr = 10000; let id = 0;
-  // First call claude-sonnet-4-6 (locks window 200k/Lcap 160000); switch to claude-opus-4-8 (1M
+  // First call test-short-window (locks window 200k/Lcap 160000); switch to claude-opus-4-8 (1M
   // window) at the halfway mark. Same rising cacheRead; the tail window would be 1M if the per-call
   // model leaked in.
   const N = 30;
   for (let i = 0; i < N; i++) {
     cr += 30000;
-    const model = i < N / 2 ? 'claude-sonnet-4-6' : 'claude-opus-4-8';
+    const model = i < N / 2 ? 'test-short-window' : 'claude-opus-4-8';
     s += asstM('m' + id++, cr, 12000, 8000, model);
   }
   const w = new SessionWatcher(tmp(s), 10000);
   w.poll();
-  const lockedLcap = contextWindowFor('claude-sonnet-4-6') - RESERVED_OUTPUT - CTX_SAFETY_MARGIN; // 160000
+  const lockedLcap = contextWindowFor('test-short-window') - RESERVED_OUTPUT - CTX_SAFETY_MARGIN; // 160000
   const last = w.getHistory().at(-1);
   assert.equal(new Set(w._calls.map(c => c.segment)).size, 1, 'all one segment (no L-drop)');
   assert.equal(last.Lthreshold, Math.min(last.Lstar, lockedLcap),
-    'Lcap resolved from the segment-locked claude-sonnet model → 160000');
-  assert.equal(last.Lthreshold, lockedLcap, 'capped to the segment-locked claude-sonnet Lcap (160000), NOT the 1M tail window');
+    'Lcap resolved from the segment-locked test-short-window model → 160000');
+  assert.equal(last.Lthreshold, lockedLcap, 'capped to the segment-locked test-short-window Lcap (160000), NOT the 1M tail window');
 });
 
 // ── #13: distinct no_transcript calibrating reason for a missing/never-openable path ────────────

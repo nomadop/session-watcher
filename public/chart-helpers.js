@@ -31,6 +31,37 @@ export function deepWaterDisplay(prevLatched, { L_read, L_exit_fullCarry, cRatio
   return L_read >= L_exit_fullCarry;
 }
 
+// Projection line helper (spec §6.1): compute two endpoints from last data point extending at slope.
+// Pure function — closure vars (lastGEma) passed explicitly so this can run under node --test.
+// Returns [] when no meaningful projection can be drawn (empty points or zero slope).
+export function buildProjectionData(points, lastGEma, currentRatchetX, currentRatchetY) {
+  if (points.length === 0) return [];
+  const slope = (lastGEma > 0) ? lastGEma : (points[points.length - 1]?.kAvg > 0 ? points[points.length - 1].kAvg : 0);
+  if (slope <= 0) return [];
+
+  const lastTurn = points.length;
+  const lastL = points[points.length - 1].L;
+
+  // Ensure projection has visible length (spec §6.1 edge case)
+  let effectiveRatchetX = currentRatchetX;
+  if (effectiveRatchetX - lastTurn < 5) {
+    effectiveRatchetX = lastTurn + 20;
+  }
+
+  const projectedY = lastL + slope * (effectiveRatchetX - lastTurn);
+  const clampedY = Math.min(projectedY, currentRatchetY);
+
+  // When Y is clamped, shorten X to the true intercept so the visual slope stays accurate
+  const endX = (clampedY < projectedY)
+    ? lastTurn + (clampedY - lastL) / slope
+    : effectiveRatchetX;
+
+  return [
+    { x: lastTurn, y: lastL },
+    { x: endX, y: clampedY },
+  ];
+}
+
 // Three points per miss row: bottom (y:0), top (y:yMax), and a null separator so Chart.js does NOT
 // connect one vertical's top to the next vertical's bottom (a slanted line). Every point carries
 // historyIndex so the tooltip can map a marker point (whose dataIndex is the marker-array position,
@@ -38,7 +69,8 @@ export function deepWaterDisplay(prevLatched, { L_read, L_exit_fullCarry, cRatio
 export function buildMissMarkers(hist, yMax) {
   const out = [];
   for (let i = 0; i < hist.length; i++) {
-    if (hist[i].miss) out.push({ x: i, y: 0, historyIndex: i }, { x: i, y: yMax, historyIndex: i }, { x: i, y: null, historyIndex: i });
+    // Fix #2: x-axis is 1-based (min:1, labels are turn numbers), so offset by +1 to align markers
+    if (hist[i].miss) out.push({ x: i + 1, y: 0, historyIndex: i }, { x: i + 1, y: yMax, historyIndex: i }, { x: i + 1, y: null, historyIndex: i });
   }
   return out;
 }

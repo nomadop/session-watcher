@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import { SessionWatcher } from './lib/watcher.js';
 import { advanceRateLampToCurrent, boundedIncrementalAdvance, mergeLedgerIntoStatus, getLiveLedger, setLiveLedger, recordBillEvent, recordStopEvent, flushAll, commitLedgerMutationSync, drainPendingStopEvaluations, _processNonce, isEnospcPaused, clearEnospcPause, engageEnospcPause, cancelCoalescedPersist, getDebugCounters, incrementCounter } from './lib/rate-lamp-manager.js';
 import { stateKeyForStatus, settleBatchAtBoundary, enqueuePending, appendProcessedHookId, alreadyAccepted, chooseCurrentStopSummary, pushStopEventRing } from './lib/rate-lamp-store.js';
-import { PENDING_STOP_EVALUATIONS_LIMIT, STOP_ADVANCE_MAX_MS, STOP_ADVANCE_MAX_BYTES, IDLE_HEARTBEAT_MS } from './lib/constants.js';
+import { PENDING_STOP_EVALUATIONS_LIMIT, STOP_ADVANCE_MAX_MS, STOP_ADVANCE_MAX_BYTES, IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS } from './lib/constants.js';
 import { validateLedgerState } from './lib/ledger-schema.js';
 import { landmarks } from './lib/landmarks.js';
 import { detectStockStep } from './lib/rate-lamp.js';
@@ -18,6 +18,7 @@ import { evaluateGate, rawTierFor } from './lib/notify-gate.js';
 import { loadGateState, saveGateState } from './lib/gate-store.js';
 import { safeSessionId } from './lib/atomic-store.js';
 import { cRatioFor } from './lib/extract.js';
+import { loadPricing, savePricing, deletePricing, validatePricingInput } from './lib/pricing-store.js';
 import { sweepStaleState } from './lib/state-reaper.js';
 import {
   renderReliability,
@@ -112,8 +113,13 @@ export function resolveBySessionId(projectsRoot, sessionId) {
 // Set via _setServerTestClock(ms); null = use real performance.now().
 let _globalTestClockMono = null;
 
-// Idle auto-shutdown: server exits after 10min with no HTTP requests and no SSE clients.
-export const IDLE_SHUTDOWN_MS = 10 * 60 * 1000; // 10 minutes
+// Idle auto-shutdown: server exits after IDLE_SHUTDOWN_MS with no HTTP requests and no SSE clients.
+// 24h default — statusline is event-driven (not polling), so long gaps between HTTP requests are normal;
+// a shorter TTL (10min, 2h) caused mid-session "no port file" on active sessions.
+// Fix #9: use Number.isFinite guard instead of `||` — `||` treats 0 as falsy, so SW_IDLE_TTL_MS=0
+// (disable idle shutdown) would be ignored and the 24h default would silently apply.
+const _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
+export const IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1000;
 
 // Pure function for testability: returns true if the server should shut down due to idleness.
 export function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
@@ -157,8 +163,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
       // pulse-clear/turnSeq hydrate and could resurrect a stale alert on the first post-restart GET).
       const ledger = getLiveLedger(sessionId);
       mergeLedgerIntoStatus(status, ledger, currentKey);
-      // billCycleCount is DEBUG-ONLY (GPT#16): attach only under debug, off the SAME ledger var (GPT#8).
-      if ((req.query.debug || process.env.SW_DEBUG) && status.rateLamp?.billingCycle) {
+      // billCycleCount is DEBUG-ONLY (GPT#16): attach only when ?debug query param is set.
+      if (req.query.debug && status.rateLamp?.billingCycle) {
         status.rateLamp.billingCycle.cycleCountInSegment = ledger?.billCycleCount ?? 0;
       }
       if (req.query.fmt === 'line') {
@@ -206,6 +212,81 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   // failing test. Small cap — the body is a tiny {session_id}. A malformed body → express.json throws →
   // the terminal error middleware returns 500 (daemon stays up). MUST precede app.post('/api/notify-gate').
   app.use(express.json({ limit: '4kb' }));
+
+  // §4 Pricing API — priority: saved > CLI > model_default
+  const cliRatioAtStartup = watcher.ratioOverride; // capture CLI value at construction time
+
+  const buildPricingResponse = () => {
+    const saved = loadPricing(sessionId);
+    const model = watcher._segmentModel || '';
+    const modelRatio = cRatioFor(model);
+
+    let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
+    if (saved) {
+      effectiveRatio = saved.ratio; source = 'saved';
+      effectiveRead = saved.readPrice; effectiveWrite = saved.writePrice;
+
+      // Preset drift detection (spec §10.3): if presetId saved, check prices still match
+      if (saved.presetId) {
+        const preset = MODEL_PRICING_PRESETS.find(p => p.id === saved.presetId);
+        if (preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice) {
+          source = 'preset';
+        }
+        // else: prices drifted or preset removed — source stays 'saved'
+      }
+    } else if (cliRatioAtStartup != null) {
+      effectiveRatio = cliRatioAtStartup; source = 'cli';
+    } else {
+      effectiveRatio = modelRatio; source = 'model_default';
+    }
+
+    return {
+      effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
+      saved: saved || null,
+      modelDefault: { model, ratio: modelRatio, readPrice: null, writePrice: null },
+      presets: MODEL_PRICING_PRESETS,
+    };
+  };
+
+  const applyEffectiveRatio = () => {
+    const saved = loadPricing(sessionId);
+    watcher.ratioOverride = saved ? saved.ratio : cliRatioAtStartup;
+    watcher._historyCache = null;
+  };
+
+  // Apply saved pricing at startup (persisted override must take effect without POST)
+  applyEffectiveRatio();
+
+  app.get('/api/pricing', (req, res) => { res.json(buildPricingResponse()); });
+
+  // Fix #4: split validation (→400) from I/O errors (→next/500). Previously `catch (e) { if (e.message) → 400 }`
+  // sent ALL errors as 400 since every Error has .message. Now validation is its own try/catch, I/O errors
+  // propagate to the terminal error boundary via next(e).
+  app.post('/api/pricing', (req, res, next) => {
+    try {
+      const { readPrice, writePrice } = req.body || {};
+      validatePricingInput({ readPrice, writePrice });
+    } catch (e) {
+      return res.status(400).json({ error: 'invalid_input', message: e.message });
+    }
+    try {
+      const { readPrice, writePrice, presetId } = req.body || {};
+      // Sanitize presetId: must be null or a short string
+      const safePresetId = (typeof presetId === 'string' && presetId.length > 0 && presetId.length <= 80)
+        ? presetId : null;
+      savePricing(sessionId, { readPrice, writePrice, presetId: safePresetId });
+      applyEffectiveRatio();
+      res.json(buildPricingResponse());
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete('/api/pricing', (req, res) => {
+    deletePricing(sessionId);
+    applyEffectiveRatio();
+    res.json(buildPricingResponse());
+  });
 
   // v2.1 notify-gate. POST advances the ratchet + persists; GET /peek is read-only (never mutates,
   // never consumes an alert — guardrail b). Gate snapshot assembled from getStatus + landmarks.
@@ -310,7 +391,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
     const matchingKeyLedger = st.rateLamp?.reliable && ledger && ledger.stateKey === currentKey;
 
     if (matchingKeyLedger && ledger.pausedReason == null) {
-      dwTurn = ledger.currentTurnDeltaW;
+      // dw_backstop only meaningful in deep water — shallow accumulation is controlled cost
+      dwTurn = st.rateLamp?.inDeepWater ? ledger.currentTurnDeltaW : 0;
       stockStep = detectStockStep(watcher._currentSegmentCalls(), ledger.kStableFrozen, { sinceFoldedSeq: ledger.billAnchorFoldedCallSeq });
     }
 
@@ -420,7 +502,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
   });
 
-  app.use(express.static(join(__dirname, 'public')));
+  app.use(express.static(join(__dirname, 'public'), {
+    setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); }
+  }));
   app.get('/', (req, res) => res.sendFile(join(__dirname, 'public', 'index.html')));
 
   // Terminal error boundary (Global Constraints / round-2 gemini 一.2): the server is a long-lived
@@ -477,7 +561,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
         const { ledger } = advanceRateLampToCurrent(watcher, sessionId, { forcePoll: false });
         if (process.env.SW_DEBUG && ledger) console.error('[rate-lamp shadow]', JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
         if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
-        // Idle auto-shutdown: no HTTP requests AND no SSE clients for 10min → exit
+        // Idle auto-shutdown: no HTTP requests AND no SSE clients for IDLE_SHUTDOWN_MS → exit
         if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
           onIdleShutdown();
         }

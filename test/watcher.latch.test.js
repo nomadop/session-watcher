@@ -58,7 +58,7 @@ test('refactor is behavior-preserving: getStatus calibratingReason unchanged on 
 // (Global Constraints), so these numbers are identical pre-refactor, after Task 3, AND after Task 4 —
 // a stable refactor-lock across the whole plan (a cold-start fixture would legitimately change when
 // Task 4 adds latching). The literals below were MEASURED against the current (pre-refactor) code with
-// this exact fixture (healthy(40,42000,'g'), model deepseek-v4-pro → cRatio 50). If Task 3's refactor
+// this exact fixture (healthy(40,42000,'g'), model deepseek-v4-pro → cRatio 120). If Task 3's refactor
 // shifts any of them the test fails — that is the whole point. If a future unrelated change to the
 // healthy() shape moves these, re-measure with a one-off print script and update the literals.
 test('refactor golden: core numbers on a fixed carried-baseline fixture match pre-refactor literals', () => {
@@ -71,7 +71,7 @@ test('refactor golden: core numbers on a fixed carried-baseline fixture match pr
   assert.equal(s.baseline.kneeTurn, 4);
   assert.ok(Math.abs(s.kAvg - 954.4444444444445) < 1e-6, `kAvg ${s.kAvg}`);
   assert.equal(s.apiCalls, 36);
-  assert.ok(Math.abs(s.Lstar - 231304.24106186096) < 1e-3, `Lstar ${s.Lstar}`);
+  assert.ok(Math.abs(s.Lstar - 320440.64906056854) < 1e-3, `Lstar ${s.Lstar}`);
   assert.ok(Math.abs(s.paybackP - 0.4979710144927536) < 1e-9, `paybackP ${s.paybackP}`);
 });
 

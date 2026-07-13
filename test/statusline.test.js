@@ -25,7 +25,7 @@ const execFileP = promisify(execFile);
 const reliableBase = (rateLamp) => ({
   model: 'claude-opus-4-8', port: 38017, L: 137000, Lstar: 375000, Lthreshold: 375000, restart: false,
   metricsReliable: true, calibratingReason: null, phi: 2.4, paybackP: 0.6, etaCalls: 40,
-  baseline: { total: 55000 }, rateLamp,
+  baseline: { total: 55000 }, kAvg: 3000, rateLamp,
 });
 
 const SCRIPT = 'statusline.sh';
@@ -78,14 +78,14 @@ test('statusline appends full dashboard URL when server is up', async () => {
 
 // ── B3: formatLine rate-lamp contract ─────────────────────────────────────────────────────────────
 
-// Task 10 (ER-2) → v3: kFit eta is retired; countdown renders from targetL/deltaLPerTurn.
+// Task 10 (ER-2) → v3: kFit eta is retired; countdown renders from targetL/kAvg.
 // Validate that no kFit eta artifact leaks.
 test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta', () => {
   _resetRenderState(); _resetCarousel();
   const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 0,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 2.5, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 5 });
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 5 });
   const out = formatLine(s);
   assert.ok(!/~\d+轮/.test(out), 'no `~N轮` kFit eta rendered');
   assert.ok(!out.includes('已过线'), 'no `已过线` kFit-crossing eta rendered');
@@ -98,13 +98,13 @@ test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill fo
   const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 2,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 2.5, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 5 });
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 5 });
   const out = formatLine(s);
   assert.ok(out.includes('▮') || out.includes('░'), 'v3 meter bar renders');
   assert.ok(out.includes('37%'), 'meter shows billProgress as floor percentage');
   assert.ok(out.includes('🟡'), 'deep water lamp from frozen latch');
-  assert.ok(out.includes('L 137k'), 'L value renders');
-  assert.ok(out.includes('b 55k'), 'baseline value renders');
+  assert.ok(out.includes('L137k'), 'L value renders fixed-width');
+  assert.ok(out.includes('b55k'), 'baseline value renders tight-coupled');
   assert.ok(!/break-even ~\d+ turns/.test(out), 'old break-even format is gone');
   assert.ok(!/bill \d+%/.test(out), 'old bill format is gone');
 });
@@ -116,7 +116,7 @@ test('A2 A7#15: hBreak Infinity (burnRate=0) renders countdown ---t, not Infinit
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 1.2, dhat: 0.4,
     band: 'below_entry', lBase: 55000, L_read: 137000, L_cap: 960000,
     currentTurnSeq: 3 });
-  // No targetL/deltaLPerTurn → countdown renders ---t
+  // No targetL/kAvg → countdown renders ---t
   const out = formatLine(s);
   assert.ok(out.includes('---t'), 'missing countdown renders ---t placeholder');
   assert.ok(!out.includes('Infinity'), 'never leaks the literal Infinity');
@@ -130,7 +130,7 @@ test('A2/I-pt2: neutral bill pulse retired — non_idle_burn lastBillEvent does 
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 7,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 7,
     lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 7 } });
   const out = formatLine(s);
   assert.ok(!/rent \+/.test(out), 'no rent +Nx in new layout (neutral pulse retired)');
@@ -142,7 +142,7 @@ test('A2/I-pt2: neutral bill pulse retired — empty_burn lastBillEvent does NOT
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 9,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 9,
     lastBillEvent: { kind: 'empty_burn', billCount: 1, delivery: 'statusline_pulse', turnSeq: 9 } });
   const out = formatLine(s);
   assert.ok(!/rent \+/.test(out), 'no rent +Nx (neutral pulse retired)');
@@ -155,7 +155,7 @@ test('A2/I-pt2: neutral bill pulse retired — cache_unstable lastBillEvent sile
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 11,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 11,
     lastBillEvent: { kind: 'cache_unstable', billCount: 1, delivery: 'statusline_pulse', turnSeq: 11 } });
   const out = formatLine(s);
   assert.ok(!/unstable/i.test(out), 'no cache_unstable copy in new layout (pulse retired)');
@@ -168,7 +168,7 @@ test('A2/I-pt2: stale lastBillEvent also renders nothing (neutral pulse retired)
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 12,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 12,
     lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 11 } });
   const out = formatLine(s);
   assert.ok(!/rent \+/.test(out), 'stale or current bill event — no pulse either way');
@@ -183,7 +183,7 @@ test('B3 single-stack: a deep-water empty_burn turn renders the prominent stop a
   const s = reliableBase({ reliable: true, hBreak: 8, billProgress: 0.9, billCycleCount: 1,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 3.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 20,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 20,
     lastStopEvent: { kind: 'empty_burn', delivery: 'stop_hook', message: '深水空烧：建议交接/重启', billCount: 1, turnSeq: 20 },
     lastBillEvent: { kind: 'empty_burn', billCount: 1, delivery: 'stop_hook', turnSeq: 20 } });
   const out = formatLine(s);
@@ -196,7 +196,7 @@ test('B3 priority: with only a stop event this turn, the stop message renders', 
   const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.95, billCycleCount: 1,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 22,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 22,
     lastStopEvent: { kind: 'wall', delivery: 'stop_hook', message: '接近速率墙', billCount: 0, turnSeq: 22 } });
   const out = formatLine(s);
   assert.ok(out.includes('接近速率墙'), 'stop alert rendered');
@@ -210,7 +210,7 @@ test('A2: a reliable frame with bill events but no stop event renders no alert l
   const s = reliableBase({ reliable: true, hBreak: 15, billProgress: 0.6, billCycleCount: 3,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 30,
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 30,
     lastBillEvent: { kind: 'non_idle_burn', billCount: 3, delivery: 'statusline_pulse', turnSeq: 30 } });
   const out = formatLine(s);
   assert.ok(out.includes('60%'), 'meter renders billProgress');
@@ -387,4 +387,22 @@ test('D2: a SPACED model display_name stays whole (A5 IFS=TAB failure mode) — 
     stateFile: { name: 'sess-D2b-off.json', json: { port: 0 } }, // port 0 → off-branch
   });
   assert.match(offOut, /^\[Claude Opus 4\] no port file$/, 'spaced model tag stays whole in the [model] tag, not split at the space');
+});
+
+// ── Task 3: u=2 at the exact lamp↔yellow transition (lamp/u alignment) ──────────────────────────────
+test('u=2.0 at the exact point where lamp turns yellow (kStable alignment)', () => {
+  _resetRenderState(); _resetCarousel();
+  // kStable drives both xExit and dhat → u=2 at lamp transition
+  const cRatio = 10, kStable = 1382, lBase = 55000;
+  const dhat = Math.sqrt(2 * cRatio * kStable / lBase);
+  const xExit = 1 + 2 * dhat;
+  const L_at_exit = lBase * xExit;
+  const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.5, billCycleCount: 3,
+    inDeepWater: true, deepWaterDisplayLatched: true, x_display: xExit, dhat,
+    kStable, band: 'above_exit', lBase, L_read: L_at_exit, L_cap: 960000,
+    targetL: 960000, kAvg: 1382, currentTurnSeq: 10 });
+  s.kAvg = 1382;
+  const out = formatLine(s);
+  assert.ok(out.includes('🟡'), 'lamp is yellow at xExit');
+  assert.ok(out.includes('u2.0'), 'u reads exactly 2.0 at the yellow transition');
 });

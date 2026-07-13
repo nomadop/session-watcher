@@ -266,7 +266,7 @@ test('formatLine still renders the normal gauge when calibratingReason is null (
     rateLamp: { reliable: true, billProgress: 0.42, billCycleCount: 2, band: 'entry_to_sweet',
       x_display: 2.1, dhat: 0.4, xEntry: 1.2, xExit: 2.0, lBase: 55000, L_read: 137000,
       L_cap: 960000, inDeepWater: false, deepWaterDisplayLatched: false,
-      targetL: 200000, deltaLPerTurn: 3000, currentTurnSeq: 1 } };
+      targetL: 200000, kAvg: 3000, currentTurnSeq: 1 } };
   const out = formatLine(s);
   assert.ok(out.includes('▮') || out.includes('░'), 'reliable status shows the v3 meter bar');
   assert.ok(/🟡|🟢|⚪/.test(out), 'reliable status still shows a lamp');

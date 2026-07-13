@@ -1,7 +1,7 @@
 // test/chart-helpers.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeYMax, buildMissMarkers, deepWaterDisplay } from '../public/chart-helpers.js';
+import { computeYMax, buildMissMarkers, deepWaterDisplay, buildProjectionData } from '../public/chart-helpers.js';
 
 test('computeYMax spans effectiveL and Lthreshold, floored at 1', () => {
   const hist = [ { L: 50000, Lthreshold: 60000 }, { L: 80000, Lthreshold: 70000 } ];
@@ -28,12 +28,13 @@ test('buildMissMarkers emits 3 points per miss: (x,0),(x,yMax),(x,null), all wit
   const hist = [ { miss: false }, { miss: true }, { miss: false }, { miss: true } ];
   const m = buildMissMarkers(hist, 90000);
   assert.equal(m.length, 6, '2 miss rows × 3 points');
-  // first miss at index 1
-  assert.deepEqual(m[0], { x: 1, y: 0, historyIndex: 1 });
-  assert.deepEqual(m[1], { x: 1, y: 90000, historyIndex: 1 });
-  assert.deepEqual(m[2], { x: 1, y: null, historyIndex: 1 });
-  // second miss at index 3
-  assert.equal(m[3].x, 3); assert.equal(m[3].historyIndex, 3);
+  // first miss at history-index 1 → x: 2 (1-based, aligned to the chart axis min:1 with turn labels)
+  // Fix #2: x was previously 0-based (x: i), now 1-based (x: i+1) to align with the chart's x-axis
+  assert.deepEqual(m[0], { x: 2, y: 0, historyIndex: 1 });
+  assert.deepEqual(m[1], { x: 2, y: 90000, historyIndex: 1 });
+  assert.deepEqual(m[2], { x: 2, y: null, historyIndex: 1 });
+  // second miss at history-index 3 → x: 4
+  assert.equal(m[3].x, 4); assert.equal(m[3].historyIndex, 3);
   assert.equal(m[5].y, null, 'null separator prevents a cross-miss slanted line');
 });
 
@@ -72,6 +73,52 @@ test('deepWaterDisplay test 38: sticky latch — enter at exit, leave only past 
   // degenerate guards: non-positive exit line or non-finite L_read → false, never a throw.
   assert.equal(deepWaterDisplay(true, args(NaN)), false, 'non-finite L_read → false');
   assert.equal(deepWaterDisplay(true, { L_read: 5, L_exit_fullCarry: 0, cRatio, B_rebuild }), false, 'non-positive exit line → false');
+});
+
+// --- buildProjectionData (spec §6.1: dashed projection from last point at gEma slope) ---
+
+test('buildProjectionData returns empty array for empty points', () => {
+  assert.deepEqual(buildProjectionData([], 0, 100, 200000), []);
+});
+
+test('buildProjectionData returns empty array when slope is zero', () => {
+  const points = [{ L: 50000, kAvg: 0 }];
+  assert.deepEqual(buildProjectionData(points, 0, 100, 200000), [], 'zero gEma and zero kAvg → no projection');
+});
+
+test('buildProjectionData uses lastGEma as slope when positive', () => {
+  const points = [{ L: 50000, kAvg: 3000 }, { L: 60000, kAvg: 5000 }];
+  const result = buildProjectionData(points, 8000, 100, 200000);
+  assert.equal(result.length, 2, 'two endpoints');
+  assert.equal(result[0].x, 2, 'starts at last turn (1-based)');
+  assert.equal(result[0].y, 60000, 'starts at last L');
+  // projectedY = 60000 + 8000 * (100 - 2) = 844000, clamped to ratchetY=200000
+  // When Y clamped, X shortened to true intercept: 2 + (200000 - 60000) / 8000 = 19.5
+  assert.equal(result[1].y, 200000, 'clamped to ratchetY');
+  assert.equal(result[1].x, 19.5, 'X shortened to true slope intercept at ratchetY');
+});
+
+test('buildProjectionData falls back to last kAvg when lastGEma is not positive', () => {
+  const points = [{ L: 50000, kAvg: 3000 }, { L: 60000, kAvg: 4000 }];
+  const result = buildProjectionData(points, 0, 100, 200000);
+  assert.equal(result.length, 2);
+  // slope = last kAvg = 4000; projectedY = 60000 + 4000 * (100 - 2) = 60000 + 392000 = 452000, clamped to 200000
+  assert.equal(result[1].y, 200000, 'clamped to ratchetY');
+});
+
+test('buildProjectionData extends ratchetX when less than 5 turns ahead of last point', () => {
+  // 10 points, ratchetX = 12 → effectiveRatchetX - lastTurn = 12 - 10 = 2 < 5 → extend to lastTurn + 20 = 30
+  const points = Array.from({ length: 10 }, (_, i) => ({ L: 10000 + i * 1000, kAvg: 1000 }));
+  const result = buildProjectionData(points, 2000, 12, 200000);
+  assert.equal(result[1].x, 30, 'extended to lastTurn + 20 when ratchetX is too close');
+  // projectedY = 19000 + 2000 * (30 - 10) = 19000 + 40000 = 59000
+  assert.equal(result[1].y, 59000, 'projected Y not clamped when below ratchetY');
+});
+
+test('buildProjectionData does not exceed ratchetY', () => {
+  const points = [{ L: 180000, kAvg: 50000 }];
+  const result = buildProjectionData(points, 50000, 100, 200000);
+  assert.equal(result[1].y, 200000, 'Y clamped to ratchetY');
 });
 
 test('deepWaterDisplay is PURE — same inputs give the same output and no argument is mutated', () => {

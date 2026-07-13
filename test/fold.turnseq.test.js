@@ -93,3 +93,21 @@ test('RV-C7 (round-7 GPT#5): a sidechain user line is NOT a turn boundary', () =
   assert.equal(isUserTurnBoundary({ type: 'user', isSidechain: true, message: { content: 'sub-agent prompt' } }), false,
     'sidechain user line must not bump turnSeq — consistent with extractUsage skipping sidechain');
 });
+
+test('task-notification user line is NOT a turn boundary (harness sub-agent return)', () => {
+  const taskNotif = {
+    type: 'user', isSidechain: false,
+    message: { content: '<task-notification>\n<task-id>abc123</task-id>\n<tool-use-id>toolu_xyz</tool-use-id>\n</task-notification>' }
+  };
+  assert.equal(isUserTurnBoundary(taskNotif), false,
+    'task-notification must not bump turnSeq — it is harness plumbing, not human input');
+});
+
+test('real human message that happens to mention task-notification is still a boundary', () => {
+  const humanMsg = {
+    type: 'user', isSidechain: false,
+    message: { content: 'I got a task-notification error, can you check?' }
+  };
+  assert.equal(isUserTurnBoundary(humanMsg), true,
+    'human text mentioning task-notification is still a real boundary');
+});

@@ -75,9 +75,10 @@ test('provider + ratio + window lookups', () => {
   assert.equal(providerOf('claude-opus-4-8'), 'claude');
   assert.equal(providerOf('deepseek-v4-pro'), 'deepseek');
   assert.equal(providerOf('gpt-5'), 'unknown');
-  assert.equal(cRatioFor('claude-opus-4-6'), 10);
+  assert.equal(cRatioFor('claude-opus-4-6'), 12.5);
   assert.equal(cRatioFor('deepseek-v4-flash'), 50);
+  assert.equal(cRatioFor('deepseek-v4-pro'), 120);
   assert.equal(cRatioFor('some-new-model'), 10); // conservative default, never 0
   assert.equal(contextWindowFor('deepseek-v4-pro'), 1000000);
-  assert.equal(contextWindowFor('claude-sonnet-4-6'), 200000);
+  assert.equal(contextWindowFor('claude-sonnet-4-6'), 1000000);
 });
