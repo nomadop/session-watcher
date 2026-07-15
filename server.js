@@ -3,7 +3,7 @@ const [_major, _minor] = process.versions.node.split('.').map(Number);
 if (_major < 22 || (_major === 22 && _minor < 16)) { console.error('Session Watcher requires Node >=22.16.0 (node:sqlite)'); process.exit(1); }
 import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import { readdirSync, statSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -343,7 +343,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
     if (bodySid && bodySid !== sessionId) { res.status(409).json({ error: 'session_mismatch' }); return true; }
     return false;
   };
-  // Internal event-id minter for hooks that don't send one (backwards compat with older warn.sh)
+  // Internal event-id minter for hooks that don't send one (backwards compat with older warn.js)
   let _internalEventSeq = 0;
   const mintInternalEventId = () => `internal-${Date.now()}-${++_internalEventSeq}`;
 
@@ -685,7 +685,7 @@ export function parseArgs(argv) {
 }
 
 // CLI entry
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
   const { transcript, project, session, lbase, ratioOverride, wantPort, open, warnings } = parseArgs(argv);
   for (const w of warnings) console.error(`session-watcher: ${w}`); // stderr only — stdout carries PORT=
@@ -701,7 +701,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const jsonlPath = transcript
     ? resolve(transcript)
     : (byId || resolveJsonl(resolve(project || projectsRoot)));
-  const sessionId = session || basename(jsonlPath).replace(/\.jsonl$/, '');
+  // Bind state to the TRANSCRIPT's session id, not --session. Claude Code passes a
+  // different session_id to the hook (per-restart) vs the statusline (persistent across
+  // restarts). The transcript basename IS the persistent id the statusline will query.
+  const sessionId = basename(jsonlPath).replace(/\.jsonl$/, '') || session;
   const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
 
   const STATE_FILE = stateFileFor(sessionId);

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
+import { pathToFileURL } from 'node:url';
 // Re-export launcher functions for backward compatibility (tests, manual usage)
 export { stateFileFor, resolveProjectDir, sessionIdOf, probeHealth, fetchHealth, readState, startWatcher, stopWatcher, watcherStatus } from './lib/launcher.js';
 
 // MCP wiring — only when run as the entrypoint (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const { z } = await import('zod');

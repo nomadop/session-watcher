@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { get as httpGet } from "node:http";
 var __dirname = dirname(fileURLToPath(import.meta.url));
 var PORT_DIR = join(homedir(), ".session-watcher");
@@ -60,7 +60,8 @@ async function startWatcher(env = process.env, { open = true, transcript, waitFo
   const prev = readState(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
   const dir = resolveProjectDir(env);
-  const resolvedServerPath = serverPath || join(__dirname, "..", "server.js");
+  const defaultServerPath = existsSync(join(__dirname, "server.js")) ? join(__dirname, "server.js") : join(__dirname, "..", "server.js");
+  const resolvedServerPath = serverPath || defaultServerPath;
   const args = [resolvedServerPath, "--port", "0", "--project", dir, "--session", sessionId];
   if (transcript) args.push("--transcript", transcript);
   if (open) args.push("--open");

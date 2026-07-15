@@ -28,7 +28,7 @@ const reliableBase = (rateLamp) => ({
   baseline: { total: 55000 }, kAvg: 3000, rateLamp,
 });
 
-const SCRIPT = 'statusline.sh';
+const SCRIPT = 'statusline.js';
 const MOCK_STDIN = JSON.stringify({
   model: { display_name: 'Opus', id: 'claude-opus-4-8' },
   session_id: 'test-sid', transcript_path: '/tmp/x.jsonl',
@@ -37,7 +37,7 @@ const MOCK_STDIN = JSON.stringify({
 
 // Not skipped: the script must exist. First run (before writing it) fails loudly, satisfying TDD.
 test('statusline exits 0 and prints a fallback line when server is down', () => {
-  assert.ok(existsSync(SCRIPT), 'statusline.sh must exist');
+  assert.ok(existsSync(SCRIPT), 'statusline.js must exist');
   chmodSync(SCRIPT, 0o755);
   // Point state dir at an empty tmp so no server is found → fallback path.
   const out = execFileSync('bash', [SCRIPT], {
@@ -235,9 +235,9 @@ test('B3: an ABSENT rateLamp renders calibrating and does not throw', () => {
   assert.ok(out.length > 0 && !/break-even/.test(out), 'no rate-lamp segment, still non-empty');
 });
 
-// ── Step 4: statusline.sh passes the fmt=line rate-lamp string through unmodified ───────────────────
+// ── Step 4: statusline.js passes the fmt=line rate-lamp string through unmodified ───────────────────
 // A REAL server (a latched healthy fixture → reliable rateLamp) → /api/status?fmt=line contains
-// `break-even`, and statusline.sh renders it verbatim (plus the dashboard URL).
+// `break-even`, and statusline.js renders it verbatim (plus the dashboard URL).
 function healthyFixtureFile() {
   const asst = (id, cr, input, out) => JSON.stringify({ type: 'assistant', uuid: id + '_' + cr, isSidechain: false,
     timestamp: '2026-07-01T00:00:00Z',
@@ -253,7 +253,7 @@ function healthyFixtureFile() {
   const p = join(dir, 's.jsonl'); writeFileSync(p, s); return p;
 }
 
-test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout when reliable, and statusline.sh passes it through', async () => {
+test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout when reliable, and statusline.js passes it through', async () => {
   chmodSync(SCRIPT, 0o755);
   const watcher = new SessionWatcher(healthyFixtureFile(), null);
   watcher.poll();
@@ -269,12 +269,12 @@ test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout whe
     const lineTxt = await (await fetch(`http://127.0.0.1:${port}/api/status?fmt=line`)).text();
     assert.ok(lineTxt.includes('▓') || lineTxt.includes('░'), 'fmt=line includes the meter bar when reliable');
     assert.ok(lineTxt.includes('%'), 'fmt=line includes the meter percentage');
-    // And statusline.sh passes the server line through unmodified (then appends the dashboard URL).
+    // And statusline.js passes the server line through unmodified (then appends the dashboard URL).
     writeFileSync(join(stateDir, `${sid}.json`), JSON.stringify({ port }));
     const child = execFileP('bash', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
     child.child.stdin.end(JSON.stringify({ session_id: sid, model: { display_name: 'Opus', id: 'claude-opus-4-8' } }));
     const { stdout: out } = await child;
-    assert.ok(out.includes('▓') || out.includes('░'), 'statusline.sh passes the meter through');
+    assert.ok(out.includes('▓') || out.includes('░'), 'statusline.js passes the meter through');
     assert.ok(out.includes(`http://127.0.0.1:${port}`), 'and still appends the dashboard URL');
   } finally {
     srv.stopTimers();
@@ -319,7 +319,7 @@ async function startMockStatusServer({ line }) {
   return { port: srv.address().port, close: () => new Promise((r) => srv.close(r)) };
 }
 
-// Runs statusline.sh once with the given stdin + optional state file, returns { out (trailing \n trimmed
+// Runs statusline.js once with the given stdin + optional state file, returns { out (trailing \n trimmed
 // for ^…$ anchors), nodeSpawns }. Async execFileP (not execFileSync) so the mock server on this loop is
 // not starved into the curl fallback.
 async function runStatusline({ stdin, stateFile } = {}) {
@@ -340,7 +340,7 @@ async function runStatusline({ stdin, stateFile } = {}) {
   }
 }
 
-test('D2: statusline.sh spawns node exactly once and emits equivalent line', async () => {
+test('D2: statusline.js spawns node exactly once and emits equivalent line', async () => {
   // Fake `node` on PATH counts invocations into a counter file, then execs the real node.
   const { out, nodeSpawns } = await runStatusline({
     stdin: JSON.stringify({

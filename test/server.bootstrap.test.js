@@ -35,7 +35,7 @@ test("D5: writeStateFileExclusive succeeds on a fresh path", () => {
 
 // Drive the REAL CLI bootstrap (the `server.listen` callback that owns the state-file write) as a
 // child process. Levers: server.js computes PORT_DIR = join(homedir(), '.session-watcher') at load
-// and does NOT read SW_STATE_DIR (only statusline.sh does), so we redirect the child's state dir by
+// and does NOT read SW_STATE_DIR (only statusline.js does), so we redirect the child's state dir by
 // overriding $HOME (os.homedir() honors it). `--project <emptyDir>` gives the watcher no transcript
 // (resolveJsonl returns the dir; the initial poll is try/caught), `--port 0` binds ephemeral — exactly
 // the path the existing health-e2e spawn test exercises, which is where the state-file write lives.

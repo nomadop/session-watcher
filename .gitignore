@@ -34,7 +34,6 @@ playwright-report/
 
 # Development scripts and archived data — not part of the release
 _archive/
-scripts/
 arxiv-submit/
 
 # dist/ is tracked in git (bundled plugin artifacts)

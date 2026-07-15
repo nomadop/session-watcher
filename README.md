@@ -51,7 +51,7 @@ Your coding agent (Claude Code, OpenCode, OpenClaw, etc.)
 │  metrics.js  — compute L* (EOQ-optimal)  │
 │  rate-lamp.js — interrupt meter (burn)   │
 │  server.js   — Express + SSE dashboard   │
-│  statusline.sh — one-line shell client   │
+│  statusline.js — one-line shell client   │
 └──────────────────────────────────────────┘
         │  dashboard :31393  ·  statusline  ·  MCP
         ▼
@@ -116,14 +116,14 @@ The plugin system does not yet support declaring a statusline. Add to your `~/.c
 {
   "statusLine": {
     "type": "command",
-    "command": "<plugin-install-path>/dist/statusline.sh"
+    "command": "<plugin-install-path>/dist/statusline.js"
   }
 }
 ```
 
 Find your plugin path with:
 ```bash
-find ~/.claude/plugins/cache -path '*/session-watcher/*/dist/statusline.sh' -print
+find ~/.claude/plugins/cache -path '*/session-watcher/*/dist/statusline.js' -print
 ```
 
 Or check via `claude plugin details session-watcher@session-watcher`.

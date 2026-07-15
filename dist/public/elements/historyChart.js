@@ -47,7 +47,7 @@ function groupBySegment(history) {
 function fitColdStart(points) {
   if (points.length === 0) return points;
   let firstValid = 0;
-  while (firstValid < points.length && (points[firstValid].kAvg == null || points[firstValid].kAvg === 0)) {
+  while (firstValid < points.length && (points[firstValid].kAvg == null || (points[firstValid].kAvg === 0 && points[firstValid].L === 0))) {
     firstValid++;
   }
   if (firstValid === 0 || firstValid >= points.length) return points;

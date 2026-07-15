@@ -52,7 +52,7 @@ test('plugin: hooks/hooks.json uses exec form for SessionStart and Stop', () => 
   assert.equal(st.type, 'command');
   assert.equal(st.command, 'bash');
   assert.ok(Array.isArray(st.args), 'Stop hook uses exec form (args array)');
-  assert.ok(st.args[0].includes('dist/hooks/warn.sh'));
+  assert.ok(st.args[0].includes('dist/hooks/warn.js'));
 });
 
 test('plugin: version consistency across plugin.json and package.json', () => {
@@ -65,9 +65,9 @@ test('plugin: dist/ contains bundled entry points', () => {
   assert.ok(existsSync(join(ROOT, 'dist', 'index.js')), 'dist/index.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'server.js')), 'dist/server.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start.js')), 'dist/hooks/session-start.js exists');
-  assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'warn.sh')), 'dist/hooks/warn.sh exists');
+  assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'warn.js')), 'dist/hooks/warn.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'public', 'index.html')), 'dist/public/index.html exists');
-  assert.ok(existsSync(join(ROOT, 'dist', 'statusline.sh')), 'dist/statusline.sh exists');
+  assert.ok(existsSync(join(ROOT, 'dist', 'statusline.js')), 'dist/statusline.js exists');
 });
 
 test('plugin: dist bundles have no external package imports', () => {

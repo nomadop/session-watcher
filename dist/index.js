@@ -58,7 +58,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { get as httpGet } from "node:http";
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
@@ -128,7 +128,8 @@ async function startWatcher(env = process.env, { open = true, transcript, waitFo
   const prev = readState(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
   const dir = resolveProjectDir(env);
-  const resolvedServerPath = serverPath || join(__dirname, "..", "server.js");
+  const defaultServerPath = existsSync(join(__dirname, "server.js")) ? join(__dirname, "server.js") : join(__dirname, "..", "server.js");
+  const resolvedServerPath = serverPath || defaultServerPath;
   const args = [resolvedServerPath, "--port", "0", "--project", dir, "--session", sessionId];
   if (transcript) args.push("--transcript", transcript);
   if (open) args.push("--open");
@@ -22373,7 +22374,8 @@ var init_stdio2 = __esm({
 
 // index.js
 init_launcher();
-if (import.meta.url === `file://${process.argv[1]}`) {
+import { pathToFileURL } from "node:url";
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { McpServer: McpServer2 } = await Promise.resolve().then(() => (init_mcp(), mcp_exports));
   const { StdioServerTransport: StdioServerTransport2 } = await Promise.resolve().then(() => (init_stdio2(), stdio_exports));
   const { z } = await Promise.resolve().then(() => (init_zod(), zod_exports));
