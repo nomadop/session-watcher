@@ -2,7 +2,7 @@
 
 ## Code style
 
-- JavaScript ES modules only (`import`/`export`), `"type": "module"`. Node ≥18 built-ins
+- JavaScript ES modules only (`import`/`export`), `"type": "module"`. Node ≥22.16 built-ins
   (`node:fs`, `node:http`, `node:path`, `node:os`, `node:child_process`) — prefer these
   over third-party where possible; `lib/` MUST stay dependency-free (only Node built-ins
   + sibling `lib/` imports) so it is testable with zero-dep `node:test`.
