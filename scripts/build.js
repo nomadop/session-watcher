@@ -11,27 +11,27 @@ const DIST = join(ROOT, 'dist');
 rmSync(DIST, { recursive: true, force: true });
 mkdirSync(join(DIST, 'hooks'), { recursive: true });
 
+// CJS→ESM shim: express and its deps use require() internally; esbuild's ESM
+// output wraps them in a __require2 helper that fails at runtime unless a real
+// `require` function exists.  We inject createRequire at the top of the bundle.
+const REQUIRE_SHIM = "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);";
+
 // Shared esbuild options: bundle all deps, keep Node built-ins external
 const shared = {
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  external: [
-    'node:*', 'fs', 'path', 'os', 'http', 'url', 'child_process', 'crypto',
-    'events', 'stream', 'util', 'net', 'tls', 'assert', 'buffer', 'string_decoder',
-  ],
-  // No banner here: CLI entry points (index.js, hooks/session-start.js) already carry
-  // #!/usr/bin/env node on line 1 and esbuild preserves it; adding a banner would
-  // produce a duplicate shebang (SyntaxError in Node). server.js overrides to '' below.
+  external: ['node:*'],
 };
 
 async function main() {
-  // 1. Bundle index.js (MCP entry)
+  // 1. Bundle index.js (MCP entry — invoked via "node <path>", shebang optional)
   await build({
     ...shared,
     entryPoints: [join(ROOT, 'index.js')],
     outfile: join(DIST, 'index.js'),
+    banner: { js: REQUIRE_SHIM },
   });
 
   // 2. Bundle server.js (HTTP dashboard)
@@ -39,7 +39,7 @@ async function main() {
     ...shared,
     entryPoints: [join(ROOT, 'server.js')],
     outfile: join(DIST, 'server.js'),
-    banner: { js: '' }, // server.js is not a CLI entry
+    banner: { js: REQUIRE_SHIM },
   });
 
   // 3. Bundle hooks/session-start.js
@@ -47,7 +47,7 @@ async function main() {
     ...shared,
     entryPoints: [join(ROOT, 'hooks', 'session-start.js')],
     outfile: join(DIST, 'hooks', 'session-start.js'),
-    // No banner: source already has #!/usr/bin/env node and esbuild preserves it
+    banner: { js: REQUIRE_SHIM },
   });
 
   // 4. Copy static assets

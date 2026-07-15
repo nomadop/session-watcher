@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
 // hooks/session-start.js
 import { pathToFileURL, fileURLToPath as fileURLToPath2 } from "node:url";
