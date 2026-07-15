@@ -40,7 +40,7 @@ test('statusline exits 0 and prints a fallback line when server is down', () => 
   assert.ok(existsSync(SCRIPT), 'statusline.js must exist');
   chmodSync(SCRIPT, 0o755);
   // Point state dir at an empty tmp so no server is found → fallback path.
-  const out = execFileSync('bash', [SCRIPT], {
+  const out = execFileSync('node', [SCRIPT], {
     input: MOCK_STDIN, env: { ...process.env, SW_STATE_DIR: '/nonexistent-sw-dir' }, encoding: 'utf8' });
   assert.ok(out.trim().length > 0, 'non-empty output (never blocks CC)');
   assert.ok(/Opus|session-watcher/.test(out), 'shows model or off-marker');
@@ -65,7 +65,7 @@ test('statusline appends full dashboard URL when server is up', async () => {
     writeFileSync(join(stateDir, 'test-sid.json'), JSON.stringify({ port }));
     // Async execFile (not execFileSync): the mock server shares this event loop, so a blocking
     // spawn would starve it and force curl into the fallback path.
-    const child = execFileP('bash', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
+    const child = execFileP('node', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
     child.child.stdin.end(MOCK_STDIN);
     const { stdout: out } = await child;
     assert.ok(out.includes('METRICS_LINE'), 'renders the server metrics line');
@@ -271,7 +271,7 @@ test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout whe
     assert.ok(lineTxt.includes('%'), 'fmt=line includes the meter percentage');
     // And statusline.js passes the server line through unmodified (then appends the dashboard URL).
     writeFileSync(join(stateDir, `${sid}.json`), JSON.stringify({ port }));
-    const child = execFileP('bash', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
+    const child = execFileP('node', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
     child.child.stdin.end(JSON.stringify({ session_id: sid, model: { display_name: 'Opus', id: 'claude-opus-4-8' } }));
     const { stdout: out } = await child;
     assert.ok(out.includes('▓') || out.includes('░'), 'statusline.js passes the meter through');
@@ -330,7 +330,7 @@ async function runStatusline({ stdin, stateFile } = {}) {
   const env = { ...process.env, SW_STATE_DIR: stateDir, PATH: `${shimDir}:${process.env.PATH}`,
     COUNT_FILE: countFile, REAL_NODE: process.execPath };
   try {
-    const child = execFileP('bash', [SCRIPT], { env });
+    const child = execFileP('node', [SCRIPT], { env });
     child.child.stdin.end(stdin ?? '');
     const { stdout } = await child;
     return { out: stdout.replace(/\n$/, ''), nodeSpawns: readFileSync(countFile, 'utf8').length };

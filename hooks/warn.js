@@ -2,7 +2,7 @@
 // Session Watcher Stop hook — Node.js cross-platform (replaces warn.sh).
 // Zero context injection: ALWAYS exit 0 + empty stdout.
 // Reads session_id from stdin JSON, POSTs notify-gate to the server, then exits.
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -27,7 +27,11 @@ async function main() {
   // Read port from state file
   const stateFile = join(STATE_DIR, `${sid}.json`);
   let state;
-  try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { process.exit(0); }
+  try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch {
+    // Fallback: scan for a state file whose hookSessionId matches (per-restart session ID)
+    state = findStateByHookSessionId(sid);
+    if (!state) { process.exit(0); }
+  }
   const port = state?.port;
   if (!port) { process.exit(0); }
 
@@ -54,11 +58,25 @@ async function main() {
   process.exit(0);
 }
 
+function findStateByHookSessionId(sid) {
+  let files;
+  try { files = readdirSync(STATE_DIR); } catch { return null; }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const st = JSON.parse(readFileSync(join(STATE_DIR, f), 'utf8'));
+      if (st.hookSessionId === sid) return st;
+    } catch { continue; }
+  }
+  return null;
+}
+
 function readStdin(ms) {
   return new Promise((resolve) => {
     let buf = '';
     const timer = setTimeout(() => { resolve(buf || null); }, ms);
     process.stdin.setEncoding('utf8');
+    process.stdin.resume();
     process.stdin.on('data', (d) => { buf += d; });
     process.stdin.on('end', () => { clearTimeout(timer); resolve(buf); });
     process.stdin.on('error', () => { clearTimeout(timer); resolve(buf || null); });

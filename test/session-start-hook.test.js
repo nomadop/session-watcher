@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -105,12 +105,17 @@ test('CLI entry: valid payload → exits 0, emits nothing to stdout, actually la
   const sessionId = `hooktest-${process.pid}-${Math.floor(process.hrtime()[1])}`;
   const fixture = join(__dirname, '..', 'fixtures', 'host', '.claude', 'projects',
     'C--Users-nomad-freshtrack', 'aa8e3739-3264-48d6-a2a0-75346d583c03.jsonl');
-  const stateFile = join(homedir(), '.session-watcher', `${sessionId}.json`);
+  const transcriptBasename = basename(fixture).replace(/\.jsonl$/, '');
+  const stateFile = join(homedir(), '.session-watcher', `${transcriptBasename}.json`);
   const payload = JSON.stringify({
     session_id: sessionId,
     source: 'resume', // not 'startup' → open:false (belt-and-suspenders with SW_NO_OPEN)
     transcript_path: existsSync(fixture) ? fixture : undefined,
   });
+  // Clean up any stale state file from a previous test run (the state file path is now
+  // keyed to the transcript basename, which is fixed — stale file would cause EEXIST in
+  // writeStateFileExclusive and the server would fail to start).
+  try { unlinkSync(stateFile); } catch {}
   try {
     const { code, out } = await runHook(payload);
     assert.equal(code, 0);
@@ -126,7 +131,8 @@ test('CLI entry: valid payload → exits 0, emits nothing to stdout, actually la
       if (!state) await sleep(50);
     }
     assert.ok(state && state.pid && state.port, 'fire-and-forget launch should have spawned a real server');
-    assert.equal(state.sessionId, sessionId);
+    assert.equal(state.sessionId, transcriptBasename);
+    assert.equal(state.hookSessionId, sessionId);
   } finally {
     // Best-effort cleanup — never leave an orphan server or state file behind. Re-poll briefly in case
     // the server booted slower than the assert budget: its pid may land only after the try block, so we

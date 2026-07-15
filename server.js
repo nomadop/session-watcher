@@ -40,7 +40,7 @@ function safeSessionId(sessionId) {
   return s;
 }
 
-export const PORT_DIR = join(homedir(), '.session-watcher');
+export const PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), '.session-watcher');
 // Discovery file is scoped by session_id (NOT a single global file, NOT project-hash):
 // server↔transcript is 1:1, and session_id is the finest key — it also disambiguates two
 // windows open on the SAME project (which a project-path hash would still collide).
@@ -704,7 +704,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Bind state to the TRANSCRIPT's session id, not --session. Claude Code passes a
   // different session_id to the hook (per-restart) vs the statusline (persistent across
   // restarts). The transcript basename IS the persistent id the statusline will query.
-  const sessionId = basename(jsonlPath).replace(/\.jsonl$/, '') || session;
+  const sessionId = jsonlPath.endsWith('.jsonl') ? basename(jsonlPath).replace(/\.jsonl$/, '') : (session || 'default');
   const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
 
   const STATE_FILE = stateFileFor(sessionId);
@@ -723,7 +723,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     // this closes the residual window of a bare relaunch for the SAME sid that bypassed startWatcher —
     // the loser hits EEXIST and exits rather than clobbering a live owner's port/pid.
     try {
-      writeStateFileExclusive(STATE_FILE, { port, pid: process.pid, transcriptPath: jsonlPath, sessionId, startedAt });
+      writeStateFileExclusive(STATE_FILE, { port, pid: process.pid, transcriptPath: jsonlPath, sessionId, hookSessionId: session, startedAt });
     } catch (e) {
       if (e.code === 'EEXIST') {
         console.error(

@@ -3,8 +3,8 @@
 // Never blocks CC: always exit 0 with output.
 // Reads stdin JSON (session_id + model), looks up the port from the per-session state file,
 // fetches /api/status?fmt=line from the dashboard server, and prints the formatted line.
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { get as httpGet } from 'node:http';
 
@@ -27,22 +27,20 @@ async function main() {
 
   // Read port from per-session state file
   let port = '';
+  let state;
   try {
-    const state = JSON.parse(readFileSync(join(STATE_DIR, `${sid}.json`), 'utf8'));
+    state = JSON.parse(readFileSync(join(STATE_DIR, `${sid}.json`), 'utf8'));
     port = String(state.port || '');
-  } catch {}
+  } catch {
+    // Fallback: scan for state file matching hookSessionId
+    const alt = findStateByHookSessionId(sid);
+    if (alt) port = String(alt.port || '');
+  }
 
   // Fetch status line from the dashboard server
   let line = '';
   if (port) {
     line = await fetchStatusLine(port);
-  }
-
-  // If the matched-session server is unreachable, scan ALL state files for any live server.
-  // Claude Code can pass a different session_id to the statusline vs SessionStart hook
-  // (e.g., persistent vs per-restart), so fallback scanning is essential.
-  if (!line) {
-    line = await scanForLiveServer();
   }
 
   if (line) {
@@ -55,24 +53,17 @@ async function main() {
   process.exit(0);
 }
 
-// Scan all .json state files (excluding store.sqlite) for any reachable server.
-// Returns the first status line found, or empty string.
-async function scanForLiveServer() {
-  if (!existsSync(STATE_DIR)) return '';
+function findStateByHookSessionId(sid) {
   let files;
-  try { files = readdirSync(STATE_DIR); } catch { return ''; }
+  try { files = readdirSync(STATE_DIR); } catch { return null; }
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
-    let state;
     try {
-      state = JSON.parse(readFileSync(join(STATE_DIR, f), 'utf8'));
+      const st = JSON.parse(readFileSync(join(STATE_DIR, f), 'utf8'));
+      if (st.hookSessionId === sid) return st;
     } catch { continue; }
-    const p = state?.port;
-    if (!p) continue;
-    const line = await fetchStatusLine(p, 500);
-    if (line) return line;
   }
-  return '';
+  return null;
 }
 
 function readStdin() {

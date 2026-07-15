@@ -50,7 +50,7 @@ test('plugin: hooks/hooks.json uses exec form for SessionStart and Stop', () => 
   // Stop
   const st = m.hooks.Stop[0].hooks[0];
   assert.equal(st.type, 'command');
-  assert.equal(st.command, 'bash');
+  assert.equal(st.command, 'node');
   assert.ok(Array.isArray(st.args), 'Stop hook uses exec form (args array)');
   assert.ok(st.args[0].includes('dist/hooks/warn.js'));
 });
