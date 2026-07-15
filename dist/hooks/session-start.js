@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { get as httpGet } from "node:http";
 var __dirname = dirname(fileURLToPath(import.meta.url));
 var PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), ".session-watcher");
@@ -56,13 +56,33 @@ function readState(sessionId) {
     return null;
   }
 }
+function scanStateByHookSessionId(sessionId) {
+  let files;
+  try {
+    files = readdirSync(PORT_DIR);
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const st = JSON.parse(readFileSync(join(PORT_DIR, f), "utf8"));
+      if (st.hookSessionId === sessionId) return st;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
 async function startWatcher(env = process.env, { open = true, transcript, waitForPort = true, serverPath } = {}) {
   const sessionId = sessionIdOf(env);
-  const prev = readState(sessionId);
+  let prev = readState(sessionId);
+  if (!prev) prev = scanStateByHookSessionId(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
   if (prev) {
+    const stalePath = stateFileFor(prev.sessionId);
     try {
-      unlinkSync(stateFileFor(sessionId));
+      unlinkSync(stalePath);
     } catch {
     }
   }

@@ -25503,7 +25503,7 @@ var IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1e3
 function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
   return sseClientsSize === 0 && now - lastRequestMono > IDLE_SHUTDOWN_MS;
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, onIdleShutdown = null }) {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null }) {
   const app = (0, import_express.default)();
   const startMs = Date.now();
   const sseClients = /* @__PURE__ */ new Set();
@@ -25658,7 +25658,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, onIdleShutdown
   };
   const sessionMismatch = (req, res) => {
     const bodySid = req.body?.session_id;
-    if (bodySid && bodySid !== sessionId) {
+    if (bodySid && bodySid !== sessionId && bodySid !== hookSessionId) {
       res.status(409).json({ error: "session_mismatch" });
       return true;
     }
@@ -25924,10 +25924,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const byId = resolveBySessionId(projectsRoot, session);
   const jsonlPath = transcript ? resolve(transcript) : byId || resolveJsonl(resolve(project || projectsRoot));
   const sessionId = jsonlPath.endsWith(".jsonl") ? basename(jsonlPath).replace(/\.jsonl$/, "") : session || "default";
+  const hookSessionId = session || null;
   const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown;
-  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1e3, sessionId, onIdleShutdown: () => shutdown() });
+  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1e3, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });
   server.listen(wantPort, "127.0.0.1", () => {
     const port = server.address().port;
     mkdirSync2(PORT_DIR, { recursive: true });

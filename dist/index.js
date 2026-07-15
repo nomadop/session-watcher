@@ -49,6 +49,7 @@ __export(launcher_exports, {
   probeHealth: () => probeHealth,
   readState: () => readState,
   resolveProjectDir: () => resolveProjectDir,
+  scanStateByHookSessionId: () => scanStateByHookSessionId,
   sessionIdOf: () => sessionIdOf,
   startWatcher: () => startWatcher,
   stateFileFor: () => stateFileFor,
@@ -59,7 +60,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { get as httpGet } from "node:http";
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
@@ -124,13 +125,33 @@ function readState(sessionId) {
     return null;
   }
 }
+function scanStateByHookSessionId(sessionId) {
+  let files;
+  try {
+    files = readdirSync(PORT_DIR);
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const st = JSON.parse(readFileSync(join(PORT_DIR, f), "utf8"));
+      if (st.hookSessionId === sessionId) return st;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
 async function startWatcher(env = process.env, { open = true, transcript, waitForPort = true, serverPath } = {}) {
   const sessionId = sessionIdOf(env);
-  const prev = readState(sessionId);
+  let prev = readState(sessionId);
+  if (!prev) prev = scanStateByHookSessionId(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
   if (prev) {
+    const stalePath = stateFileFor(prev.sessionId);
     try {
-      unlinkSync(stateFileFor(sessionId));
+      unlinkSync(stalePath);
     } catch {
     }
   }
@@ -183,7 +204,8 @@ async function startWatcher(env = process.env, { open = true, transcript, waitFo
 }
 async function stopWatcher(env = process.env) {
   const sessionId = sessionIdOf(env);
-  const st = readState(sessionId);
+  let st = readState(sessionId);
+  if (!st) st = scanStateByHookSessionId(sessionId);
   if (!st || !st.pid) return { stopped: false };
   const health = await fetchHealth(st.port);
   if (health) {
@@ -198,13 +220,15 @@ async function stopWatcher(env = process.env) {
     return { stopped: false };
   }
   try {
-    unlinkSync(stateFileFor(sessionId));
+    unlinkSync(stateFileFor(st.sessionId));
   } catch {
   }
   return { stopped: false };
 }
 async function watcherStatus(env = process.env) {
-  const st = readState(sessionIdOf(env));
+  const sessionId = sessionIdOf(env);
+  let st = readState(sessionId);
+  if (!st) st = scanStateByHookSessionId(sessionId);
   if (st && await probeHealth(st.port)) return { running: true, url: `http://127.0.0.1:${st.port}` };
   return { running: false };
 }

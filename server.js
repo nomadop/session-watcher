@@ -142,7 +142,7 @@ export function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
 // Factory: build an http.Server around an existing watcher (used by tests and CLI).
 // Returns { app, server, sseClients, startPolling, stopTimers }. `server` is a real
 // node:http.Server so callers do server.listen(0)/server.address()/server.close().
-export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdleShutdown = null }) {
+export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSessionId = null, onIdleShutdown = null }) {
   const app = express();
   const startMs = Date.now();
   const sseClients = new Set();
@@ -340,7 +340,10 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   // round-6 GPT#3a: stale-port cross-session guard.
   const sessionMismatch = (req, res) => {
     const bodySid = req.body?.session_id;
-    if (bodySid && bodySid !== sessionId) { res.status(409).json({ error: 'session_mismatch' }); return true; }
+    // Accept EITHER the server's transcript-basename identity (sessionId) OR the
+    // hook's per-restart session_id (hookSessionId). CC sends different IDs to the
+    // Stop hook vs. the statusline; both are legitimate callers of this server.
+    if (bodySid && bodySid !== sessionId && bodySid !== hookSessionId) { res.status(409).json({ error: 'session_mismatch' }); return true; }
     return false;
   };
   // Internal event-id minter for hooks that don't send one (backwards compat with older warn.js)
@@ -701,15 +704,17 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const jsonlPath = transcript
     ? resolve(transcript)
     : (byId || resolveJsonl(resolve(project || projectsRoot)));
-  // Bind state to the TRANSCRIPT's session id, not --session. Claude Code passes a
-  // different session_id to the hook (per-restart) vs the statusline (persistent across
-  // restarts). The transcript basename IS the persistent id the statusline will query.
+  // Bind state to the transcript basename — this is the PERSISTENT id the statusline
+  // queries (CC sends different session_ids to the hook vs. the statusline). The
+  // --session value (hook's per-restart id) is stored as hookSessionId for the
+  // sessionMismatch guard and startWatcher's fallback scan.
   const sessionId = jsonlPath.endsWith('.jsonl') ? basename(jsonlPath).replace(/\.jsonl$/, '') : (session || 'default');
+  const hookSessionId = session || null;
   const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
 
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown; // forward-declared for onIdleShutdown reference
-  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, onIdleShutdown: () => shutdown() });
+  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });
   server.listen(wantPort, '127.0.0.1', () => {   // loopback only — never expose local session data
     const port = server.address().port;
     mkdirSync(PORT_DIR, { recursive: true });

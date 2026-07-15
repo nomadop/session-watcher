@@ -112,9 +112,7 @@ test('CLI entry: valid payload → exits 0, emits nothing to stdout, actually la
     source: 'resume', // not 'startup' → open:false (belt-and-suspenders with SW_NO_OPEN)
     transcript_path: existsSync(fixture) ? fixture : undefined,
   });
-  // Clean up any stale state file from a previous test run (the state file path is now
-  // keyed to the transcript basename, which is fixed — stale file would cause EEXIST in
-  // writeStateFileExclusive and the server would fail to start).
+  // Clean up any stale state file from a previous test run.
   try { unlinkSync(stateFile); } catch {}
   try {
     const { code, out } = await runHook(payload);
