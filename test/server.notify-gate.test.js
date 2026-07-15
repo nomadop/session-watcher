@@ -5,12 +5,16 @@ import { tmpdir } from 'node:os';
 import { join, dirname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
-// Isolate gate-state writes to a temp CLAUDE_PLUGIN_DATA — gate-store's pathFor reads the env lazily
-// per call, so setting it before importing the server is sufficient (mirrors server.rate-lamp.test.js).
+// Initialize a module-level SQLite store so loadGateState/saveGateState never write into
+// the real ~/.session-watcher. initStore is called once for this test file.
 const TMP = mkdtempSync(join(tmpdir(), 'sw-gate-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 import { createServer, stateFileFor, PORT_DIR } from '../server.js';
 import { loadGateState } from '../lib/gate-store.js';

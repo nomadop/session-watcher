@@ -1,11 +1,22 @@
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { freshLedger, stateKeyOf, applyFoldedCallSample, settleBatchAtBoundary,
   saveRateLampState, loadRateLampState } from '../lib/rate-lamp-store.js';
 import { validateLedgerState } from '../lib/ledger-schema.js'; // R5 GPT#3: assert paused-state re-validates
+import { initStore, closeStoreGlobal } from '../lib/store.js';
+
+let _storeDir;
+beforeEach(() => {
+  _storeDir = mkdtempSync(join(tmpdir(), 'sw-rl-ledger-'));
+  initStore(join(_storeDir, 'test.sqlite'));
+});
+afterEach(() => {
+  closeStoreGlobal();
+  rmSync(_storeDir, { recursive: true, force: true });
+});
 
 const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'd30000|t25000|k6|T', contextCap: 1000000, schemaVersion: 1 });
 // sample helper — field is L_read (effectiveL), NEVER cacheRead (Task 2.5 locked contract).
@@ -328,22 +339,14 @@ test('50: single ledger — deadOnly is counterfactual only (store has no deadOn
   assert.equal('deadOnlyBillProgress' in s, false);
 });
 
-test('GPT#12: persistence round-trips a valid ledger and a corrupt/foreign file loads as null (silent fresh)', () => {
-  const dir = join(tmpdir(), `rate-lamp-store-${process.pid}`);
-  const prev = process.env.CLAUDE_PLUGIN_DATA;
-  process.env.CLAUDE_PLUGIN_DATA = dir;
-  try {
-    rmSync(join(dir, 'rate-lamp-state'), { recursive: true, force: true });
-    const s = freshLedger(KEY, 940);
-    saveRateLampState('sess-A', s);
-    assert.deepEqual(loadRateLampState('sess-A'), s, 'a valid saved ledger round-trips through validateLedgerState');
-    // a file that fails the schema (validateLedgerState → null) must load as null, never crash.
-    saveRateLampState('sess-B', { not: 'a ledger' });
-    assert.equal(loadRateLampState('sess-B'), null, 'a schema-invalid file loads as null (treated as no saved state)');
-    // a never-written session loads as null too (readFileSync throws → catch → null).
-    assert.equal(loadRateLampState('sess-missing'), null, 'no file → null, no throw');
-  } finally {
-    if (prev === undefined) delete process.env.CLAUDE_PLUGIN_DATA; else process.env.CLAUDE_PLUGIN_DATA = prev;
-    rmSync(dir, { recursive: true, force: true });
-  }
+test('GPT#12: persistence round-trips a valid ledger and a corrupt/foreign entry loads as null (silent fresh)', () => {
+  // store is already initialized by beforeEach — just use it directly
+  const s = freshLedger(KEY, 940);
+  saveRateLampState('sess-A', s);
+  assert.deepEqual(loadRateLampState('sess-A'), s, 'a valid saved ledger round-trips through validateLedgerState');
+  // a value that fails the schema (validateLedgerState → null) must load as null, never crash.
+  saveRateLampState('sess-B', { not: 'a ledger' });
+  assert.equal(loadRateLampState('sess-B'), null, 'a schema-invalid entry loads as null (treated as no saved state)');
+  // a never-written session loads as null too (getStore().load returns null → catch → null).
+  assert.equal(loadRateLampState('sess-missing'), null, 'no entry → null, no throw');
 });

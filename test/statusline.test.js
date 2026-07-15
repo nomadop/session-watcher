@@ -96,29 +96,29 @@ test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta',
 test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill format', () => {
   _resetRenderState(); _resetCarousel();
   const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 2,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: 2.5, dhat: 0.4,
-    band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
+    inDeepWater: true, br: 0.15, x_display: 2.5, dhat: 0.4,
+    lBase: 55000, L_read: 137000, L_cap: 960000,
     targetL: 200000, kAvg: 3000, currentTurnSeq: 5 });
   const out = formatLine(s);
   assert.ok(out.includes('▮') || out.includes('░'), 'v3 meter bar renders');
   assert.ok(out.includes('37%'), 'meter shows billProgress as floor percentage');
-  assert.ok(out.includes('🟡'), 'deep water lamp from frozen latch');
+  assert.ok(out.includes('🟡'), 'amber lamp from br >= 0.10');
   assert.ok(out.includes('L137k'), 'L value renders fixed-width');
   assert.ok(out.includes('b55k'), 'baseline value renders tight-coupled');
   assert.ok(!/break-even ~\d+ turns/.test(out), 'old break-even format is gone');
   assert.ok(!/bill \d+%/.test(out), 'old bill format is gone');
 });
 
-// Review A7#15 → v3: hBreak Infinity (burnRate=0, below the floor) — countdown renders ---t, never Infinity.
-test('A2 A7#15: hBreak Infinity (burnRate=0) renders countdown ---t, not Infinity', () => {
+// Review A7#15 → v3: hBreak Infinity (burnRate=0, below the floor) — br renders b---% (no br data), never Infinity.
+test('A2 A7#15: hBreak Infinity (burnRate=0) renders br b---%, not Infinity', () => {
   _resetRenderState(); _resetCarousel();
   const s = reliableBase({ reliable: true, hBreak: Infinity, billProgress: 0, billCycleCount: 0,
-    inDeepWater: false, deepWaterDisplayLatched: false, x_display: 1.2, dhat: 0.4,
-    band: 'below_entry', lBase: 55000, L_read: 137000, L_cap: 960000,
+    inDeepWater: false, x_display: 1.2, dhat: 0.4,
+    lBase: 55000, L_read: 137000, L_cap: 960000,
     currentTurnSeq: 3 });
-  // No targetL/kAvg → countdown renders ---t
+  // No br → renderBr(undefined) renders b---%
   const out = formatLine(s);
-  assert.ok(out.includes('---t'), 'missing countdown renders ---t placeholder');
+  assert.ok(out.includes('b---%'), 'missing br renders b---% placeholder');
   assert.ok(!out.includes('Infinity'), 'never leaks the literal Infinity');
   assert.ok(out.includes('0%'), 'billProgress 0 rendered in meter');
 });
@@ -398,8 +398,8 @@ test('u=2.0 at the exact point where lamp turns yellow (kStable alignment)', () 
   const xExit = 1 + 2 * dhat;
   const L_at_exit = lBase * xExit;
   const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.5, billCycleCount: 3,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: xExit, dhat,
-    kStable, band: 'above_exit', lBase, L_read: L_at_exit, L_cap: 960000,
+    inDeepWater: true, br: 0.15, x_display: xExit, dhat,
+    kStable, lBase, L_read: L_at_exit, L_cap: 960000,
     targetL: 960000, kAvg: 1382, currentTurnSeq: 10 });
   s.kAvg = 1382;
   const out = formatLine(s);

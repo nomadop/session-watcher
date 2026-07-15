@@ -12,7 +12,7 @@ import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { stopWatcher } from '../index.js';
+import { stopWatcher } from '../lib/launcher.js';
 
 const PORT_DIR = join(homedir(), '.session-watcher');
 const stateFileFor = (sid) => join(PORT_DIR, `${sid}.json`);

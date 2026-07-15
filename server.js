@@ -1,5 +1,6 @@
-// R2-15 / final-review GPT#10: node:test + node:assert/strict + structuredClone require Node ≥18.
-if (Number(process.versions.node.split('.')[0]) < 18) { console.error('Session Watcher requires Node >=18'); process.exit(1); }
+// node:sqlite (DatabaseSync) requires Node >=22.16.0.
+const [_major, _minor] = process.versions.node.split('.').map(Number);
+if (_major < 22 || (_major === 22 && _minor < 16)) { console.error('Session Watcher requires Node >=22.16.0 (node:sqlite)'); process.exit(1); }
 import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -16,10 +17,12 @@ import { detectStockStep } from './lib/rate-lamp.js';
 import { resolveStopMessage } from './lib/stop-message.js';
 import { evaluateGate, rawTierFor } from './lib/notify-gate.js';
 import { loadGateState, saveGateState } from './lib/gate-store.js';
-import { safeSessionId } from './lib/atomic-store.js';
+import { initStore, closeStoreGlobal } from './lib/store.js';
+import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
 import { cRatioFor } from './lib/extract.js';
-import { loadPricing, savePricing, deletePricing, validatePricingInput } from './lib/pricing-store.js';
-import { sweepStaleState } from './lib/state-reaper.js';
+import { loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput } from './lib/pricing-store.js';
+import { sweepStaleState, sweepStalePortFiles } from './lib/state-reaper.js';
+import { BR_AMBER, BR_RED } from './lib/bill-regret.js';
 import {
   renderReliability,
   tagOf,
@@ -27,6 +30,16 @@ import {
 } from './lib/statusline-format.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// round-6 GPT#3b: sanitize a sessionId used as a filename segment. Defense-in-depth — a `/`, `\`,
+// `..`, or NUL would let `${sessionId}.json` escape the state dir. Inlined from the deleted
+// lib/atomic-store.js (previously shared; now only used here and lib/launcher.js, each inline).
+function safeSessionId(sessionId) {
+  const s = String(sessionId ?? '');
+  if (!s || s === '.' || s === '..' || /[/\\\0]/.test(s) || s.includes('..')) return '__invalid_session__';
+  return s;
+}
+
 export const PORT_DIR = join(homedir(), '.session-watcher');
 // Discovery file is scoped by session_id (NOT a single global file, NOT project-hash):
 // server↔transcript is 1:1, and session_id is the finest key — it also disambiguates two
@@ -217,8 +230,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   const cliRatioAtStartup = watcher.ratioOverride; // capture CLI value at construction time
 
   const buildPricingResponse = () => {
-    const saved = loadPricing(sessionId);
     const model = watcher._segmentModel || '';
+    const saved = loadPricingOverride(model);
     const modelRatio = cRatioFor(model);
 
     let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
@@ -249,7 +262,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   };
 
   const applyEffectiveRatio = () => {
-    const saved = loadPricing(sessionId);
+    const model = watcher._segmentModel || '';
+    const saved = loadPricingOverride(model);
     watcher.ratioOverride = saved ? saved.ratio : cliRatioAtStartup;
     watcher._historyCache = null;
   };
@@ -274,7 +288,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
       // Sanitize presetId: must be null or a short string
       const safePresetId = (typeof presetId === 'string' && presetId.length > 0 && presetId.length <= 80)
         ? presetId : null;
-      savePricing(sessionId, { readPrice, writePrice, presetId: safePresetId });
+      const model = watcher._segmentModel || '';
+      if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });  // #9: guard empty model key
+      savePricingOverride(model, { readPrice, writePrice, presetId: safePresetId });
       applyEffectiveRatio();
       res.json(buildPricingResponse());
     } catch (e) {
@@ -283,7 +299,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   });
 
   app.delete('/api/pricing', (req, res) => {
-    deletePricing(sessionId);
+    const model = watcher._segmentModel || '';
+    if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });
+    deletePricingOverride(model);
     applyEffectiveRatio();
     res.json(buildPricingResponse());
   });
@@ -293,6 +311,20 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
   // #8 (v2.2-D): take the ALREADY-computed status (from advanceRateLampToCurrent) — do NOT call
   // watcher.getStatus() a second time. peek route passes its own fresh getStatus (it has no advance).
   const gateSnapshotFor = (turnSeq, st) => {
+    const br = st.rateLamp?.br;
+    if (st.rateLamp?.reliable === true && Number.isFinite(br)) {
+      // br-coordinate shim: feed br directly as x, with BR thresholds as landmarks.
+      // Note: reliable=true implies kStableFrozen > 0 (same gate), so br is always
+      // computed via computeBr in mergeLedgerIntoStatus. The "reliable + br=NaN" case
+      // cannot occur in production — the guard is defensive only.
+      return {
+        segment: st.segment, turnSeq, reliable: true,
+        x: br,
+        landmarks: { fullCarry: { xStar: BR_AMBER, dhat: BR_RED - BR_AMBER } },
+      };
+    }
+    // Fallback: calibrating period (kStable not yet frozen) — geometric landmarks.
+    // reliable is false here, so evaluateGate won't fire notifications.
     // RV-C15: C_RATIO fallback is model-derived, not a hardcoded 10. A deepseek unreliable frame OMITS
     // rateLamp.C_RATIO, so `?? 10` would compute landmarks at ratio 10 instead of the model-correct 50 —
     // cRatioFor(st.model) mirrors the segment-locked ratio getStatus itself uses (never 0/undefined: it
@@ -560,6 +592,10 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
         // No local load-modify-save (round-2 GPT#10 race). Manager checkpoints to disk itself.
         const { ledger } = advanceRateLampToCurrent(watcher, sessionId, { forcePoll: false });
         if (process.env.SW_DEBUG && ledger) console.error('[rate-lamp shadow]', JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
+        if (sseClients.size > 0) {
+          const tick = JSON.stringify({ type: 'tick', uptime: watcher._uptimeSec() });
+          for (const c of sseClients) { try { c.write(`data: ${tick}\n\n`); } catch { sseClients.delete(c); } }
+        }
         if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
         // Idle auto-shutdown: no HTTP requests AND no SSE clients for IDLE_SHUTDOWN_MS → exit
         if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
@@ -581,7 +617,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, onIdle
 
   // #7: expose startMs as `startedAt` so the CLI writes the SAME timestamp to the state file that
   // /api/health reports — one source of truth for the identity handshake (health===stateFile).
-  return { app, server, sseClients, startPolling, startedAt: startMs, stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); } };
+  return { app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio, stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); } };
 }
 
 // v2.2-C5b test-injection seams (A20): allow tests to inspect SSE client count and override the
@@ -670,10 +706,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown; // forward-declared for onIdleShutdown reference
-  const { server, startPolling, sseClients, stopTimers, startedAt } = createServer({ watcher, pollIntervalMs: 1000, sessionId, onIdleShutdown: () => shutdown() });
+  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, onIdleShutdown: () => shutdown() });
   server.listen(wantPort, '127.0.0.1', () => {   // loopback only — never expose local session data
     const port = server.address().port;
     mkdirSync(PORT_DIR, { recursive: true });
+    try { initStore(); } catch (e) { console.error('[session-watcher] fatal: store init failed —', e.message); process.exit(1); }
+    cleanupLegacyJson(defaultBaseDir());
+    applyEffectiveRatio(); // re-apply now that store is ready
     // #7: write createServer's startedAt (NOT a fresh Date.now()) so the state file's identity tokens
     // (pid, startedAt) are the exact values /api/health reports — the handshake stopWatcher relies on.
     // D5 (spec §5.2, invariant #20): write ATOMICALLY with wx (O_CREAT|O_EXCL). startWatcher owns the
@@ -692,13 +731,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       throw e;
     }
     console.log(`PORT=${port}`);
-    const rateLampDir = process.env.CLAUDE_PLUGIN_DATA
-      ? join(process.env.CLAUDE_PLUGIN_DATA, 'rate-lamp-state')
-      : join(homedir(), '.session-watcher', 'rate-lamp');
-    const gateDir = process.env.CLAUDE_PLUGIN_DATA
-      ? join(process.env.CLAUDE_PLUGIN_DATA, 'gate-state')
-      : join(homedir(), '.session-watcher', 'gate');
-    sweepStaleState([rateLampDir, gateDir, PORT_DIR], { portDir: PORT_DIR });
+    sweepStaleState({ portDir: PORT_DIR });
+    sweepStalePortFiles(PORT_DIR);
     startPolling();
     if (open && !process.env.SW_NO_OPEN) {
       import('node:child_process').then(({ spawn }) => {
@@ -724,20 +758,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   shutdown = function shutdown() {
     stopTimers();
     for (const c of sseClients) { try { c.end(); } catch {} }
+    try { flushAll(); } catch {}  // persist in-memory ledgers while store is still open
+    closeStoreGlobal();
     try { unlinkSync(STATE_FILE); } catch {}
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
-  // SIGINT/SIGTERM flush (round-2 gemini 二.1): checkpoint every in-memory ledger on shutdown. Registered
-  // AFTER shutdown() so shutdown's synchronous unlinkSync(STATE_FILE) runs FIRST (STATE_FILE lifecycle
-  // preserved), then flushAll() persists the ledgers and the process exits. round-8 gemini#2 (by-design):
-  // the hard process.exit(0) is acceptable because server.js is a PROCESS-EXCLUSIVE daemon — its own
-  // bootstrap owns the process; there is no shared host whose shutdown this could truncate. Register ONLY
-  // here (the bootstrap branch), NEVER inside createServer, so an embedding test/host that imports
-  // createServer doesn't inherit a process-killing signal handler.
-  for (const sig of ['SIGINT', 'SIGTERM']) process.once(sig, () => { try { flushAll(); } finally { process.exit(0); } });
 
   // Process-level last-resort boundary (final-review Important #1, belt-and-suspenders): keep the
   // long-lived daemon alive across any throw/rejection the poll-loop try/catch or a route boundary

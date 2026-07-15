@@ -22,10 +22,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Temp dir for disk writes
+// Initialize a module-level SQLite store so disk writes never touch the real ~/.session-watcher.
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 const TMP = mkdtempSync(join(tmpdir(), 'sw-rl-prop-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 import { freshLedger, stateKeyOf, applyFoldedCallSample, settleMeterAtBoundary } from '../lib/rate-lamp-store.js';
 import {

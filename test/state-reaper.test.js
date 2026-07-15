@@ -1,13 +1,22 @@
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readdirSync, utimesSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readdirSync, utimesSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { sweepStaleState } from '../lib/state-reaper.js';
+import { initStore, closeStoreGlobal, getStore } from '../lib/store.js';
 
-function tmpDir() { return mkdtempSync(join(tmpdir(), 'sw-reaper-')); }
-function writeJson(dir, name, obj) {
-  const p = join(dir, name);
+let dir;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'sw-reaper-'));
+  initStore(join(dir, 'test.sqlite'));
+});
+afterEach(() => {
+  closeStoreGlobal();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+function writeJson(d, name, obj) {
+  const p = join(d, name);
   writeFileSync(p, JSON.stringify(obj));
   return p;
 }
@@ -16,54 +25,73 @@ function setMtimeOld(path, daysAgo) {
   utimesSync(path, t, t);
 }
 
-test('sweepStaleState deletes .json files older than 7 days', () => {
-  const dir = tmpDir();
-  const old = writeJson(dir, 'old-session.json', { x: 1 });
-  setMtimeOld(old, 10);
-  writeJson(dir, 'fresh-session.json', { x: 2 });
-  const removed = sweepStaleState([dir], { now: Date.now() });
-  assert.equal(removed, 1);
-  const remaining = readdirSync(dir);
-  assert.ok(!remaining.includes('old-session.json'));
-  assert.ok(remaining.includes('fresh-session.json'));
+test('sweepStaleState removes expired sessions from store', async () => {
+  const { sweepStaleState } = await import('../lib/state-reaper.js');
+  const store = getStore();
+  // Insert an old session directly
+  const old = Date.now() - 8 * 24 * 3600 * 1000;
+  store._db.prepare('INSERT INTO sessions (session_id, created_at, updated_at) VALUES (?, ?, ?)').run('old1', old, old);
+  store._db.prepare("INSERT INTO state (session_id, key, value, updated_at) VALUES ('old1', 'ledger', '{}', ?)").run(old);
+  // Fresh session
+  store.save('fresh1', 'ledger', { x: 1 });
+  const count = sweepStaleState();
+  assert.equal(count, 1);
+  assert.equal(store.load('old1', 'ledger'), null);
+  assert.deepEqual(store.load('fresh1', 'ledger'), { x: 1 });
 });
 
-test('sweepStaleState skips non-.json files', () => {
-  const dir = tmpDir();
-  const p = join(dir, 'note.txt');
-  writeFileSync(p, 'hello');
+test('sweepStaleState respects custom maxAgeMs', async () => {
+  const { sweepStaleState } = await import('../lib/state-reaper.js');
+  const store = getStore();
+  // Insert a session that is 2 days old
+  const twoDay = Date.now() - 2 * 24 * 3600 * 1000;
+  store._db.prepare('INSERT INTO sessions (session_id, created_at, updated_at) VALUES (?, ?, ?)').run('med1', twoDay, twoDay);
+  // Default 7-day max: should NOT sweep
+  assert.equal(sweepStaleState(), 0);
+  // 1-day max: should sweep
+  assert.equal(sweepStaleState({ maxAgeMs: 1 * 24 * 3600 * 1000 }), 1);
+});
+
+test('sweepStalePortFiles removes old port files with dead pid', async () => {
+  const { sweepStalePortFiles } = await import('../lib/state-reaper.js');
+  const portDir = mkdtempSync(join(tmpdir(), 'sw-ports-'));
+  const p = writeJson(portDir, 'dead.json', { pid: 99999999, port: 12345 });
   setMtimeOld(p, 10);
-  assert.equal(sweepStaleState([dir], { now: Date.now() }), 0);
+  const count = sweepStalePortFiles(portDir);
+  assert.equal(count, 1);
+  rmSync(portDir, { recursive: true, force: true });
 });
 
-test('sweepStaleState skips missing directories gracefully', () => {
-  assert.equal(sweepStaleState(['/nonexistent-dir-xyz'], { now: Date.now() }), 0);
-});
-
-test('sweepStaleState PORT_DIR: skips old file if pid is alive', () => {
-  const dir = tmpDir();
-  const p = writeJson(dir, 'live.json', { pid: process.pid, port: 12345 });
+test('sweepStalePortFiles skips files with live pid', async () => {
+  const { sweepStalePortFiles } = await import('../lib/state-reaper.js');
+  const portDir = mkdtempSync(join(tmpdir(), 'sw-ports-'));
+  const p = writeJson(portDir, 'live.json', { pid: process.pid, port: 12345 });
   setMtimeOld(p, 10);
-  assert.equal(sweepStaleState([dir], { now: Date.now(), portDir: dir }), 0, 'live pid must not be reaped');
+  const count = sweepStalePortFiles(portDir);
+  assert.equal(count, 0);
+  rmSync(portDir, { recursive: true, force: true });
 });
 
-test('sweepStaleState PORT_DIR: deletes old file if pid is dead', () => {
-  const dir = tmpDir();
-  writeJson(dir, 'dead.json', { pid: 99999999, port: 12345 });
-  setMtimeOld(join(dir, 'dead.json'), 10);
-  assert.equal(sweepStaleState([dir], { now: Date.now(), portDir: dir }), 1, 'dead pid should be reaped');
+test('sweepStalePortFiles skips fresh files', async () => {
+  const { sweepStalePortFiles } = await import('../lib/state-reaper.js');
+  const portDir = mkdtempSync(join(tmpdir(), 'sw-ports-'));
+  writeJson(portDir, 'fresh.json', { pid: 99999999, port: 12345 });
+  // No mtime change — it's fresh
+  const count = sweepStalePortFiles(portDir);
+  assert.equal(count, 0);
+  rmSync(portDir, { recursive: true, force: true });
 });
 
-test('sweepStaleState PORT_DIR: deletes old file with non-numeric pid', () => {
-  const dir = tmpDir();
-  const p = writeJson(dir, 'corrupt.json', { pid: "abc", port: 12345 });
+test('sweepStalePortFiles handles missing directory gracefully', async () => {
+  const { sweepStalePortFiles } = await import('../lib/state-reaper.js');
+  assert.equal(sweepStalePortFiles('/nonexistent-dir-xyz'), 0);
+});
+
+test('sweepStalePortFiles removes old file with non-numeric pid', async () => {
+  const { sweepStalePortFiles } = await import('../lib/state-reaper.js');
+  const portDir = mkdtempSync(join(tmpdir(), 'sw-ports-'));
+  const p = writeJson(portDir, 'corrupt.json', { pid: "abc", port: 12345 });
   setMtimeOld(p, 10);
-  assert.equal(sweepStaleState([dir], { now: Date.now(), portDir: dir }), 1);
-});
-
-test('sweepStaleState PORT_DIR: deletes old file with null pid', () => {
-  const dir = tmpDir();
-  const p = writeJson(dir, 'nullpid.json', { pid: null, port: 12345 });
-  setMtimeOld(p, 10);
-  assert.equal(sweepStaleState([dir], { now: Date.now(), portDir: dir }), 1);
+  assert.equal(sweepStalePortFiles(portDir), 1);
+  rmSync(portDir, { recursive: true, force: true });
 });

@@ -47,7 +47,7 @@ function groupBySegment(history) {
 function fitColdStart(points) {
   if (points.length === 0) return points;
   let firstValid = 0;
-  while (firstValid < points.length && (points[firstValid].kAvg == null || points[firstValid].kAvg === 0)) {
+  while (firstValid < points.length && (points[firstValid].kAvg == null || (points[firstValid].kAvg === 0 && points[firstValid].L === 0))) {
     firstValid++;
   }
   if (firstValid === 0 || firstValid >= points.length) return points;
@@ -56,9 +56,31 @@ function fitColdStart(points) {
 }
 
 /**
+ * Pick the single "next threshold" line to display based on current L.
+ * Priority: entry (green) → amber (yellow) → red (stays visible once passed).
+ * Returns {value, color, label} or null.
+ */
+function pickThresholdLine(currentL, entryL, exitL, redL, colors) {
+  if (entryL != null && currentL < entryL) {
+    return { value: entryL, color: colors.mint, label: `entry ${Math.round(entryL / 1000)}k` };
+  }
+  if (exitL != null && currentL < exitL) {
+    return { value: exitL, color: colors.amber, label: `b10 ${Math.round(exitL / 1000)}k` };
+  }
+  // Red line: always visible once past amber (stays as reference even when crossed)
+  if (redL != null) {
+    return { value: redL, color: colors.coral, label: `b25 ${Math.round(redL / 1000)}k` };
+  }
+  if (exitL != null) {
+    return { value: exitL, color: colors.amber, label: `b10 ${Math.round(exitL / 1000)}k` };
+  }
+  return null;
+}
+
+/**
  * Build Chart.js configuration for a single segment
  */
-function buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors) {
+function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
   // Fix #10: miss markers span the full y-axis (ratchetY), not just yMax from current data.
   // After a ratchet-up, ratchetY may be 2× computeYMax — using yMax would leave markers half-height.
   // computeYMax is still used by computeRatchet (called before buildChartConfig), not needed here.
@@ -68,16 +90,16 @@ function buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors) {
   // Amber dot at the current (last) point — matches mockup's endpoint marker
   const lPointRadius = points.map((_, i) => i === points.length - 1 ? 4 : 0);
   const lPointColor = points.map((_, i) => i === points.length - 1 ? colors.amber : 'transparent');
-  // v2.1 deep-water line: spans full x-axis as a constant horizontal line
-  const exitVal = exitLineL ?? (points.length > 0 ? points[0].Lthreshold : null);
-  const lThresholdData = exitVal != null
-    ? [{ x: 1, y: exitVal }, { x: ratchetX, y: exitVal }]
-    : points.map((p, i) => ({ x: i + 1, y: p.Lthreshold }));
+  // Single "next threshold" line — collapses entry/amber/red into one visible line
+  const thresholdData = thresholdLine
+    ? [{ x: 1, y: thresholdLine.value }, { x: ratchetX, y: thresholdLine.value }]
+    : [];
+  const thresholdColor = thresholdLine?.color ?? colors.amber;
   const missMarkers = buildMissMarkers(points, ratchetY);
 
-  // Inline plugin: draw "exit Nk" label at right end of the threshold line
-  const exitLabelPlugin = {
-    id: 'exitLineLabel',
+  // Inline plugin: draw label for the single threshold line
+  const thresholdLabelPlugin = {
+    id: 'thresholdLabels',
     afterDatasetsDraw(chart) {
       const ds = chart.data.datasets[1];
       if (!ds || !ds.data || ds.data.length === 0) return;
@@ -85,16 +107,15 @@ function buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors) {
       const val = typeof last === 'object' ? last.y : last;
       if (val == null || !Number.isFinite(val)) return;
       const yScale = chart.scales.y;
-      const yPx = yScale.getPixelForValue(val);
+      if (val > yScale.max) return;
       const ca = chart.chartArea;
       const ctx = chart.ctx;
-      const label = `exit ${Math.round(val / 1000)}k`;
       ctx.save();
       ctx.font = '8px "JetBrains Mono", monospace';
-      ctx.fillStyle = colors.amber;
+      ctx.fillStyle = ds.borderColor;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(label, ca.right - 4, yPx - 3);
+      ctx.fillText(chart._thresholdLabel ?? '', ca.right - 4, yScale.getPixelForValue(val) - 3);
       ctx.restore();
     },
   };
@@ -117,9 +138,9 @@ function buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors) {
           tension: 0,
         },
         {
-          label: 'L* exit threshold',
-          data: lThresholdData,
-          borderColor: colors.amber,
+          label: 'threshold',
+          data: thresholdData,
+          borderColor: thresholdColor,
           borderWidth: 1.3,
           borderDash: [4, 5],
           pointRadius: 0,
@@ -154,7 +175,7 @@ function buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors) {
         },
       ],
     },
-    plugins: [exitLabelPlugin],
+    plugins: [thresholdLabelPlugin],
     options: {
       animation: false,
       responsive: true,
@@ -193,7 +214,9 @@ export function mount(root, ctx) {
   let chart = null;
   let ratchetX = RATCHET_X_INIT;
   let ratchetY = RATCHET_Y_INIT;
-  let exitLineL = null;          // v2.1 deep-water line (L_exit_fullCarry from rateLamp)
+  let entryLineL = null;         // left-arm entry line (xBrAmberL * lBase, br=-10%)
+  let exitLineL = null;          // v2.1 deep-water line (L_exit_fullCarry from rateLamp, br=10%)
+  let redLineL = null;           // br=25% threshold line (xBrRedR * lBase)
   let lastGEma = null;           // per-call EMA growth rate (gEma from rateLamp)
   let lastLRead = null;          // current L_read from rateLamp
   let lastLBase = null;          // current lBase from rateLamp
@@ -217,7 +240,7 @@ export function mount(root, ctx) {
     </div>
     <div class="sw-history-legend">
       <span><i class="sw-legend-l"></i>L tokens</span>
-      <span><i class="sw-legend-exit"></i>deep-water line</span>
+      <span><i class="sw-legend-threshold"></i>next threshold</span>
       <span><i class="sw-legend-miss"></i>cache miss</span>
       <span><i class="sw-legend-proj"></i>projection</span>
     </div>
@@ -260,8 +283,8 @@ export function mount(root, ctx) {
 
   // Apply theme colors to legend swatches
   root.querySelector('.sw-legend-l').style.background = mint;
-  const exitSwatch = root.querySelector('.sw-legend-exit');
-  exitSwatch.style.cssText = `height:1.5px;border-top:2px dashed ${amber};background:none;width:14px;`;
+  const threshSwatch = root.querySelector('.sw-legend-threshold');
+  threshSwatch.style.cssText = `height:1.5px;border-top:2px dashed ${amber};background:none;width:14px;`;
   root.querySelector('.sw-legend-miss').style.background = coral;
   const projSwatch = root.querySelector('.sw-legend-proj');
   projSwatch.style.cssText = `border-top:2px dashed ${txtDim};background:none;width:14px;height:1.5px;`;
@@ -440,9 +463,16 @@ export function mount(root, ctx) {
       chart.destroy();
       chart = null;
     }
-    // Reset ratchets on segment change
+    // Reset ratchets on segment change; clear thresholds only when paging to a
+    // historical segment (follow=false) — on the live segment, update() has
+    // already set them from the current rateLamp before calling rebuildChart().
     ratchetX = RATCHET_X_INIT;
     ratchetY = RATCHET_Y_INIT;
+    if (!follow) {
+      entryLineL = null;
+      exitLineL = null;
+      redLineL = null;
+    }
 
     const raw = segmentKeys.length > 0 ? (segments.get(segmentKeys[currentPage]) || []) : [];
     const points = fitColdStart(raw);
@@ -453,8 +483,11 @@ export function mount(root, ctx) {
     }
 
     computeRatchet(points);
-    const config = buildChartConfig(points, ratchetX, ratchetY, exitLineL, colors);
+    const currentL = points[points.length - 1]?.L ?? 0;
+    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
+    const config = buildChartConfig(points, ratchetX, ratchetY, tLine, colors);
     chart = new Chart(canvas, config);
+    chart._thresholdLabel = tLine?.label ?? '';
 
     // Inject projection data (spec §6.1 — needs closure vars, not available in buildChartConfig)
     const projDs = chart.data.datasets.find(d => d.id === 'projection');
@@ -486,10 +519,12 @@ export function mount(root, ctx) {
     const lData = points.map(p => p.L);
     const lPointRadius = points.map((_, i) => i === points.length - 1 ? 4 : 0);
     const lPointColor = points.map((_, i) => i === points.length - 1 ? colors.amber : 'transparent');
-    const exitVal = exitLineL ?? (points.length > 0 ? points[0].Lthreshold : null);
-    const lThresholdData = exitVal != null
-      ? [{ x: 1, y: exitVal }, { x: ratchetX, y: exitVal }]
-      : points.map((p, i) => ({ x: i + 1, y: p.Lthreshold }));
+    // Single "next threshold" line
+    const currentL = points[points.length - 1]?.L ?? 0;
+    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
+    const thresholdData = tLine
+      ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }]
+      : [];
     const missMarkers = buildMissMarkers(points, ratchetY);
 
     chart.data.labels = labels;
@@ -503,7 +538,9 @@ export function mount(root, ctx) {
       lPointRadius[hiIdx] = 4;
       lPointColor[hiIdx] = '#ffffff';
     }
-    chart.data.datasets[1].data = lThresholdData;
+    chart.data.datasets[1].data = thresholdData;
+    chart.data.datasets[1].borderColor = tLine?.color ?? colors.amber;
+    chart._thresholdLabel = tLine?.label ?? '';
     chart.data.datasets[2].data = missMarkers;
 
     // Projection (id-based lookup — spec §6.1)
@@ -524,10 +561,18 @@ export function mount(root, ctx) {
   }
 
   function update(snapshot) {
-    // v2.1: use L_exit_fullCarry (deep-water line) instead of v1 Lthreshold
     const rl = snapshot?.status?.rateLamp;
-    if (rl?.L_exit_fullCarry != null && Number.isFinite(rl.L_exit_fullCarry)) {
-      exitLineL = rl.L_exit_fullCarry;
+    // Threshold lines: entry (left arm), exit (br=10%), red (br=25%)
+    if (rl?.xBrAmberL != null && Number.isFinite(rl.xBrAmberL) && rl?.lBase > 0) {
+      entryLineL = rl.xBrAmberL * rl.lBase;
+    }
+    if (rl?.xBrAmberR != null && Number.isFinite(rl.xBrAmberR) && rl?.lBase > 0) {
+      exitLineL = rl.xBrAmberR * rl.lBase;
+    } else if (rl?.L_exit_fullCarry != null && Number.isFinite(rl.L_exit_fullCarry)) {
+      exitLineL = rl.L_exit_fullCarry; // fallback before mf is available
+    }
+    if (rl?.xBrRedR != null && Number.isFinite(rl.xBrRedR) && rl?.lBase > 0) {
+      redLineL = rl.xBrRedR * rl.lBase;
     }
     if (rl?.gEma != null && Number.isFinite(rl.gEma)) {
       lastGEma = rl.gEma;

@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   renderReliability,
-  renderCountdown,
   renderLB,
   formatLine,
   _resetRenderState,
@@ -206,13 +205,11 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
       hBreak: 8,
       x_display: 2.1,
       dhat: 0.4167,
-      band: "entry_to_sweet",
+      br: 0.05,
       lBase: 80000,
       L_read: 168000,
       L_cap: 960000,
       inDeepWater: false,
-      deepWaterDisplayLatched: false,
-      targetL: 200000,
       kAvg: 3000,
       currentTurnSeq: 1,
       lastStopEvent: null,
@@ -246,13 +243,11 @@ test("A2: deep band shows 🟡 in v3 layout", () => {
       hBreak: 2,
       x_display: 9.3,
       dhat: 0.4,
-      band: "above_exit",
+      br: 0.15,
       lBase: 55000,
       L_read: 512000,
       L_cap: 960000,
       inDeepWater: true,
-      deepWaterDisplayLatched: true,
-      targetL: 600000,
       kAvg: 5000,
       currentTurnSeq: 1,
     },
@@ -343,58 +338,6 @@ test("A2/RV-C17: the new statusline layout never reads fitWindow (ER-2 retired t
   _resetRenderState();
   const b = formatLine({ ...s, fitWindow: 40 });
   assert.equal(a, b);
-});
-
-// ── renderCountdown: Nt countdown scenarios ──────────────────────────────────────────────────────
-
-test("Nt: typical mid-session — turns remaining matches (target-L)/rate", () => {
-  // L=80k, target=110k, rate=3k/turn → (110k-80k)/3k = 10 turns
-  const out = renderCountdown({ targetL: 110000, kAvg: 3000 }, 80000);
-  assert.equal(out, "~10t");
-});
-
-test("Nt: rate includes zero-growth turns (lower effective rate → more turns)", () => {
-  // If 10 turns produced: 5 turns × 6k growth + 5 turns × 0 growth
-  // Old EMA (positive-only) would estimate ~6k/turn → ceil(30k/6k) = 5 turns
-  // New EMA decays: effective rate ≈ 3k/turn → ceil(30k/3k) = 10 turns
-  // This test just verifies the formula at the lower rate:
-  const out = renderCountdown({ targetL: 110000, kAvg: 3000 }, 80000);
-  assert.equal(out, "~10t");
-  // Contrast: same gap at inflated rate gives fewer turns (the old bug)
-  const inflated = renderCountdown({ targetL: 110000, kAvg: 6000 }, 80000);
-  assert.equal(inflated, "~05t");
-});
-
-test("Nt: already at or past target → ~00t", () => {
-  assert.equal(renderCountdown({ targetL: 100000, kAvg: 3000 }, 100000), "~00t");
-  assert.equal(renderCountdown({ targetL: 100000, kAvg: 3000 }, 120000), "~00t");
-});
-
-test("Nt: very far away (>99 turns) → +99t cap", () => {
-  // target=960k, L=80k, rate=2k → ceil(880k/2k) = 440 >> 99
-  assert.equal(renderCountdown({ targetL: 960000, kAvg: 2000 }, 80000), "+99t");
-});
-
-test("Nt: missing or invalid inputs → ---t fallback", () => {
-  assert.equal(renderCountdown({ targetL: null, kAvg: 3000 }, 80000), "---t");
-  assert.equal(renderCountdown({ targetL: 110000, kAvg: null }, 80000), "---t");
-  assert.equal(renderCountdown({ targetL: 110000, kAvg: 0 }, 80000), "---t");
-  assert.equal(renderCountdown({ targetL: 110000, kAvg: -1 }, 80000), "---t");
-  assert.equal(renderCountdown(null, 80000), "---t");
-  assert.equal(renderCountdown({ targetL: 110000, kAvg: 3000 }, NaN), "---t");
-});
-
-test("Nt: small fractional result rounds up (ceil)", () => {
-  // target=81k, L=80k, rate=3k → ceil(1k/3k) = ceil(0.333) = 1
-  assert.equal(renderCountdown({ targetL: 81000, kAvg: 3000 }, 80000), "~01t");
-});
-
-test("Nt: exactly 99 turns → ~99t (not capped)", () => {
-  // target - L = 99 * rate
-  const rate = 1000;
-  const L = 10000;
-  const target = L + 99 * rate;
-  assert.equal(renderCountdown({ targetL: target, kAvg: rate }, L), "~99t");
 });
 
 // ── renderLB: fixed-width L/b formatting ─────────────────────────────────────────────────────────

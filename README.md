@@ -62,17 +62,41 @@ Your coding agent (Claude Code, OpenCode, OpenClaw, etc.)
 
 ## Install
 
-### MCP (Claude Code)
+### Plugin (recommended)
+
+```bash
+# 1. Add the marketplace (one-time)
+claude plugin marketplace add nomadop/session-watcher
+
+# 2. Install the plugin
+claude plugin install session-watcher@session-watcher
+```
+
+Or from within a Claude Code session:
+```
+/plugin marketplace add nomadop/session-watcher
+/plugin install session-watcher@session-watcher
+/reload-plugins
+```
+
+This registers:
+- **MCP tools** (`start_watcher`, `stop_watcher`, `watcher_status`) — available in every session
+- **SessionStart hook** — auto-launches the dashboard server on each session
+- **Stop hook** — evaluates the restart gate on each stop boundary
+
+If you installed or updated in an already-running session, run `/reload-plugins` to activate.
+
+### Manual MCP
 
 ```json
 {
   "mcpServers": {
-    "session-watcher": { "command": "node", "args": ["<path>/index.js"] }
+    "session-watcher": { "command": "node", "args": ["/path/to/index.js"] }
   }
 }
 ```
 
-Call `start_watcher` — it launches the dashboard and returns its URL.
+Add to your project's `.mcp.json` or `~/.claude/settings.json`. Then call `start_watcher` — it launches the dashboard and returns its URL.
 
 ### Auto-launch with every session
 
@@ -84,19 +108,27 @@ Call `start_watcher` — it launches the dashboard and returns its URL.
 
 Add to `~/.claude/settings.json`. The watcher starts automatically, fire-and-forget.
 
-### Standalone (no MCP)
-
-```bash
-node server.js --project ~/.claude/projects/<project> --ratio 50 --open
-```
-
-Omit `--lbase` to auto-detect the cold-start baseline. Pass `--lbase <n>` only when the transcript has no cold start (a carried baseline stays in calibrating mode until enough data accumulates).
-
 ### Statusline
 
+The plugin system does not yet support declaring a statusline. Add to your `~/.claude/settings.json`:
+
 ```json
-{ "statusLine": { "type": "command", "command": "<path>/statusline.sh" } }
+{
+  "statusLine": {
+    "type": "command",
+    "command": "<plugin-install-path>/dist/statusline.sh"
+  }
+}
 ```
+
+Find your plugin path with:
+```bash
+find ~/.claude/plugins/cache -path '*/session-watcher/*/dist/statusline.sh' -print
+```
+
+Or check via `claude plugin details session-watcher@session-watcher`.
+
+**Note:** the plugin cache path changes on version update. After updating, re-run the command above and update your statusline path.
 
 One compact line:
 
@@ -108,8 +140,10 @@ One compact line:
 git clone https://github.com/nomadop/session-watcher.git
 cd session-watcher
 npm install
-node server.js --project ~/.claude/projects/<project> --ratio 50 --open
+node server.js --project ~/.claude/projects/<project> --open
 ```
+
+Additional flags: `--ratio <N>` (override C_RATIO), `--port <N>` (fixed port), `--lbase <N>` (override baseline — only when transcript has no cold start).
 
 Then open `http://localhost:31393` in your browser. The dashboard updates in real time as your agent runs.
 
@@ -146,11 +180,19 @@ The paper derives the full theoretical specification: EOQ→LLM mapping, the 41.
 
 The current release implements the full paper specification: the measurement pipeline (fold, baseline, `L*`, `φ`), the billing gauge (`billProgress`), the rate-lamp interrupt meter with wall-position scaling, model-tier-specific pricing ratios, deep-water latching, and the restart recommendation signal via dashboard and statusline.
 
+## Uninstall
+
+```bash
+claude plugin uninstall session-watcher@session-watcher
+# Remove state directory (optional):
+rm -rf ~/.session-watcher
+```
+
 ## Test
 
 ```bash
-npm test                 # unit + integration (node:test, 540+ tests)
-npx playwright test      # E2E
+npm test              # unit + integration (node:test)
+npx playwright test   # E2E (requires running server)
 ```
 
 ## Citation

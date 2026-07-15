@@ -12,8 +12,11 @@
 // This hook is BEST-EFFORT: any failure (bad stdin, launch error) must never block or delay the
 // session, so we always exit 0. It coexists with the MCP start_watcher tool (shared state file →
 // health-probe reuse means no double-launch); the hook is the automatic path, the tool the manual one.
-import { pathToFileURL } from 'node:url';
-import { startWatcher } from '../index.js';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { startWatcher } from '../lib/launcher.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Pure decision function — no I/O, unit-tested directly.
 export function launchOptionsFor(payload = {}, baseEnv = process.env) {
@@ -62,7 +65,7 @@ if (isMainModule(import.meta.url, process.argv[1])) {
       // its port. The server opens its own browser and writes its own state file, so the hook needs
       // neither — and must never block session start for the launcher's 10s port-wait on a slow/broken
       // server. This is what keeps the BEST-EFFORT "never delay" promise literally true.
-      await startWatcher(env, { open, transcript, waitForPort: false });
+      await startWatcher(env, { open, transcript, waitForPort: false, serverPath: join(__dirname, '..', 'server.js') });
     } catch {
       // swallow — a hook must never block or fail session start
     } finally {

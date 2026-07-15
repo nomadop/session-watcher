@@ -4,15 +4,23 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
 let tmpDir;
-beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'sw-psrv-')); process.env.CLAUDE_PLUGIN_DATA = tmpDir; });
-afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); delete process.env.CLAUDE_PLUGIN_DATA; });
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), 'sw-psrv-'));
+  initStore(join(tmpDir, 'test.sqlite'));
+});
+afterEach(() => {
+  closeStoreGlobal();
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 async function withServer(opts, fn) {
   const { createServer } = await import('../server.js');
   const { SessionWatcher } = await import('../lib/watcher.js');
   const watcher = new SessionWatcher('/dev/null', 55000, opts.watcherOpts || {});
+  watcher._segmentModel = opts.model || 'test-model';  // non-empty so POST guard passes
   const { server, stopTimers } = createServer({ watcher, pollIntervalMs: 0, sessionId: opts.sid || 'test' });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
@@ -124,4 +132,26 @@ test('GET /api/pricing — preset drift: saved presetId with changed prices → 
     // Drift detected: source should be 'saved' not 'preset'
     assert.equal(get.effective.source, 'saved');
   });
+});
+
+test('POST /api/pricing — no model detected → 409', async () => {
+  const { createServer } = await import('../server.js');
+  const { SessionWatcher } = await import('../lib/watcher.js');
+  const watcher = new SessionWatcher('/dev/null', 55000, {});
+  // _segmentModel stays null — empty string after || '' — triggers guard
+  const { server, stopTimers } = createServer({ watcher, pollIntervalMs: 0, sessionId: 'no-model-test' });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/pricing`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readPrice: 3, writePrice: 15 })
+    });
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.equal(body.error, 'no_model');
+  } finally {
+    stopTimers();
+    await new Promise(r => server.close(r));
+  }
 });

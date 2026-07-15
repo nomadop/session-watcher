@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { resolveProjectDir, probeHealth, stopWatcher, watcherStatus } from '../index.js';
+import { resolveProjectDir, probeHealth, stopWatcher, watcherStatus } from '../lib/launcher.js';
 
 test('resolveProjectDir prefers CLAUDE_PROJECT_DIR, falls back to projects root', () => {
   assert.equal(resolveProjectDir({ CLAUDE_PROJECT_DIR: '/tmp/proj' }), '/tmp/proj');

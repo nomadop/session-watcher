@@ -1,6 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 import { freshLedger, stateKeyOf, matchPendingToSummary, settleableDistanceAfterWatermark } from '../lib/rate-lamp-store.js';
+
+// Module-level SQLite store so setLiveLedger (which calls persistLedger) never writes to ~/.session-watcher.
+const TMP = mkdtempSync(join(tmpdir(), 'sw-rl-pending-'));
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'f', contextCap: 1_000_000, schemaVersion: 2 });
 // G8 (round-5): a FULLY F3-legal summary factory

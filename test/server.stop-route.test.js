@@ -1,19 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
-// Isolate ledger + gate state writes to a temp CLAUDE_PLUGIN_DATA (read lazily per call by the stores,
-// so setting it before importing the server is sufficient — mirrors server.notify-gate.test.js).
+// Initialize a module-level SQLite store so gate/ledger state writes never touch the real
+// ~/.session-watcher. initStore is called once for this test file.
 const TMP = mkdtempSync(join(tmpdir(), 'sw-stoproute-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 import { createServer } from '../server.js';
 import { freshLedger, stateKeyOf } from '../lib/rate-lamp-store.js';
-import { setLiveLedger, getLiveLedger, _resetRateLampManagerForTest, drainPendingStopEvaluations, commitLedgerMutationSync } from '../lib/rate-lamp-manager.js';
+import { setLiveLedger, getLiveLedger, _resetRateLampManagerForTest, _setRateLampManagerTestHooks,
+  drainPendingStopEvaluations, commitLedgerMutationSync } from '../lib/rate-lamp-manager.js';
 import { loadGateState, saveGateState } from '../lib/gate-store.js';
 import { PENDING_STOP_EVALUATIONS_LIMIT } from '../lib/constants.js';
 
@@ -111,9 +116,11 @@ test('(e) POST returns the unified H-A contract (ok/bill:null/gate) — exactly 
 
 // (a) H-A: deep-water empty_burn does NOT fire inline — deferred to reader's authoritative settle.
 // Under H-A the Stop unconditionally pends and lets drain resolve off the reader's summary at N+1.
+// br-shim (Task 4): L_read=43500 → x≈0.791 → br≈0.15 (amber/tier-1); first POST → pending_confirm,
+// not a fire. inDeepWater=(br≥0.10)=true is preserved via mergeLedgerIntoStatus.
 test('(a) H-A: deep-water empty_burn does NOT fire inline — deferred (unconditional pend)', async () => {
   const sid = `sr-${randomUUID()}`;
-  const w = stopWatcher({ L_read: 250500, inDeepWater: true, gateL: 100000 });
+  const w = stopWatcher({ L_read: 43500, inDeepWater: true, gateL: 100000 });
   await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
     seedLedger(sid);
     const r = await post(port);
@@ -237,34 +244,23 @@ test('(i) gate-fire POST carries both root `tier` and `gate.tier`, equal', async
 });
 
 // (j) persist-before-gate-commit (round-8 GPT#4): a ledger-persist failure → 500 AND gate NOT ratcheted.
-// This test uses its OWN CLAUDE_PLUGIN_DATA so it can BLOCK the rate-lamp-state dir (place a FILE where the
-// store needs a directory → writeJsonAtomic's mkdirSync throws ENOTDIR) while leaving the gate-state dir
-// writable. If the gate ratchet were committed BEFORE the ledger persist, the gate file would show
-// maxTierFired=2 even though the ledger throw returned 500 — a silently-consumed alert. The ordering
-// (setLiveLedger first, saveGateState last) means the throw happens BEFORE saveGateState → gate un-ratcheted.
+// With SQLite, we inject a failing writer via _setRateLampManagerTestHooks to simulate a persist error.
+// The ordering invariant: boundedIncrementalAdvance → persistLedger (throws) → error propagates BEFORE
+// saveGateState → gate ratchet is NOT advanced. If persist were called AFTER saveGateState, the gate
+// would show maxTierFired=2 even on the 500 — a silently-consumed alert.
 test('(j) ledger persist failure → 500 AND the gate ratchet is NOT advanced (alert re-fires, not lost)', async () => {
-  const prevEnv = process.env.CLAUDE_PLUGIN_DATA;
-  const jTmp = mkdtempSync(join(tmpdir(), 'sw-jfail-'));
-  process.env.CLAUDE_PLUGIN_DATA = jTmp;
-  try {
-    // Block the rate-lamp-state directory: a regular FILE at that path makes mkdirSync(recursive) throw
-    // ENOTDIR when saveRateLampState tries to create <jTmp>/rate-lamp-state/<sid>.json.
-    writeFileSync(join(jTmp, 'rate-lamp-state'), 'not a dir');
-    const sid = `sr-${randomUUID()}`;
-    const w = stopWatcher({ L_read: 250500, burnRate: 1.2, inDeepWater: true, gateL: 160000 }); // WALL + tier2 gate
-    await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
-      // No seedLedger: advanceRateLampToCurrent itself checkpoints the (fresh) ledger via saveRateLampState,
-      // which throws at the blocked dir — BEFORE the handler's saveGateState. That proves the ordering.
-      const res = await fetch(`http://127.0.0.1:${port}/api/notify-gate`, { method: 'POST' });
-      assert.equal(res.status, 500, 'a ledger-persist throw becomes HTTP 500 (error boundary), not a crash');
-      // The gate ratchet must NOT have been committed — saveGateState runs only AFTER the ledger persist,
-      // which threw. So the gate re-fires next turn (visible duplicate) rather than being consumed silently.
-      assert.equal(loadGateState(sid), null, 'gate ratchet NOT advanced: no gate file written before the ledger throw');
-    });
-  } finally {
-    process.env.CLAUDE_PLUGIN_DATA = prevEnv;
-    rmSync(jTmp, { recursive: true, force: true });
-  }
+  const sid = `sr-${randomUUID()}`;
+  const w = stopWatcher({ L_read: 250500, burnRate: 1.2, inDeepWater: true, gateL: 160000 }); // WALL + tier2 gate
+  await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
+    // Inject a throwing writer AFTER withServer's _resetRateLampManagerForTest so it sticks.
+    // No seedLedger: boundedIncrementalAdvance will attempt to persist the fresh ledger → throws.
+    _setRateLampManagerTestHooks({ writer: () => { throw new Error('simulated persist failure'); } });
+    const res = await fetch(`http://127.0.0.1:${port}/api/notify-gate`, { method: 'POST' });
+    assert.equal(res.status, 500, 'a ledger-persist throw becomes HTTP 500 (error boundary), not a crash');
+    // The gate ratchet must NOT have been committed — saveGateState runs only AFTER the ledger persist,
+    // which threw. So the gate re-fires next turn (visible duplicate) rather than being consumed silently.
+    assert.equal(loadGateState(sid), null, 'gate ratchet NOT advanced: gate not written before the ledger throw');
+  });
 });
 
 // ─── v2.2-C3 H-A tests ───────────────────────────────────────────────────────
@@ -307,7 +303,8 @@ test('(l) H-A: WALL resolves inline from live burnRate, no settlement occurs', a
 test('(m) H-A: low deltaW + sub-wall + sub-dw → no stop_hook this POST (empty_burn never inline)', async () => {
   const sid = `sr-${randomUUID()}`;
   // burnRate < 1, dwTurn < DW_TURN_BACKSTOP (2), no gate fire → no inline stop_hook
-  const w = stopWatcher({ burnRate: 0.3, gateL: 100000, L_read: 250500, inDeepWater: true });
+  // br-shim (Task 4): L_read=43500 → br≈0.15 (tier 1, pending_confirm on first POST → not a fire).
+  const w = stopWatcher({ burnRate: 0.3, gateL: 100000, L_read: 43500, inDeepWater: true });
   await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
     seedLedger(sid, { currentTurnDeltaW: 0.5, settledThroughTurnSeq: 3, currentTurnSeq: 4, pendingBillCountSinceBoundary: 0 });
     const r = await post(port, { hook_event_id: 'ev-m1' });
@@ -431,7 +428,9 @@ test('(r) H-A: hook-gap — historical summaries with no pending are marked skip
 // (s) deferred-drain faithfulness: resolved kind matches BOUNDARY snapshot, not live values
 test('(s) H-A: deferred drain resolves from boundary snapshot (billKindAtBoundary), not live values', async () => {
   const sid = `sr-${randomUUID()}`;
-  const w = stopWatcher({ burnRate: 0.3, gateL: 100000 });
+  // br-shim (Task 4): L_read=30000 → br≈0.05 (tier 0); gate does not fire inline, so
+  // alertEvaluatedThroughTurnSeq is NOT pushed up by gateResult — it stays at 4 (from drain).
+  const w = stopWatcher({ burnRate: 0.3, gateL: 100000, L_read: 30000 });
   await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
     // A summary with billKindAtBoundary='empty_burn' + inDeepWater=true → resolves to stop_hook
     const summaries = [{ turnSeq: 4, foldedCallSeqStart: 3, foldedCallSeqEnd: 5, deltaW: 50,
@@ -509,62 +508,56 @@ test('(t) same-turn inline WALL + deferred empty_burn = TWO stop_hooks (round-9 
 });
 
 // (u) A12: persist failure leaves hookEventId NOT accepted → retry succeeds (not short-circuited)
+// With SQLite, we inject a failing writer via _setRateLampManagerTestHooks after seeding the ledger,
+// then clear it ("unblock") before the retry.
 test('(u) A12: persist failure → 503 persist_failed; hookEventId NOT accepted; retry processes', async () => {
-  const prevEnv = process.env.CLAUDE_PLUGIN_DATA;
-  const uTmp = mkdtempSync(join(tmpdir(), 'sw-u-a12-'));
-  process.env.CLAUDE_PLUGIN_DATA = uTmp;
-  try {
-    const sid = `sr-${randomUUID()}`;
-    const w = stopWatcher({ burnRate: 0.3, gateL: 100000 });
+  const sid = `sr-${randomUUID()}`;
+  const w = stopWatcher({ burnRate: 0.3, gateL: 100000 });
 
-    await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
-      // Seed a valid ledger first (in a writable state so manager advance succeeds)
-      seedLedger(sid, { settledThroughTurnSeq: 3, currentTurnSeq: 4, pendingBillCountSinceBoundary: 0 });
+  await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
+    // Seed a valid ledger first (in a writable state so advance + initial seed succeed)
+    seedLedger(sid, { settledThroughTurnSeq: 3, currentTurnSeq: 4, pendingBillCountSinceBoundary: 0 });
 
-      // NOW block the rate-lamp-state directory: remove the directory that seedLedger created,
-      // then place a regular FILE at that path so mkdirSync(recursive) throws ENOTDIR when
-      // commitLedgerMutationSync → persistLedger → saveRateLampState tries to write the ledger.
-      rmSync(join(uTmp, 'rate-lamp-state'), { recursive: true, force: true });
-      writeFileSync(join(uTmp, 'rate-lamp-state'), 'not a dir');
+    // NOW inject the failing writer — simulates disk full / ENOTDIR for commitLedgerMutationSync.
+    // boundedIncrementalAdvance may elide writing (same content as seed), so the failure surfaces
+    // at commitLedgerMutationSync's synchronous persist inside stop-enqueue.
+    _setRateLampManagerTestHooks({ writer: () => { throw new Error('simulated persist failure'); } });
 
-      // Attempt a Stop — persist should fail
-      const res1 = await postRaw(port, { hook_event_id: 'ev-u-fail' });
-      assert.equal(res1.status, 503, 'persist failure returns 503');
-      const body1 = await res1.json();
-      assert.equal(body1.degraded, 'persist_failed', 'degraded reason is persist_failed');
+    // Attempt a Stop — persist should fail
+    const res1 = await postRaw(port, { hook_event_id: 'ev-u-fail' });
+    assert.equal(res1.status, 503, 'persist failure returns 503');
+    const body1 = await res1.json();
+    assert.equal(body1.degraded, 'persist_failed', 'degraded reason is persist_failed');
 
-      // The hookEventId must NOT be in the live ledger's processedIds (A12: mutation never-happened)
-      const led = getLiveLedger(sid);
-      assert.ok(!led.recentProcessedHookEventIds.includes('ev-u-fail'),
-        'hookEventId NOT accepted on persist failure');
-      assert.equal(led.pendingStopEvaluations.length, 0,
-        'no pending was added (mutation rolled back)');
+    // The hookEventId must NOT be in the live ledger's processedIds (A12: mutation never-happened)
+    const led = getLiveLedger(sid);
+    assert.ok(!led.recentProcessedHookEventIds.includes('ev-u-fail'),
+      'hookEventId NOT accepted on persist failure');
+    assert.equal(led.pendingStopEvaluations.length, 0,
+      'no pending was added (mutation rolled back)');
 
-      // Unblock: remove the blocking file so persist works again
-      const { unlinkSync: unlink } = await import('node:fs');
-      unlink(join(uTmp, 'rate-lamp-state'));
+    // "Unblock": clear the failing writer so persist works again
+    _setRateLampManagerTestHooks({ writer: null });
 
-      // Retry with the SAME hookEventId — should process (not short-circuited by alreadyAccepted)
-      const res2 = await postRaw(port, { hook_event_id: 'ev-u-fail' });
-      assert.equal(res2.status, 200, 'retry succeeds after persist recovers');
-      const body2 = await res2.json();
-      assert.equal(body2.ok, true, 'retry accepted');
-      const led2 = getLiveLedger(sid);
-      assert.ok(led2.recentProcessedHookEventIds.includes('ev-u-fail'),
-        'hookEventId accepted on retry');
-      assert.equal(led2.pendingStopEvaluations.length, 1,
-        'pending enqueued on retry');
-    });
-  } finally {
-    process.env.CLAUDE_PLUGIN_DATA = prevEnv;
-    rmSync(uTmp, { recursive: true, force: true });
-  }
+    // Retry with the SAME hookEventId — should process (not short-circuited by alreadyAccepted)
+    const res2 = await postRaw(port, { hook_event_id: 'ev-u-fail' });
+    assert.equal(res2.status, 200, 'retry succeeds after persist recovers');
+    const body2 = await res2.json();
+    assert.equal(body2.ok, true, 'retry accepted');
+    const led2 = getLiveLedger(sid);
+    assert.ok(led2.recentProcessedHookEventIds.includes('ev-u-fail'),
+      'hookEventId accepted on retry');
+    assert.equal(led2.pendingStopEvaluations.length, 1,
+      'pending enqueued on retry');
+  });
 });
 
 // (v) B3: cache_unstable never re-thresholded — negative deltaW resolves as cache_unstable, NOT empty_burn
 test('(v) B3: cache_unstable boundary (negative deltaW) resolves as cache_unstable, never re-thresholded to empty_burn', async () => {
   const sid = `sr-${randomUUID()}`;
-  const w = stopWatcher({ burnRate: 0.3, gateL: 100000 });
+  // br-shim (Task 4): L_read=30000 → br≈0.05 (tier 0); gate does not fire inline, so
+  // alertEvaluatedThroughTurnSeq is NOT pushed up — it stays at 4 (from drain), matching the assertion.
+  const w = stopWatcher({ burnRate: 0.3, gateL: 100000, L_read: 30000 });
   await withServer({ sessionId: sid, watcher: w }, async ({ port }) => {
     // A summary with deltaL<0 → billKindAtBoundary='cache_unstable' and a NEGATIVE deltaW.
     // If the drain naively re-thresholded deltaW < kStable, it would falsely classify as empty_burn.

@@ -4,12 +4,15 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Point the ledger checkpoint dir at a temp CLAUDE_PLUGIN_DATA so the disk-touching advance tests below
-// (persistLedger / disk-hydrate) never write into the real ~/.session-watcher. pathFor() reads the env
-// lazily per-call, so setting it before the tests run is enough.
+// Initialize a module-level SQLite store so disk-touching advance tests (persistLedger / disk-hydrate)
+// never write into the real ~/.session-watcher.
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 const TMP = mkdtempSync(join(tmpdir(), 'sw-rl-settle-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 import { freshLedger, stateKeyOf, applyFoldedCallSample, settleMeterAtBoundary, settleBatchAtBoundary } from '../lib/rate-lamp-store.js';
 import { advanceRateLampToCurrent, setLiveLedger, _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
@@ -205,28 +208,22 @@ test('C2-1 #5: CROSS-POLL boundary settles with the REAL deltaW read from the PE
   assert.equal(s5.billKindAtBoundary, 'non_idle_burn', 'real burn 50000 ≥ kStable 940 ⟹ non_idle');
 });
 
-test('C2-1 #6: per-committed-boundary display latch update uses deepWaterDisplay hysteresis (H-pt4)', () => {
+test('C2-1 #6: per-committed-boundary inDeepWater uses br >= BR_AMBER (replaces deepWaterDisplay latch)', () => {
   _resetRateLampManagerForTest();
-  // L_exit_fullCarry = (1 + 2·√(2·10·940/250000))·250000 ≈ 387113; hyst = max(2048, 0.02·10·250000) = 50000.
+  // With cRatio=10, kStable=940, lBase=250000: dhat=√(2·10·940/250000)=0.274
+  // Need br >= 0.10 at boundary. mf≈0.209, so pp >= 0.478, u >= 2.567, x >= 1.703
+  // Use L_read=430000 → x=1.72, u=2.628, pp=0.504, br=0.209*0.504=0.105 > 0.10
   const lBase = 250000;
-  const xExit = 1 + 2 * Math.sqrt(2 * 10 * 940 / lBase);
-  const L_exit = xExit * lBase;
-  const hyst = 50000;
-  assert.ok(420000 > L_exit, 'precondition: enter boundary L is above the exit line');
-  assert.ok(360000 < L_exit && 360000 >= L_exit - hyst, 'precondition: recede boundary L sits INSIDE the deadband');
-  assert.ok(!(360000 >= L_exit), 'precondition: a RAW compare would drop the latch at 360000 — hysteresis must not');
 
   setLiveLedger(SID, seedLedger(1));
-  // Poll ①: turn 1 climbs to 420000 (above exit) → boundary crosses → latch enters true.
+  // Poll ①: turn 1 climbs to 430000 → boundary settles with br-based inDeepWater.
   const poll1 = fakeWatcher({ turnSeq: 2, foldedSeq: 3, baselineTotal: lBase, samples: [
-    rs(1, 0.1, 410000, 1), rs(2, 0.1, 420000, 1), rs(3, 0.1, 425000, 2),
+    rs(1, 0.1, 420000, 1), rs(2, 0.1, 430000, 1), rs(3, 0.1, 435000, 2),
   ] });
   const r1 = advanceRateLampToCurrent(poll1, SID, { forcePoll: false });
-  assert.equal(r1.ledger.deepWaterDisplayLatched, true, 'latch ENTERS true on the committed boundary crossing the exit line');
-  // Poll ②: a cache-expiry dip recedes turn 2 to 360000 — INSIDE the deadband. Hysteresis keeps it latched.
-  const poll2 = fakeWatcher({ turnSeq: 3, foldedSeq: 5, baselineTotal: lBase, samples: [
-    rs(4, 0.1, 360000, 2), rs(5, 0.1, 365000, 3),
-  ] });
-  const { ledger } = advanceRateLampToCurrent(poll2, SID, { forcePoll: false });
-  assert.equal(ledger.deepWaterDisplayLatched, true, 'receding only INTO the deadband keeps it latched (hysteresis, no flicker — a raw compare would drop it)');
+  // The settled turn summary at boundary should reflect inDeepWater based on br
+  const summary = r1.ledger.settledTurnSummaries?.find(s => s.turnSeq === 1);
+  assert.ok(summary, 'turn 1 settled');
+  // With x=430000/250000=1.72, br ≈ 0.105 > BR_AMBER
+  assert.equal(summary.inDeepWaterAtBoundary, true, 'boundary inDeepWater is br-based (br >= 0.10 at x=1.72)');
 });

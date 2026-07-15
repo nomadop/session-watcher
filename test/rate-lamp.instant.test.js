@@ -68,11 +68,11 @@ test('computeRateLampInstant reliable bundle carries the §4.1 fields', () => {
     { scenario: 'fullCarry' });
   assert.equal(inst.reliable, true);
   for (const f of ['basis','L_read','L_cap','B_post','B_rebuild','C_RATIO','x_display','burnRate',
-                   'hBreak','xExit','L_exit_fullCarry','inDeepWater','rateWall']) {
+                   'hBreak','xExit','L_exit_fullCarry','rateWall']) {
     assert.ok(f in inst, `field ${f} present`);
   }
   assert.equal(inst.basis, 'fullCarry');
-  assert.equal(inst.inDeepWater, inst.L_read >= inst.L_exit_fullCarry);
+  // inDeepWater removed: now br-based, computed in mergeLedgerIntoStatus (not in instant)
 });
 
 test('22d: kStable missing → reliable=false, insufficient_data (no kAvg/kFit fallback)', () => {

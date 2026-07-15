@@ -48,9 +48,10 @@ test('hero diptych renders chart canvas in #sw-hero when landmarks available', a
       L_read: 63000,
       lBase: 42000,
       x_display: 1.5,
-      xEntry: 1.2,
+      xBrAmberL: 1.2,
       xSweet: 1.5,
-      xExit: 2.0,
+      xBrAmberR: 2.0,
+      xBrRedR: 3.5,
       wallP: 11,
       hBreak: 5.2,
       billProgress: 0.45,
@@ -374,7 +375,7 @@ test('no console.error during normal dashboard operation', async ({ page }) => {
       reliable: true, hBreak: 8, billProgress: 0.62, inDeepWater: false,
       currentTurnSeq: 42, billCycleCount: 3,
       C_RATIO: 10, L_read: 137000, lBase: 55000,
-      xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11,
+      xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11,
       band: 'sweet', dhat: 0.6, targetL: 165000, kAvg: 3200,
     },
   };
@@ -415,7 +416,7 @@ test('normal state: all elements visible with valid rateLamp landmarks', async (
       reliable: true, hBreak: 8, billProgress: 0.62, inDeepWater: false,
       currentTurnSeq: 42, billCycleCount: 3,
       C_RATIO: 10, L_read: 137000, lBase: 55000,
-      xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11,
+      xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11,
       band: 'sweet', dhat: 0.6, targetL: 165000, kAvg: 3200,
     },
   };
@@ -534,8 +535,9 @@ test('deep-water state: hero shows deep/wall verdict when x > xExit', async ({ p
       currentTurnSeq: 100, billCycleCount: 5,
       C_RATIO: 10, L_read: 300000, lBase: 55000,
       // x = 300000/55000 ≈ 5.45 which is > xExit (2.2) and > wallP (3.5)
-      xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 3.5,
+      xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.0, wallP: 3.5,
       band: 'wall', dhat: 0.9, targetL: 165000, kAvg: 3200,
+      br: 0.30, mf: 0.38,
     },
   };
 
@@ -584,7 +586,7 @@ test('aux-bar is positioned beneath hero chart canvas with non-zero width', asyn
       reliable: true, hBreak: 8, billProgress: 0.62, inDeepWater: false,
       currentTurnSeq: 42, billCycleCount: 3,
       C_RATIO: 10, L_read: 137000, lBase: 55000,
-      xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11,
+      xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11,
       band: 'sweet',
     },
   };
@@ -633,7 +635,7 @@ test('full bootstrap: store receives first update, all elements updated after tr
       reliable: true, hBreak: 8, billProgress: 0.62, inDeepWater: false,
       currentTurnSeq: 42, billCycleCount: 3,
       C_RATIO: 10, L_read: 137000, lBase: 55000,
-      xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11,
+      xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11,
       band: 'sweet',
     },
   };
@@ -686,9 +688,10 @@ const v2MockStatus = {
     L_read: 63000,
     lBase: 42000,
     x_display: 1.5,
-    xEntry: 1.2,
+    xBrAmberL: 1.2,
     xSweet: 1.5,
-    xExit: 2.0,
+    xBrAmberR: 2.0,
+    xBrRedR: 3.5,
     wallP: 11,
     hBreak: 5.2,
     billProgress: 0.45,

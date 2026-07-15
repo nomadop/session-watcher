@@ -36,3 +36,6 @@ playwright-report/
 _archive/
 scripts/
 arxiv-submit/
+
+# dist/ is tracked in git (bundled plugin artifacts)
+!dist/

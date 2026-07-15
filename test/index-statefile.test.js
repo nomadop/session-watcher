@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { stateFileFor } from '../index.js';
+import { stateFileFor } from '../lib/launcher.js';
 
 const PORT_DIR = join(homedir(), '.session-watcher');
 

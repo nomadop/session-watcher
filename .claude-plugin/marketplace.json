@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "session-watcher",
+  "owner": { "name": "nomadop" },
+  "description": "Session Watcher — EOQ context restart advisor",
+  "plugins": [
+    {
+      "name": "session-watcher",
+      "description": "EOQ-optimal context restart advisor for Claude Code",
+      "source": "./"
+    }
+  ]
+}

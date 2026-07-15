@@ -1,18 +1,25 @@
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
-// GPT#7: point the ledger checkpoint dir at a temp CLAUDE_PLUGIN_DATA so the disk-touching advance
-// tests (setLiveLedger / saveRateLampState / the disk-hydrate) never write into the real ~/.session-watcher.
-// pathFor() in the store reads process.env lazily per-call, so setting it before the tests run is enough.
-const TMP = mkdtempSync(join(tmpdir(), 'sw-rl-mgr-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+// Initialize a fresh SQLite store for each test to isolate persistence from ~/.session-watcher.
+let _storeDir;
+beforeEach(() => {
+  _storeDir = mkdtempSync(join(tmpdir(), 'sw-rl-mgr-'));
+  initStore(join(_storeDir, 'test.sqlite'));
+});
+afterEach(() => {
+  closeStoreGlobal();
+  rmSync(_storeDir, { recursive: true, force: true });
+});
 
 import { resolveLedgerForKey, mergeLedgerIntoStatus, recordBillEvent,
-  advanceRateLampToCurrent, setLiveLedger, _resetRateLampManagerForTest, flushPendingPersistsSync } from '../lib/rate-lamp-manager.js';
+  advanceRateLampToCurrent, setLiveLedger, getLiveLedger, _resetRateLampManagerForTest,
+  _setRateLampManagerTestHooks, flushPendingPersistsSync, sweepStaleLedgers,
+  getDebugCounters } from '../lib/rate-lamp-manager.js';
 import { freshLedger, saveRateLampState, stateKeyOf, applyFoldedCallSample } from '../lib/rate-lamp-store.js';
 
 // KEY is the real state key the fakeWatcher's snapshot computes (segment/model/cRatio/fingerprint/cap).
@@ -238,38 +245,64 @@ test('R6-A2 (GPT#1): restart hydrates watcher._turnSeq monotonically from ledger
 // --- #6 (fix wave): per-poll disk write gated on an actual ledger change ---
 // The poll loop calls advanceRateLampToCurrent once per second. Pre-fix it wrote the checkpoint to disk
 // UNCONDITIONALLY every call (~86k identical rewrites/day/session). The SSE emit was already gated on
-// `changed`; only the redundant no-op disk write is eliminated here. We OBSERVE writes by deleting the
-// checkpoint file after the first (real) write and asserting whether a subsequent advance recreates it.
-const LEDGER_FILE = (sid) => join(TMP, 'rate-lamp-state', `${sid}.json`);
+// `changed`; only the redundant no-op disk write is eliminated here. We OBSERVE writes via the
+// getDebugCounters().diskWrites counter (reset by _resetRateLampManagerForTest) — SQLite-compatible,
+// no file-sentinel needed.
 
 test('#6: first poll advance writes, a second no-change advance does NOT rewrite the checkpoint', () => {
-  _resetRateLampManagerForTest();                              // clears _ledgers AND the write-elision cache
+  _resetRateLampManagerForTest();                              // clears _ledgers, write-elision cache, AND counters
   const SID6 = 'sid-poll-gate';
-  // Seed the DISK only (saveRateLampState bypasses the elision cache), mimicking a fresh process whose first
-  // poll hydrates from disk. reliable-latched watcher, NO new folded calls, turn unchanged between calls.
+  // Seed the store only (saveRateLampState bypasses the elision cache), mimicking a fresh process whose first
+  // poll hydrates from the store. reliable-latched watcher, NO new folded calls, turn unchanged between calls.
   saveRateLampState(SID6, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 5, billProgress: 0.4 });
   const w = fakeWatcher({ turnSeq: 5, foldedSeq: 12, samples: [] });
   advanceRateLampToCurrent(w, SID6, { forcePoll: false });     // first advance: cache miss → WRITES, primes cache
-  assert.ok(existsSync(LEDGER_FILE(SID6)), 'first advance wrote the checkpoint');
-  rmSync(LEDGER_FILE(SID6), { force: true });                  // sentinel: any subsequent write recreates it
+  flushPendingPersistsSync();                                  // flush write-behind so counter reflects the write
+  const writesAfterFirst = getDebugCounters().diskWrites;
+  assert.ok(writesAfterFirst >= 1, 'first advance wrote the checkpoint (diskWrites incremented)');
   advanceRateLampToCurrent(w, SID6, { forcePoll: false });     // no new call, no turn change → must NOT write
-  assert.equal(existsSync(LEDGER_FILE(SID6)), false, 'a no-op poll advance did not rewrite the checkpoint (gate works)');
+  flushPendingPersistsSync();                                  // flush: if anything was enqueued, it fires now
+  assert.equal(getDebugCounters().diskWrites, writesAfterFirst, 'a no-op poll advance did not rewrite the checkpoint (gate works)');
 });
 
 test('#6: an advance that DOES change the ledger still writes (gate never suppresses a real change)', () => {
   _resetRateLampManagerForTest();
   const SID6 = 'sid-poll-gate-change';
-  // First: latch with no new call to prime the file + gate snapshot.
+  // First: latch with no new call to prime the store + gate snapshot.
   const wIdle = fakeWatcher({ turnSeq: 5, foldedSeq: 12, samples: [] });
   setLiveLedger(SID6, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 5, billProgress: 0.4, lastBurnRate: 0.5 });
   advanceRateLampToCurrent(wIdle, SID6, { forcePoll: false });
-  flushPendingPersistsSync(); // C5a: write-behind flush so the file exists before we delete it
-  rmSync(LEDGER_FILE(SID6), { force: true });                  // sentinel
+  flushPendingPersistsSync(); // C5a: write-behind flush
+  const writesBeforeChange = getDebugCounters().diskWrites;
   // Now a genuinely new folded call (seq 13) arrives → the ledger integrates and MUST be persisted.
   const wNew = fakeWatcher({ turnSeq: 6, foldedSeq: 13,
     samples: [{ seq: 13, reliable: true, burnRate: 0.9, L_read: 320000, turnSeq: 6 }] });
   const { ledger } = advanceRateLampToCurrent(wNew, SID6, { forcePoll: false });
   flushPendingPersistsSync(); // C5a: write-behind → flush to verify the write happens
-  assert.ok(existsSync(LEDGER_FILE(SID6)), 'a real ledger change wrote the checkpoint (gate did not suppress it)');
+  assert.ok(getDebugCounters().diskWrites > writesBeforeChange, 'a real ledger change wrote the checkpoint (gate did not suppress it)');
   assert.equal(ledger.lastAppliedFoldedCallSeq, 13, 'the new call was integrated (cursor advanced)');
+});
+
+test('RV-C8: sweepStaleLedgers evicts entries older than TTL', () => {
+  _resetRateLampManagerForTest();
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  let now = 1_000_000_000_000;
+  // Suppress disk writes (setLiveLedger calls persistLedger internally)
+  _setRateLampManagerTestHooks({ nowMono: () => now, writer: () => {} });
+
+  // Set two sessions (writer hook suppresses disk I/O)
+  setLiveLedger('session-old', { stateKey: 'k1', ledgerRevision: 1 });
+  setLiveLedger('session-new', { stateKey: 'k2', ledgerRevision: 1 });
+
+  // Advance time past TTL
+  now += SEVEN_DAYS_MS + 1000;
+
+  // Touch session-new (simulates active use)
+  getLiveLedger('session-new'); // access refreshes timestamp
+
+  // Sweep
+  const evicted = sweepStaleLedgers();
+  assert.equal(evicted, 1, 'one stale ledger evicted');
+  assert.equal(getLiveLedger('session-old'), null, 'old session gone');
+  assert.ok(getLiveLedger('session-new') !== null, 'new session retained');
 });

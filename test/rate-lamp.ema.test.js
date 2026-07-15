@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeTargetL, updatePerCallEma, mergeLedgerIntoStatus } from '../lib/rate-lamp-manager.js';
-import { renderCountdown, renderDelta, renderU } from '../lib/statusline-format.js';
+import { updatePerCallEma, mergeLedgerIntoStatus } from '../lib/rate-lamp-manager.js';
+import { renderDelta, renderU } from '../lib/statusline-format.js';
 import { freshLedger, stateKeyOf } from '../lib/rate-lamp-store.js';
 
 // ── updatePerCallEma: per-call EMA (alpha=0.5) ───────────────────────────────
@@ -62,43 +62,6 @@ test('per-call EMA: non-finite L returns current ema unchanged', () => {
   assert.equal(state.prevL, 50000, 'prevL unchanged');
 });
 
-// ── renderCountdown: prefers gEma, falls back to kAvg ─────────────────────────
-
-test('countdown: gEma >= 1, target > L → ceil((target-L)/gEma)', () => {
-  const rl = { targetL: 110000, gEma: 3000, kAvg: 5000 };
-  assert.equal(renderCountdown(rl, 95000), '~05t'); // uses gEma: ceil(15000/3000) = 5
-});
-
-test('countdown: gEma null → falls back to kAvg', () => {
-  const rl = { targetL: 110000, gEma: null, kAvg: 5000 };
-  assert.equal(renderCountdown(rl, 95000), '~03t'); // ceil(15000/5000) = 3
-});
-
-test('countdown: gEma=0 → falls back to kAvg', () => {
-  const rl = { targetL: 110000, gEma: 0, kAvg: 5000 };
-  assert.equal(renderCountdown(rl, 95000), '~03t');
-});
-
-test('countdown: target <= L → ~00t (already past target)', () => {
-  const rl = { targetL: 100000, kAvg: 3000 };
-  assert.equal(renderCountdown(rl, 105000), '~00t');
-});
-
-test('countdown: kAvg missing or <= 0, no gEma → ---t', () => {
-  assert.equal(renderCountdown({ targetL: 100000 }, 50000), '---t');
-  assert.equal(renderCountdown({ targetL: 100000, kAvg: 0 }, 50000), '---t');
-  assert.equal(renderCountdown({ targetL: 100000, kAvg: -1 }, 50000), '---t');
-});
-
-test('countdown: result > 99 → +99t', () => {
-  const rl = { targetL: 500000, kAvg: 1000 };
-  assert.equal(renderCountdown(rl, 100000), '+99t'); // ceil(400000/1000) = 400
-});
-
-test('countdown: targetL missing → ---t', () => {
-  assert.equal(renderCountdown({ kAvg: 3000 }, 50000), '---t');
-});
-
 // ── renderDelta: prefers gEma, falls back to kAvgFallback ─────────────────────
 
 test('renderDelta: uses gEma when available', () => {
@@ -124,32 +87,6 @@ test('renderDelta: kAvg < 1000 → integer, right-padded', () => {
 
 test('renderDelta: kAvg >= 100000 → Nk format', () => {
   assert.equal(renderDelta(120000, 5000), 'Δ120k');
-});
-
-// ── computeTargetL (unchanged, retained for completeness) ─────────────────────
-
-test('computeTargetL below_entry → lBase * xEntry', () => {
-  const target = computeTargetL({ band: 'below_entry', lBase: 55000, xEntry: 1.2, xExit: 2.0, lCap: 960000 });
-  assert.ok(Math.abs(target - 55000 * 1.2) < 1e-6);
-});
-
-test('computeTargetL sweet zones → lBase * xExit', () => {
-  const t1 = computeTargetL({ band: 'entry_to_sweet', lBase: 55000, xEntry: 1.2, xExit: 2.0, lCap: 960000 });
-  assert.ok(Math.abs(t1 - 55000 * 2.0) < 1e-6);
-});
-
-test('computeTargetL above_exit → lCap', () => {
-  assert.equal(computeTargetL({ band: 'above_exit', lBase: 55000, xEntry: 1.2, xExit: 2.0, lCap: 960000 }), 960000);
-});
-
-test('computeTargetL returns null for unknown band / missing data', () => {
-  assert.equal(computeTargetL({ band: null, lBase: 55000, xEntry: 1.2, xExit: 2.0, lCap: 960000 }), null);
-  assert.equal(computeTargetL({ band: 'below_entry', lBase: NaN, xEntry: 1.2, xExit: 2.0, lCap: 960000 }), null);
-});
-
-test('computeTargetL clamps to lCap when landmark exceeds cap', () => {
-  const target = computeTargetL({ band: 'sweet_to_exit', lBase: 500000, xEntry: 1.2, xExit: 3.0, lCap: 960000 });
-  assert.equal(target, 960000);
 });
 
 // ── Task 3: u-display aligned to frozen kStable (lamp↔u consistency) ─────────
@@ -198,12 +135,11 @@ test('mergeLedgerIntoStatus: dhat derived from kStable, not kAvg', () => {
   assert.notEqual(status.rateLamp.dhat, wrongDhat, 'dhat must NOT use kAvg');
 });
 
-test('mergeLedgerIntoStatus: deep-water forces targetL=min(wallL,lCap) (rent-wall target)', () => {
+test('mergeLedgerIntoStatus: br-based inDeepWater when L far past sweet', () => {
   const cRatio = 10, kStable = 1000, lBase = 50000, kAvg = 2000;
-  // L past kStable's exit but below kAvg's exit — the split that caused 00t
+  // L far past sweet → high br → inDeepWater=true
   const L_read = 125000;
   const lCap = 960000;
-  const wallL = lBase + cRatio * lBase; // 550000
   const status = {
     kAvg,
     baseline: { total: lBase },
@@ -211,13 +147,15 @@ test('mergeLedgerIntoStatus: deep-water forces targetL=min(wallL,lCap) (rent-wal
       reliable: true, C_RATIO: cRatio, L_read, L_cap: lCap,
       kStable, kStableReliable: true, B_post: lBase, B_rebuild: lBase,
       x_display: L_read / lBase,
-      inDeepWater: true, deepWaterDisplayLatched: true,
     },
   };
   const key = JSON.stringify([0, 'claude-opus-4-6', cRatio, 'd0|t50000|k3|T', lCap, 1]);
   const ledger = { ...freshLedger(key, kStable), stateKey: key, kStableFrozen: kStable, currentTurnSeq: 5 };
   mergeLedgerIntoStatus(status, ledger, key);
-  assert.equal(status.rateLamp.targetL, Math.min(wallL, lCap),
-    'deep-water: targetL must be min(wallL, lCap) — the rent-wall, not the old lCap');
-  assert.equal(status.rateLamp.targetL, 550000, 'wallL=lBase*(1+cRatio)=550000 < lCap=960000');
+  assert.ok(Number.isFinite(status.rateLamp.br), 'br is computed');
+  assert.ok(Number.isFinite(status.rateLamp.mf), 'mf is computed');
+  // x=2.5 with cRatio=10, kStable=1000, lBase=50000 → br should exceed BR_AMBER=0.10
+  assert.ok(status.rateLamp.br >= 0.10, `br=${status.rateLamp.br} should be >= 0.10`);
+  assert.equal(status.rateLamp.inDeepWater, true, 'inDeepWater=true when br >= BR_AMBER');
+  assert.equal(status.rateLamp.targetL, undefined, 'targetL no longer produced');
 });

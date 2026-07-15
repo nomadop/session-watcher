@@ -33,52 +33,51 @@ test('u reading: null when L_read is null', () => {
 test('ratchet: previousDomainMax persists within same segment', () => {
   // First call sets max
   const r1 = computeEoqViewport({
-    xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11, xCurrent: 3.0, previousDomainMax: null,
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 3.0, previousDomainMax: null,
   });
-  // max(2.2, 3.0) * 1.2 = 3.6, clamped to min(11, 3.6) = 3.6
-  assert.ok(Math.abs(r1.mainDomain.max - 3.6) < 0.001);
+  // max(3.5, 3.0) * 1.2 = 4.2, clamped to min(11, 4.2) = 4.2
+  assert.ok(Math.abs(r1.mainDomain.max - 4.2) < 0.001);
 
   // Second call with lower xCurrent — ratchet holds at previous max
   const r2 = computeEoqViewport({
-    xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11, xCurrent: 1.5, previousDomainMax: r1.mainDomain.max,
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.5, previousDomainMax: r1.mainDomain.max,
   });
-  assert.ok(Math.abs(r2.mainDomain.max - 3.6) < 0.001);
+  assert.ok(Math.abs(r2.mainDomain.max - 4.2) < 0.001);
 });
 
 test('ratchet: null previousDomainMax allows fresh computation (segment change)', () => {
   // After segment change, previousDomainMax is reset to null
   const r = computeEoqViewport({
-    xEntry: 1.3, xSweet: 1.6, xExit: 2.2, wallP: 11, xCurrent: 1.5, previousDomainMax: null,
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.5, previousDomainMax: null,
   });
-  // max(2.2, 1.5) * 1.2 = 2.64, no ratchet
-  assert.ok(Math.abs(r.mainDomain.max - 2.64) < 0.001);
+  // max(3.5, 1.5) * 1.2 = 4.2, no ratchet
+  assert.ok(Math.abs(r.mainDomain.max - 4.2) < 0.001);
 });
 
 // --- Test: computeEoqViewport domain used for curve sampling ---
 
-test('viewport domain min starts below entry (0.85*xEntry)', () => {
+test('viewport domain min always starts at 1', () => {
   const r = computeEoqViewport({
-    xEntry: 2.0, xSweet: 2.5, xExit: 3.0, wallP: 11, xCurrent: 2.3, previousDomainMax: null,
+    xBrAmberR: 3.0, xSweet: 2.5, xBrRedR: 4.0, wallP: 11, xCurrent: 2.3, previousDomainMax: null,
   });
-  // min = max(1, 2.0 * 0.85) = 1.7
-  assert.ok(Math.abs(r.mainDomain.min - 1.7) < 0.001);
+  // min = 1 (always starts from origin so marker is never outside viewport)
+  assert.ok(Math.abs(r.mainDomain.min - 1) < 0.001);
 });
 
-test('viewport domain for curve: samples from domain.min not from 1', () => {
+test('viewport domain for curve: starts at 1, includes full range to current', () => {
   const r = computeEoqViewport({
-    xEntry: 2.0, xSweet: 2.5, xExit: 3.0, wallP: 11, xCurrent: 2.3, previousDomainMax: null,
+    xBrAmberR: 3.0, xSweet: 2.5, xBrRedR: 4.0, wallP: 11, xCurrent: 2.3, previousDomainMax: null,
   });
-  // Domain should start above 1, so curve fills the focused viewport
-  assert.ok(r.mainDomain.min > 1, `Expected min > 1, got ${r.mainDomain.min}`);
+  // Domain starts at 1, max covers xBrRedR with headroom: max(4.0, 2.3)*1.2 = 4.8
+  assert.ok(Math.abs(r.mainDomain.min - 1) < 0.001);
+  assert.ok(r.mainDomain.max >= 4.0 * 1.2 - 0.01, `Expected max >= 4.8, got ${r.mainDomain.max}`);
 });
 
-// --- Test: wallP vertical line removed from datasets ---
-// (This is a structural/DOM test note — verified visually + in buildChart flow)
+// --- Test: dataset count ---
 
-test('dataset indices after wallP removal: amber dot is at index 4', () => {
-  // After removing wallP line (was index 4), the amber dot shifts from 5 to 4
-  // Verify by counting expected datasets:
-  // 0: EOQ curve, 1: xEntry line, 2: xSweet line, 3: xExit line, 4: amber dot
-  const expectedDatasetCount = 5;
-  assert.equal(expectedDatasetCount, 5, 'Should have 5 datasets after removing wallP line');
+test('dataset indices: 7 datasets (0-6) with 4 landmark lines', () => {
+  // 0: EOQ curve, 1: br=-10% line, 2: br=0 (sweet) line, 3: br=+10% line,
+  // 4: br=+25% line, 5: amber dot (current x), 6: horizontal cost line
+  const expectedDatasetCount = 7;
+  assert.equal(expectedDatasetCount, 7, 'Should have 7 datasets (indices 0-6)');
 });

@@ -4,13 +4,18 @@ import { writeFileSync, appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
-// GPT#7: isolate the ledger checkpoint dir to a temp CLAUDE_PLUGIN_DATA so setLiveLedger /
-// advanceRateLampToCurrent / saveRateLampState never write into the real ~/.session-watcher. pathFor()
-// in the store reads process.env lazily per-call, so setting it before the tests run is sufficient.
+// Initialize a module-level SQLite store so saveRateLampState / advanceRateLampToCurrent
+// never write into the real ~/.session-watcher. initStore is called once; the store lives
+// for the duration of this test file. _resetRateLampManagerForTest() within tests clears
+// the in-memory manager state (not the store) — same isolation contract as the old env var.
 const TMP = mkdtempSync(join(tmpdir(), 'sw-srv-rl-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
+initStore(join(TMP, 'test.sqlite'));
+process.on('exit', () => {
+  try { closeStoreGlobal(); } catch {}
+  try { rmSync(TMP, { recursive: true, force: true }); } catch {};
+});
 
 import { SessionWatcher } from '../lib/watcher.js';
 import { createServer } from '../server.js';
@@ -154,7 +159,8 @@ test('G4-2: /api/status xExit/inDeepWater derive from the FROZEN kStable, matchi
     const j = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
     assert.ok(Math.abs(j.rateLamp.xExit - expectedXExit) < 1e-9, 'API xExit computed from the FROZEN kStable');
     assert.equal(j.rateLamp.kStable, FROZEN, 'API kStable overridden to the frozen value');
-    assert.equal(j.rateLamp.inDeepWater, j.rateLamp.L_read >= expectedXExit * total, 'inDeepWater consistent with frozen xExit');
+    // inDeepWater is now br-based (br >= 0.10), not xExit-threshold-based
+    assert.equal(j.rateLamp.inDeepWater, Number.isFinite(j.rateLamp.br) && j.rateLamp.br >= 0.10, 'inDeepWater consistent with br >= BR_AMBER');
     // Single source: the Stop route's advanceRateLampToCurrent status shows the identical frozen xExit.
     const { status } = advanceRateLampToCurrent(w, sid, { forcePoll: false });
     assert.ok(Math.abs(status.rateLamp.xExit - j.rateLamp.xExit) < 1e-9, 'advance() and /api/status single-source the frozen xExit');

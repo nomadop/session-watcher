@@ -4,56 +4,50 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { initStore, closeStoreGlobal } from '../lib/store.js';
 
-let tmpDir;
+let dir;
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'sw-pricing-'));
-  process.env.CLAUDE_PLUGIN_DATA = tmpDir;
+  dir = mkdtempSync(join(tmpdir(), 'sw-pricing-'));
+  initStore(join(dir, 'test.sqlite'));
 });
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-  delete process.env.CLAUDE_PLUGIN_DATA;
+  closeStoreGlobal();
+  rmSync(dir, { recursive: true, force: true });
 });
 
-test('loadPricing returns null when no file exists', async () => {
-  const { loadPricing } = await import('../lib/pricing-store.js');
-  assert.equal(loadPricing('test-session'), null);
+test('loadPricingOverride returns null when nothing saved', async () => {
+  const { loadPricingOverride } = await import('../lib/pricing-store.js');
+  assert.equal(loadPricingOverride('claude-sonnet-4'), null);
 });
 
-test('savePricing writes and loadPricing reads back', async () => {
-  const { savePricing, loadPricing } = await import('../lib/pricing-store.js');
-  const result = savePricing('test-session', { readPrice: 0.30, writePrice: 3.00 });
-  assert.equal(result.ratio, 10);
-  assert.equal(result.readPrice, 0.30);
-  assert.equal(result.writePrice, 3.00);
-  assert(result.savedAt);
-  const loaded = loadPricing('test-session');
-  assert.deepEqual(loaded, result);
+test('savePricingOverride + loadPricingOverride roundtrip', async () => {
+  const { savePricingOverride, loadPricingOverride } = await import('../lib/pricing-store.js');
+  const result = savePricingOverride('claude-sonnet-4', { readPrice: 3, writePrice: 15 });
+  assert.equal(result.ratio, 5);
+  assert.equal(result.readPrice, 3);
+  const loaded = loadPricingOverride('claude-sonnet-4');
+  assert.equal(loaded.ratio, 5);
+  assert.ok(loaded.savedAt);
 });
 
-test('savePricing rejects invalid input', async () => {
-  const { savePricing } = await import('../lib/pricing-store.js');
-  assert.throws(() => savePricing('s', { readPrice: 0, writePrice: 3 }), /> 0/);
-  assert.throws(() => savePricing('s', { readPrice: 0.3, writePrice: -1 }), /> 0/);
-  assert.throws(() => savePricing('s', { readPrice: Infinity, writePrice: 3 }), /finite/);
-  assert.throws(() => savePricing('s', { readPrice: 3, writePrice: 0.3 }), />= 1/);
+test('savePricingOverride rejects invalid input', async () => {
+  const { savePricingOverride } = await import('../lib/pricing-store.js');
+  assert.throws(() => savePricingOverride('m', { readPrice: 0, writePrice: 3 }), /> 0/);
+  assert.throws(() => savePricingOverride('m', { readPrice: 3, writePrice: -1 }), /> 0/);
+  assert.throws(() => savePricingOverride('m', { readPrice: Infinity, writePrice: 3 }), /finite/);
+  assert.throws(() => savePricingOverride('m', { readPrice: 3, writePrice: 0.3 }), />= 1/);
 });
 
-test('deletePricing removes saved file', async () => {
-  const { savePricing, deletePricing, loadPricing } = await import('../lib/pricing-store.js');
-  savePricing('test-session', { readPrice: 0.30, writePrice: 3.00 });
-  deletePricing('test-session');
-  assert.equal(loadPricing('test-session'), null);
+test('deletePricingOverride removes saved config', async () => {
+  const { savePricingOverride, deletePricingOverride, loadPricingOverride } = await import('../lib/pricing-store.js');
+  savePricingOverride('opus', { readPrice: 15, writePrice: 75 });
+  deletePricingOverride('opus');
+  assert.equal(loadPricingOverride('opus'), null);
 });
 
-test('deletePricing is no-op when nothing saved', async () => {
-  const { deletePricing } = await import('../lib/pricing-store.js');
-  assert.doesNotThrow(() => deletePricing('test-session'));
-});
-
-test('savePricing stores presetId when provided', async () => {
-  const { savePricing, loadPricing } = await import('../lib/pricing-store.js');
-  savePricing('test-preset', { readPrice: 15, writePrice: 75, presetId: 'opus-4' });
-  const loaded = loadPricing('test-preset');
-  assert.equal(loaded.presetId, 'opus-4');
+test('savePricingOverride stores presetId', async () => {
+  const { savePricingOverride, loadPricingOverride } = await import('../lib/pricing-store.js');
+  savePricingOverride('opus', { readPrice: 15, writePrice: 75, presetId: 'opus-4' });
+  assert.equal(loadPricingOverride('opus').presetId, 'opus-4');
 });
