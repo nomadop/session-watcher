@@ -1,6 +1,6 @@
 {
   "name": "session-watcher",
-  "description": "EOQ-optimal context restart advisor for Claude Code — statusline, dashboard, and MCP tools with zero context pollution.",
+  "description": "EOQ-optimal context restart advisor for Claude Code \u2014 statusline, dashboard, and MCP tools with zero context pollution.",
   "version": "0.3.0",
   "author": {
     "name": "nomad"
@@ -8,6 +8,14 @@
   "homepage": "https://github.com/nomadop/session-watcher",
   "repository": "https://github.com/nomadop/session-watcher",
   "license": "MIT",
+  "mcpServers": {
+    "session-watcher": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/index.js"
+      ]
+    }
+  },
   "keywords": [
     "claude-code",
     "context-cost",
