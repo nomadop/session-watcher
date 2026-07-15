@@ -26,9 +26,9 @@ test('plugin: .claude-plugin/marketplace.json declares this plugin', () => {
   assert.ok(entry, 'session-watcher listed in plugins');
 });
 
-test('plugin: .mcp.json declares session-watcher MCP server with exec form', () => {
-  const p = join(ROOT, '.mcp.json');
-  assert.ok(existsSync(p), '.mcp.json exists');
+test('plugin: plugin.json declares session-watcher MCP server with exec form', () => {
+  const p = join(ROOT, '.claude-plugin', 'plugin.json');
+  assert.ok(existsSync(p), 'plugin.json exists');
   const m = JSON.parse(readFileSync(p, 'utf8'));
   const srv = m.mcpServers?.['session-watcher'];
   assert.ok(srv, 'session-watcher server declared');

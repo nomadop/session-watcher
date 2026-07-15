@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { get as httpGet } from "node:http";
 var __dirname = dirname(fileURLToPath(import.meta.url));
-var PORT_DIR = join(homedir(), ".session-watcher");
+var PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), ".session-watcher");
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
   if (!s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..")) return "__invalid_session__";
@@ -59,6 +59,12 @@ async function startWatcher(env = process.env, { open = true, transcript, waitFo
   const sessionId = sessionIdOf(env);
   const prev = readState(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
+  if (prev) {
+    try {
+      unlinkSync(stateFileFor(sessionId));
+    } catch {
+    }
+  }
   const dir = resolveProjectDir(env);
   const defaultServerPath = existsSync(join(__dirname, "server.js")) ? join(__dirname, "server.js") : join(__dirname, "..", "server.js");
   const resolvedServerPath = serverPath || defaultServerPath;

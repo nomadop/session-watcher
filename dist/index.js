@@ -127,6 +127,12 @@ async function startWatcher(env = process.env, { open = true, transcript, waitFo
   const sessionId = sessionIdOf(env);
   const prev = readState(sessionId);
   if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
+  if (prev) {
+    try {
+      unlinkSync(stateFileFor(sessionId));
+    } catch {
+    }
+  }
   const dir = resolveProjectDir(env);
   const defaultServerPath = existsSync(join(__dirname, "server.js")) ? join(__dirname, "server.js") : join(__dirname, "..", "server.js");
   const resolvedServerPath = serverPath || defaultServerPath;
@@ -205,7 +211,7 @@ var __dirname, PORT_DIR, stateFileFor;
 var init_launcher = __esm({
   "lib/launcher.js"() {
     __dirname = dirname(fileURLToPath(import.meta.url));
-    PORT_DIR = join(homedir(), ".session-watcher");
+    PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), ".session-watcher");
     stateFileFor = (sessionId) => join(PORT_DIR, `${safeSessionId(sessionId || "default")}.json`);
   }
 });
