@@ -35,6 +35,9 @@ playwright-report/
 # Development scripts and archived data — not part of the release
 _archive/
 arxiv-submit/
+# Native worktrees created by the harness — per-session, never committed
+.claude/worktrees/
+
 
 # dist/ is tracked in git (bundled plugin artifacts)
 !dist/

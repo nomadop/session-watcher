@@ -12,18 +12,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/hooks/warn.js"],
-            "timeout": 5
-          }
-        ]
-      }
     ]
   }
 }

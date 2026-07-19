@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractUsage, providerOf, cRatioFor, contextWindowFor } from '../lib/extract.js';
+import { extractUsage, providerOf, cRatioFor, contextWindowFor, ctpForModel } from '../lib/extract.js';
 
 const claudeLine = {
   type: 'assistant', uuid: 'u1', isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
@@ -39,12 +39,10 @@ test('extractUsage skips a line with an explicit null on a known field', () => {
   assert.equal(extractUsage(nulled), null, 'explicit null on cache_creation_input_tokens → skip');
 });
 
-test('gField is provider-specific: claude=cacheCreation+output, deepseek=input+output', () => {
-  assert.equal(extractUsage(claudeLine).gField, 2446 + 110);
-  const ds = { type: 'assistant', uuid: 'd', isSidechain: false, timestamp: 't',
-    message: { id: 'm', model: 'deepseek-v4-pro', usage: {
-      input_tokens: 3000, output_tokens: 700, cache_creation_input_tokens: 0, cache_read_input_tokens: 5000 } } };
-  assert.equal(extractUsage(ds).gField, 3000 + 700);
+test('v3: extractUsage no longer emits gField', () => {
+  const u = extractUsage({ type: 'assistant', message: { id: 'm', model: 'claude-opus-4-8',
+    usage: { cache_read_input_tokens: 100, output_tokens: 5 } } });
+  assert.equal(u.gField, undefined);
 });
 
 test('extractUsage skips a <synthetic>-model all-zero no-op turn', () => {
@@ -81,4 +79,12 @@ test('provider + ratio + window lookups', () => {
   assert.equal(cRatioFor('some-new-model'), 10); // conservative default, never 0
   assert.equal(contextWindowFor('deepseek-v4-pro'), 1000000);
   assert.equal(contextWindowFor('claude-sonnet-4-6'), 1000000);
+});
+
+test('ctpForModel: prefix-matches calibrated models, falls back to default', () => {
+  assert.deepEqual(ctpForModel('claude-opus-4-8'), { ascii: 2.45, cjk: 0.59 });
+  assert.deepEqual(ctpForModel('deepseek-v4-flash'), { ascii: 3.24, cjk: 0.94 });
+  assert.deepEqual(ctpForModel('gpt-5'), { ascii: 3.0, cjk: 1.0 }); // uncalibrated → DEFAULT_CTP
+  assert.deepEqual(ctpForModel(''), { ascii: 3.0, cjk: 1.0 });
+  assert.deepEqual(ctpForModel(undefined), { ascii: 3.0, cjk: 1.0 });
 });

@@ -1,18 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nucleus, landmarksFor, hBreak, bandOf, landmarks } from '../lib/landmarks.js';
-import { lStar } from '../lib/metrics.js';
 
 const R = 10, K = 940, LBASE = 55000;
-
-test('51: fullCarry (b=1) xStar reproduces v1 lStar (pure reparametrization)', () => {
-  const { xStar } = landmarksFor(R, K, LBASE, LBASE);
-  const lstarFromLandmarks = xStar * LBASE;
-  assert.ok(Math.abs(lstarFromLandmarks - lStar(LBASE, R, K)) < 1e-6,
-    'xStar·lBase === lStar(lBase,cRatio,kAvg)');
-  const dhat = nucleus(R, K, LBASE);
-  assert.ok(Math.abs(xStar - (1 + 2 * dhat)) < 1e-9, 'fullCarry xStar = 1 + 2·Δ̂');
-});
 
 test('52: deadOnly floor offset is b, not fixed 1', () => {
   const lDead = 0.25 * LBASE; // b = 0.25

@@ -819,3 +819,192 @@ test('v2: token label removed from aux', async ({ page }) => {
   const el = await page.$('.sw-aux-toklabel');
   expect(el).toBeNull();
 });
+
+// Regression: history chart Y-axis must auto-expand (ratchet) so the L line is never
+// clipped as L grows within a live segment. Observed once in the wild: L climbed but the
+// y-axis stayed pinned and the line ran off the top. Drives the real store→element→Chart.js
+// path with successively higher L snapshots and asserts the invariant scales.y.max >= max(L)
+// holds at every step (covers both the ratchet doubling math AND Chart.js scale recompute timing).
+test('history chart: Y-axis ratchets up so growing L is never clipped', async ({ page }) => {
+  await page.route('**/api/status', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(v2MockStatus),
+  }));
+  await page.route('**/api/history', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+
+  await page.goto(base);
+  await page.waitForFunction(() => window.__SW_dashboard?.store != null);
+
+  // Feed a single live segment whose L grows past each ratchet doubling boundary.
+  // Boundaries from RATCHET_Y_INIT=200k doubling to CAP=1M: 200k → 400k → 800k → 1M.
+  // Pick L peaks that straddle every boundary, including the cap.
+  const peaks = [150000, 250000, 450000, 850000, 1200000];
+
+  const results = await page.evaluate((peaks) => {
+    const { store } = window.__SW_dashboard;
+    const status = store.getSnapshot().status;
+    const out = [];
+    const history = [];
+    for (let step = 0; step < peaks.length; step++) {
+      const peak = peaks[step];
+      // Append one point per step at the running peak L, same segment (0).
+      history.push({
+        ts: new Date(0).toISOString(), segment: 0, L: peak, Lthreshold: 120000,
+        kAvg: 940, g: 5000, paybackP: 0, phi: 1, miss: false,
+        cacheRead: peak, cacheCreation: 2000,
+      });
+      // Drive the exact production path: store.update → subscribers → element.update → chart.
+      store.update(status, history.slice(), store.getSnapshot().capabilities);
+      const chart = window.__SW_dashboard.charts.history;
+      out.push({ peak, yMax: chart?.scales?.y?.max ?? null });
+    }
+    return out;
+  }, peaks);
+
+  // The y-axis must contain the data at every step (line never clipped).
+  for (const { peak, yMax } of results) {
+    expect(yMax).not.toBeNull();
+    // Cap at 1M is by design: data above cap is allowed to clip, axis pins at 1M.
+    const expectedFloor = Math.min(peak, 1000000);
+    expect(yMax).toBeGreaterThanOrEqual(expectedFloor);
+  }
+
+  // And the axis must have actually grown from its initial 200k as L climbed (not stayed pinned).
+  const finalYMax = results[results.length - 1].yMax;
+  expect(finalYMax).toBeGreaterThan(200000);
+});
+
+// Same invariant (axis always contains data), stressed under several DIFFERENT growth timings.
+// Chart.js only recomputes ticks when options.scales.y.max actually changes; a mistimed update
+// path could leave the axis lagging one step behind the data. Each strategy exercises a distinct
+// update cadence to smoke out that class of timing bug.
+const RATCHET_GROWTH_STRATEGIES = [
+  {
+    name: 'fine-grained gradual creep across a doubling boundary',
+    // Many small increments straddling 200k → 400k: axis must expand on the step that crosses.
+    peaks: [50000, 120000, 180000, 205000, 260000, 340000, 410000],
+  },
+  {
+    name: 'long flat plateau then a sudden jump past two boundaries',
+    // Stays well under 200k, then leaps past 800k in one step (200k→400k→800k in a single update).
+    peaks: [90000, 90000, 90000, 90000, 850000],
+  },
+  {
+    name: 'L landing exactly on each doubling boundary',
+    // Off-by-one risk: yMax === axis boundary. Axis must still contain (>=) the value.
+    peaks: [200000, 400000, 800000, 1000000],
+  },
+  {
+    name: 'climb to the cap then keep growing beyond it',
+    // Past 1M the axis pins at the cap (data clips by design); assert it never regresses.
+    peaks: [300000, 700000, 1000000, 1500000, 2000000],
+  },
+  {
+    name: 'monotonic single-point-per-step ramp',
+    peaks: [100000, 150000, 220000, 300000, 500000, 900000],
+  },
+];
+
+// Same invariant, but with bucket selection linkage interleaved between the data updates.
+// The bucket preview/hover handlers share the ONE history chart instance and both call
+// chart.update('none') on a path that does NOT run the ratchet — so if a preview's update
+// were to race a data-growth update, Chart.js's scale recompute could theoretically lag and
+// clip the L line. Fires sw-bucket-preview (dirty) + sw-bucket-hover between each L bump and
+// asserts the axis still contains the data. (Code tracing says these handlers never touch
+// scales.y — this test locks that in and guards against future coupling.)
+test('history chart Y-axis stays correct when bucket selection events interleave with L growth', async ({ page }) => {
+  await page.route('**/api/status', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(v2MockStatus),
+  }));
+  await page.route('**/api/history', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify([]),
+  }));
+
+  await page.goto(base);
+  await page.waitForFunction(() => window.__SW_dashboard?.store != null);
+
+  const peaks = [120000, 260000, 450000, 850000, 1200000];
+
+  const results = await page.evaluate((peaks) => {
+    const { store } = window.__SW_dashboard;
+    const status = store.getSnapshot().status;
+    const out = [];
+    const history = [];
+    for (let step = 0; step < peaks.length; step++) {
+      const peak = peaks[step];
+      history.push({
+        ts: new Date(0).toISOString(), segment: 0, L: peak, Lthreshold: 120000,
+        kAvg: 940, g: 5000, paybackP: 0, phi: 1, miss: false, foldedSeq: step + 1,
+        cacheRead: peak, cacheCreation: 2000,
+      });
+      // Data-growth update.
+      store.update(status, history.slice(), store.getSnapshot().capabilities);
+      // Interleave bucket linkage BEFORE the next growth: a dirty preview (recomputes
+      // threshold lines + chart.update('none')) and a hover (moves the linkage line).
+      document.dispatchEvent(new CustomEvent('sw-bucket-preview', {
+        detail: { B_preview: 60000, dirty: true },
+      }));
+      document.dispatchEvent(new CustomEvent('sw-bucket-hover', {
+        detail: { lastCallSeq: step + 1, name: 'src/foo.js' },
+      }));
+      // Then a revert preview (dirty:false) to exercise the un-preview branch too.
+      document.dispatchEvent(new CustomEvent('sw-bucket-preview', {
+        detail: { B_preview: 60000, dirty: false },
+      }));
+      const chart = window.__SW_dashboard.charts.history;
+      out.push({ peak, yMax: chart?.scales?.y?.max ?? null });
+    }
+    return out;
+  }, peaks);
+
+  let prevYMax = 0;
+  for (const { peak, yMax } of results) {
+    expect(yMax).not.toBeNull();
+    expect(yMax).toBeGreaterThanOrEqual(Math.min(peak, 1000000));
+    expect(yMax).toBeGreaterThanOrEqual(prevYMax);
+    prevYMax = yMax;
+  }
+});
+
+for (const strat of RATCHET_GROWTH_STRATEGIES) {
+  test(`history chart Y-axis contains growing L — ${strat.name}`, async ({ page }) => {
+    await page.route('**/api/status', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(v2MockStatus),
+    }));
+    await page.route('**/api/history', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify([]),
+    }));
+
+    await page.goto(base);
+    await page.waitForFunction(() => window.__SW_dashboard?.store != null);
+
+    const results = await page.evaluate((peaks) => {
+      const { store } = window.__SW_dashboard;
+      const status = store.getSnapshot().status;
+      const out = [];
+      const history = [];
+      for (const peak of peaks) {
+        history.push({
+          ts: new Date(0).toISOString(), segment: 0, L: peak, Lthreshold: 120000,
+          kAvg: 940, g: 5000, paybackP: 0, phi: 1, miss: false,
+          cacheRead: peak, cacheCreation: 2000,
+        });
+        store.update(status, history.slice(), store.getSnapshot().capabilities);
+        const chart = window.__SW_dashboard.charts.history;
+        out.push({ peak, yMax: chart?.scales?.y?.max ?? null });
+      }
+      return out;
+    }, strat.peaks);
+
+    let prevYMax = 0;
+    for (const { peak, yMax } of results) {
+      expect(yMax).not.toBeNull();
+      // Axis must contain the data (capped at 1M by design — data above cap may clip).
+      expect(yMax).toBeGreaterThanOrEqual(Math.min(peak, 1000000));
+      // Ratchet is monotonic: the axis only ever grows, never shrinks within a segment.
+      expect(yMax).toBeGreaterThanOrEqual(prevYMax);
+      prevYMax = yMax;
+    }
+  });
+}

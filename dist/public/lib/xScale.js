@@ -38,8 +38,11 @@ export function validateLandmarks({ xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP
 /**
  * Unified EOQ viewport computation (spec §11).
  * Single source of truth for main chart domain, overview positions, viewport frame.
+ *
+ * When `previewGroup` is provided (ghost/dual-landmark mode), viewport expands
+ * ephemerally to include preview landmarks + dot without touching the ratchet.
  */
-export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent, previousDomainMax }) {
+export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent, previousDomainMax, previewGroup }) {
   // NaN/undefined guard — all numeric inputs sanitized to safe defaults
   const safeWall = Number.isFinite(wallP) && wallP > 1 ? wallP : 2;
   const safeAmberR = Number.isFinite(xBrAmberR) ? xBrAmberR : 1;
@@ -51,7 +54,7 @@ export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent
   const rawMax = Math.max(safeRedR, safeCurrent) * 1.2;
   let max = Math.min(safeWall, rawMax);
 
-  // Ratchet: only expand within same segment
+  // Ratchet: only expand within same segment (actual data only, ghost never advances ratchet)
   if (previousDomainMax != null && Number.isFinite(previousDomainMax)) {
     max = Math.max(previousDomainMax, max);
   }
@@ -64,6 +67,22 @@ export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent
     max = Math.min(min + 0.3, safeWall);
     // If still too narrow (wall is very close to 1), widen min downward
     if (max - min < 0.3) min = Math.max(1, max - 0.3);
+  }
+
+  // Ghost-aware ephemeral expansion (dual-landmarks spec §3.1):
+  // Expand visible domain to include preview landmarks + dot without touching ratchet.
+  const actualDomainMax = max;
+  if (previewGroup) {
+    const VIEWPORT_EXPAND_FACTOR = 1.12;
+    const candidates = [
+      previewGroup.xRedR, previewGroup.x,
+      safeRedR, safeCurrent,
+    ].filter(Number.isFinite);
+    if (candidates.length) {
+      const ghostMax = Math.max(...candidates) * VIEWPORT_EXPAND_FACTOR;
+      max = Math.max(actualDomainMax, ghostMax);
+      max = Math.min(max, safeWall);  // ghost must not exceed wall
+    }
   }
 
   const mainDomain = { min, max };
@@ -82,5 +101,5 @@ export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent
 
   const isPastWall = safeCurrent > safeWall;
 
-  return { mainDomain, overviewDomain, viewportPct, markerPct, isPastWall };
+  return { mainDomain, overviewDomain, viewportPct, markerPct, isPastWall, actualDomainMax };
 }

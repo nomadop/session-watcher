@@ -8,26 +8,18 @@ import { dirname, join, resolve, basename } from 'node:path';
 import { readdirSync, statSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { SessionWatcher } from './lib/watcher.js';
-import { advanceRateLampToCurrent, boundedIncrementalAdvance, mergeLedgerIntoStatus, getLiveLedger, setLiveLedger, recordBillEvent, recordStopEvent, flushAll, commitLedgerMutationSync, drainPendingStopEvaluations, _processNonce, isEnospcPaused, clearEnospcPause, engageEnospcPause, cancelCoalescedPersist, getDebugCounters, incrementCounter } from './lib/rate-lamp-manager.js';
-import { stateKeyForStatus, settleBatchAtBoundary, enqueuePending, appendProcessedHookId, alreadyAccepted, chooseCurrentStopSummary, pushStopEventRing } from './lib/rate-lamp-store.js';
-import { PENDING_STOP_EVALUATIONS_LIMIT, STOP_ADVANCE_MAX_MS, STOP_ADVANCE_MAX_BYTES, IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS } from './lib/constants.js';
-import { validateLedgerState } from './lib/ledger-schema.js';
-import { landmarks } from './lib/landmarks.js';
-import { detectStockStep } from './lib/rate-lamp.js';
-import { resolveStopMessage } from './lib/stop-message.js';
-import { evaluateGate, rawTierFor } from './lib/notify-gate.js';
-import { loadGateState, saveGateState } from './lib/gate-store.js';
-import { initStore, closeStoreGlobal } from './lib/store.js';
+import { advanceRateLampToCurrent, mergeLedgerIntoStatus, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
+import { stateKeyForStatus } from './lib/rate-lamp-store.js';
+import { IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS } from './lib/constants.js';
+import { initStore, closeStoreGlobal, getStore } from './lib/store.js';
 import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
 import { cRatioFor } from './lib/extract.js';
 import { loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput } from './lib/pricing-store.js';
 import { sweepStaleState, sweepStalePortFiles } from './lib/state-reaper.js';
-import { BR_AMBER, BR_RED } from './lib/bill-regret.js';
 import {
-  renderReliability,
-  tagOf,
   formatLine,
 } from './lib/statusline-format.js';
+import { loadIsIgnored } from './gitignore-loader.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -170,7 +162,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   app.get('/api/status', (req, res, next) => {
     try {
-      const status = watcher.getStatus(parseFitWindow(req.query.fitWindow));
+      const status = watcher.getStatus();
       const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null; // #10: shared key builder
       // round-7 GPT#2/#8: LIVE ledger only — never a raw disk read (that would skip the manager's
       // pulse-clear/turnSeq hydrate and could resurrect a stale alert on the first post-restart GET).
@@ -202,6 +194,10 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     res.json(h);
   });
 
+  app.get('/api/buckets', (req, res, next) => {
+    try { res.json(watcher.getBucketData()); } catch (e) { next(e); }
+  });
+
   app.get('/api/stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(': connected\n\n');
@@ -219,11 +215,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     if (req.socket) req.socket.setTimeout(30000, () => req.socket.destroy());
   });
 
-  // round-7 gemini#2: mount the JSON body parser HERE, physically above the routes — the sessionMismatch
-  // guard reads req.body.session_id, and because that guard tolerates an ABSENT body sid, a missing or
-  // mis-ordered parser would SILENTLY DISABLE the cross-session 409 (fail-open) with no error and no
-  // failing test. Small cap — the body is a tiny {session_id}. A malformed body → express.json throws →
-  // the terminal error middleware returns 500 (daemon stays up). MUST precede app.post('/api/notify-gate').
+  // Mount the JSON body parser for POST routes (pricing). A malformed body → express.json throws →
+  // the terminal error middleware returns 500 (daemon stays up).
   app.use(express.json({ limit: '4kb' }));
 
   // §4 Pricing API — priority: saved > CLI > model_default
@@ -306,216 +299,6 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     res.json(buildPricingResponse());
   });
 
-  // v2.1 notify-gate. POST advances the ratchet + persists; GET /peek is read-only (never mutates,
-  // never consumes an alert — guardrail b). Gate snapshot assembled from getStatus + landmarks.
-  // #8 (v2.2-D): take the ALREADY-computed status (from advanceRateLampToCurrent) — do NOT call
-  // watcher.getStatus() a second time. peek route passes its own fresh getStatus (it has no advance).
-  const gateSnapshotFor = (turnSeq, st) => {
-    const br = st.rateLamp?.br;
-    if (st.rateLamp?.reliable === true && Number.isFinite(br)) {
-      // br-coordinate shim: feed br directly as x, with BR thresholds as landmarks.
-      // Note: reliable=true implies kStableFrozen > 0 (same gate), so br is always
-      // computed via computeBr in mergeLedgerIntoStatus. The "reliable + br=NaN" case
-      // cannot occur in production — the guard is defensive only.
-      return {
-        segment: st.segment, turnSeq, reliable: true,
-        x: br,
-        landmarks: { fullCarry: { xStar: BR_AMBER, dhat: BR_RED - BR_AMBER } },
-      };
-    }
-    // Fallback: calibrating period (kStable not yet frozen) — geometric landmarks.
-    // reliable is false here, so evaluateGate won't fire notifications.
-    // RV-C15: C_RATIO fallback is model-derived, not a hardcoded 10. A deepseek unreliable frame OMITS
-    // rateLamp.C_RATIO, so `?? 10` would compute landmarks at ratio 10 instead of the model-correct 50 —
-    // cRatioFor(st.model) mirrors the segment-locked ratio getStatus itself uses (never 0/undefined: it
-    // falls back by tier substring, DEFAULT_C_RATIO=10 for a missing/unknown model — see lib/extract.js).
-    const lm = landmarks(st.rateLamp?.C_RATIO ?? cRatioFor(st.model), st.kAvg, st.baseline?.total ?? 0, st.baseline?.dead ?? 0, st.L);
-    return { segment: st.segment, turnSeq, reliable: st.rateLamp?.reliable === true,
-      x: lm.x, landmarks: { fullCarry: { xStar: lm.fullCarry.xStar, dhat: lm.fullCarry.dhat } } };
-  };
-  // v2.2-C3 H-A: Zero-settle Stop route. The Stop settles NOTHING — it (a) integrates flushed events via
-  // advanceRateLampToCurrent (forcePoll); (b) drains PRIOR pending off reader-committed summaries;
-  // (c) resolves wall/dw_backstop/gate INLINE from LIVE quantities; (d) UNCONDITIONALLY enqueues a pending
-  // for the open turn. empty_burn/non_idle/cache_unstable defer to the reader's authoritative settle at N+1.
-  // round-6 GPT#3a: stale-port cross-session guard.
-  const sessionMismatch = (req, res) => {
-    const bodySid = req.body?.session_id;
-    // Accept EITHER the server's transcript-basename identity (sessionId) OR the
-    // hook's per-restart session_id (hookSessionId). CC sends different IDs to the
-    // Stop hook vs. the statusline; both are legitimate callers of this server.
-    if (bodySid && bodySid !== sessionId && bodySid !== hookSessionId) { res.status(409).json({ error: 'session_mismatch' }); return true; }
-    return false;
-  };
-  // Internal event-id minter for hooks that don't send one (backwards compat with older warn.js)
-  let _internalEventSeq = 0;
-  const mintInternalEventId = () => `internal-${Date.now()}-${++_internalEventSeq}`;
-
-  app.post('/api/notify-gate', (req, res, next) => {
-   try {
-    if (sessionMismatch(req, res)) return;
-
-    const hookEventId = req.body?.hook_event_id ?? mintInternalEventId();
-
-    // 0. Hydrate the live ledger (needed for the dedup check below)
-    let ledger = getLiveLedger(sessionId);
-
-    // 1. HTTP dedup (B12): already accepted → short-circuit, no mutation
-    if (ledger && alreadyAccepted(hookEventId, ledger)) {
-      const snap = gateSnapshotFor(watcher._turnSeq, watcher.getStatus());
-      const gateResult = evaluateGate(snap, loadGateState(sessionId));
-      res.json({ ok: true, notify: false, tier: gateResult?.tier ?? 0, kind: null, delivery: null, message: null,
-        gate: { notify: false, tier: gateResult?.tier ?? 0, reason: 'already_accepted' }, bill: null });
-      return;
-    }
-
-    // 1.5 ENOSPC probe (C5a, round-5 G1 — BEFORE B7 backpressure to prevent deadlock):
-    // If this session is in ENOSPC pause-drain, the Stop's force-write is the recovery probe.
-    // On success → clear pause, drain backlog, return 200 {recovered:true, accepted:false}.
-    // On failure → return 503 persist_failed (keep the pause).
-    if (isEnospcPaused(sessionId)) {
-      try {
-        // Probe: force-write the current live ledger (proves disk is back)
-        const currentLedger = getLiveLedger(sessionId);
-        if (currentLedger) setLiveLedger(sessionId, currentLedger);
-        // Probe succeeded → clear pause (setLiveLedger already cleared it internally)
-        // Drain the backlog
-        try {
-          if (getLiveLedger(sessionId)) drainPendingStopEvaluations(sessionId);
-        } catch (drainErr) {
-          // round-8 GPT-pt5: drain re-hits ENOSPC → pause re-engaged, 503
-          // persistLedger inside commitLedgerMutationSync threw → A12 rollback applied
-          // Re-engage pause: setLiveLedger's clearEnospcPause already ran (probe succeeded),
-          // but the drain's commitLedgerMutationSync threw on persist → re-add to pause set.
-          engageEnospcPause(sessionId);
-          res.status(503).json({ ok: false, degraded: 'persist_failed' });
-          return;
-        }
-        res.json({ ok: true, recovered: true, accepted: false });
-        return;
-      } catch (probeErr) {
-        // Probe failed → disk still down, keep pause engaged
-        res.status(503).json({ ok: false, degraded: 'persist_failed' });
-        return;
-      }
-    }
-
-    // 2. Bounded incremental advance (C4-1: replaces forcePoll with budget-capped advance)
-    const { caughtUp, status: st } = boundedIncrementalAdvance(watcher, sessionId, { maxMs: STOP_ADVANCE_MAX_MS, maxBytes: STOP_ADVANCE_MAX_BYTES });
-
-    // 3. Drain PRIOR pending (reader-committed summaries). Sources LIVE ledger internally.
-    // Bug fix: try/catch so a throw (e.g. IO error in commitLedgerMutationSync's persist) does not
-    // prevent the current Stop's pending from being enqueued (alert intent must not be lost).
-    try {
-      if (getLiveLedger(sessionId)) drainPendingStopEvaluations(sessionId);
-    } catch (e) { if (process.env.SW_DEBUG) console.error('[rate-lamp] drain throw (non-fatal):', e.message); }
-
-    // 3.5 Hook-gap bookkeeping (F1/H-A): reconcile orphaned committed summaries.
-    try {
-      if (getLiveLedger(sessionId)) commitLedgerMutationSync(sessionId, 'choose-current-stop', draft => chooseCurrentStopSummary(draft));
-    } catch (e) { if (process.env.SW_DEBUG) console.error('[rate-lamp] choose throw (non-fatal):', e.message); }
-
-    // 3.6 RE-FETCH (I-pt3): step-2 advance, step-3 drain, step-3.5 choose EACH commit a new draft.
-    ledger = getLiveLedger(sessionId);
-
-    // 4. Resolve THIS Stop's inline signals from LIVE quantities (H-A)
-    const snap = gateSnapshotFor(watcher._turnSeq, st);
-    const gateResult = evaluateGate(snap, loadGateState(sessionId));
-
-    let dwTurn = 0, stockStep = false;
-    const currentKey = st.rateLamp?.reliable ? stateKeyForStatus(st) : null;
-    const matchingKeyLedger = st.rateLamp?.reliable && ledger && ledger.stateKey === currentKey;
-
-    if (matchingKeyLedger && ledger.pausedReason == null) {
-      // dw_backstop only meaningful in deep water — shallow accumulation is controlled cost
-      dwTurn = st.rateLamp?.inDeepWater ? ledger.currentTurnDeltaW : 0;
-      stockStep = detectStockStep(watcher._currentSegmentCalls(), ledger.kStableFrozen, { sinceFoldedSeq: ledger.billAnchorFoldedCallSeq });
-    }
-
-    const inlineMsg = resolveStopMessage({ gateResult, bill: null, burnRate: st.rateLamp?.burnRate ?? 0, dwTurn, stockStep });
-    const firesInline = inlineMsg && inlineMsg.delivery === 'stop_hook' && ['wall', 'dw_backstop', 'gate'].includes(inlineMsg.kind);
-
-    // 5. Single transaction: unconditionally enqueue pending + optional inline stop_hook + add id + persist
-    // B7 backpressure gate: check capacity on the LIVE ledger BEFORE entering the atomic commit.
-    // A full queue returns 503 with NO mutation (enqueuePending's length check on the live ref is read-only here).
-    if (ledger && (ledger.pendingStopEvaluations || []).length >= PENDING_STOP_EVALUATIONS_LIMIT) {
-      res.status(503).json({ ok: false, degraded: 'pending_backpressure' });
-      return;
-    }
-
-    // C5a: cancel any pending coalesced persist before the synchronous Stop-route write — eliminates
-    // the interleave window where a stale coalesced flush could race the alert commit.
-    cancelCoalescedPersist(sessionId);
-
-    // A12 atomicity: ALL mutations (enqueue pending + appendProcessedHookId + optional inline stop_hook)
-    // run inside commitLedgerMutationSync on a structuredClone'd DRAFT. If persist throws, the live
-    // _ledgers entry is UNTOUCHED → the hookEventId is NOT accepted → next Stop self-heals (spec A12).
-    // Guard: only enter the atomic commit if the ledger passes validateLedgerState — a ledger in a
-    // degraded/invalid state (e.g. incomplete rateLamp bundle during calibration) skips pending tracking
-    // gracefully; the gate fire still reaches the response (A12 applies to VALID ledgers only).
-    try {
-      if (ledger && validateLedgerState(ledger)) {
-        commitLedgerMutationSync(sessionId, 'stop-enqueue', (draft) => {
-          // B12: appendProcessedHookId — same-transaction
-          appendProcessedHookId(draft, hookEventId);
-
-          // Unconditionally enqueue pending
-          enqueuePending(draft, {
-            hookEventId,
-            requestedAtWallMs: Date.now(),
-            requestedAtMonoMs: performance.now(),
-            processNonce: _processNonce,
-            beforeSettledThroughTurnSeq: draft.settledThroughTurnSeq,
-          });
-          incrementCounter('pendingCreatedCount');
-
-          // 6. Inline stop_hook from LIVE quantities (H-A)
-          if (firesInline) {
-            const stopEvt = { kind: inlineMsg.kind, delivery: inlineMsg.delivery, message: inlineMsg.message, billCount: inlineMsg.billCount ?? 0, turnSeq: draft.currentTurnSeq };
-            draft.lastStopEvent = stopEvt;
-            pushStopEventRing(draft, stopEvt);
-            draft.alertEvaluatedThroughTurnSeq = Math.max(draft.currentTurnSeq, draft.alertEvaluatedThroughTurnSeq || 0);
-          }
-        });
-      }
-    } catch (writeErr) {
-      // A12: persist failed — commitLedgerMutationSync persists BEFORE _ledgers.set, so on throw the
-      // in-memory entry is UNTOUCHED. The hookEventId is NOT in the live ledger's processedIds ring →
-      // not dedup-accepted → next Stop re-evaluates (self-heal). Rollback is free.
-      // Bug fix: return BEFORE saveGateState — gate tier must NOT be consumed when hookEventId failed
-      // to persist (otherwise the ratchet advances but the id isn't recorded → alert lost on retry).
-      res.status(503).json({ ok: false, degraded: 'persist_failed' });
-      return;
-    }
-
-    // Gate ratchet AFTER ledger persist (round-8 GPT#4: prefer visible duplicate over silent loss).
-    // Safe: if commit threw we already returned above; if commit was skipped (no ledger / invalid),
-    // the gate advances normally (no dedup ring to track against in that state).
-    saveGateState(sessionId, gateResult.nextState);
-
-    res.json({
-      ok: true,
-      notify: firesInline === true,
-      tier: gateResult?.tier ?? 0,
-      kind: inlineMsg?.kind ?? null,
-      delivery: inlineMsg?.delivery ?? null,
-      message: firesInline ? inlineMsg.message : null,
-      gate: { notify: gateResult.notify, tier: gateResult.tier, reason: gateResult.reason },
-      bill: null,  // H-A: Stop settles NOTHING — no bill
-    });
-   } catch (e) { next(e); }
-  });
-  app.get('/api/notify-gate/peek', (req, res, next) => {
-   try {
-    const st = watcher.getStatus(); // #8: peek has no advance → compute its own fresh status
-    const snap = gateSnapshotFor(watcher._turnSeq, st);
-    const prev = loadGateState(sessionId);
-    // A7/GPT#9: reuse the SAME rawTierFor as evaluateGate — no hand-rolled copy that can drift.
-    // would-be raw tier WITHOUT running the ratchet / persisting.
-    const rawTier = rawTierFor(snap.x, snap.landmarks.fullCarry);
-    res.json({ rawTier, maxTierFired: prev?.maxTierFired ?? 0, reliable: snap.reliable });
-   } catch (e) { next(e); }
-  });
-
   // v2.2-C5a (step 4): debug endpoint — loopback/SW_DEBUG gated (A22). Exposes live ledger + counters.
   // Reject with 403 unless req.socket.remoteAddress is loopback (127.0.0.1/::1) OR SW_DEBUG is set.
   app.get('/api/debug/rate-lamp/:sid', (req, res) => {
@@ -528,10 +311,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     const sid = req.params.sid;
     const ledger = getLiveLedger(sid);
     const counters = getDebugCounters();
-    // Step 4 size counters: computed at read time from the live ledger (no per-mutation tracking).
     const sizes = {
-      pendingStopEvaluations: (ledger?.pendingStopEvaluations || []).length,
-      settledTurnSummaries: (ledger?.settledTurnSummaries || []).length,
       recentStopEvents: (ledger?.recentStopEvents || []).length,
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
@@ -600,6 +380,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           for (const c of sseClients) { try { c.write(`data: ${tick}\n\n`); } catch { sseClients.delete(c); } }
         }
         if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
+        // v3 (spec section 6.7): profile snapshot for GC archival — co-batched with the ledger save.
+        if (changed) {
+          try {
+            const snap = watcher.getTerminalSnapshot();
+            getStore().saveBatch(sessionId, [['profile_snapshot', snap]], { model: snap.model });
+          } catch (e) { if (process.env.SW_DEBUG) console.error('[profile_snapshot]', e.message); }
+        }
         // Idle auto-shutdown: no HTTP requests AND no SSE clients for IDLE_SHUTDOWN_MS → exit
         if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
           onIdleShutdown();
@@ -710,7 +497,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   // sessionMismatch guard and startWatcher's fallback scan.
   const sessionId = jsonlPath.endsWith('.jsonl') ? basename(jsonlPath).replace(/\.jsonl$/, '') : (session || 'default');
   const hookSessionId = session || null;
-  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
+  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride, cwd: project || null, isIgnored: project ? loadIsIgnored(project) : null });
 
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown; // forward-declared for onIdleShutdown reference

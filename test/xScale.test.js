@@ -78,3 +78,43 @@ test('computeEoqViewport — min floors at 1', () => {
   // min is always 1 (viewport starts from origin)
   assert.equal(r.mainDomain.min, 1);
 });
+
+test('computeEoqViewport — previewGroup expands viewport ephemerally', () => {
+  const r = computeEoqViewport({
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
+    xCurrent: 1.8, previousDomainMax: null,
+    previewGroup: { xRedR: 6.0, x: 5.5 },
+  });
+  // Ghost max = max(6.0, 5.5, 3.5, 1.8) * 1.12 = 6.72
+  // Without ghost: max(3.5, 1.8) * 1.2 = 4.2
+  // Final visible max = max(4.2, 6.72) = 6.72
+  assert.ok(Math.abs(r.mainDomain.max - 6.72) < 0.01, `Expected ~6.72, got ${r.mainDomain.max}`);
+  // actualDomainMax is pre-ghost (ratchet-safe); callers use this to avoid a second invocation
+  assert.ok(Math.abs(r.actualDomainMax - 4.2) < 0.01, `Expected actualDomainMax ~4.2 (pre-ghost), got ${r.actualDomainMax}`);
+});
+
+test('computeEoqViewport — previewGroup does not advance ratchet', () => {
+  // With previewGroup: viewport is 6.72
+  computeEoqViewport({
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
+    xCurrent: 1.8, previousDomainMax: null,
+    previewGroup: { xRedR: 6.0, x: 5.5 },
+  });
+  // Without previewGroup using same inputs: viewport should NOT retain ghost expansion
+  const actual = computeEoqViewport({
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
+    xCurrent: 1.8, previousDomainMax: null,
+  });
+  // Actual max = max(3.5, 1.8) * 1.2 = 4.2
+  assert.ok(Math.abs(actual.mainDomain.max - 4.2) < 0.01, `Expected ~4.2, got ${actual.mainDomain.max}`);
+});
+
+test('computeEoqViewport — previewGroup with NaN values is filtered safely', () => {
+  const r = computeEoqViewport({
+    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
+    xCurrent: 1.8, previousDomainMax: null,
+    previewGroup: { xRedR: NaN, x: 5.0 },
+  });
+  // Only finite candidate is 5.0; ghost max = max(5.0, 3.5, 1.8) * 1.12 = 5.6
+  assert.ok(Math.abs(r.mainDomain.max - 5.6) < 0.01, `Expected ~5.6, got ${r.mainDomain.max}`);
+});

@@ -1,6 +1,21 @@
 // Pure helpers for the decision chart's cache-miss markers. No DOM / Chart.js dependency, so they run
 // under `node --test` as well as in the browser (public/ is served statically → index.html imports).
 
+// Y-axis ratchet constants (spec §2 #10)
+export const RATCHET_Y_INIT = 200000;
+export const RATCHET_Y_CAP = 1000000;
+
+// Compute the next Y ratchet ceiling given current ceiling and data max.
+// Triggers when yMax > 80% of current ceiling; steps by 1.5×.
+// Monotonically increasing (never shrinks). Capped at RATCHET_Y_CAP.
+export function computeYRatchet(currentRatchetY, yMax) {
+  let r = currentRatchetY;
+  while (r < RATCHET_Y_CAP && yMax > r * 0.8) {
+    r = Math.min(Math.ceil(r * 1.5), RATCHET_Y_CAP);
+  }
+  return r;
+}
+
 // Max over the PRIMARY decision y-series — effective-L only — floored at 1.
 // Lthreshold is excluded: on large R it dwarfs actual L data and flattens the line;
 // the exit threshold line is allowed to clip at the chart top. A for-loop — NEVER
@@ -24,7 +39,7 @@ export function computeYMax(hist) {
 // Returns [] when no meaningful projection can be drawn (empty points or zero slope).
 export function buildProjectionData(points, lastGEma, currentRatchetX, currentRatchetY) {
   if (points.length === 0) return [];
-  const slope = (lastGEma > 0) ? lastGEma : (points[points.length - 1]?.kAvg > 0 ? points[points.length - 1].kAvg : 0);
+  const slope = (lastGEma > 0) ? lastGEma : (points[points.length - 1]?.g > 0 ? points[points.length - 1].g : 0);
   if (slope <= 0) return [];
 
   const lastTurn = points.length;
@@ -50,15 +65,21 @@ export function buildProjectionData(points, lastGEma, currentRatchetX, currentRa
   ];
 }
 
-// Three points per miss row: bottom (y:0), top (y:yMax), and a null separator so Chart.js does NOT
-// connect one vertical's top to the next vertical's bottom (a slanted line). Every point carries
-// historyIndex so the tooltip can map a marker point (whose dataIndex is the marker-array position,
-// 3× the history index) back to the source history row.
-export function buildMissMarkers(hist, yMax) {
+// Bill-regret at a preview position: br = mf*(u-1)^2/(2u) where u = (x-1)/dhat.
+// Guards u<=0 (undefined/degenerate) by returning 0, matching the call-site behaviour in
+// both heroDiptych and depthAux before this was extracted.
+export function computePreviewBr(mf, u) {
+  if (u <= 0) return 0;
+  return mf * (u - 1) * (u - 1) / (2 * u);
+}
+
+// §10.4 miss-marker demotion: small triangles at x-axis (6px), semi-transparent.
+// One point per miss at y=0 — rendered as triangle pointStyle by the dataset config.
+// Each point carries historyIndex so the tooltip can map back to the source history row.
+export function buildMissMarkers(hist) {
   const out = [];
   for (let i = 0; i < hist.length; i++) {
-    // Fix #2: x-axis is 1-based (min:1, labels are turn numbers), so offset by +1 to align markers
-    if (hist[i].miss) out.push({ x: i + 1, y: 0, historyIndex: i }, { x: i + 1, y: yMax, historyIndex: i }, { x: i + 1, y: null, historyIndex: i });
+    if (hist[i].miss) out.push({ x: i + 1, y: 0, historyIndex: i });
   }
   return out;
 }

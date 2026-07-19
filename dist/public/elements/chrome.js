@@ -138,10 +138,10 @@ export function mount(root, ctx) {
     }
     renderMeta();
 
-    // Fix #3: stop-banner — show when lastStopEvent is for the current turn
+    // Fix #3: stop-banner — show when lastStopEvent is active (seq-based TTL filtered server-side)
     const rl = snapshot?.status?.rateLamp;
     const stopEvt = rl?.lastStopEvent;
-    if (stopEvt && stopEvt.turnSeq === rl.currentTurnSeq) {
+    if (stopEvt) {
       bannerEl.textContent = `⚠ ${stopEvt.kind}: ${stopEvt.message}`;
       bannerEl.hidden = false;
     } else {

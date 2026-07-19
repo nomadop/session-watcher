@@ -1,9 +1,7 @@
-// public/elements/burnMeter.js — Taxi-meter style burn progress (spec §2 #3)
-// Fill bar + "~N turns" + odometer + pulse
-// Capabilities gating: billingLedger → fill, breakEvenTurns → "~N turns"
-// Element contract: mount(root, ctx) → { update(snapshot), destroy() }
-
-const PULSE_DURATION_MS = 600;
+// Dual-bar rent meter (spec §3.4). Renders from status.rateLamp.rentMeter — NO re-derivation of
+// notification/backstop logic (spec invariant 10). Cycle bar = micro timescale (billProgress); depth
+// bar = macro (deep-water backstop progress), disabled until gate fires.
+import { MAG_VISIBLE_TICKS } from '../lib/uiConstants.js';  // mirror of lib/constants MAG_VISIBLE_TICKS (5)
 
 export function mount(root, _ctx) {
   const container = document.createElement('div');
@@ -13,102 +11,104 @@ export function mount(root, _ctx) {
       <span class="lab">Carry rent</span>
       <div class="sub">break-even meter · Karlin 1990</div>
     </div>
-    <div class="sw-burn-turns">—<small> turns</small></div>
-    <div class="sw-burn-meter-lab">until holding costs one restart · fills at <b class="sw-burn-rate-text">rent —/turn</b></div>
-    <div class="sw-burn-bar-wrap">
-      <div class="sw-burn-fill" style="width:0%;"></div>
+    <div class="bar-group cycle-group">
+      <span class="bar-name">cycle</span>
+      <div class="bar-inline">
+        <div class="bar-track"><div class="bar-fill cycle" style="width:0%"></div></div>
+        <div class="bar-tail"><span class="bar-inline-value">—</span></div>
+      </div>
+      <div class="bar-detail">rent <span class="hl">—</span>/turn (sweet: —)</div>
     </div>
-    <div class="sw-burn-cap">
-      <span class="sw-burn-cap-left">this cycle —</span>
-      <span>fills to 1.00 = one restart</span>
+    <div class="bar-group depth-group disabled">
+      <span class="bar-name">depth</span>
+      <div class="bar-with-mag">
+        <div class="bar-track">
+          <div class="bar-fill depth" style="width:0%"></div>
+          <div class="bar-ticks"></div>
+        </div>
+        <div class="mag-tail"><div class="mag-ticks"></div></div>
+      </div>
+      <div class="bar-detail">awaiting gate · reminder inactive</div>
     </div>
-    <div class="sw-burn-odometer">
-      <span class="sw-burn-odo-digits"></span>
-      <span class="olab">restarts burned (odometer)</span>
-    </div>
-    <div class="sw-burn-pulse" style="display:none;"></div>
   `;
   root.appendChild(container);
 
-  const turnsEl = container.querySelector('.sw-burn-turns');
-  const rateText = container.querySelector('.sw-burn-rate-text');
-  const fillEl = container.querySelector('.sw-burn-fill');
-  const barWrap = container.querySelector('.sw-burn-bar-wrap');
-  const capLeft = container.querySelector('.sw-burn-cap-left');
-  const odometerDigits = container.querySelector('.sw-burn-odo-digits');
-  const pulseEl = container.querySelector('.sw-burn-pulse');
+  const cycleFill = container.querySelector('.bar-fill.cycle');
+  const cycleValue = container.querySelector('.cycle-group .bar-inline-value');
+  const cycleDetail = container.querySelector('.cycle-group .bar-detail');
+  const depthGroup = container.querySelector('.depth-group');
+  const depthFill = container.querySelector('.bar-fill.depth');
+  const depthTicks = container.querySelector('.bar-ticks');
+  const magTicks = container.querySelector('.mag-ticks');
+  const depthDetail = container.querySelector('.depth-group .bar-detail');
 
-  let pulseTimeout = null;
-  let lastPulseTurnSeq = null;
-
-  function triggerPulse(burnRate) {
-    pulseEl.textContent = `↑ rent +${burnRate != null ? burnRate.toFixed(2) : '—'}/turn · context growing`;
-    pulseEl.style.display = '';
-    barWrap.style.boxShadow = '0 0 8px 2px rgba(255,194,77,0.4)';
-    if (pulseTimeout) clearTimeout(pulseTimeout);
-    pulseTimeout = setTimeout(() => {
-      barWrap.style.boxShadow = '';
-      pulseEl.style.display = 'none';
-      pulseTimeout = null;
-    }, PULSE_DURATION_MS);
+  let _prevTickCount = -1;
+  function renderTickSegments(n) {
+    const count = Math.max(0, Math.min(20, Math.round(n) || 0));
+    if (count === _prevTickCount) return;
+    _prevTickCount = count;
+    depthTicks.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const seg = document.createElement('div');
+      seg.className = 'bar-tick-segment';
+      depthTicks.appendChild(seg);
+    }
   }
 
-  function renderOdometer(count) {
-    // Render each digit of count as a separate "roll" span
-    const digits = String(count).padStart(3, '0').split('');
-    odometerDigits.innerHTML = digits
-      .map(d => `<span class="roll">${d}</span>`)
-      .join('');
+  let _prevMagKey = null;
+  function renderMagazine(lapCount, hot) {
+    const spent = Math.max(0, lapCount || 0);
+    const visible = Math.min(spent, MAG_VISIBLE_TICKS);
+    const key = `${spent}:${hot}`;
+    if (key === _prevMagKey) return;
+    _prevMagKey = key;
+    magTicks.innerHTML = '';
+    for (let i = 0; i < MAG_VISIBLE_TICKS; i++) {
+      const t = document.createElement('div');
+      t.className = 'mag-tick' + (i < visible ? ' spent' : '') + (i < visible && hot ? ' hot' : '');
+      magTicks.appendChild(t);
+    }
+    // existing overflow node
+    let ov = container.querySelector('.mag-overflow');
+    if (spent > MAG_VISIBLE_TICKS) {
+      if (!ov) { ov = document.createElement('span'); ov.className = 'mag-overflow'; container.querySelector('.mag-tail').appendChild(ov); }
+      ov.textContent = `+${spent - MAG_VISIBLE_TICKS}`;
+    } else if (ov) { ov.remove(); }
   }
+
+  // Null-safe default so a missing rentMeter (server always sends one now, but be defensive) resets the
+  // frame instead of leaving a stale bar (review fold, GPT #15).
+  const EMPTY_RM = { cycleProgress: 0, rentRate: null, sweetRentRate: null, depthActive: false, depthProgress: 0, backstopInterval: null, backstopLapCount: 0, depthHot: false };
 
   function update(snapshot) {
-    const rl = snapshot?.status?.rateLamp;
-    const capabilities = snapshot?.capabilities;
+    const rm = snapshot?.status?.rateLamp?.rentMeter || EMPTY_RM;
+    const cyclePct = Math.round(Math.min(1, Math.max(0, rm.cycleProgress ?? 0)) * 100);
+    cycleFill.style.width = `${cyclePct}%`;
+    cycleValue.textContent = `${cyclePct}%`;
+    const rent = Number.isFinite(rm.rentRate) ? rm.rentRate.toFixed(2) : '—';
+    const sweet = Number.isFinite(rm.sweetRentRate) ? rm.sweetRentRate.toFixed(2) : '—';
+    cycleDetail.innerHTML = `rent <span class="hl">${rent}</span>/turn (sweet: ${sweet})`;
 
-    const burnRate = rl?.burnRate ?? rl?.kAvg ?? null;
-
-    // "~N turns" label — gated by breakEvenTurns
-    if (capabilities?.breakEvenTurns?.available && Number.isFinite(rl?.hBreak)) {
-      const n = Math.ceil(rl.hBreak);
-      turnsEl.innerHTML = `~${n}<small> turns</small>`;
+    if (rm.depthActive) {
+      depthGroup.classList.remove('disabled');
+      const depthPct = Math.round(Math.min(1, Math.max(0, rm.depthProgress ?? 0)) * 100);
+      depthFill.className = 'bar-fill ' + (rm.depthHot ? 'depth-hot' : 'depth');
+      depthFill.style.width = `${depthPct}%`;
+      renderTickSegments(rm.backstopInterval);
+      renderMagazine(rm.backstopLapCount, rm.depthHot);
+      const denom = Number.isFinite(rm.backstopInterval) ? Math.max(1, Math.round(rm.backstopInterval)) : '—';
+      depthDetail.textContent = (rm.backstopLapCount > 0)
+        ? `${(rm.depthProgress ?? 0).toFixed(1)}× amber depth`
+        : `next reminder at ${denom} deep-water cycles`;
     } else {
-      turnsEl.innerHTML = `—<small> turns</small>`;
-    }
-
-    // Burn rate label
-    if (burnRate != null) {
-      rateText.textContent = `rent ${burnRate.toFixed(2)}/turn`;
-    } else {
-      rateText.textContent = 'rent —/turn';
-    }
-
-    // Fill bar — gated by billingLedger
-    if (capabilities?.billingLedger?.available && rl?.billProgress != null) {
-      const pct = Math.max(0, Math.min(100, rl.billProgress * 100));
-      fillEl.style.width = `${pct.toFixed(1)}%`;
-      capLeft.textContent = `this cycle ${rl.billProgress.toFixed(2)}`;
-    } else {
-      fillEl.style.width = '0%';
-      capLeft.textContent = 'this cycle —';
-    }
-
-    // Odometer — billCycleCount (always displayed if present)
-    const cycleCount = rl?.billCycleCount ?? 0;
-    renderOdometer(cycleCount);
-
-    // Pulse — when lastBillEvent.turnSeq matches currentTurnSeq and hasn't been pulsed yet
-    if (rl?.lastBillEvent && rl.lastBillEvent.turnSeq === rl.currentTurnSeq) {
-      if (lastPulseTurnSeq !== rl.currentTurnSeq) {
-        lastPulseTurnSeq = rl.currentTurnSeq;
-        triggerPulse(burnRate);
-      }
+      depthGroup.classList.add('disabled');
+      depthFill.style.width = '0%';
+      renderTickSegments(0);
+      renderMagazine(0, false);
+      depthDetail.textContent = 'awaiting gate · reminder inactive';
     }
   }
 
-  function destroy() {
-    if (pulseTimeout) { clearTimeout(pulseTimeout); pulseTimeout = null; }
-    container.remove();
-  }
-
+  function destroy() { container.remove(); }
   return { update, destroy };
 }

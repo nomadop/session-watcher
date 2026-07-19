@@ -37,7 +37,7 @@ test('plugin: plugin.json declares session-watcher MCP server with exec form', (
   assert.ok(srv.args[0].includes('dist/index.js'), 'args[0] points to dist/index.js');
 });
 
-test('plugin: hooks/hooks.json uses exec form for SessionStart and Stop', () => {
+test('plugin: hooks/hooks.json uses exec form for SessionStart', () => {
   const p = join(ROOT, 'hooks', 'hooks.json');
   assert.ok(existsSync(p), 'hooks/hooks.json exists');
   const m = JSON.parse(readFileSync(p, 'utf8'));
@@ -47,12 +47,8 @@ test('plugin: hooks/hooks.json uses exec form for SessionStart and Stop', () => 
   assert.equal(ss.command, 'node');
   assert.ok(Array.isArray(ss.args), 'SessionStart hook uses exec form (args array)');
   assert.ok(ss.args[0].includes('dist/hooks/session-start.js'));
-  // Stop
-  const st = m.hooks.Stop[0].hooks[0];
-  assert.equal(st.type, 'command');
-  assert.equal(st.command, 'node');
-  assert.ok(Array.isArray(st.args), 'Stop hook uses exec form (args array)');
-  assert.ok(st.args[0].includes('dist/hooks/warn.js'));
+  // Stop hook retired (2026-07-18) — gate + backstop now run in reader path
+  assert.equal(m.hooks.Stop, undefined, 'Stop hook must not be registered');
 });
 
 test('plugin: version consistency across plugin.json and package.json', () => {
@@ -65,7 +61,7 @@ test('plugin: dist/ contains bundled entry points', () => {
   assert.ok(existsSync(join(ROOT, 'dist', 'index.js')), 'dist/index.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'server.js')), 'dist/server.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start.js')), 'dist/hooks/session-start.js exists');
-  assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'warn.js')), 'dist/hooks/warn.js exists');
+  // warn.js retired (2026-07-18) — Stop hook removed
   assert.ok(existsSync(join(ROOT, 'dist', 'public', 'index.html')), 'dist/public/index.html exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'statusline.js')), 'dist/statusline.js exists');
 });

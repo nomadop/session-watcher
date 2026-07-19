@@ -5,7 +5,6 @@ import {
   renderLB,
   formatLine,
   _resetRenderState,
-  _resetCarousel,
 } from "../lib/statusline-format.js";
 
 const base = {
@@ -30,15 +29,16 @@ const base = {
   },
 };
 
-test("D1: calibrating branch renders via renderCalibratingV3 (no_transcript)", () => {
-  const s = { ...base, calibratingReason: "no_transcript" };
+test("D1: unreliable rateLamp renders measuring… line (v3 drops carousel/no_transcript branch)", () => {
+  // v3: any !rl?.reliable state → single neutral "measuring…" line; no carousel, no no_transcript branch
+  const s = { ...base, calibratingReason: "no_transcript", rateLamp: { reliable: false } };
   const out = formatLine(s);
-  // v3: no_transcript shows "no transcript found" (not legacy 指标校准中)
-  assert.match(out, /no transcript/i);
+  assert.match(out, /measuring…/);
+  assert.ok(out.includes("opus"), "model tag present");
 });
 
 test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · countdown u · delta L/b · tag :port)", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   // v3 layout: 灯 bar %% ×N · ~Nt u · Δ L/b · model :port
   const s = {
     ...base,
@@ -122,7 +122,7 @@ test("B1: no_transcript + STALE reliable ledger → hardUnavailable true", () =>
 });
 
 test("B2: post-latch metricsReliable===false renders the v3 meter, not 校准中", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = {
     model: "opus",
     port: 38017,
@@ -160,43 +160,34 @@ test("B2: post-latch metricsReliable===false renders the v3 meter, not 校准中
   assert.ok(out.includes("▮") || out.includes("░"), "v3 meter bar renders");
 });
 
-// v3: without rateLamp.reliable, the formatLine renders calibrating (carousel-style progressive fill).
-// The old "restart on unlatched" scenario goes through renderCalibratingV3 which shows model tag +
-// progressive L info. In v3, the restart signal is only meaningful with a latched rateLamp.
-test("B2: an un-latched frame (no rateLamp) renders calibrating, not 校准中 (v3 progressive fill)", () => {
-  _resetRenderState(); _resetCarousel();
+// v3: without rateLamp.reliable, formatLine returns a single neutral "measuring…" line.
+// No carousel, no progressive fill — any !rl?.reliable state collapses to measuring…
+test("B2: an un-latched frame (no rateLamp) renders measuring…, not 校准中 (v3 neutral line)", () => {
+  _resetRenderState();
   const s = {
     model: "opus",
     port: 38017,
     L: 400000,
-    Lstar: 375000,
-    Lthreshold: 375000,
-    restart: true,
-    restartReason: "cost",
-    metricsReliable: true,
-    calibratingReason: null,
-    phi: 3,
-    paybackP: 4,
-    baseline: { total: 55000 },
-    // rateLamp absent ⟹ not latched ⟹ renderCalibratingV3 path
+    // rateLamp absent ⟹ !rl?.reliable ⟹ measuring… path
   };
   const out = formatLine(s);
   assert.doesNotMatch(out, /指标校准中/, "v3 never produces the legacy 指标校准中 text");
-  // v3: unlatched renders progressive calibrating (carousel lamp + L + tag + port)
+  // v3: unlatched renders neutral measuring line
+  assert.match(out, /measuring…/, "measuring… line");
   assert.ok(out.includes("opus"), "model tag present");
-  assert.ok(out.length > 0, "non-empty output");
 });
 
 // ── A2: new statusline layout (meter cluster + position + bridge + alert) ───────────────────────
 
 test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · tag :port", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = {
     model: "claude-opus-4-8",
     port: 38017,
     metricsReliable: true,
     calibratingReason: null,
     L: 168000,
+    B: 80000,
     baseline: { total: 80000 },
     rateLamp: {
       reliable: true,
@@ -228,13 +219,14 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
 });
 
 test("A2: deep band shows 🟡 in v3 layout", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = {
     model: "opus",
     port: 38017,
     metricsReliable: true,
     calibratingReason: null,
     L: 512000,
+    B: 55000,
     baseline: { total: 55000 },
     rateLamp: {
       reliable: true,
@@ -260,7 +252,7 @@ test("A2: deep band shows 🟡 in v3 layout", () => {
 });
 
 test("A2: alert on the hook turn renders on second line (no verdict word)", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = {
     model: "opus",
     port: 38017,
@@ -304,7 +296,7 @@ test("A2: alert on the hook turn renders on second line (no verdict word)", () =
 });
 
 test("A2/RV-C17: the new statusline layout never reads fitWindow (ER-2 retired the kFit eta)", () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   // formatLine + its render helpers accept only `s`/`s.rateLamp`; none takes a fitWindow arg.
   // Assert the rendered line is identical whether or not a fitWindow-shaped field is present on the status.
   const s = {

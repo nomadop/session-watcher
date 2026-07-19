@@ -145,8 +145,26 @@ test('GET /api/status returns full Status JSON', async () => {
   await withServer(async (port) => {
     const j = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
     assert.equal(typeof j.L, 'number');
-    assert.equal(typeof j.Lstar, 'number');
-    assert.ok('restart' in j && 'metricsReliable' in j && 'baseline' in j);
+    // v3 status shape: L, B, g, model, rateLamp, segment
+    assert.ok('rateLamp' in j && 'model' in j && 'segment' in j);
+  });
+});
+
+test('GET /api/status includes rentMeter on rateLamp (spec invariant 10)', async () => {
+  await withServer(async (port) => {
+    const j = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    // rentMeter must always be present (never undefined) — even when rateLamp is unreliable.
+    assert.ok('rentMeter' in j.rateLamp, 'rateLamp.rentMeter is always present');
+    const rm = j.rateLamp.rentMeter;
+    // Null-safe defaults: all required fields present with correct types.
+    assert.ok('cycleProgress' in rm, 'rentMeter.cycleProgress present');
+    assert.ok('rentRate' in rm, 'rentMeter.rentRate present');
+    assert.ok('sweetRentRate' in rm, 'rentMeter.sweetRentRate present');
+    assert.ok('depthActive' in rm, 'rentMeter.depthActive present');
+    assert.ok('depthProgress' in rm, 'rentMeter.depthProgress present');
+    assert.ok('backstopInterval' in rm, 'rentMeter.backstopInterval present');
+    assert.ok('backstopLapCount' in rm, 'rentMeter.backstopLapCount present');
+    assert.ok('depthHot' in rm, 'rentMeter.depthHot present');
   });
 });
 
@@ -250,12 +268,11 @@ test('formatLine shows calibrating (not a full bar) when metricsReliable but cal
   assert.ok(/deepseek|opus|sonnet|haiku/i.test(out), 'keeps the model tag');
 });
 
-test('formatLine shows calibrating for calibratingReason=no_transcript', () => {
-  const s = { L: 0, Lstar: 0, Lthreshold: 0, restart: false, metricsReliable: true,
-    calibratingReason: 'no_transcript', baseline: { total: 0 }, model: 'opus' };
+test('formatLine shows measuring when rateLamp.reliable is false (no_transcript)', () => {
+  // v3: no calibrating carousel — unreliable status shows "measuring…"
+  const s = { L: 0, model: 'opus', rateLamp: { reliable: false, unavailableReason: 'no_transcript' } };
   const out = formatLine(s);
-  // v3: no_transcript renders via renderCalibratingV3 with "no transcript found" text
-  assert.ok(out.length > 0 && /no transcript/i.test(out), 'calibrating for no_transcript');
+  assert.ok(out.length > 0 && /measuring/i.test(out), 'unreliable shows measuring');
 });
 
 test('formatLine still renders the normal gauge when calibratingReason is null (regression)', () => {

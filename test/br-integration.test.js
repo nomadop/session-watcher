@@ -5,7 +5,6 @@ import { describe, test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeLedgerIntoStatus, _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
 import { formatLine, renderLamp, renderBr, _resetRenderState } from '../lib/statusline-format.js';
-import { rawTierFor } from '../lib/notify-gate.js';
 import { BR_AMBER, BR_RED } from '../lib/bill-regret.js';
 
 describe('br integration: status → display → gate', () => {
@@ -15,11 +14,10 @@ describe('br integration: status → display → gate', () => {
   });
 
   function buildScenario(L_read, cRatio = 10) {
+    const B = 80000, g = 684;
     const status = {
-      rateLamp: { reliable: true, C_RATIO: cRatio, L_read, L_cap: 960000 },
-      baseline: { total: 80000 },
-      kAvg: 684,
-      L: L_read,
+      rateLamp: { reliable: true, C_RATIO: cRatio, L_read, L_cap: 960000, B_post: B, B_rebuild: B, gEma: g },
+      L: L_read, B, g,
       model: 'claude-sonnet-4-20250514',
     };
     const ledger = {
@@ -29,7 +27,6 @@ describe('br integration: status → display → gate', () => {
       billCycleCount: 2,
       currentTurnSeq: 5,
       lastAppliedFoldedCallSeq: 10,
-      currentTurnDeltaW: 100,
     };
     return { status, ledger };
   }
@@ -44,10 +41,6 @@ describe('br integration: status → display → gate', () => {
     assert.ok(Number.isFinite(status.rateLamp.br), `br should be finite, got ${status.rateLamp.br}`);
     assert.ok(status.rateLamp.br < BR_AMBER, `br=${status.rateLamp.br} should be < ${BR_AMBER}`);
     assert.equal(renderLamp(status.rateLamp.br), '🟢');
-
-    // Gate: br as x, BR_AMBER as xStar → tier 0
-    const fc = { xStar: BR_AMBER, dhat: BR_RED - BR_AMBER };
-    assert.equal(rawTierFor(status.rateLamp.br, fc), 0);
   });
 
   test('red zone: R=10, L_read=240000 (x=3.0) → br >= 0.25, lamp red, tier 2', () => {
@@ -59,12 +52,9 @@ describe('br integration: status → display → gate', () => {
 
     assert.ok(Number.isFinite(status.rateLamp.br), `br should be finite, got ${status.rateLamp.br}`);
     assert.ok(status.rateLamp.br >= BR_RED, `br=${status.rateLamp.br} should be >= ${BR_RED}`);
-    assert.equal(status.rateLamp.inDeepWater, true);
+    // v3: inDeepWater is computed at getStatus time from br >= BR_AMBER
+    assert.ok(status.rateLamp.br >= BR_AMBER, 'br in deep water territory');
     assert.equal(renderLamp(status.rateLamp.br), '🔴');
-
-    // Gate: br as x, BR_AMBER as xStar → tier 2
-    const fc = { xStar: BR_AMBER, dhat: BR_RED - BR_AMBER };
-    assert.equal(rawTierFor(status.rateLamp.br, fc), 2);
   });
 
   test('formatLine produces valid output with br display', () => {

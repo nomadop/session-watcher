@@ -1,9 +1,11 @@
 // public/elements/historyChart.js — Per-segment paged history chart (spec §2 #4, #10, #12)
-// Renders L trajectory + L* exit line + miss markers per segment.
+// Renders L trajectory + projection + miss markers per segment.
 // Groups flat /api/history array by segment field client-side.
 
-import { computeYMax, buildMissMarkers, buildProjectionData } from '../chart-helpers.js';
+import { computeYMax, buildMissMarkers, buildProjectionData, computeYRatchet, RATCHET_Y_INIT } from '../chart-helpers.js';
 import { computeCrosshairLabel, computeLabelOffset } from '../lib/crosshairHelpers.js';
+import { HOVER_LINE_COLOR, MAX_TOUCH_MARKERS } from '../lib/uiConstants.js';
+import { computePreviewLandmarks } from './heroDiptych.js';
 
 /** Resolve a CSS custom property to its computed value, with fallback. */
 function cssVar(el, name, fallback) {
@@ -11,15 +13,8 @@ function cssVar(el, name, fallback) {
   return v || fallback;
 }
 
-// Ratchet defaults (spec §2 #10)
-const RATCHET_Y_INIT = 200000;
-const RATCHET_Y_CAP = 1000000;
+// X-axis ratchet (still 2× doubling — horizontal space is less constrained)
 const RATCHET_X_INIT = 100;
-
-function nextYRatchet(current) {
-  const next = current * 2;
-  return next > RATCHET_Y_CAP ? RATCHET_Y_CAP : next;
-}
 
 function nextXRatchet(current) {
   return current * 2;
@@ -39,20 +34,11 @@ function groupBySegment(history) {
 }
 
 /**
- * Fit cold-start points (kAvg=0, baseline not yet latched) at the start of a segment.
- * Instead of showing the raw L=0→baseline jump, backfill cold-start L values with the
- * first valid point's L (flat line at baseline level), so the chart starts level and
- * only shows real incremental growth.
+ * fitColdStart: v3's computeHistoryPoint never emits kAvg, so the original cold-start
+ * backfill logic (which keyed on kAvg===0) is a permanent no-op. Return input unchanged.
  */
 function fitColdStart(points) {
-  if (points.length === 0) return points;
-  let firstValid = 0;
-  while (firstValid < points.length && (points[firstValid].kAvg == null || (points[firstValid].kAvg === 0 && points[firstValid].L === 0))) {
-    firstValid++;
-  }
-  if (firstValid === 0 || firstValid >= points.length) return points;
-  const baseL = points[firstValid].L;
-  return points.map((p, i) => i < firstValid ? { ...p, L: baseL } : p);
+  return points;
 }
 
 /**
@@ -82,7 +68,7 @@ function pickThresholdLine(currentL, entryL, exitL, redL, colors) {
  */
 function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
   // Fix #10: miss markers span the full y-axis (ratchetY), not just yMax from current data.
-  // After a ratchet-up, ratchetY may be 2× computeYMax — using yMax would leave markers half-height.
+  // After a ratchet-up, ratchetY may exceed computeYMax — using yMax would leave markers half-height.
   // computeYMax is still used by computeRatchet (called before buildChartConfig), not needed here.
   // X labels are 1-based turn numbers
   const labels = points.map((_, i) => i + 1);
@@ -95,7 +81,7 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
     ? [{ x: 1, y: thresholdLine.value }, { x: ratchetX, y: thresholdLine.value }]
     : [];
   const thresholdColor = thresholdLine?.color ?? colors.amber;
-  const missMarkers = buildMissMarkers(points, ratchetY);
+  const missMarkers = buildMissMarkers(points);
 
   // Inline plugin: draw label for the single threshold line
   const thresholdLabelPlugin = {
@@ -150,17 +136,6 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
           spanGaps: true,
         },
         {
-          label: 'Cache miss',
-          data: missMarkers,
-          borderColor: colors.coralAlpha,
-          borderWidth: 1.5,
-          pointRadius: 0,
-          fill: false,
-          showLine: true,
-          parsing: false,
-          spanGaps: false,
-        },
-        {
           id: 'projection',
           label: 'projection',
           data: [],  // populated by mount()'s rebuildChart/updateChart
@@ -172,6 +147,19 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
           tension: 0,
           parsing: false,
           spanGaps: true,
+        },
+        {
+          id: 'missMarkers',
+          label: 'Cache miss',
+          data: missMarkers,
+          borderColor: colors.coralAlpha,
+          backgroundColor: colors.coralAlpha,
+          pointStyle: 'triangle',
+          pointRadius: 6,
+          pointBorderWidth: 0,
+          showLine: false,
+          fill: false,
+          parsing: false,
         },
       ],
     },
@@ -217,9 +205,16 @@ export function mount(root, ctx) {
   let entryLineL = null;         // left-arm entry line (xBrAmberL * lBase, br=-10%)
   let exitLineL = null;          // v2.1 deep-water line (L_exit_fullCarry from rateLamp, br=10%)
   let redLineL = null;           // br=25% threshold line (xBrRedR * lBase)
+  // Saved copies: restored when navigating back to live segment (update() hasn't fired yet)
+  let _savedEntryLineL = null;
+  let _savedExitLineL = null;
+  let _savedRedLineL = null;
   let lastGEma = null;           // per-call EMA growth rate (gEma from rateLamp)
+  let lastCRatio = null;         // C_RATIO (cache cost ratio) from rateLamp
   let lastLRead = null;          // current L_read from rateLamp
   let lastLBase = null;          // current lBase from rateLamp
+  let previewB = null;           // non-null ⇔ bucket preview active
+  let hoverTouchMap = null;      // Map<localSeq, 'r'|'w'> — active during path-bucket hover for L-line coloring
 
   // DOM structure
   root.innerHTML = `
@@ -241,15 +236,14 @@ export function mount(root, ctx) {
     <div class="sw-history-legend">
       <span><i class="sw-legend-l"></i>L tokens</span>
       <span><i class="sw-legend-threshold"></i>next threshold</span>
-      <span><i class="sw-legend-miss"></i>cache miss</span>
       <span><i class="sw-legend-proj"></i>projection</span>
+      <span><i class="sw-legend-miss"></i>cache miss</span>
     </div>
     <div class="sw-history-footnote">
-      <span><b class="sw-fn-kavg">—</b> kAvg</span>
-      <span><b class="sw-fn-g">—</b> gₑ</span>
       <span>calls <b class="sw-fn-calls">—</b></span>
+      <span>gₑ <b class="sw-fn-g">—</b></span>
       <span>L <b class="sw-fn-l">—</b></span>
-      <span>base <b class="sw-fn-base">—</b></span>
+      <span>B <b class="sw-fn-base">—</b></span>
     </div>
   `;
 
@@ -261,23 +255,56 @@ export function mount(root, ctx) {
   const nextBtn = root.querySelector('.sw-history-next');
   const pageNumEl = root.querySelector('.sw-history-page-num');
   const pageTotalEl = root.querySelector('.sw-history-page-total');
-  const fnKavg = root.querySelector('.sw-fn-kavg');
   const fnG = root.querySelector('.sw-fn-g');
   const fnCalls = root.querySelector('.sw-fn-calls');
   const fnL = root.querySelector('.sw-fn-l');
   const fnBase = root.querySelector('.sw-fn-base');
+
+  // Hover line overlay — created in the chart container (relative positioned)
+  const container = root.querySelector('.sw-history-container');
+  const hoverLineEl = document.createElement('div');
+  hoverLineEl.className = 'sw-history-hoverline';
+  hoverLineEl.style.cssText = `display:none;position:absolute;top:0;height:100%;border-left:1px dashed ${HOVER_LINE_COLOR};pointer-events:none;`;
+  const hoverLineTag = document.createElement('span');
+  hoverLineTag.style.cssText = 'position:absolute;top:0;left:2px;font-size:9px;font-family:"JetBrains Mono",monospace;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;color:' + HOVER_LINE_COLOR + ';';
+  hoverLineEl.appendChild(hoverLineTag);
+  container.appendChild(hoverLineEl);
+
+  // Touch-marker line pool: reusable dashed lines for touchSeqs multi-marker (capped at MAX_TOUCH_MARKERS)
+  const touchLinePool = [];
+  function getTouchLine(index, color) {
+    if (index >= touchLinePool.length) {
+      const el = document.createElement('div');
+      el.className = 'sw-history-touchline';
+      el.style.cssText = 'display:none;position:absolute;top:0;height:100%;border-left:1px dashed;pointer-events:none;z-index:1;opacity:0.35;';
+      container.appendChild(el);
+      touchLinePool.push(el);
+    }
+    const el = touchLinePool[index];
+    el.style.borderLeftColor = color;
+    return el;
+  }
+  function hideTouchLines() {
+    for (const el of touchLinePool) el.style.display = 'none';
+  }
+
+  // currentPoints ref for sw-bucket-hover handler — updated whenever chart is rebuilt/updated
+  let currentPoints = [];
 
   // Theme colors — read once at mount, refreshed on theme switch (destroy+remount)
   const mint = cssVar(root, '--mint', '#4fe0b0');
   const amber = cssVar(root, '--amber', '#ffc24d');
   const coral = cssVar(root, '--coral', '#ff7566');
   const txtDim = cssVar(root, '--txt-dim', '#93a1ab');
+  const sky = cssVar(root, '--sky', '#49c5e0');
   const colors = {
     mint,
     mintBg: mint.startsWith('#') ? mint + '0F' : 'rgba(79,224,176,0.06)',
+    mintDim: mint.startsWith('#') ? mint + '22' : 'rgba(79,224,176,0.13)',
     amber,
     coral,
-    coralAlpha: coral.startsWith('#') ? coral + 'CC' : 'rgba(255,117,102,0.8)',
+    coralAlpha: coral.startsWith('#') ? coral + '80' : 'rgba(255,117,102,0.5)',
+    sky,
     txtDim,
   };
 
@@ -285,7 +312,8 @@ export function mount(root, ctx) {
   root.querySelector('.sw-legend-l').style.background = mint;
   const threshSwatch = root.querySelector('.sw-legend-threshold');
   threshSwatch.style.cssText = `height:1.5px;border-top:2px dashed ${amber};background:none;width:14px;`;
-  root.querySelector('.sw-legend-miss').style.background = coral;
+  const missSwatch = root.querySelector('.sw-legend-miss');
+  missSwatch.style.cssText = `width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:7px solid ${coral};background:none;border-radius:0;`;
   const projSwatch = root.querySelector('.sw-legend-proj');
   projSwatch.style.cssText = `border-top:2px dashed ${txtDim};background:none;width:14px;height:1.5px;`;
 
@@ -360,7 +388,7 @@ export function mount(root, ctx) {
     if (snappedTurn <= lastDataTurn && currentPoints[snappedTurn - 1]) {
       yPx = chart.scales.y.getPixelForValue(currentPoints[snappedTurn - 1].L);
     } else {
-      const slope = (lastGEma > 0) ? lastGEma : (currentPoints[lastDataTurn - 1]?.kAvg || 0);
+      const slope = (lastGEma > 0) ? lastGEma : (currentPoints[lastDataTurn - 1]?.g || 0);
       const lastL = currentPoints[lastDataTurn - 1]?.L || 0;
       yPx = chart.scales.y.getPixelForValue(lastL + slope * (snappedTurn - lastDataTurn));
     }
@@ -413,6 +441,134 @@ export function mount(root, ctx) {
   canvas.addEventListener('mouseleave', onChartMouseLeave);
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // ── Bucket hover linkage line (§10.2) ────────────────────────────────────────
+  function onBucketHover(e) {
+    const { lastCallSeq, name, touchSeqs, tier, group } = e.detail || {};
+    if (lastCallSeq == null || !chart) {
+      hoverLineEl.style.display = 'none';
+      hideTouchLines();
+      if (hoverTouchMap) { hoverTouchMap = null; chart?.update('none'); }
+      return;
+    }
+    // lastCallSeq is a global foldedCallSeq that never resets at segment boundaries.
+    // The chart x-axis uses segment-local 1-based indices. Convert by subtracting
+    // the offset of this segment's first point in the global sequence.
+    const segOffset = currentPoints.length > 0
+      ? (currentPoints[0].foldedSeq ?? 1) - 1
+      : 0;
+    const localSeq = lastCallSeq - segOffset;
+
+    // Primary hover line (last call seq)
+    if (localSeq >= 1 && localSeq <= currentPoints.length) {
+      const px = chart.scales.x.getPixelForValue(localSeq);
+      const ca = chart.chartArea;
+      hoverLineEl.style.display = '';
+      hoverLineEl.style.left = `${px}px`;
+      hoverLineEl.style.top = `${ca.top}px`;
+      hoverLineEl.style.height = `${ca.bottom - ca.top}px`;
+      const truncated = touchSeqs && touchSeqs.length > MAX_TOUCH_MARKERS;
+      const baseName = name ? name.split('/').pop() || name : '';
+      hoverLineTag.textContent = truncated ? `${baseName} (last ${MAX_TOUCH_MARKERS})` : baseName;
+    } else {
+      hoverLineEl.style.display = 'none';
+    }
+
+    // Tool buckets (output group): show dashed vertical lines at each touchSeq position.
+    // Path buckets: use L-line segment coloring instead (dimmed non-touched segments).
+    hideTouchLines();
+    if (group === 'output' && touchSeqs && touchSeqs.length > 0 && chart) {
+      const shown = touchSeqs.slice(-MAX_TOUCH_MARKERS);
+      const tierColor = tier === 'coral' ? colors.coral : tier === 'amber' ? colors.amber : colors.mint;
+      const ca = chart.chartArea;
+      let lineIdx = 0;
+      for (const entry of shown) {
+        const seq = typeof entry === 'number' ? entry : entry.seq;
+        const local = seq - segOffset;
+        if (local < 1 || local > currentPoints.length) continue;
+        const px = chart.scales.x.getPixelForValue(local);
+        const el = getTouchLine(lineIdx++, tierColor);
+        el.style.display = '';
+        el.style.left = `${px}px`;
+        el.style.top = `${ca.top}px`;
+        el.style.height = `${ca.bottom - ca.top}px`;
+      }
+      // No L-line coloring for tool buckets
+      if (hoverTouchMap) { hoverTouchMap = null; chart.update('none'); }
+    } else {
+      // Path buckets: L-line segment coloring
+      const newMap = new Map();
+      if (touchSeqs && touchSeqs.length > 0) {
+        for (const entry of touchSeqs) {
+          const seq = typeof entry === 'number' ? entry : entry.seq;
+          const mode = typeof entry === 'object' ? entry.mode : null;
+          const local = seq - segOffset;
+          if (local >= 1 && local <= currentPoints.length) {
+            if (mode === 'w' || !newMap.has(local)) newMap.set(local, mode);
+          }
+        }
+      }
+      hoverTouchMap = newMap.size > 0 ? newMap : null;
+      chart.update('none');
+    }
+  }
+
+  document.addEventListener('sw-bucket-hover', onBucketHover);
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // ── Bucket preview → threshold line update (§10.3) ───────────────────────────
+  /** Recompute threshold lines from stored previewB + latest g/R/L. */
+  function applyPreviewThresholds() {
+    if (!previewB || lastCRatio == null || lastGEma == null || lastLRead == null) return;
+    const prev = computePreviewLandmarks({
+      B_preview: previewB, R: lastCRatio, g: lastGEma, L: lastLRead, mf: null,
+    });
+    entryLineL = prev.xAmberL * previewB;
+    exitLineL = prev.xAmberR * previewB;
+    redLineL = prev.xRedR * previewB;
+  }
+
+  function onBucketPreview(e) {
+    const detail = e.detail ?? null;
+    const dirty = detail?.dirty;
+    const B_preview = detail?.B_preview;
+
+    // Preview thresholds only apply on the live segment — historical segments have no threshold lines.
+    if (!follow) return;
+
+    if (dirty && B_preview > 0 && lastCRatio != null && lastGEma != null && lastLRead != null) {
+      previewB = B_preview;
+      applyPreviewThresholds();
+    } else if (!dirty && previewB) {
+      previewB = null;
+      // Revert: recompute from actual state
+      if (lastLBase > 0 && lastCRatio != null && lastGEma != null && lastLRead != null) {
+        const actual = computePreviewLandmarks({
+          B_preview: lastLBase, R: lastCRatio, g: lastGEma, L: lastLRead, mf: null,
+        });
+        entryLineL = actual.xAmberL * lastLBase;
+        exitLineL = actual.xAmberR * lastLBase;
+        redLineL = actual.xRedR * lastLBase;
+      }
+    } else {
+      return; // no change needed
+    }
+
+    // Redraw threshold line immediately
+    if (!chart) return;
+    const currentL = currentPoints.length > 0 ? currentPoints[currentPoints.length - 1]?.L ?? 0 : 0;
+    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
+    const thresholdData = tLine
+      ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }]
+      : [];
+    chart.data.datasets[1].data = thresholdData;
+    chart.data.datasets[1].borderColor = tLine?.color ?? colors.amber;
+    chart._thresholdLabel = tLine?.label ?? '';
+    chart.update('none');
+  }
+
+  document.addEventListener('sw-bucket-preview', onBucketPreview);
+  // ─────────────────────────────────────────────────────────────────────────────
+
   function updateControls() {
     const total = segmentKeys.length;
     prevBtn.disabled = currentPage <= 0;
@@ -428,7 +584,6 @@ export function mount(root, ctx) {
 
   function updateFootnote(points) {
     if (!points || points.length === 0) {
-      fnKavg.textContent = '—';
       fnG.textContent = '—';
       fnCalls.textContent = '—';
       fnL.textContent = '—';
@@ -436,8 +591,7 @@ export function mount(root, ctx) {
       return;
     }
     const last = points[points.length - 1];
-    fnKavg.textContent = last.kAvg != null ? Math.round(last.kAvg).toLocaleString() : '—';
-    const gVal = (lastGEma >= 1) ? lastGEma : last?.kAvg;
+    const gVal = (lastGEma >= 1) ? lastGEma : last?.g;
     fnG.textContent = gVal != null ? Math.round(gVal).toLocaleString() : '—';
     fnCalls.textContent = points.length;
     fnL.textContent = lastLRead != null ? `${Math.round(lastLRead / 1000)}k` : '—';
@@ -445,11 +599,9 @@ export function mount(root, ctx) {
   }
 
   function computeRatchet(points) {
-    // Y ratchet: only grow
+    // Y ratchet: 80% trigger, 1.5× step (imported from chart-helpers)
     const yMax = computeYMax(points);
-    while (ratchetY < yMax && ratchetY < RATCHET_Y_CAP) {
-      ratchetY = nextYRatchet(ratchetY);
-    }
+    ratchetY = computeYRatchet(ratchetY, yMax);
     // X ratchet: only grow
     const xMax = points.length;
     while (ratchetX < xMax) {
@@ -463,6 +615,7 @@ export function mount(root, ctx) {
       chart.destroy();
       chart = null;
     }
+    hoverTouchMap = null; // clear stale L-line coloring from previous segment
     // Reset ratchets on segment change; clear thresholds only when paging to a
     // historical segment (follow=false) — on the live segment, update() has
     // already set them from the current rateLamp before calling rebuildChart().
@@ -472,10 +625,18 @@ export function mount(root, ctx) {
       entryLineL = null;
       exitLineL = null;
       redLineL = null;
+      previewB = null; // clear stale preview so update() won't re-apply thresholds
+    } else {
+      // Returning to live segment via navigation: restore thresholds from last snapshot
+      // (they were nulled when we paged away; update() hasn't fired yet to repopulate).
+      entryLineL = _savedEntryLineL;
+      exitLineL = _savedExitLineL;
+      redLineL = _savedRedLineL;
     }
 
     const raw = segmentKeys.length > 0 ? (segments.get(segmentKeys[currentPage]) || []) : [];
     const points = fitColdStart(raw);
+    currentPoints = points;
     if (points.length === 0) {
       updateControls();
       updateFootnote(points);
@@ -489,7 +650,19 @@ export function mount(root, ctx) {
     chart = new Chart(canvas, config);
     chart._thresholdLabel = tLine?.label ?? '';
 
-    // Inject projection data (spec §6.1 — needs closure vars, not available in buildChartConfig)
+    // L-line segment coloring: when a path bucket is hovered, dim non-touched segments
+    // so that only the touched positions stand out (read=sky, write=amber, rest=dimmed).
+    chart.data.datasets[0].segment = {
+      borderColor: (ctx) => {
+        if (!hoverTouchMap) return colors.mint;
+        const mode = hoverTouchMap.get(ctx.p1DataIndex + 1);
+        if (mode === 'w') return colors.amber;
+        if (mode === 'r') return colors.sky;
+        return colors.mintDim;
+      },
+    };
+
+    // Inject projection data (needs closure vars not available in buildChartConfig)
     const projDs = chart.data.datasets.find(d => d.id === 'projection');
     if (projDs) {
       projDs.data = buildProjectionData(points, lastGEma, ratchetX, ratchetY);
@@ -514,7 +687,7 @@ export function mount(root, ctx) {
     computeRatchet(points);
 
     // Fix #10: use ratchetY (actual axis height) for miss markers, not computeYMax (current data height).
-    // After a ratchet-up ratchetY may be 2× the data max — markers must span the full visible axis.
+    // After a ratchet-up ratchetY may exceed the data max — markers must span the full visible axis.
     const labels = points.map((_, i) => i + 1);
     const lData = points.map(p => p.L);
     const lPointRadius = points.map((_, i) => i === points.length - 1 ? 4 : 0);
@@ -525,7 +698,7 @@ export function mount(root, ctx) {
     const thresholdData = tLine
       ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }]
       : [];
-    const missMarkers = buildMissMarkers(points, ratchetY);
+    const missMarkers = buildMissMarkers(points);
 
     chart.data.labels = labels;
     chart.data.datasets[0].data = lData;
@@ -541,20 +714,22 @@ export function mount(root, ctx) {
     chart.data.datasets[1].data = thresholdData;
     chart.data.datasets[1].borderColor = tLine?.color ?? colors.amber;
     chart._thresholdLabel = tLine?.label ?? '';
-    chart.data.datasets[2].data = missMarkers;
 
-    // Projection (id-based lookup — spec §6.1)
+    // Projection (id-based lookup)
     const projDs = chart.data.datasets.find(d => d.id === 'projection');
     if (projDs) {
-      const projData = buildProjectionData(points, lastGEma, ratchetX, ratchetY);
-      projDs.data = projData;
+      projDs.data = buildProjectionData(points, lastGEma, ratchetX, ratchetY);
     }
 
-    // x-axis max: always = max(ratchetX, projection endpoint) — shrinks back when projection disappears
+    const missDs = chart.data.datasets.find(d => d.id === 'missMarkers');
+    if (missDs) missDs.data = missMarkers;
+
+    // x-axis max: max(ratchetX, projection endpoint) — shrinks back when projection disappears
     const projEndX = projDs?.data?.[1]?.x ?? 0;
     chart.options.scales.x.max = Math.max(ratchetX, projEndX);
     if (ratchetY !== prevRY) chart.options.scales.y.max = ratchetY;
 
+    currentPoints = points;
     chart.update('none'); // spec §5.7: same-segment = update('none')
     updateControls();
     updateFootnote(points);
@@ -562,21 +737,35 @@ export function mount(root, ctx) {
 
   function update(snapshot) {
     const rl = snapshot?.status?.rateLamp;
-    // Threshold lines: entry (left arm), exit (br=10%), red (br=25%)
-    if (rl?.xBrAmberL != null && Number.isFinite(rl.xBrAmberL) && rl?.lBase > 0) {
-      entryLineL = rl.xBrAmberL * rl.lBase;
-    }
-    if (rl?.xBrAmberR != null && Number.isFinite(rl.xBrAmberR) && rl?.lBase > 0) {
-      exitLineL = rl.xBrAmberR * rl.lBase;
-    } else if (rl?.L_exit_fullCarry != null && Number.isFinite(rl.L_exit_fullCarry)) {
-      exitLineL = rl.L_exit_fullCarry; // fallback before mf is available
-    }
-    if (rl?.xBrRedR != null && Number.isFinite(rl.xBrRedR) && rl?.lBase > 0) {
-      redLineL = rl.xBrRedR * rl.lBase;
+    // Threshold lines: during preview, recompute from previewB + latest inputs;
+    // otherwise use server-provided landmarks directly.
+    if (previewB) {
+      applyPreviewThresholds();
+    } else {
+      // Always compute and cache threshold values from the latest rateLamp snapshot.
+      if (rl?.xBrAmberL != null && Number.isFinite(rl.xBrAmberL) && rl?.lBase > 0) {
+        _savedEntryLineL = rl.xBrAmberL * rl.lBase;
+      }
+      if (rl?.xBrAmberR != null && Number.isFinite(rl.xBrAmberR) && rl?.lBase > 0) {
+        _savedExitLineL = rl.xBrAmberR * rl.lBase;
+      } else if (rl?.L_exit_fullCarry != null && Number.isFinite(rl.L_exit_fullCarry)) {
+        _savedExitLineL = rl.L_exit_fullCarry;
+      }
+      if (rl?.xBrRedR != null && Number.isFinite(rl.xBrRedR) && rl?.lBase > 0) {
+        _savedRedLineL = rl.xBrRedR * rl.lBase;
+      }
+      // Only apply to the active render vars when on the live segment.
+      // Historical segments must not show live threshold lines.
+      if (follow) {
+        entryLineL = _savedEntryLineL;
+        exitLineL = _savedExitLineL;
+        redLineL = _savedRedLineL;
+      }
     }
     if (rl?.gEma != null && Number.isFinite(rl.gEma)) {
       lastGEma = rl.gEma;
     }
+    if (rl?.C_RATIO != null && Number.isFinite(rl.C_RATIO)) lastCRatio = rl.C_RATIO;
     if (rl?.L_read != null && Number.isFinite(rl.L_read)) lastLRead = rl.L_read;
     if (rl?.lBase != null && Number.isFinite(rl.lBase)) lastLBase = rl.lBase;
     const history = snapshot.history || [];
@@ -635,6 +824,8 @@ export function mount(root, ctx) {
     nextBtn.removeEventListener('click', handleNext);
     canvas.removeEventListener('mousemove', onChartMouseMove);
     canvas.removeEventListener('mouseleave', onChartMouseLeave);
+    document.removeEventListener('sw-bucket-hover', onBucketHover);
+    document.removeEventListener('sw-bucket-preview', onBucketPreview);
     root.innerHTML = '';
   }
 

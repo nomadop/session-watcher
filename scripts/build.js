@@ -51,14 +51,12 @@ async function main() {
   });
 
   // 4. Copy static assets
-  cpSync(join(ROOT, 'hooks', 'warn.js'), join(DIST, 'hooks', 'warn.js'));
   cpSync(join(ROOT, 'public'), join(DIST, 'public'), { recursive: true });
   cpSync(join(ROOT, 'statusline.js'), join(DIST, 'statusline.js'));
 
   // 5. Ensure executables have +x
   chmodSync(join(DIST, 'index.js'), 0o755);
   chmodSync(join(DIST, 'hooks', 'session-start.js'), 0o755);
-  chmodSync(join(DIST, 'hooks', 'warn.js'), 0o755);
   chmodSync(join(DIST, 'statusline.js'), 0o755);
 
   console.log('Build complete → dist/');

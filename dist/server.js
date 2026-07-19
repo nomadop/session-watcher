@@ -1295,8 +1295,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs = __require("fs");
-          stream2 = new fs.SyncWriteStream(fd2, { autoClose: false });
+          var fs2 = __require("fs");
+          stream2 = new fs2.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14083,11 +14083,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path) {
-      if (!path || typeof path !== "string") {
+    function lookup(path4) {
+      if (!path4 || typeof path4 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path).toLowerCase().substr(1);
+      var extension2 = extname("x." + path4).toLowerCase().substr(1);
       if (!extension2) {
         return false;
       }
@@ -16194,7 +16194,7 @@ var require_utils = __commonJS({
         obj[key] = value;
       }
     };
-    var merge2 = function merge3(target, source, options) {
+    var merge = function merge2(target, source, options) {
       if (!source) {
         return target;
       }
@@ -16251,7 +16251,7 @@ var require_utils = __commonJS({
           if (has.call(target, i)) {
             var targetItem = target[i];
             if (targetItem && typeof targetItem === "object" && item && typeof item === "object") {
-              target[i] = merge3(targetItem, item, options);
+              target[i] = merge2(targetItem, item, options);
             } else {
               target[target.length] = item;
             }
@@ -16270,7 +16270,7 @@ var require_utils = __commonJS({
       return Object.keys(source).reduce(function(acc, key) {
         var value = source[key];
         if (has.call(acc, key)) {
-          setProperty(acc, key, merge3(acc[key], value, options));
+          setProperty(acc, key, merge2(acc[key], value, options));
         } else {
           setProperty(acc, key, value);
         }
@@ -16425,7 +16425,7 @@ var require_utils = __commonJS({
       isRegExp,
       markOverflow,
       maybeMap,
-      merge: merge2
+      merge
     };
   }
 });
@@ -17316,9 +17316,9 @@ var require_body_parser = __commonJS({
 var require_merge_descriptors = __commonJS({
   "node_modules/merge-descriptors/index.js"(exports, module) {
     "use strict";
-    module.exports = merge2;
+    module.exports = merge;
     var hasOwnProperty = Object.prototype.hasOwnProperty;
-    function merge2(dest, src, redefine) {
+    function merge(dest, src, redefine) {
       if (!dest) {
         throw new TypeError("argument dest is required");
       }
@@ -17416,7 +17416,7 @@ var require_parseurl = __commonJS({
         return void 0;
       }
       var parsed = req._parsedUrl;
-      if (fresh2(url2, parsed)) {
+      if (fresh(url2, parsed)) {
         return parsed;
       }
       parsed = fastparse(url2);
@@ -17429,7 +17429,7 @@ var require_parseurl = __commonJS({
         return parseurl(req);
       }
       var parsed = req._parsedOriginalUrl;
-      if (fresh2(url2, parsed)) {
+      if (fresh(url2, parsed)) {
         return parsed;
       }
       parsed = fastparse(url2);
@@ -17479,7 +17479,7 @@ var require_parseurl = __commonJS({
       }
       return url2;
     }
-    function fresh2(url2, parsedUrl) {
+    function fresh(url2, parsedUrl) {
       return typeof parsedUrl === "object" && parsedUrl !== null && (Url === void 0 || parsedUrl instanceof Url) && parsedUrl._raw === url2;
     }
   }
@@ -17676,7 +17676,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports, module) {
     module.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path, keys, options) {
+    function pathToRegexp(path4, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -17690,8 +17690,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m;
-      if (path instanceof RegExp) {
-        while (m = MATCHING_GROUP_REGEXP.exec(path.source)) {
+      if (path4 instanceof RegExp) {
+        while (m = MATCHING_GROUP_REGEXP.exec(path4.source)) {
           if (m[0][0] === "\\") continue;
           keys.push({
             name: m[1] || name++,
@@ -17699,18 +17699,18 @@ var require_path_to_regexp = __commonJS({
             offset: m.index
           });
         }
-        return path;
+        return path4;
       }
-      if (Array.isArray(path)) {
-        path = path.map(function(value) {
+      if (Array.isArray(path4)) {
+        path4 = path4.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path.join("|"), flags);
+        return new RegExp(path4.join("|"), flags);
       }
-      if (typeof path !== "string") {
+      if (typeof path4 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path = path.replace(
+      path4 = path4.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match, slash, format, key, capture, star, optional, offset) {
           if (match[0] === "\\") {
@@ -17727,7 +17727,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path.slice(pos, offset);
+            backtrack += path4.slice(pos, offset);
           }
           pos = offset + match.length;
           if (match === "*") {
@@ -17757,7 +17757,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m = MATCHING_GROUP_REGEXP.exec(path)) {
+      while (m = MATCHING_GROUP_REGEXP.exec(path4)) {
         if (m[0][0] === "\\") continue;
         if (keysOffset + i === keys.length || keys[keysOffset + i].offset > m.index) {
           keys.splice(keysOffset + i, 0, {
@@ -17769,13 +17769,13 @@ var require_path_to_regexp = __commonJS({
         }
         i++;
       }
-      path += strict ? "" : path[path.length - 1] === "/" ? "?" : "/?";
+      path4 += strict ? "" : path4[path4.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path += "$";
-      } else if (path[path.length - 1] !== "/") {
-        path += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path4 += "$";
+      } else if (path4[path4.length - 1] !== "/") {
+        path4 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path, flags);
+      return new RegExp("^" + path4, flags);
     }
   }
 });
@@ -17788,19 +17788,19 @@ var require_layer = __commonJS({
     var debug = require_src()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module.exports = Layer;
-    function Layer(path, options, fn) {
+    function Layer(path4, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path, options, fn);
+        return new Layer(path4, options, fn);
       }
-      debug("new %o", path);
+      debug("new %o", path4);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path, this.keys = [], opts);
-      this.regexp.fast_star = path === "*";
-      this.regexp.fast_slash = path === "/" && opts.end === false;
+      this.regexp = pathRegexp(path4, this.keys = [], opts);
+      this.regexp.fast_star = path4 === "*";
+      this.regexp.fast_slash = path4 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -17824,20 +17824,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match(path) {
+    Layer.prototype.match = function match(path4) {
       var match2;
-      if (path != null) {
+      if (path4 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path) };
-          this.path = path;
+          this.params = { "0": decode_param(path4) };
+          this.path = path4;
           return true;
         }
-        match2 = this.regexp.exec(path);
+        match2 = this.regexp.exec(path4);
       }
       if (!match2) {
         this.params = void 0;
@@ -17930,10 +17930,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module.exports = Route;
-    function Route(path) {
-      this.path = path;
+    function Route(path4) {
+      this.path = path4;
       this.stack = [];
-      debug("new %o", path);
+      debug("new %o", path4);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18145,8 +18145,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path = getPathname(req);
-        if (path == null) {
+        var path4 = getPathname(req);
+        if (path4 == null) {
           return done(layerError);
         }
         var layer;
@@ -18154,7 +18154,7 @@ var require_router = __commonJS({
         var route;
         while (match !== true && idx < stack.length) {
           layer = stack[idx++];
-          match = matchLayer(layer, path);
+          match = matchLayer(layer, path4);
           route = layer.route;
           if (typeof match !== "boolean") {
             layerError = layerError || match;
@@ -18192,18 +18192,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path);
+            trim_prefix(layer, layerError, layerPath, path4);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path) {
+      function trim_prefix(layer, layerError, layerPath, path4) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path.slice(0, layerPath.length)) {
+          if (layerPath !== path4.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path[layerPath.length];
+          var c = path4[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -18281,7 +18281,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path = "/";
+      var path4 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -18289,7 +18289,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path = fn;
+          path4 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -18301,8 +18301,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path, fn.name || "<anonymous>");
-        var layer = new Layer(path, {
+        debug("use %o %s", path4, fn.name || "<anonymous>");
+        var layer = new Layer(path4, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -18312,9 +18312,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path) {
-      var route2 = new Route(path);
-      var layer = new Layer(path, {
+    proto.route = function route(path4) {
+      var route2 = new Route(path4);
+      var layer = new Layer(path4, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -18324,8 +18324,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path) {
-        var route = this.route(path);
+      proto[method] = function(path4) {
+        var route = this.route(path4);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -18361,9 +18361,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path) {
+    function matchLayer(layer, path4) {
       try {
-        return layer.match(path);
+        return layer.match(path4);
       } catch (err) {
         return err;
       }
@@ -18452,11 +18452,11 @@ var require_init = __commonJS({
 var require_query = __commonJS({
   "node_modules/express/lib/middleware/query.js"(exports, module) {
     "use strict";
-    var merge2 = require_utils_merge();
+    var merge = require_utils_merge();
     var parseUrl = require_parseurl();
     var qs = require_lib2();
     module.exports = function query(options) {
-      var opts = merge2({}, options);
+      var opts = merge({}, options);
       var queryparse = qs.parse;
       if (typeof options === "function") {
         queryparse = options;
@@ -18481,13 +18481,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports, module) {
     "use strict";
     var debug = require_src()("express:view");
-    var path = __require("path");
-    var fs = __require("fs");
-    var dirname3 = path.dirname;
-    var basename2 = path.basename;
-    var extname = path.extname;
-    var join5 = path.join;
-    var resolve2 = path.resolve;
+    var path4 = __require("path");
+    var fs2 = __require("fs");
+    var dirname4 = path4.dirname;
+    var basename2 = path4.basename;
+    var extname = path4.extname;
+    var join5 = path4.join;
+    var resolve2 = path4.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18516,17 +18516,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path2;
+      var path5;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i = 0; i < roots.length && !path2; i++) {
+      for (var i = 0; i < roots.length && !path5; i++) {
         var root = roots[i];
         var loc = resolve2(root, name);
-        var dir = dirname3(loc);
+        var dir = dirname4(loc);
         var file = basename2(loc);
-        path2 = this.resolve(dir, file);
+        path5 = this.resolve(dir, file);
       }
-      return path2;
+      return path5;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -18534,21 +18534,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve3(dir, file) {
       var ext = this.ext;
-      var path2 = join5(dir, file);
-      var stat = tryStat(path2);
+      var path5 = join5(dir, file);
+      var stat = tryStat(path5);
       if (stat && stat.isFile()) {
-        return path2;
+        return path5;
       }
-      path2 = join5(dir, basename2(file, ext), "index" + ext);
-      stat = tryStat(path2);
+      path5 = join5(dir, basename2(file, ext), "index" + ext);
+      stat = tryStat(path5);
       if (stat && stat.isFile()) {
-        return path2;
+        return path5;
       }
     };
-    function tryStat(path2) {
-      debug('stat "%s"', path2);
+    function tryStat(path5) {
+      debug('stat "%s"', path5);
       try {
-        return fs.statSync(path2);
+        return fs2.statSync(path5);
       } catch (e) {
         return void 0;
       }
@@ -18824,8 +18824,8 @@ var require_fresh = __commonJS({
   "node_modules/fresh/index.js"(exports, module) {
     "use strict";
     var CACHE_CONTROL_NO_CACHE_REGEXP = /(?:^|,)\s*?no-cache\s*?(?:,|$)/;
-    module.exports = fresh2;
-    function fresh2(reqHeaders, resHeaders) {
+    module.exports = fresh;
+    function fresh(reqHeaders, resHeaders) {
       var modifiedSince = reqHeaders["if-modified-since"];
       var noneMatch = reqHeaders["if-none-match"];
       if (!modifiedSince && !noneMatch) {
@@ -18902,8 +18902,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports, module) {
-    var path = __require("path");
-    var fs = __require("fs");
+    var path4 = __require("path");
+    var fs2 = __require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -18924,7 +18924,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs2.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -18932,8 +18932,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path2, fallback) {
-      var ext = path2.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path5, fallback) {
+      var ext = path5.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -19161,34 +19161,34 @@ var require_send = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var etag = require_etag();
-    var fresh2 = require_fresh();
-    var fs = __require("fs");
+    var fresh = require_fresh();
+    var fs2 = __require("fs");
     var mime = require_mime();
     var ms = require_ms2();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path = __require("path");
+    var path4 = __require("path");
     var statuses = require_statuses();
     var Stream = __require("stream");
     var util = __require("util");
-    var extname = path.extname;
-    var join5 = path.join;
-    var normalize = path.normalize;
-    var resolve2 = path.resolve;
-    var sep = path.sep;
+    var extname = path4.extname;
+    var join5 = path4.join;
+    var normalize = path4.normalize;
+    var resolve2 = path4.resolve;
+    var sep = path4.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module.exports = send;
     module.exports.mime = mime;
-    function send(req, path2, options) {
-      return new SendStream(req, path2, options);
+    function send(req, path5, options) {
+      return new SendStream(req, path5, options);
     }
-    function SendStream(req, path2, options) {
+    function SendStream(req, path5, options) {
       Stream.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path2;
+      this.path = path5;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -19234,8 +19234,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path2) {
-      this._root = resolve2(String(path2));
+    SendStream.prototype.root = function root(path5) {
+      this._root = resolve2(String(path5));
       debug("root %s", this._root);
       return this;
     };
@@ -19331,7 +19331,7 @@ var require_send = __commonJS({
       }
     };
     SendStream.prototype.isFresh = function isFresh() {
-      return fresh2(this.req.headers, {
+      return fresh(this.req.headers, {
         etag: this.res.getHeader("ETag"),
         "last-modified": this.res.getHeader("Last-Modified")
       });
@@ -19348,10 +19348,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path2) {
+    SendStream.prototype.redirect = function redirect(path5) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path2);
+        this.emit("directory", res, path5);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -19371,42 +19371,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path2 = decode(this.path);
-      if (path2 === -1) {
+      var path5 = decode(this.path);
+      if (path5 === -1) {
         this.error(400);
         return res;
       }
-      if (~path2.indexOf("\0")) {
+      if (~path5.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path2) {
-          path2 = normalize("." + sep + path2);
+        if (path5) {
+          path5 = normalize("." + sep + path5);
         }
-        if (UP_PATH_REGEXP.test(path2)) {
-          debug('malicious path "%s"', path2);
+        if (UP_PATH_REGEXP.test(path5)) {
+          debug('malicious path "%s"', path5);
           this.error(403);
           return res;
         }
-        parts = path2.split(sep);
-        path2 = normalize(join5(root, path2));
+        parts = path5.split(sep);
+        path5 = normalize(join5(root, path5));
       } else {
-        if (UP_PATH_REGEXP.test(path2)) {
-          debug('malicious path "%s"', path2);
+        if (UP_PATH_REGEXP.test(path5)) {
+          debug('malicious path "%s"', path5);
           this.error(403);
           return res;
         }
-        parts = normalize(path2).split(sep);
-        path2 = resolve2(path2);
+        parts = normalize(path5).split(sep);
+        path5 = resolve2(path5);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path2);
+        debug('%s dotfile "%s"', access, path5);
         switch (access) {
           case "allow":
             break;
@@ -19420,13 +19420,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path2);
+        this.sendIndex(path5);
         return res;
       }
-      this.sendFile(path2);
+      this.sendFile(path5);
       return res;
     };
-    SendStream.prototype.send = function send2(path2, stat) {
+    SendStream.prototype.send = function send2(path5, stat) {
       var len = stat.size;
       var options = this.options;
       var opts = {};
@@ -19438,9 +19438,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path2);
-      this.setHeader(path2, stat);
-      this.type(path2);
+      debug('pipe "%s"', path5);
+      this.setHeader(path5, stat);
+      this.type(path5);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -19489,28 +19489,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path2, opts);
+      this.stream(path5, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path2) {
+    SendStream.prototype.sendFile = function sendFile(path5) {
       var i = 0;
       var self = this;
-      debug('stat "%s"', path2);
-      fs.stat(path2, function onstat(err, stat) {
-        if (err && err.code === "ENOENT" && !extname(path2) && path2[path2.length - 1] !== sep) {
+      debug('stat "%s"', path5);
+      fs2.stat(path5, function onstat(err, stat) {
+        if (err && err.code === "ENOENT" && !extname(path5) && path5[path5.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self.onStatError(err);
-        if (stat.isDirectory()) return self.redirect(path2);
-        self.emit("file", path2, stat);
-        self.send(path2, stat);
+        if (stat.isDirectory()) return self.redirect(path5);
+        self.emit("file", path5, stat);
+        self.send(path5, stat);
       });
       function next(err) {
         if (self._extensions.length <= i) {
           return err ? self.onStatError(err) : self.error(404);
         }
-        var p = path2 + "." + self._extensions[i++];
+        var p = path5 + "." + self._extensions[i++];
         debug('stat "%s"', p);
-        fs.stat(p, function(err2, stat) {
+        fs2.stat(p, function(err2, stat) {
           if (err2) return next(err2);
           if (stat.isDirectory()) return next();
           self.emit("file", p, stat);
@@ -19518,7 +19518,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path2) {
+    SendStream.prototype.sendIndex = function sendIndex(path5) {
       var i = -1;
       var self = this;
       function next(err) {
@@ -19526,9 +19526,9 @@ var require_send = __commonJS({
           if (err) return self.onStatError(err);
           return self.error(404);
         }
-        var p = join5(path2, self._index[i]);
+        var p = join5(path5, self._index[i]);
         debug('stat "%s"', p);
-        fs.stat(p, function(err2, stat) {
+        fs2.stat(p, function(err2, stat) {
           if (err2) return next(err2);
           if (stat.isDirectory()) return next();
           self.emit("file", p, stat);
@@ -19537,10 +19537,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path2, options) {
+    SendStream.prototype.stream = function stream(path5, options) {
       var self = this;
       var res = this.res;
-      var stream2 = fs.createReadStream(path2, options);
+      var stream2 = fs2.createReadStream(path5, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -19555,10 +19555,10 @@ var require_send = __commonJS({
         self.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path2) {
+    SendStream.prototype.type = function type(path5) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path2);
+      var type2 = mime.lookup(path5);
       if (!type2) {
         debug("no content-type");
         return;
@@ -19567,9 +19567,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path2, stat) {
+    SendStream.prototype.setHeader = function setHeader(path5, stat) {
       var res = this.res;
-      this.emit("headers", res, path2, stat);
+      this.emit("headers", res, path5, stat);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -19628,9 +19628,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path2) {
+    function decode(path5) {
       try {
-        return decodeURIComponent(path2);
+        return decodeURIComponent(path5);
       } catch (err) {
         return -1;
       }
@@ -20539,10 +20539,10 @@ var require_utils2 = __commonJS({
     var querystring = __require("querystring");
     exports.etag = createETagGenerator({ weak: false });
     exports.wetag = createETagGenerator({ weak: true });
-    exports.isAbsolute = function(path) {
-      if ("/" === path[0]) return true;
-      if (":" === path[1] && ("\\" === path[2] || "/" === path[2])) return true;
-      if ("\\\\" === path.substring(0, 2)) return true;
+    exports.isAbsolute = function(path4) {
+      if ("/" === path4[0]) return true;
+      if (":" === path4[1] && ("\\" === path4[2] || "/" === path4[2])) return true;
+      if ("\\\\" === path4.substring(0, 2)) return true;
     };
     exports.flatten = deprecate.function(
       flatten,
@@ -20678,7 +20678,7 @@ var require_application = __commonJS({
     var compileTrust = require_utils2().compileTrust;
     var deprecate = require_depd()("express");
     var flatten = require_array_flatten();
-    var merge2 = require_utils_merge();
+    var merge = require_utils_merge();
     var resolve2 = __require("path").resolve;
     var setPrototypeOf = require_setprototypeof();
     var hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -20754,7 +20754,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path = "/";
+      var path4 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -20762,7 +20762,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path = fn;
+          path4 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -20773,12 +20773,12 @@ var require_application = __commonJS({
       var router = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path, fn2);
+          return router.use(path4, fn2);
         }
-        debug(".use app under %s", path);
-        fn2.mountpath = path;
+        debug(".use app under %s", path4);
+        fn2.mountpath = path4;
         fn2.parent = this;
-        router.use(path, function mounted_app(req, res, next) {
+        router.use(path4, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -20790,9 +20790,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path) {
+    app.route = function route(path4) {
       this.lazyrouter();
-      return this._router.route(path);
+      return this._router.route(path4);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -20843,7 +20843,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path() {
+    app.path = function path4() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -20859,19 +20859,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path) {
+      app[method] = function(path4) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path);
+          return this.set(path4);
         }
         this.lazyrouter();
-        var route = this._router.route(path);
+        var route = this._router.route(path4);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path) {
+    app.all = function all(path4) {
       this.lazyrouter();
-      var route = this._router.route(path);
+      var route = this._router.route(path4);
       var args = slice.call(arguments, 1);
       for (var i = 0; i < methods.length; i++) {
         route[methods[i]].apply(route, args);
@@ -20890,11 +20890,11 @@ var require_application = __commonJS({
         done = options;
         opts = {};
       }
-      merge2(renderOptions, this.locals);
+      merge(renderOptions, this.locals);
       if (opts._locals) {
-        merge2(renderOptions, opts._locals);
+        merge(renderOptions, opts._locals);
       }
-      merge2(renderOptions, opts);
+      merge(renderOptions, opts);
       if (renderOptions.cache == null) {
         renderOptions.cache = this.enabled("view cache");
       }
@@ -21524,7 +21524,7 @@ var require_request = __commonJS({
     var isIP = __require("net").isIP;
     var typeis = require_type_is();
     var http = __require("http");
-    var fresh2 = require_fresh();
+    var fresh = require_fresh();
     var parseRange = require_range_parser();
     var parse = require_parseurl();
     var proxyaddr = require_proxy_addr();
@@ -21630,7 +21630,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path() {
+    defineGetter(req, "path", function path4() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -21655,7 +21655,7 @@ var require_request = __commonJS({
       var status = res.statusCode;
       if ("GET" !== method && "HEAD" !== method) return false;
       if (status >= 200 && status < 300 || 304 === status) {
-        return fresh2(this.headers, {
+        return fresh(this.headers, {
           "etag": res.get("ETag"),
           "last-modified": res.get("Last-Modified")
         });
@@ -21952,18 +21952,18 @@ var require_response = __commonJS({
     var http = __require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path = __require("path");
+    var path4 = __require("path");
     var statuses = require_statuses();
-    var merge2 = require_utils_merge();
+    var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
     var normalizeType = require_utils2().normalizeType;
     var normalizeTypes = require_utils2().normalizeTypes;
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path.extname;
+    var extname = path4.extname;
     var mime = send.mime;
-    var resolve2 = path.resolve;
+    var resolve2 = path4.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module.exports = res;
@@ -22140,26 +22140,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path2, options, callback) {
+    res.sendFile = function sendFile(path5, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path2) {
+      if (!path5) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path2 !== "string") {
+      if (typeof path5 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path2)) {
+      if (!opts.root && !isAbsolute(path5)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path2);
+      var pathname = encodeURI(path5);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -22169,7 +22169,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path2, options, callback) {
+    res.sendfile = function(path5, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -22179,7 +22179,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path2, opts);
+      var file = send(req, path5, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -22192,7 +22192,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path2, filename, options, callback) {
+    res.download = function download(path5, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -22209,7 +22209,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path2)
+        "Content-Disposition": contentDisposition(name || path5)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -22222,7 +22222,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve2(path2) : path2;
+      var fullPath = !opts.root ? resolve2(path5) : path5;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -22298,11 +22298,11 @@ var require_response = __commonJS({
           deprecate('res.clearCookie: Passing "options.expires" is deprecated. In v5.0.0 of Express, this option will be ignored, as res.clearCookie will automatically set cookies to expire immediately. Please update your code to omit this option.');
         }
       }
-      var opts = merge2({ expires: /* @__PURE__ */ new Date(1), path: "/" }, options);
+      var opts = merge({ expires: /* @__PURE__ */ new Date(1), path: "/" }, options);
       return this.cookie(name, "", opts);
     };
     res.cookie = function(name, value, options) {
-      var opts = merge2({}, options);
+      var opts = merge({}, options);
       var secret = this.req.secret;
       var signed = opts.signed;
       if (signed && !secret) {
@@ -22523,11 +22523,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path = parseUrl(req).pathname;
-        if (path === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path = "";
+        var path4 = parseUrl(req).pathname;
+        if (path4 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path4 = "";
         }
-        var stream = send(req, path, opts);
+        var stream = send(req, path4, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -22663,43 +22663,478 @@ var require_express2 = __commonJS({
   }
 });
 
+// node_modules/ignore/index.js
+var require_ignore = __commonJS({
+  "node_modules/ignore/index.js"(exports, module) {
+    function makeArray(subject) {
+      return Array.isArray(subject) ? subject : [subject];
+    }
+    var UNDEFINED = void 0;
+    var EMPTY = "";
+    var SPACE = " ";
+    var ESCAPE = "\\";
+    var REGEX_TEST_BLANK_LINE = /^\s+$/;
+    var REGEX_INVALID_TRAILING_BACKSLASH = /(?:[^\\]|^)\\$/;
+    var REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION = /^\\!/;
+    var REGEX_REPLACE_LEADING_EXCAPED_HASH = /^\\#/;
+    var REGEX_SPLITALL_CRLF = /\r?\n/g;
+    var REGEX_TEST_INVALID_PATH = /^\.{0,2}\/|^\.{1,2}$/;
+    var REGEX_TEST_TRAILING_SLASH = /\/$/;
+    var SLASH = "/";
+    var TMP_KEY_IGNORE = "node-ignore";
+    if (typeof Symbol !== "undefined") {
+      TMP_KEY_IGNORE = /* @__PURE__ */ Symbol.for("node-ignore");
+    }
+    var KEY_IGNORE = TMP_KEY_IGNORE;
+    var define = (object, key, value) => {
+      Object.defineProperty(object, key, { value });
+      return value;
+    };
+    var REGEX_REGEXP_RANGE = /([0-z])-([0-z])/g;
+    var RETURN_FALSE = () => false;
+    var sanitizeRange = (range) => range.replace(
+      REGEX_REGEXP_RANGE,
+      (match, from, to) => from.charCodeAt(0) <= to.charCodeAt(0) ? match : EMPTY
+    );
+    var negateRange = (range) => range.startsWith("!") || range.startsWith("\\^") ? `^${range.slice(range[0] === "!" ? 1 : 2)}` : range;
+    var cleanRangeBackSlash = (slashes) => {
+      const { length } = slashes;
+      return slashes.slice(0, length - length % 2);
+    };
+    var REPLACERS = [
+      [
+        // Remove BOM
+        // TODO:
+        // Other similar zero-width characters?
+        /^\uFEFF/,
+        () => EMPTY
+      ],
+      // > Trailing spaces are ignored unless they are quoted with backslash ("\")
+      [
+        // (a\ ) -> (a )
+        // (a  ) -> (a)
+        // (a ) -> (a)
+        // (a \ ) -> (a  )
+        /((?:\\\\)*?)(\\?\s+)$/,
+        (_, m1, m2) => m1 + (m2.indexOf("\\") === 0 ? SPACE : EMPTY)
+      ],
+      // Replace (\ ) with ' '
+      // (\ ) -> ' '
+      // (\\ ) -> '\\ '
+      // (\\\ ) -> '\\ '
+      [
+        /(\\+?)\s/g,
+        (_, m1) => {
+          const { length } = m1;
+          return m1.slice(0, length - length % 2) + SPACE;
+        }
+      ],
+      // Escape metacharacters
+      // which is written down by users but means special for regular expressions.
+      // > There are 12 characters with special meanings:
+      // > - the backslash \,
+      // > - the caret ^,
+      // > - the dollar sign $,
+      // > - the period or dot .,
+      // > - the vertical bar or pipe symbol |,
+      // > - the question mark ?,
+      // > - the asterisk or star *,
+      // > - the plus sign +,
+      // > - the opening parenthesis (,
+      // > - the closing parenthesis ),
+      // > - and the opening square bracket [,
+      // > - the opening curly brace {,
+      // > These special characters are often called "metacharacters".
+      [
+        /[\\$.|*+(){^]/g,
+        (match) => `\\${match}`
+      ],
+      [
+        // > a question mark (?) matches a single character
+        /(?!\\)\?/g,
+        () => "[^/]"
+      ],
+      // leading slash
+      [
+        // > A leading slash matches the beginning of the pathname.
+        // > For example, "/*.c" matches "cat-file.c" but not "mozilla-sha1/sha1.c".
+        // A leading slash matches the beginning of the pathname
+        /^\//,
+        () => "^"
+      ],
+      // replace special metacharacter slash after the leading slash
+      [
+        /\//g,
+        () => "\\/"
+      ],
+      [
+        // > A leading "**" followed by a slash means match in all directories.
+        // > For example, "**/foo" matches file or directory "foo" anywhere,
+        // > the same as pattern "foo".
+        // > "**/foo/bar" matches file or directory "bar" anywhere that is directly
+        // >   under directory "foo".
+        // Notice that the '*'s have been replaced as '\\*'
+        /^\^*(?:\\\*\\\*\\\/)+/,
+        // '**/foo' <-> 'foo'
+        () => "^(?:.*\\/)?"
+      ],
+      // starting
+      [
+        // there will be no leading '/'
+        //   (which has been replaced by section "leading slash")
+        // If starts with '**', adding a '^' to the regular expression also works
+        /^(?=[^^])/,
+        function startingReplacer() {
+          return !/\/(?!$)/.test(this) ? "(?:^|\\/)" : "^";
+        }
+      ],
+      // two globstars
+      [
+        // Use lookahead assertions so that we could match more than one `'/**'`
+        /\\\/\\\*\\\*(?=\\\/|$)/g,
+        // Zero, one or several directories
+        // should not use '*', or it will be replaced by the next replacer
+        // Check if it is not the last `'/**'`
+        (_, index, str) => index + 6 < str.length ? "(?:\\/[^\\/]+)*" : "\\/.+"
+      ],
+      // normal intermediate wildcards
+      [
+        // Never replace escaped '*'
+        // ignore rule '\*' will match the path '*'
+        // 'abc.*/' -> go
+        // 'abc.*'  -> skip this rule,
+        //    coz trailing single wildcard will be handed by [trailing wildcard]
+        /(^|[^\\]+)(\\\*)+(?=.+)/g,
+        // '*.js' matches '.js'
+        // '*.js' doesn't match 'abc'
+        (_, p1, p2) => {
+          const unescaped = p2.replace(/\\\*/g, "[^\\/]*");
+          return p1 + unescaped;
+        }
+      ],
+      [
+        // unescape, revert step 3 except for back slash
+        // For example, if a user escape a '\\*',
+        // after step 3, the result will be '\\\\\\*'
+        /\\\\\\(?=[$.|*+(){^])/g,
+        () => ESCAPE
+      ],
+      [
+        // '\\\\' -> '\\'
+        /\\\\/g,
+        () => ESCAPE
+      ],
+      [
+        // > The range notation, e.g. [a-zA-Z],
+        // > can be used to match one of the characters in a range.
+        // `\` is escaped by step 3
+        /(\\)?\[([^\]/]*?)(\\*)($|\])/g,
+        (match, leadEscape, range, endEscape, close) => leadEscape === ESCAPE ? `\\[${range}${cleanRangeBackSlash(endEscape)}${close}` : close === "]" ? endEscape.length % 2 === 0 ? `[${negateRange(sanitizeRange(range))}${endEscape}]` : "[]" : "[]"
+      ],
+      // ending
+      [
+        // 'js' will not match 'js.'
+        // 'ab' will not match 'abc'
+        /(?:[^*])$/,
+        // WTF!
+        // https://git-scm.com/docs/gitignore
+        // changes in [2.22.1](https://git-scm.com/docs/gitignore/2.22.1)
+        // which re-fixes #24, #38
+        // > If there is a separator at the end of the pattern then the pattern
+        // > will only match directories, otherwise the pattern can match both
+        // > files and directories.
+        // 'js*' will not match 'a.js'
+        // 'js/' will not match 'a.js'
+        // 'js' will match 'a.js' and 'a.js/'
+        (match) => /\/$/.test(match) ? `${match}$` : `${match}(?=$|\\/$)`
+      ]
+    ];
+    var REGEX_REPLACE_TRAILING_WILDCARD = /(^|\\\/)?\\\*$/;
+    var MODE_IGNORE = "regex";
+    var MODE_CHECK_IGNORE = "checkRegex";
+    var UNDERSCORE = "_";
+    var TRAILING_WILD_CARD_REPLACERS = {
+      [MODE_IGNORE](_, p1) {
+        const prefix = p1 ? `${p1}[^/]+` : "[^/]*";
+        return `${prefix}(?=$|\\/$)`;
+      },
+      [MODE_CHECK_IGNORE](_, p1) {
+        const prefix = p1 ? `${p1}[^/]*` : "[^/]*";
+        return `${prefix}(?=$|\\/$)`;
+      }
+    };
+    var makeRegexPrefix = (pattern) => REPLACERS.reduce(
+      (prev, [matcher, replacer]) => prev.replace(matcher, replacer.bind(pattern)),
+      pattern
+    );
+    var isString = (subject) => typeof subject === "string";
+    var checkPattern = (pattern) => pattern && isString(pattern) && !REGEX_TEST_BLANK_LINE.test(pattern) && !REGEX_INVALID_TRAILING_BACKSLASH.test(pattern) && pattern.indexOf("#") !== 0;
+    var splitPattern = (pattern) => pattern.split(REGEX_SPLITALL_CRLF).filter(Boolean);
+    var IgnoreRule = class {
+      constructor(pattern, mark, body, ignoreCase, negative, prefix) {
+        this.pattern = pattern;
+        this.mark = mark;
+        this.negative = negative;
+        define(this, "body", body);
+        define(this, "ignoreCase", ignoreCase);
+        define(this, "regexPrefix", prefix);
+      }
+      get regex() {
+        const key = UNDERSCORE + MODE_IGNORE;
+        if (this[key]) {
+          return this[key];
+        }
+        return this._make(MODE_IGNORE, key);
+      }
+      get checkRegex() {
+        const key = UNDERSCORE + MODE_CHECK_IGNORE;
+        if (this[key]) {
+          return this[key];
+        }
+        return this._make(MODE_CHECK_IGNORE, key);
+      }
+      _make(mode, key) {
+        const str = this.regexPrefix.replace(
+          REGEX_REPLACE_TRAILING_WILDCARD,
+          // It does not need to bind pattern
+          TRAILING_WILD_CARD_REPLACERS[mode]
+        );
+        const regex = this.ignoreCase ? new RegExp(str, "i") : new RegExp(str);
+        return define(this, key, regex);
+      }
+    };
+    var createRule = ({
+      pattern,
+      mark
+    }, ignoreCase) => {
+      let negative = false;
+      let body = pattern;
+      if (body.indexOf("!") === 0) {
+        negative = true;
+        body = body.substr(1);
+      }
+      body = body.replace(REGEX_REPLACE_LEADING_EXCAPED_EXCLAMATION, "!").replace(REGEX_REPLACE_LEADING_EXCAPED_HASH, "#");
+      const regexPrefix = makeRegexPrefix(body);
+      return new IgnoreRule(
+        pattern,
+        mark,
+        body,
+        ignoreCase,
+        negative,
+        regexPrefix
+      );
+    };
+    var RuleManager = class {
+      constructor(ignoreCase) {
+        this._ignoreCase = ignoreCase;
+        this._rules = [];
+      }
+      _add(pattern) {
+        if (pattern && pattern[KEY_IGNORE]) {
+          this._rules = this._rules.concat(pattern._rules._rules);
+          this._added = true;
+          return;
+        }
+        if (isString(pattern)) {
+          pattern = {
+            pattern
+          };
+        }
+        if (checkPattern(pattern.pattern)) {
+          const rule = createRule(pattern, this._ignoreCase);
+          this._added = true;
+          this._rules.push(rule);
+        }
+      }
+      // @param {Array<string> | string | Ignore} pattern
+      add(pattern) {
+        this._added = false;
+        makeArray(
+          isString(pattern) ? splitPattern(pattern) : pattern
+        ).forEach(this._add, this);
+        return this._added;
+      }
+      // Test one single path without recursively checking parent directories
+      //
+      // - checkUnignored `boolean` whether should check if the path is unignored,
+      //   setting `checkUnignored` to `false` could reduce additional
+      //   path matching.
+      // - check `string` either `MODE_IGNORE` or `MODE_CHECK_IGNORE`
+      // @returns {TestResult} true if a file is ignored
+      test(path4, checkUnignored, mode) {
+        let ignored = false;
+        let unignored = false;
+        let matchedRule;
+        this._rules.forEach((rule) => {
+          const { negative } = rule;
+          if (unignored === negative && ignored !== unignored || negative && !ignored && !unignored && !checkUnignored) {
+            return;
+          }
+          const matched = rule[mode].test(path4);
+          if (!matched) {
+            return;
+          }
+          ignored = !negative;
+          unignored = negative;
+          matchedRule = negative ? UNDEFINED : rule;
+        });
+        const ret = {
+          ignored,
+          unignored
+        };
+        if (matchedRule) {
+          ret.rule = matchedRule;
+        }
+        return ret;
+      }
+    };
+    var throwError = (message, Ctor) => {
+      throw new Ctor(message);
+    };
+    var checkPath = (path4, originalPath, doThrow) => {
+      if (!isString(path4)) {
+        return doThrow(
+          `path must be a string, but got \`${originalPath}\``,
+          TypeError
+        );
+      }
+      if (!path4) {
+        return doThrow(`path must not be empty`, TypeError);
+      }
+      if (checkPath.isNotRelative(path4)) {
+        const r = "`path.relative()`d";
+        return doThrow(
+          `path should be a ${r} string, but got "${originalPath}"`,
+          RangeError
+        );
+      }
+      return true;
+    };
+    var isNotRelative = (path4) => REGEX_TEST_INVALID_PATH.test(path4);
+    checkPath.isNotRelative = isNotRelative;
+    checkPath.convert = (p) => p;
+    var Ignore = class {
+      constructor({
+        ignorecase = true,
+        ignoreCase = ignorecase,
+        allowRelativePaths = false
+      } = {}) {
+        define(this, KEY_IGNORE, true);
+        this._rules = new RuleManager(ignoreCase);
+        this._strictPathCheck = !allowRelativePaths;
+        this._initCache();
+      }
+      _initCache() {
+        this._ignoreCache = /* @__PURE__ */ Object.create(null);
+        this._testCache = /* @__PURE__ */ Object.create(null);
+      }
+      add(pattern) {
+        if (this._rules.add(pattern)) {
+          this._initCache();
+        }
+        return this;
+      }
+      // legacy
+      addPattern(pattern) {
+        return this.add(pattern);
+      }
+      // @returns {TestResult}
+      _test(originalPath, cache, checkUnignored, slices) {
+        const path4 = originalPath && checkPath.convert(originalPath);
+        checkPath(
+          path4,
+          originalPath,
+          this._strictPathCheck ? throwError : RETURN_FALSE
+        );
+        return this._t(path4, cache, checkUnignored, slices);
+      }
+      checkIgnore(path4) {
+        if (!REGEX_TEST_TRAILING_SLASH.test(path4)) {
+          return this.test(path4);
+        }
+        const slices = path4.split(SLASH).filter(Boolean);
+        slices.pop();
+        if (slices.length) {
+          const parent = this._t(
+            slices.join(SLASH) + SLASH,
+            this._testCache,
+            true,
+            slices
+          );
+          if (parent.ignored) {
+            return parent;
+          }
+        }
+        return this._rules.test(path4, false, MODE_CHECK_IGNORE);
+      }
+      _t(path4, cache, checkUnignored, slices) {
+        if (path4 in cache) {
+          return cache[path4];
+        }
+        if (!slices) {
+          slices = path4.split(SLASH).filter(Boolean);
+        }
+        slices.pop();
+        if (!slices.length) {
+          return cache[path4] = this._rules.test(path4, checkUnignored, MODE_IGNORE);
+        }
+        const parent = this._t(
+          slices.join(SLASH) + SLASH,
+          cache,
+          checkUnignored,
+          slices
+        );
+        return cache[path4] = parent.ignored ? parent : this._rules.test(path4, checkUnignored, MODE_IGNORE);
+      }
+      ignores(path4) {
+        return this._test(path4, this._ignoreCache, false).ignored;
+      }
+      createFilter() {
+        return (path4) => !this.ignores(path4);
+      }
+      filter(paths) {
+        return makeArray(paths).filter(this.createFilter());
+      }
+      // @returns {TestResult}
+      test(path4) {
+        return this._test(path4, this._testCache, true);
+      }
+    };
+    var factory = (options) => new Ignore(options);
+    var isPathValid = (path4) => checkPath(path4 && checkPath.convert(path4), path4, RETURN_FALSE);
+    var setupWindows = () => {
+      const makePosix = (str) => /^\\\\\?\\/.test(str) || /["<>|\u0000-\u001F]+/u.test(str) ? str : str.replace(/\\/g, "/");
+      checkPath.convert = makePosix;
+      const REGEX_TEST_WINDOWS_PATH_ABSOLUTE = /^[a-z]:\//i;
+      checkPath.isNotRelative = (path4) => REGEX_TEST_WINDOWS_PATH_ABSOLUTE.test(path4) || isNotRelative(path4);
+    };
+    if (
+      // Detect `process` so that it can run in browsers.
+      typeof process !== "undefined" && process.platform === "win32"
+    ) {
+      setupWindows();
+    }
+    module.exports = factory;
+    factory.default = factory;
+    module.exports.isPathValid = isPathValid;
+    define(module.exports, /* @__PURE__ */ Symbol.for("setupWindows"), setupWindows);
+  }
+});
+
 // server.js
 var import_express = __toESM(require_express2(), 1);
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname as dirname2, join as join4, resolve, basename } from "node:path";
+import { dirname as dirname3, join as join4, resolve, basename } from "node:path";
 import { readdirSync as readdirSync3, statSync as statSync2, mkdirSync as mkdirSync2, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 
+// lib/watcher.js
+import nodePath from "node:path";
+
 // lib/constants.js
-var CONSTANTS = {
-  EFFICIENCY_MULT: 2,
-  FIT_WINDOW_DEFAULT: 20,
-  KNEE_BG_MULT: 1.75,
-  KNEE_MIN_TURN: 3,
-  RESIDUAL_MAX: 0.3,
-  BASELINE_CONF_MIN: 0.75,
-  // Cache-miss denoise (v1.1) — dimensionless ratios ONLY, cross-project/cross-environment stable.
-  // A miss row: cacheRead collapses below MISS_READ_RESIDUAL of both its own total and the segment's
-  // established read peak, while total stock stays >= MISS_TOTAL_KEEP of the segment peak. Empirical:
-  // real miss read/total ≡ 0.0; normal p5 = 0.926 — a wide gap, any 0.05–0.5 splits them (spec §3.1.1).
-  MISS_READ_RESIDUAL: 0.5,
-  MISS_TOTAL_KEEP: 0.7,
-  // k_stable static clamp (spec §3.4 / §10.1#6). PROVISIONAL, tunable (§9 non-core UX knob):
-  // K_FLOOR stops k_stable→0 (which would make empty_burn near-impossible and collapse xExit→1);
-  // K_CEIL stops a knee-adjacent code-dump from freezing k_stable absurdly high (→ every normal
-  // small step reads <k_stable → chronic false empty_burn). Static clamp ONLY — no behavioral decay
-  // (rejected: reintroduces drift into a frozen quantity). Typical stable delta ≈ 940 tok/call.
-  K_FLOOR: 50,
-  K_CEIL: 5e3,
-  DW_TURN_BACKSTOP: 2
-  // ΔW_turn ≥ 2 single-turn backstop threshold (§2.8), tunable
-};
-var SETTLED_SUMMARY_HARD_LIMIT = 512;
 var RECENT_STOP_EVENTS_LIMIT = 32;
 var RECENT_PROCESSED_HOOK_IDS_LIMIT = 128;
-var PENDING_STOP_EVALUATIONS_LIMIT = 64;
-var PENDING_STOP_TTL_MS = 6e5;
 var PENDING_MAX_TURN_DISTANCE = 2;
 var C_RATIO_TABLE = [
   { match: /claude|opus|sonnet|haiku/i, ratio: 12.5 },
@@ -22753,21 +23188,33 @@ var RESERVED_OUTPUT = 32e3;
 var CTX_SAFETY_MARGIN = 8e3;
 var PRECHECK_LONG_LINE_BYTES = 1048576;
 var PRECHECK_HEAD_CAP_BYTES = 8192;
-var STOP_ADVANCE_MAX_MS = 150;
-var STOP_ADVANCE_MAX_BYTES = 524288;
 var COALESCED_PERSIST_MS = 2e3;
 var IDLE_HEARTBEAT_MS = 5e3;
+var CTP_TABLE = {
+  claude: { ascii: 2.45, cjk: 0.59 },
+  // Anthropic tokenizer (n=5881)
+  deepseek: { ascii: 3.24, cjk: 0.94 }
+  // DeepSeek tokenizer (n=5265)
+};
+var DEFAULT_CTP = { ascii: 3, cjk: 1 };
+var TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40 };
+var DEPTH_HOT_LAP_COUNT = 3;
+var ALPHA_EMA = 0.03;
+var G_FLOOR = 100;
+var MISS_CR_DROP = 0.95;
+var SEGMENT_DROP_EPSILON = 100;
+var NOTIFY_DWELL = 3;
 
 // lib/extract.js
 var KNOWN_USAGE_FIELDS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"];
-function providerOf(model = "") {
-  if (/claude|opus|sonnet|haiku/i.test(model)) return "claude";
-  if (/deepseek/i.test(model)) return "deepseek";
-  return "unknown";
-}
 function cRatioFor(model = "") {
   const hit = C_RATIO_TABLE.find((r) => r.match.test(model));
   return hit ? hit.ratio : DEFAULT_C_RATIO;
+}
+function ctpForModel(modelId = "") {
+  const id = String(modelId || "");
+  const prefix = Object.keys(CTP_TABLE).find((p) => id.startsWith(p));
+  return prefix ? CTP_TABLE[prefix] : DEFAULT_CTP;
 }
 function contextWindowFor(model = "") {
   const hit = CONTEXT_WINDOW_TABLE.find((r) => r.match.test(model));
@@ -22788,6 +23235,7 @@ function hasNullKnownField(entry) {
 function isUserTurnBoundary(entry) {
   if (!entry || entry.type !== "user") return false;
   if (entry.isSidechain === true) return false;
+  if (entry.isMeta === true) return false;
   const msg = entry.message;
   if (!msg) return false;
   const c = msg.content;
@@ -22812,7 +23260,6 @@ function extractUsage(entry) {
   if (model === "<synthetic>" || input === 0 && output === 0 && cacheRead === 0 && cacheCreation === 0) {
     return null;
   }
-  const gField = providerOf(model) === "claude" ? cacheCreation + output : input + output;
   return {
     model,
     messageId: msg.id || null,
@@ -22822,213 +23269,646 @@ function extractUsage(entry) {
     input,
     output,
     cacheRead,
-    cacheCreation,
-    gField
+    cacheCreation
   };
-}
-
-// lib/stats.js
-function median(nums) {
-  if (!Array.isArray(nums) || !nums.length) return 0;
-  const s = [...nums].sort((a, b) => a - b);
-  const m = s.length;
-  return m % 2 ? s[(m - 1) / 2] : (s[m / 2 - 1] + s[m / 2]) / 2;
-}
-
-// lib/baseline.js
-function detectKnee(cacheReadSeq, opts = {}) {
-  const kneeBgMult = opts.kneeBgMult ?? CONSTANTS.KNEE_BG_MULT;
-  const kneeMinTurn = opts.kneeMinTurn ?? CONSTANTS.KNEE_MIN_TURN;
-  const dead = cacheReadSeq[0] ?? 0;
-  const deltas = [];
-  for (let i = 1; i < cacheReadSeq.length; i++) deltas.push(Math.max(0, cacheReadSeq[i] - cacheReadSeq[i - 1]));
-  const backHalf = deltas.slice(Math.floor(deltas.length / 2));
-  const stableMedian = median(backHalf.length ? backHalf : deltas) || 1;
-  const bg = kneeBgMult * stableMedian;
-  const LOOKAHEAD = 4;
-  const MIN_EVIDENCE = 2;
-  for (let t = kneeMinTurn; t < cacheReadSeq.length; t++) {
-    const window2 = deltas.slice(t, t + LOOKAHEAD);
-    if (window2.length < MIN_EVIDENCE) break;
-    if (window2.every((d) => d < bg)) {
-      return { kneeTurn: t, taskCtx: Math.max(0, cacheReadSeq[t] - dead), isRealKnee: true, stableMedian };
-    }
-  }
-  const fallback = Math.min(kneeMinTurn, cacheReadSeq.length - 1);
-  return { kneeTurn: fallback, taskCtx: Math.max(0, (cacheReadSeq[fallback] ?? dead) - dead), isRealKnee: false, stableMedian };
-}
-
-// lib/metrics.js
-function nStar(cRatio, lBase, g) {
-  if (g <= 0) return Infinity;
-  return Math.sqrt(2 * cRatio * lBase / g);
-}
-function lStar(lBase, cRatio, kAvg, M = CONSTANTS.EFFICIENCY_MULT) {
-  if (kAvg <= 0) return lBase;
-  return lBase + M * Math.sqrt(2 * cRatio * lBase * kAvg);
-}
-function rho(cRatio, kAvg, lBase) {
-  if (lBase <= 0) return 0;
-  return cRatio * kAvg / lBase;
-}
-function phi(L, lBase, cRatio, kAvg) {
-  const denom = lBase + cRatio * kAvg;
-  if (denom <= 0) return 1;
-  return Math.max(1, (L + cRatio * kAvg) / denom);
-}
-function paybackP(L, lBase) {
-  if (lBase <= 0) return 0;
-  return Math.max(0, L / lBase - 1);
-}
-function timingWeight(rhoVal) {
-  if (rhoVal <= 0) return 0;
-  const s = Math.sqrt(2 * rhoVal);
-  return s / (s + 1 + rhoVal);
-}
-function regret(nNow, nStarVal) {
-  if (!Number.isFinite(nNow) || !Number.isFinite(nStarVal)) return 0;
-  if (nNow <= 0 || nStarVal <= 0) return 0;
-  const u = nNow / nStarVal;
-  return (u + 1 / u) / 2 - 1;
 }
 
 // lib/l-measure.js
 function effectiveL(c) {
   return Number.isFinite(c?.L) ? c.L : c?.cacheRead ?? 0;
 }
-function classifyMiss({ cacheRead, cacheCreation, peakTotalBefore, peakReadBefore }) {
-  const total = cacheRead + cacheCreation;
-  return total > 0 && cacheRead < total * CONSTANTS.MISS_READ_RESIDUAL && peakTotalBefore > 0 && total >= peakTotalBefore * CONSTANTS.MISS_TOTAL_KEEP && peakReadBefore > 0 && cacheRead < peakReadBefore * CONSTANTS.MISS_READ_RESIDUAL;
+function classifyMiss({ cacheRead, totalStock, prevL, prevTotalStock }) {
+  if (!(prevL > 0)) return false;
+  const crDropped = cacheRead < prevL * MISS_CR_DROP;
+  const stockPreserved = totalStock >= prevTotalStock - SEGMENT_DROP_EPSILON;
+  return crDropped && stockPreserved;
 }
 
-// lib/latch.js
-function computeCalibrationGate({ confidence, postKneeGrowthCalls, baselineTotal, L }) {
-  if (confidence < CONSTANTS.BASELINE_CONF_MIN) return { passed: false, reason: "low_confidence" };
-  if (postKneeGrowthCalls < 3 || baselineTotal <= 0 || L <= baselineTotal) return { passed: false, reason: "insufficient_data" };
-  return { passed: true, reason: null };
+// lib/bill-regret.js
+var BR_AMBER = 0.1;
+var BR_RED = 0.25;
+function computeMovableFrac(cRatio, lBase, kStable) {
+  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
+  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
+  return arm / (arm + lBase + cRatio * kStable);
 }
-function callIdentity(c) {
-  return c?.messageId ?? c?.message?.id ?? c?.id ?? null;
+function computeBr(x, dhat, mf) {
+  const d = x - 1;
+  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
+  const u = d / dhat;
+  const ppFrac = (u - 1) * (u - 1) / (2 * u);
+  return mf * ppFrac;
 }
-function applyFrozen(entry) {
-  return {
-    dead: entry.dead,
-    task: entry.taskCtx,
-    total: entry.dead + entry.taskCtx,
-    source: "latched",
-    confidence: 0.92,
-    kneeTurn: entry.kneeTurn,
-    isRealKnee: true,
-    stableMedian: entry.stableMedian
-  };
+function xRightFromBr(brTarget, dhat, mf) {
+  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
+  const p = brTarget / mf;
+  const disc = p * p + 2 * p;
+  const uRight = 1 + p + Math.sqrt(disc);
+  return 1 + uRight * dhat;
 }
-function makeLatchEntry(live, prefixSlice) {
-  const segmentStartCallId = callIdentity(prefixSlice[0]);
-  const latchIndex = prefixSlice.length - 1;
-  const latchCallId = callIdentity(prefixSlice[latchIndex]);
-  if (!segmentStartCallId || !latchCallId) return null;
-  return {
-    dead: live.baseline.dead,
-    taskCtx: live.baseline.task,
-    kneeTurn: live.baseline.kneeTurn,
-    stableMedian: live.baseline.stableMedian,
-    latchIndex,
-    latchCallId,
-    segmentStartCallId
-  };
+function xLeftFromBr(brTarget, dhat, mf) {
+  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
+  const p = brTarget / mf;
+  const disc = p * p + 2 * p;
+  const uLeft = 1 + p - Math.sqrt(disc);
+  return 1 + uLeft * dhat;
 }
-function validateLatch(entry, prefix) {
-  if (!entry) return null;
-  if (entry.segmentStartCallId !== callIdentity(prefix[0])) return null;
-  if (!(entry.latchIndex < prefix.length)) return null;
-  if (entry.latchCallId !== callIdentity(prefix[entry.latchIndex])) return null;
-  return entry;
+function isInDeepWater(x, xSweet, br) {
+  if (!Number.isFinite(br) || !Number.isFinite(x) || !Number.isFinite(xSweet)) return false;
+  if (x < xSweet) return false;
+  return br >= BR_AMBER;
 }
-function baselineFingerprint(entry) {
-  if (!entry) return null;
-  const teeth = Array.isArray(entry.teeth) ? entry.teeth.join(",") : "";
-  return `d${entry.dead}|t${entry.taskCtx}|k${entry.kneeTurn}|T${teeth}`;
+function uAtBr(mf, brTarget) {
+  if (!Number.isFinite(mf) || mf <= 0) return Infinity;
+  if (!Number.isFinite(brTarget)) return Infinity;
+  if (brTarget <= 0) return 1;
+  const a = mf;
+  const b = -(2 * mf + 2 * brTarget);
+  const c = mf;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  return (-b + Math.sqrt(disc)) / (2 * a);
+}
+function backstopIntervalFor(mf, brTarget) {
+  const u = uAtBr(mf, brTarget);
+  if (!Number.isFinite(u)) return Infinity;
+  return u * u;
+}
+
+// lib/landmarks.js
+function nucleus(cRatio, kAvg, lBase) {
+  if (cRatio <= 0 || kAvg <= 0 || lBase <= 0) return 0;
+  return Math.sqrt(2 * cRatio * kAvg / lBase);
 }
 
 // lib/rate-lamp.js
-function clampKStable(raw) {
-  if (!Number.isFinite(raw)) return CONSTANTS.K_FLOOR;
-  return Math.min(CONSTANTS.K_CEIL, Math.max(CONSTANTS.K_FLOOR, raw));
-}
-var EXIT_NUCLEUS = 2;
-function computeXExitFromKStable(cRatio, kStable, lBase) {
-  if (cRatio <= 0 || kStable <= 0 || lBase <= 0) return 1;
-  return 1 + EXIT_NUCLEUS * Math.sqrt(2 * cRatio * kStable / lBase);
-}
-function deriveFrozenExit(cRatio, kStable, lBase) {
-  const xExit = computeXExitFromKStable(cRatio, kStable, lBase);
-  const L_exit_fullCarry = xExit * lBase;
-  return { xExit, L_exit_fullCarry };
-}
 function computeFullCarryBurnRate({ L_read, B_post, B_rebuild, cRatio }) {
   if (!(B_rebuild > 0) || !(cRatio > 0)) return NaN;
   return Math.max(0, L_read - B_post) / (cRatio * B_rebuild);
 }
-function computeRateWall({ B_post, B_rebuild, cRatio, lCap }) {
-  const L = B_post + cRatio * B_rebuild;
-  const reachable = L < lCap;
-  return {
-    L,
-    x_display: B_rebuild > 0 ? L / B_rebuild : 0,
-    // display axis; wall x = 1 + cRatio for fullCarry
-    reachableBeforeContextCap: reachable,
-    reasonIfNotReachable: reachable ? null : "context_cap"
-  };
-}
-function detectStockStep(prefix, frozenKStable, { stepMult = 8, sinceFoldedSeq = -Infinity } = {}) {
-  if (!Array.isArray(prefix) || !(frozenKStable > 0)) return false;
-  const idx = prefix.findIndex((c) => (c.foldedSeq ?? 0) > sinceFoldedSeq);
-  if (idx === -1) return false;
-  const window2 = idx === 0 ? prefix : prefix.slice(idx - 1);
-  if (window2.length < 2) return false;
-  const threshold = stepMult * frozenKStable;
-  for (let i = 1; i < window2.length; i++) {
-    const totalNow = (window2[i].cacheRead ?? 0) + (window2[i].cacheCreation ?? 0);
-    const totalPrev = (window2[i - 1].cacheRead ?? 0) + (window2[i - 1].cacheCreation ?? 0);
-    if (totalNow - totalPrev >= threshold) return true;
-  }
-  return false;
-}
-function computeRateLampInstant(snap, { scenario }) {
-  const { L_read, lBase, lDead, cRatio, lCap, kStable, kStableReliable, baselineValid } = snap;
-  if (baselineValid === false || !(lBase > 0) || !(cRatio > 0)) {
-    return { reliable: false, unavailableReason: "invalid_baseline" };
-  }
-  if (!kStableReliable || !(kStable > 0)) {
-    return { reliable: false, unavailableReason: "insufficient_data" };
-  }
-  const B = scenario === "deadOnly" ? lDead : lBase;
-  if (!(B > 0)) return { reliable: false, unavailableReason: "invalid_baseline" };
-  const burnRate = computeFullCarryBurnRate({ L_read, B_post: B, B_rebuild: B, cRatio });
-  if (!Number.isFinite(burnRate)) return { reliable: false, unavailableReason: "invalid_baseline" };
-  const hBreak2 = burnRate > 0 ? 1 / burnRate : Infinity;
-  const { xExit, L_exit_fullCarry } = deriveFrozenExit(cRatio, kStable, lBase);
-  return {
-    reliable: true,
-    basis: scenario,
-    L_read,
-    L_cap: lCap,
-    B_post: B,
-    B_rebuild: B,
-    C_RATIO: cRatio,
-    x_display: lBase > 0 ? L_read / lBase : 1,
-    // display axis only (§10.1#14)
-    burnRate,
-    hBreak: hBreak2,
-    xExit,
-    L_exit_fullCarry,
-    rateWall: computeRateWall({ B_post: B, B_rebuild: B, cRatio, lCap })
-  };
-}
 
 // lib/fold.js
 import { readSync, openSync, closeSync, fstatSync } from "node:fs";
+import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+
+// lib/measure.js
+import path from "node:path";
+var CJK_RE = /[\u3000-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/g;
+function charsToTokens(text, ctp, { asciiOnly = false } = {}) {
+  if (!text) return 0;
+  if (asciiOnly) return text.length / ctp.ascii;
+  const cjkCount = (text.match(CJK_RE) || []).length;
+  if (cjkCount === 0) return text.length / ctp.ascii;
+  return (text.length - cjkCount) / ctp.ascii + cjkCount / ctp.cjk;
+}
+function countsToTokens({ chars, cjk }, ctp) {
+  if (chars === 0) return 0;
+  if (cjk === 0) return chars / ctp.ascii;
+  return (chars - cjk) / ctp.ascii + cjk / ctp.cjk;
+}
+function canonicalizePath(rawPath, cwd) {
+  const abs = path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd || "/", rawPath);
+  return path.normalize(abs);
+}
+function extractToolResultText(block) {
+  if (typeof block?.content === "string") return block.content;
+  if (Array.isArray(block?.content)) {
+    return block.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n");
+  }
+  return "";
+}
+function parseBashFileRead(command) {
+  let effectiveCwd = null;
+  let cmd = String(command || "").trim();
+  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
+  if (!cmd) return null;
+  const cdMatch = cmd.match(/^((?:cd\s+(\S+)\s*&&\s*)+)/);
+  if (cdMatch) {
+    const cdParts = cdMatch[1].matchAll(/cd\s+(\S+)\s*&&/g);
+    for (const part of cdParts) effectiveCwd = part[1];
+    cmd = cmd.slice(cdMatch[0].length);
+  }
+  cmd = cmd.replace(/^(fn\w+\s*&&\s*)+/g, "");
+  let m = cmd.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
+  if (m && !_hasShellExpansion(m[1])) return { type: "cat", path: m[1], effectiveCwd };
+  m = cmd.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
+  if (m && !_hasShellExpansion(m[1])) return { type: "head", path: m[1], effectiveCwd };
+  m = cmd.match(/^(grep|rg)\s+(.*)/);
+  if (m) {
+    const hasLineNum = /(?:^|\s)-[A-Za-z]*n/.test(m[2]);
+    if (!hasLineNum) return null;
+    const bare = _stripQuotedStrings(m[2]);
+    const firstStage = bare.split("|")[0];
+    const tokens = firstStage.replace(/\s*\d*>{1,2}.*$/, "").trim().split(/\s+/).filter(Boolean);
+    let path4 = null;
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const t = tokens[i];
+      if (t.startsWith("-")) continue;
+      if (/[./]/.test(t)) {
+        path4 = t;
+        break;
+      }
+      break;
+    }
+    if (path4 && !_isUnresolvablePath(path4)) return { type: "grep-n", path: path4, effectiveCwd };
+  }
+  const heredocMatch = cmd.split("\n")[0].match(/^cat\s+<<-?\s*['"]?([\w-]+)['"]?\s*>\s*['"]?([^\s'"]+)['"]?\s*$/);
+  if (heredocMatch) {
+    const marker = heredocMatch[1];
+    const writePath = heredocMatch[2];
+    if (_hasShellExpansion(writePath)) return null;
+    const allLines = String(command || "").split("\n");
+    let startIdx = 0;
+    for (let i = 0; i < allLines.length; i++) {
+      if (allLines[i].includes("<<") && allLines[i].includes(marker)) {
+        startIdx = i;
+        break;
+      }
+    }
+    let endIdx = -1;
+    for (let i = startIdx + 1; i < allLines.length; i++) {
+      if (allLines[i].trim() === marker) {
+        endIdx = i;
+        break;
+      }
+    }
+    if (endIdx < 0) return null;
+    const heredocBody = allLines.slice(startIdx + 1, endIdx).join("\n");
+    return { type: "cat-write", path: writePath, effectiveCwd, heredocBody };
+  }
+  return null;
+}
+function _stripQuotedStrings(s) {
+  let result = "";
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === "'") {
+      const end = s.indexOf("'", i + 1);
+      if (end === -1) break;
+      i = end + 1;
+    } else if (s[i] === '"') {
+      let j = i + 1;
+      while (j < s.length) {
+        if (s[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (s[j] === '"') break;
+        j++;
+      }
+      if (j >= s.length) break;
+      i = j + 1;
+    } else {
+      result += s[i];
+      i++;
+    }
+  }
+  return result;
+}
+function _hasShellExpansion(p) {
+  if (/\$[({A-Za-z_]|`/.test(p) || p.startsWith("~")) return true;
+  if (/[*?]/.test(p)) return true;
+  return false;
+}
+function _isUnresolvablePath(p) {
+  if (p.includes("$(") || p.includes("`") || p.startsWith("~")) return true;
+  if (/[*?]/.test(p)) return true;
+  if (p === "." || p === "/") return true;
+  if (p === "/dev/null") return true;
+  return false;
+}
+var BUILTIN_ADAPTERS = [
+  {
+    name: "Read",
+    match: (name) => name === "Read",
+    extractPath: (input, cwd) => input.file_path ? canonicalizePath(input.file_path, cwd) : null,
+    computeUpdate: (input, result, cwd, ctp) => {
+      if (result.length < 100 && !result.includes("\n")) return null;
+      const lineEntries = [];
+      for (const physicalLine of result.split("\n")) {
+        const m = physicalLine.match(/^(\d+)\t/);
+        if (!m) continue;
+        lineEntries.push([Number(m[1]), charsToTokens(physicalLine, ctp)]);
+      }
+      const requestedFull = input.offset == null && input.limit == null;
+      const looksComplete = lineEntries.length > 0 && !/(truncated|use offset|too large)/i.test(result.slice(-200));
+      const isFullRead = requestedFull && looksComplete;
+      const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Read;
+      return { type: isFullRead ? "fullSet" : "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Read, spent };
+    }
+  },
+  {
+    name: "Write",
+    match: (name) => name === "Write",
+    extractPath: (input, cwd) => input.file_path ? canonicalizePath(input.file_path, cwd) : null,
+    computeUpdate: (input, _result, _cwd, ctp) => {
+      const rawLines = String(input.content ?? "").split("\n");
+      const lineEntries = rawLines.map((l, i) => [i + 1, charsToTokens(String(i + 1) + "	" + l, ctp)]);
+      const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
+      return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
+    }
+  },
+  {
+    name: "Edit",
+    match: (name) => name === "Edit",
+    extractPath: (input, cwd) => input.file_path ? canonicalizePath(input.file_path, cwd) : null,
+    // Edit returns editDelta (token difference), NOT fullSet — it has no independent overhead because the
+    // framing cost is already captured by the subsequent Read that re-reads the file (TOOL_OVERHEAD.Edit
+    // exists in constants for documentation/future use but is intentionally not charged here to avoid
+    // double-counting with the corrective Read that follows most Edits).
+    computeUpdate: (input, _result, _cwd, ctp) => {
+      const tokenDelta = charsToTokens(input.new_string ?? "", ctp) - charsToTokens(input.old_string ?? "", ctp);
+      const lineDelta = ((input.new_string ?? "").match(/\n/g) || []).length - ((input.old_string ?? "").match(/\n/g) || []).length;
+      const spent = charsToTokens(input.old_string ?? "", ctp) + charsToTokens(input.new_string ?? "", ctp) + TOOL_OVERHEAD.Edit;
+      return { type: "editDelta", value: tokenDelta + lineDelta * (4 / ctp.ascii), spent };
+    }
+  },
+  {
+    name: "Grep",
+    match: (name) => name === "Grep",
+    extractPath: () => null,
+    // multi-file: handled inside computeUpdate
+    computeUpdate: (_input, result, cwd, ctp) => {
+      const files = {};
+      for (const line of result.split("\n")) {
+        const m = line.match(/^(.+?):(\d+):(.*)$/);
+        if (!m) continue;
+        const [, rawPath, lineNum, content] = m;
+        const canon = canonicalizePath(rawPath, cwd);
+        (files[canon] ||= []).push([parseInt(lineNum, 10), charsToTokens(String(lineNum) + "	" + content, ctp)]);
+      }
+      let spent = TOOL_OVERHEAD.Grep;
+      for (const entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
+      return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
+    }
+  },
+  {
+    name: "Bash",
+    match: (name) => name === "Bash",
+    extractPath: (input, cwd) => {
+      const parsed = parseBashFileRead(input.command);
+      if (!parsed) return null;
+      const base = parsed.effectiveCwd ? canonicalizePath(parsed.effectiveCwd, cwd) : cwd;
+      return canonicalizePath(parsed.path, base);
+    },
+    computeUpdate: (input, result, _cwd, ctp) => {
+      const parsed = parseBashFileRead(input.command);
+      if (!parsed) return null;
+      const lines = result.split("\n");
+      if (parsed.type === "cat") {
+        const lineEntries = lines.map((l, i) => [i + 1, charsToTokens(l, ctp)]);
+        const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
+        return { type: "fullSet", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
+      }
+      if (parsed.type === "head") {
+        const lineEntries = lines.map((l, i) => [i + 1, charsToTokens(l, ctp)]);
+        const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
+        return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
+      }
+      if (parsed.type === "grep-n") {
+        const lineEntries = [];
+        for (const line of lines) {
+          const m = line.match(/^(\d+):(.*)$/);
+          if (!m) continue;
+          lineEntries.push([parseInt(m[1], 10), charsToTokens(m[2], ctp)]);
+        }
+        if (lineEntries.length === 0) return null;
+        const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
+        return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
+      }
+      if (parsed.type === "cat-write") {
+        const bodyLines = parsed.heredocBody.split("\n");
+        const lineEntries = bodyLines.map((l, i) => [i + 1, charsToTokens(String(i + 1) + "	" + l, ctp)]);
+        const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
+        return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
+      }
+      return null;
+    }
+  },
+  {
+    name: "Skill",
+    match: (name) => name === "Skill",
+    extractPath: (input) => "skill:" + input.skill,
+    computeUpdate: (_input, result, _cwd, ctp) => {
+      const tokens = charsToTokens(result, ctp);
+      return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
+    }
+  }
+];
+function matchAdapter(toolName) {
+  return BUILTIN_ADAPTERS.find((a) => a.match(toolName)) || null;
+}
+var BRebuild = class {
+  constructor() {
+    this.dead = 0;
+    this.paths = /* @__PURE__ */ new Map();
+    this._totalSpent = /* @__PURE__ */ new Map();
+    this._totalSpentReasoning = /* @__PURE__ */ new Map();
+    this._touchSeqs = /* @__PURE__ */ new Map();
+    this._readCount = /* @__PURE__ */ new Map();
+    this._editCount = /* @__PURE__ */ new Map();
+    this._pureRereads = /* @__PURE__ */ new Map();
+    this._hasFullSnapshot = /* @__PURE__ */ new Map();
+    this._editedSinceFullSnapshot = /* @__PURE__ */ new Map();
+  }
+  setDead(v) {
+    this.dead = v;
+  }
+  // §2.4 reasoning attribution (display-only, SEPARATE ledger so it can be dropped wholesale on drift).
+  addReasoningSpent(path4, tokens) {
+    if (path4 == null || !(tokens > 0)) return;
+    this._totalSpentReasoning.set(path4, (this._totalSpentReasoning.get(path4) || 0) + tokens);
+  }
+  // Reversible degrade (provider safety): zero the reasoning ledger entirely → content-only totals.
+  dropReasoningSpent() {
+    this._totalSpentReasoning.clear();
+  }
+  // Sum of both ledgers for one path (used by snapshot).
+  _spentFor(path4) {
+    return (this._totalSpent.get(path4) || 0) + (this._totalSpentReasoning.get(path4) || 0);
+  }
+  // Sum of _spentFor across all tracked paths (used by foldCall drift breaker).
+  snapshotTotalSpentSum() {
+    let s = 0;
+    for (const path4 of this.paths.keys()) s += this._spentFor(path4);
+    return s;
+  }
+  // Sum of ONLY reasoning spend across all paths (§2.4 drift breaker comparator).
+  // Reasoning tokens never enter L (physical invariant), so this sum alone — not content — is the
+  // correct signal for drift detection. Content-spent is cumulative and legitimately exceeds
+  // instantaneous L in any high-churn session.
+  totalReasoningSpentSum() {
+    let s = 0;
+    for (const [, v] of this._totalSpentReasoning) s += v;
+    return s;
+  }
+  _ensure(path4) {
+    let e = this.paths.get(path4);
+    if (!e) {
+      e = { lines: /* @__PURE__ */ new Map(), total: 0, editDelta: 0, overhead: 0, correction: 0, lastActiveTurn: 0, lastActiveCallSeq: 0 };
+      this.paths.set(path4, e);
+    }
+    return e;
+  }
+  _setLine(e, lineNum, tokens) {
+    const old = e.lines.get(lineNum) || 0;
+    e.lines.set(lineNum, tokens);
+    e.total += tokens - old;
+  }
+  _pushTouch(path4, callSeq, mode) {
+    const arr = this._touchSeqs.get(path4) || [];
+    arr.push({ seq: callSeq, mode });
+    if (arr.length > 128) arr.splice(0, arr.length - 64);
+    this._touchSeqs.set(path4, arr);
+  }
+  apply(update, path4, turn, callSeq) {
+    if (!update) return;
+    if (update.type === "grepMultiFile") {
+      const fileCount = Object.keys(update.files).length || 1;
+      const perFileOverhead = update.overhead / fileCount;
+      const perFileInjected = {};
+      let totalInjected = 0;
+      for (const [p, entries] of Object.entries(update.files)) {
+        const fileTokens = entries.reduce((s, [, t]) => s + t, 0) + perFileOverhead;
+        perFileInjected[p] = fileTokens;
+        totalInjected += fileTokens;
+      }
+      for (const [p, entries] of Object.entries(update.files)) {
+        const e2 = this._ensure(p);
+        for (const [ln, tok] of entries) this._setLine(e2, ln, tok);
+        e2.overhead = perFileOverhead;
+        e2.lastActiveTurn = turn;
+        if (callSeq != null) e2.lastActiveCallSeq = callSeq;
+        if (update.spent != null && update.spent > 0 && totalInjected > 0) {
+          const share = update.spent * (perFileInjected[p] / totalInjected);
+          this._totalSpent.set(p, (this._totalSpent.get(p) || 0) + share);
+        }
+        this._readCount.set(p, (this._readCount.get(p) || 0) + 1);
+        if (callSeq != null) this._pushTouch(p, callSeq, "r");
+      }
+      return;
+    }
+    if (path4 == null) return;
+    const e = this._ensure(path4);
+    if (update.type === "editDelta" || update.type === "write") {
+      this._editedSinceFullSnapshot.set(path4, true);
+    }
+    if (update.type === "fullSet") {
+      const hasSnapshot = this._hasFullSnapshot.get(path4);
+      const editedSince = this._editedSinceFullSnapshot.get(path4) === true;
+      const contentTokens = update.lines.reduce((s, [, t]) => s + t, 0);
+      if (hasSnapshot && !editedSince && contentTokens > 0) {
+        this._pureRereads.set(path4, (this._pureRereads.get(path4) || 0) + 1);
+      }
+      this._hasFullSnapshot.set(path4, true);
+      this._editedSinceFullSnapshot.set(path4, false);
+    }
+    if (update.type === "write") {
+      this._hasFullSnapshot.set(path4, true);
+    }
+    if (update.type === "fullSet" || update.type === "write") {
+      e.lines.clear();
+      e.total = 0;
+      e.editDelta = 0;
+      e.correction = 0;
+      for (const [ln, tok] of update.lines) this._setLine(e, ln, tok);
+      e.overhead = update.overhead;
+    } else if (update.type === "lineUpdate") {
+      for (const [ln, tok] of update.lines) this._setLine(e, ln, tok);
+      e.overhead = update.overhead;
+    } else if (update.type === "editDelta") {
+      e.editDelta += update.value;
+    }
+    e.lastActiveTurn = turn;
+    if (callSeq != null) e.lastActiveCallSeq = callSeq;
+    if (update.spent != null && update.spent > 0) {
+      this._totalSpent.set(path4, (this._totalSpent.get(path4) || 0) + update.spent);
+    }
+    if (update.type === "editDelta" || update.type === "write") {
+      this._editCount.set(path4, (this._editCount.get(path4) || 0) + 1);
+    } else {
+      this._readCount.set(path4, (this._readCount.get(path4) || 0) + 1);
+    }
+    if (callSeq != null) {
+      const mode = update.type === "editDelta" || update.type === "write" ? "w" : "r";
+      this._pushTouch(path4, callSeq, mode);
+    }
+  }
+  pathTotal(path4) {
+    const e = this.paths.get(path4);
+    if (!e) return 0;
+    return Math.max(0, e.total + e.editDelta + e.overhead - e.correction);
+  }
+  // CTP overshoot correction (§2.5): when ΔB > ΔL, distribute the overshoot as a per-path
+  // correction proportional to each path's contribution. Called by foldCall after detecting overshoot.
+  addCorrection(path4, amount) {
+    const e = this.paths.get(path4);
+    if (e) e.correction += amount;
+  }
+  B() {
+    let sum = this.dead;
+    for (const path4 of this.paths.keys()) sum += this.pathTotal(path4);
+    return sum;
+  }
+  // Lightweight alternative to snapshot() for callers that only need path+tokens.
+  // Skips churn/efficiency/readCount/editCount/touchSeqs/pureRereads computation entirely.
+  pathTokenPairs() {
+    const out = [];
+    for (const [path4, e] of this.paths) {
+      const tokens = Math.max(0, e.total + e.editDelta + e.overhead - e.correction);
+      if (tokens > 0) out.push({ path: path4, tokens });
+    }
+    return out;
+  }
+  snapshot() {
+    const out = [];
+    for (const [path4, e] of this.paths) {
+      const tokens = Math.max(0, e.total + e.editDelta + e.overhead - e.correction);
+      if (tokens > 0) {
+        const totalSpent = Math.max(tokens, Math.round(this._spentFor(path4) || tokens));
+        const churn = totalSpent / tokens;
+        const efficiency = Math.round(tokens / totalSpent * 100);
+        out.push({
+          path: path4,
+          tokens,
+          lastActiveTurn: e.lastActiveTurn,
+          lastActiveCallSeq: e.lastActiveCallSeq,
+          totalSpent,
+          churn,
+          efficiency,
+          readCount: this._readCount.get(path4) || 0,
+          editCount: this._editCount.get(path4) || 0,
+          touchSeqs: this._touchSeqs.get(path4) || [],
+          pureRereads: this._pureRereads.get(path4) || 0
+        });
+      }
+    }
+    return out;
+  }
+  clear() {
+    this.paths.clear();
+    this._totalSpent.clear();
+    this._totalSpentReasoning.clear();
+    this._touchSeqs.clear();
+    this._readCount.clear();
+    this._editCount.clear();
+    this._pureRereads.clear();
+    this._hasFullSnapshot.clear();
+    this._editedSinceFullSnapshot.clear();
+  }
+};
+function applyResidual(deltaL, deltaB) {
+  const raw = deltaL - deltaB;
+  return raw >= 0 ? { residual: raw, overshoot: 0 } : { residual: 0, overshoot: -raw };
+}
+function emaStep(prevG, residual, alpha = ALPHA_EMA) {
+  return alpha * residual + (1 - alpha) * prevG;
+}
+function gEffective(gEma, floor = G_FLOOR) {
+  return Math.max(Number.isFinite(gEma) ? gEma : floor, floor);
+}
+function redactCmd(cmd) {
+  return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
+}
+function mcpDisplay(toolName) {
+  if (!toolName || !toolName.startsWith("mcp__")) return toolName;
+  let name = toolName.slice(5);
+  name = name.replace(/^plugin_/, "");
+  const segments = name.split("__");
+  if (segments.length > 0) {
+    const firstSeg = segments[0];
+    const halfLen = Math.floor(firstSeg.length / 2);
+    for (let len = halfLen + 1; len >= 2; len--) {
+      const candidate = firstSeg.slice(0, len);
+      const remainder = firstSeg.slice(len);
+      if (remainder === "_" + candidate) {
+        segments[0] = candidate;
+        break;
+      }
+    }
+  }
+  return segments.join(" ");
+}
+var LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/;
+function bashFeature(command) {
+  if (!command || !String(command).trim()) return { name: "(bash)", detail: "" };
+  let cmd = String(command).trim();
+  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
+  if (!cmd) return { name: "(bash)", detail: "" };
+  cmd = cmd.split("|")[0].trim();
+  cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
+  cmd = cmd.replace(/^(cd\s+\S+\s*&&\s*)+/g, "");
+  cmd = cmd.replace(/^(fn\w+\s*&&\s*)+/g, "");
+  while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
+  cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)+/, "");
+  cmd = cmd.trim();
+  if (!cmd) return { name: "(bash)", detail: "" };
+  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
+  if (!cmd) return { name: "(bash)", detail: "" };
+  const firstLine = cmd.split("\n")[0];
+  const tokens = firstLine.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  if (tokens.length === 0) return { name: "(bash)", detail: "" };
+  const tool = tokens[0];
+  if (tool.includes("/") || tool.includes("=")) {
+    return { name: "(script)", detail: "" };
+  }
+  let name;
+  let argsStart;
+  if (tool === "git") {
+    let i = 1;
+    while (i < tokens.length && tokens[i].startsWith("-")) {
+      if (tokens[i] === "-C" || tokens[i] === "-c") {
+        i += 2;
+      } else {
+        break;
+      }
+    }
+    const sub = i < tokens.length ? tokens[i] : "";
+    name = sub ? `git ${sub}` : "git";
+    argsStart = i + 1;
+  } else if (tool === "bash" || tool === "sh") {
+    const script = tokens[1] || "";
+    const basename2 = script.includes("/") ? script.split("/").pop() : script;
+    name = basename2 ? `${tool} ${basename2}` : tool;
+    argsStart = 2;
+  } else if ((tool === "npm" || tool === "pnpm" || tool === "yarn") && tokens.length > 1) {
+    const sub = tokens[1] || "";
+    if (sub.startsWith("-")) {
+      name = tool;
+      argsStart = 1;
+    } else {
+      name = `${tool} ${sub}`;
+      argsStart = 2;
+    }
+  } else if (tool === "docker" && tokens.length > 1 && !tokens[1].startsWith("-")) {
+    name = `${tool} ${tokens[1]}`;
+    argsStart = 2;
+  } else {
+    name = tool;
+    argsStart = 1;
+  }
+  if (name.length > 40) name = name.slice(0, 40);
+  let detail = "";
+  const remaining = tokens.slice(argsStart);
+  for (const arg of remaining) {
+    if (arg.startsWith("-")) continue;
+    const urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
+    if (urlMatch) {
+      detail = urlMatch[1];
+      break;
+    }
+    if (!arg.startsWith("$") && !arg.startsWith('"') && !arg.startsWith("'")) {
+      detail = arg;
+      break;
+    }
+  }
+  detail = redactCmd(detail);
+  if (detail.length > 40) detail = detail.slice(0, 40);
+  return { name, detail };
+}
+
+// lib/fold.js
 function boundaryPrecheck(raw) {
   if (typeof raw !== "string" || raw.length === 0) return false;
   const scan = raw.length > PRECHECK_LONG_LINE_BYTES ? raw.slice(0, PRECHECK_HEAD_CAP_BYTES) : raw;
@@ -23063,88 +23943,156 @@ function readNewText(w) {
     closeSync(fd);
   }
 }
+function extractTurnToolEvents(w) {
+  const evs = w._turnToolEvents || [];
+  w._turnToolEvents = [];
+  return evs;
+}
 function foldCall(w, u) {
   const foldKey = u.messageId ?? u.requestId ?? null;
   if (foldKey != null && w._byId.has(foldKey)) {
     const idx = w._byId.get(foldKey);
-    const totalTok2 = u.input + u.output + u.cacheRead + u.cacheCreation;
+    const totalTok = u.input + u.output + u.cacheRead + u.cacheCreation;
     let changed = false;
-    if (totalTok2 >= w._calls[idx]._total) {
+    if (totalTok >= w._calls[idx]._total) {
       const prev = w._calls[idx];
-      const crCcChanged = u.cacheRead !== prev.cacheRead || u.cacheCreation !== prev.cacheCreation;
-      const miss2 = crCcChanged ? classifyMiss({
-        cacheRead: u.cacheRead,
-        cacheCreation: u.cacheCreation,
-        peakTotalBefore: prev._peakTotalBefore,
-        peakReadBefore: prev._peakReadBefore
-      }) : prev.miss;
-      const L2 = miss2 ? u.cacheRead + u.cacheCreation : u.cacheRead;
       w._calls[idx] = {
         ...prev,
         cacheRead: u.cacheRead,
         output: u.output,
         input: u.input,
         cacheCreation: u.cacheCreation,
-        gField: u.gField,
         ts: u.ts,
-        _total: totalTok2,
-        miss: miss2,
-        L: L2
+        _total: totalTok
       };
       changed = true;
       w._foldRev++;
-      const mutatedSeg = w._calls[idx].segment;
-      for (const segId of [...w._latchedBaseline.keys()]) {
-        if (segId >= mutatedSeg) w._latchedBaseline.delete(segId);
-      }
     }
     return { isNew: false, changed };
   }
-  const total = u.cacheRead + u.cacheCreation;
-  const peakTotalBefore = w._segmentMaxTotal;
-  const peakReadBefore = w._segmentMaxRead;
-  const miss = classifyMiss({ cacheRead: u.cacheRead, cacheCreation: u.cacheCreation, peakTotalBefore, peakReadBefore });
-  const startsNewSegment = !miss && w._segmentMaxTotal > 0 && total < w._segmentMaxTotal;
-  if (startsNewSegment) {
-    w._segment++;
-    w._byId.clear();
+  const totalStock = u.cacheRead + u.cacheCreation + u.input;
+  if (!w._segmentModel) w._segmentModel = u.model;
+  if (w._compactDetected) {
+    w.segmentReset();
     w._segmentModel = u.model;
-    w._segmentMaxTotal = total;
-    w._segmentMaxRead = u.cacheRead;
-  } else {
-    if (w._segmentMaxTotal === 0) w._segmentModel = w._segmentModel || u.model;
-    w._segmentMaxTotal = Math.max(w._segmentMaxTotal, total);
-    w._segmentMaxRead = Math.max(w._segmentMaxRead, u.cacheRead);
+    w._compactDetected = false;
+  } else if (w._prevTotalStock > 0 && totalStock < w._prevTotalStock - SEGMENT_DROP_EPSILON) {
+    if (w._firstRootUuid) {
+      const looksLikeEviction = w._prevL > 0 && u.cacheRead < w._prevL * MISS_CR_DROP;
+      if (!looksLikeEviction) {
+        w.segmentReset();
+        w._segmentModel = u.model;
+      }
+    } else {
+      w.segmentReset();
+      w._segmentModel = u.model;
+    }
   }
-  const L = miss ? total : u.cacheRead;
-  const totalTok = u.input + u.output + u.cacheRead + u.cacheCreation;
-  const rec = {
-    messageId: u.messageId,
-    cacheRead: u.cacheRead,
-    output: u.output,
-    input: u.input,
-    cacheCreation: u.cacheCreation,
-    gField: u.gField,
-    model: u.model,
-    ts: u.ts,
-    segment: w._segment,
-    _total: totalTok,
-    L,
-    miss,
-    // Peaks-before are stored so an in-place fold that later rewrites cr/cc can re-run classifyMiss
-    // for THIS record deterministically (spec §3.6; used by Task 5's scoped invalidation).
-    _peakTotalBefore: peakTotalBefore,
-    _peakReadBefore: peakReadBefore
-  };
+  if (w._bRebuild.dead === 0) {
+    w._bRebuild.setDead(Math.max(u.cacheRead, u.cacheCreation, u.input));
+    w._warmupCeiling = totalStock;
+  }
+  let B_current = w._bRebuild.B();
+  const prevB = w._prevB;
+  const miss = classifyMiss({ cacheRead: u.cacheRead, totalStock, prevL: w._prevL, prevTotalStock: w._prevTotalStock });
+  const L = miss ? u.cacheRead + u.cacheCreation : u.cacheRead;
+  let residual = 0;
+  if (w._prevL != null) {
+    let deltaL = L - w._prevL;
+    const ceiling = w._warmupCeiling || 0;
+    if (ceiling > 0 && w._prevL < ceiling && deltaL > 0) {
+      deltaL = Math.max(0, L - ceiling);
+    }
+    const rawDeltaB = B_current - prevB;
+    if (deltaL >= 0 && rawDeltaB > deltaL && rawDeltaB > 0 && w._intervalPathDeltas?.size) {
+      const overshoot = rawDeltaB - deltaL;
+      const totalPathDelta = [...w._intervalPathDeltas.values()].reduce((s, d) => s + d, 0);
+      if (totalPathDelta > 0) {
+        const uncached = totalStock - L;
+        const unexplained = Math.max(0, overshoot - uncached);
+        const effectiveOvershoot = Math.min(unexplained, totalPathDelta);
+        if (effectiveOvershoot > 0) {
+          for (const [p, d] of w._intervalPathDeltas) {
+            if (d <= 0) continue;
+            w._bRebuild.addCorrection(p, effectiveOvershoot * (d / totalPathDelta));
+          }
+          B_current = w._bRebuild.B();
+        }
+      }
+    }
+    w._intervalPathDeltas = /* @__PURE__ */ new Map();
+    const deltaB = B_current - prevB;
+    const applied = applyResidual(deltaL, deltaB);
+    residual = applied.residual;
+    w._ctpOvershoot += applied.overshoot;
+    w._g_ema = emaStep(w._g_ema == null ? residual : w._g_ema, residual);
+    const resTools = w._turnResidualTools || [];
+    if (resTools.length && residual > 0) {
+      const totalW = resTools.reduce((s, t) => s + t.weight, 0);
+      for (const t of resTools) {
+        const share = totalW > 0 ? residual * (t.weight / totalW) : residual / resTools.length;
+        const prev = w._residualByTool.get(t.key) || { tokens: 0, lastTurn: 0, lastCallSeq: 0, count: 0, kind: t.kind, detail: t.detail, touchSeqs: [] };
+        prev.tokens += share;
+        prev.lastTurn = w._turnSeq;
+        prev.lastCallSeq = w._foldedCallSeq;
+        prev.count += 1;
+        prev.kind = t.kind;
+        prev.detail = t.detail;
+        prev.touchSeqs.push({ seq: w._foldedCallSeq, mode: t.hadError ? "e" : "w" });
+        if (prev.touchSeqs.length > 128) prev.touchSeqs = prev.touchSeqs.slice(-64);
+        w._residualByTool.set(t.key, prev);
+      }
+    }
+    w._turnResidualTools = [];
+    if (w._pendingResidual?.size) {
+      for (const [id, p] of w._pendingResidual) {
+        if (w._turnSeq - (p.turn ?? 0) > PENDING_MAX_TURN_DISTANCE) w._pendingResidual.delete(id);
+      }
+    }
+  } else if (w._g_ema == null) {
+    w._g_ema = gEffective(null);
+    w._turnResidualTools = [];
+    w._intervalPathDeltas = /* @__PURE__ */ new Map();
+  }
   if (w._pendingTurnBump || w._turnSeq === 0) {
     w._turnSeq++;
     w._pendingTurnBump = false;
   }
   if (foldKey != null) w._byId.set(foldKey, w._calls.length);
   w._foldedCallSeq++;
-  rec.foldedSeq = w._foldedCallSeq;
-  rec.turnSeq = w._turnSeq;
+  const toolEvents = extractTurnToolEvents(w);
+  const rec = {
+    messageId: u.messageId,
+    cacheRead: u.cacheRead,
+    output: u.output,
+    input: u.input,
+    cacheCreation: u.cacheCreation,
+    model: u.model,
+    ts: u.ts,
+    segment: w._segment,
+    _total: u.input + u.output + u.cacheRead + u.cacheCreation,
+    L,
+    miss,
+    foldedSeq: w._foldedCallSeq,
+    turnSeq: w._turnSeq,
+    // v3 per-call metadata (display layer):
+    B_at_call: B_current,
+    g_at_call: gEffective(w._g_ema),
+    deltaResidual: residual,
+    toolEvents
+  };
   w._calls.push(rec);
+  if (!w._reasoningAttributionDisabled && w._bRebuild._totalSpentReasoning.size > 0) {
+    const reasoningSum = w._bRebuild.totalReasoningSpentSum();
+    if (reasoningSum > L) {
+      w._bRebuild.dropReasoningSpent();
+      w._reasoningAttributionDisabled = true;
+      console.warn("bucket reasoning drift \u2192 content-only mode");
+    }
+  }
+  w._prevB = B_current;
+  w._prevL = L;
+  w._prevTotalStock = totalStock;
   return { isNew: true, changed: true };
 }
 function readCompleteJsonlEventsFromBuffer(chunk, { baseOffset = 0, maxBytes, atEof = false } = {}) {
@@ -23195,8 +24143,23 @@ function indexRow(w, entry) {
   if (entry.parentUuid) {
     if (!w._uuidChildren.has(entry.parentUuid)) w._uuidChildren.set(entry.parentUuid, /* @__PURE__ */ new Set());
     w._uuidChildren.get(entry.parentUuid).add(entry.uuid);
+  } else if (!w._firstRootUuid) {
+    w._firstRootUuid = entry.uuid;
+  } else {
+    w._compactDetected = true;
   }
   w._latestUuid = entry.uuid;
+}
+function deepestLeafFrom(w, rootUuid) {
+  const visited = /* @__PURE__ */ new Set();
+  let leaf = rootUuid;
+  while (leaf && w._uuidChildren.has(leaf)) {
+    if (visited.has(leaf)) break;
+    visited.add(leaf);
+    const children = w._uuidChildren.get(leaf);
+    leaf = [...children].pop();
+  }
+  return leaf;
 }
 function detectActiveLeaf(w) {
   const visited = /* @__PURE__ */ new Set();
@@ -23210,14 +24173,14 @@ function detectActiveLeaf(w) {
   return leaf;
 }
 function resolveActivePath(w, leafUuid) {
-  const path = /* @__PURE__ */ new Set();
+  const path4 = /* @__PURE__ */ new Set();
   let current = leafUuid;
   while (current != null) {
-    if (path.has(current)) break;
-    path.add(current);
+    if (path4.has(current)) break;
+    path4.add(current);
     current = w._uuidToParent.get(current) ?? null;
   }
-  return path;
+  return path4;
 }
 function isAncestorOf(w, ancestor, descendant) {
   const visited = /* @__PURE__ */ new Set();
@@ -23235,8 +24198,6 @@ function resetFoldState(w, { bumpSegment = false, bumpFoldRev = true, clearCalls
   w._byId.clear();
   if (bumpSegment) w._segment++;
   else w._segment = 0;
-  w._segmentMaxTotal = 0;
-  w._segmentMaxRead = 0;
   w._segmentModel = null;
   if (clearCalls) {
     w._foldedCallSeq = 0;
@@ -23244,13 +24205,77 @@ function resetFoldState(w, { bumpSegment = false, bumpFoldRev = true, clearCalls
     w._pendingTurnBump = false;
   }
   if (bumpFoldRev) w._foldRev++;
-  w._latchedBaseline.clear();
   w._uuidToParent.clear();
   w._uuidChildren.clear();
   w._latestUuid = null;
   w._activeLeafUuid = null;
+  w._firstRootUuid = null;
+  w._compactDetected = false;
+  if (clearCalls || bumpSegment) {
+    w._bRebuild.clear();
+    w._bRebuild.setDead(0);
+    w._warmupCeiling = 0;
+    w._g_ema = null;
+    w._prevB = 0;
+    w._prevL = null;
+    w._prevTotalStock = 0;
+    w._ctpOvershoot = 0;
+    w._pendingTool.clear();
+    w._segmentEpoch++;
+    w._turnToolEvents = [];
+    w._residualByTool = /* @__PURE__ */ new Map();
+    w._turnResidualTools = [];
+    w._pendingResidual = /* @__PURE__ */ new Map();
+    w._intervalPathDeltas = /* @__PURE__ */ new Map();
+    w._completedSkills = /* @__PURE__ */ new Map();
+    w._reasoningAttributionDisabled = false;
+  }
 }
-function replayActivePath(w) {
+function foldEntries(w, entries, pathFilter) {
+  let newCalls = 0, changed = false;
+  for (const entry of entries) {
+    if (pathFilter && entry.uuid && !pathFilter.has(entry.uuid)) continue;
+    if (w._ctp == null && entry.type === "assistant" && entry.message?.usage && entry.message?.model) {
+      w._ctp = ctpForModel(entry.message.model);
+    }
+    processToolEvents(w, entry, w._turnSeq);
+    if (entry.isMeta === true && entry.sourceToolUseID && w._completedSkills?.has(entry.sourceToolUseID)) {
+      const sk = w._completedSkills.get(entry.sourceToolUseID);
+      if (sk.epoch === w._segmentEpoch) {
+        const text = extractSkillText(entry);
+        if (text) {
+          const tokens = charsToTokens(text, w._ctp || DEFAULT_CTP);
+          w._bRebuild.apply({ type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read }, sk.path, w._turnSeq, w._foldedCallSeq);
+        }
+      }
+      w._completedSkills.delete(entry.sourceToolUseID);
+      continue;
+    }
+    if (entry.type === "user" && typeof entry.message?.content === "string" && entry.message.content.trimStart().startsWith("<task-notification>")) {
+      const content = entry.message.content;
+      const tidMatch = content.match(/<task-id>([^<]+)<\/task-id>/);
+      const tidPrefix = tidMatch ? tidMatch[1].slice(0, 8) : "";
+      const summaryMatch = content.match(/<summary>([^<]*)<\/summary>/);
+      const detail = summaryMatch ? summaryMatch[1].replace(/^Agent "(.+)" finished$/, "$1") : tidPrefix;
+      (w._turnResidualTools ||= []).push({ key: "agent:" + tidPrefix, detail, kind: "agent", weight: content.length, hadError: false });
+      continue;
+    }
+    if (isUserTurnBoundary(entry)) {
+      w._pendingTurnBump = true;
+      continue;
+    }
+    const u = extractUsage(entry);
+    if (!u || u.isSidechain) continue;
+    const r = foldCall(w, u);
+    if (r.isNew) newCalls++;
+    if (r.changed) changed = true;
+  }
+  return { newCalls, changed };
+}
+function foldSubset(w, events, pathSet) {
+  foldEntries(w, events, pathSet);
+}
+function replayActivePath(w, { isCompact = false } = {}) {
   let fd;
   try {
     fd = openSync(w.path, "r");
@@ -23258,6 +24283,7 @@ function replayActivePath(w) {
     return;
   }
   resetFoldState(w);
+  w._partial = "";
   try {
     const st = fstatSync(fd);
     const buf = Buffer.allocUnsafe(st.size);
@@ -23267,18 +24293,139 @@ function replayActivePath(w) {
     for (const entry of events) indexRow(w, entry);
     w._activeLeafUuid = detectActiveLeaf(w);
     const activePath = w._uuidChildren.size > 0 ? resolveActivePath(w, w._activeLeafUuid) : null;
-    for (const entry of events) {
-      if (activePath && entry.uuid && !activePath.has(entry.uuid)) continue;
-      if (isUserTurnBoundary(entry)) {
-        w._pendingTurnBump = true;
-        continue;
+    if (isCompact && activePath) {
+      const roots = [];
+      for (const entry of events) {
+        if (entry.uuid && w._uuidToParent.get(entry.uuid) === null) roots.push(entry.uuid);
       }
-      const u = extractUsage(entry);
-      if (!u || u.isSidechain) continue;
-      foldCall(w, u);
+      w._compactDetected = false;
+      for (let i = 0; i < roots.length; i++) {
+        if (i > 0) {
+          w.segmentReset();
+          w._ctp = null;
+          w._pendingTurnBump = false;
+        }
+        const leaf = deepestLeafFrom(w, roots[i]);
+        const path4 = resolveActivePath(w, leaf);
+        foldSubset(w, events, path4);
+      }
+    } else {
+      w._compactDetected = false;
+      foldSubset(w, events, activePath);
     }
   } finally {
     closeSync(fd);
+  }
+}
+function extractSkillText(entry) {
+  const c = entry.message?.content;
+  if (!Array.isArray(c)) return null;
+  let text = "";
+  for (const block of c) {
+    if (block?.type === "text" && typeof block.text === "string") text += block.text;
+  }
+  return text || null;
+}
+function processToolEvents(w, entry, turn) {
+  const msg = entry?.message;
+  if (!msg) return;
+  const blocks = Array.isArray(msg.content) ? msg.content : null;
+  if (!blocks) return;
+  let lastToolPath = null;
+  let accReasoningChars = 0;
+  let accReasoningCjk = 0;
+  for (const block of blocks) {
+    if (block?.type === "text" || block?.type === "thinking") {
+      if (!w._reasoningAttributionDisabled) {
+        const chunk = block.text || block.thinking || "";
+        accReasoningChars += chunk.length;
+        accReasoningCjk += (chunk.match(CJK_RE) || []).length;
+      }
+      continue;
+    }
+    if (block?.type === "tool_use") {
+      const adapter = matchAdapter(block.name);
+      if (!adapter) {
+        const isBash = block.name === "Bash";
+        const isMcp = typeof block.name === "string" && block.name.startsWith("mcp__");
+        if (isBash || isMcp) {
+          let key, detail = "";
+          if (isBash) {
+            const f = bashFeature(block.input?.command);
+            key = f.name || "(bash)";
+            detail = f.detail || "";
+          } else {
+            key = mcpDisplay(block.name);
+          }
+          const inputLen = JSON.stringify(block.input || {}).length;
+          w._pendingResidual ||= /* @__PURE__ */ new Map();
+          w._pendingResidual.set(block.id, { key, detail, kind: isBash ? "bash" : "mcp", inputLen, epoch: w._segmentEpoch, turn: w._turnSeq });
+        }
+        lastToolPath = null;
+        accReasoningChars = 0;
+        accReasoningCjk = 0;
+        continue;
+      }
+      const cwd = entry.cwd || w.cwd || dirname(w.path);
+      const path4 = adapter.extractPath(block.input || {}, cwd);
+      if (path4 == null && block.name === "Bash") {
+        const f = bashFeature(block.input?.command);
+        const key = f.name || "(bash)";
+        const detail = f.detail || "";
+        const inputLen = JSON.stringify(block.input || {}).length;
+        w._pendingResidual ||= /* @__PURE__ */ new Map();
+        w._pendingResidual.set(block.id, { key, detail, kind: "bash", inputLen, epoch: w._segmentEpoch, turn: w._turnSeq });
+        lastToolPath = null;
+        accReasoningChars = 0;
+        accReasoningCjk = 0;
+        continue;
+      }
+      w._pendingTool.set(block.id, { adapter, input: block.input || {}, path: path4, cwd, epoch: w._segmentEpoch });
+      if (!w._reasoningAttributionDisabled && path4 != null && accReasoningChars > 0 && path4 === lastToolPath) {
+        const reasoningTokens = countsToTokens({ chars: accReasoningChars, cjk: accReasoningCjk }, w._ctp || DEFAULT_CTP);
+        w._bRebuild.addReasoningSpent(path4, reasoningTokens);
+      }
+      lastToolPath = path4;
+      accReasoningChars = 0;
+      accReasoningCjk = 0;
+    } else if (block?.type === "tool_result") {
+      const pendResidual = w._pendingResidual?.get(block.tool_use_id);
+      if (pendResidual) {
+        w._pendingResidual.delete(block.tool_use_id);
+        if (pendResidual.epoch === w._segmentEpoch) {
+          const resultText = extractToolResultText(block);
+          const weight = pendResidual.inputLen + resultText.length;
+          (w._turnResidualTools ||= []).push({ key: pendResidual.key, detail: pendResidual.detail, kind: pendResidual.kind, weight, hadError: block.is_error === true });
+        }
+        continue;
+      }
+      const pending = w._pendingTool.get(block.tool_use_id);
+      if (!pending) continue;
+      w._pendingTool.delete(block.tool_use_id);
+      if (pending.epoch !== w._segmentEpoch) continue;
+      if (block.is_error === true) continue;
+      try {
+        const resultText = extractToolResultText(block);
+        const update = pending.adapter.computeUpdate(pending.input, resultText, pending.cwd, w._ctp || DEFAULT_CTP);
+        if (update) {
+          const beforeTotal = pending.path ? w._bRebuild.pathTotal(pending.path) : 0;
+          w._bRebuild.apply(update, pending.path, turn, w._foldedCallSeq);
+          (w._turnToolEvents ||= []).push({ name: pending.adapter.name, path: pending.path || null, isError: false });
+          if (pending.adapter.name === "Skill" && pending.path) {
+            (w._completedSkills ||= /* @__PURE__ */ new Map()).set(block.tool_use_id, { path: pending.path, epoch: pending.epoch });
+          }
+          if (pending.path) {
+            const delta = w._bRebuild.pathTotal(pending.path) - beforeTotal;
+            if (delta > 0) {
+              if (!w._intervalPathDeltas) w._intervalPathDeltas = /* @__PURE__ */ new Map();
+              w._intervalPathDeltas.set(pending.path, (w._intervalPathDeltas.get(pending.path) || 0) + delta);
+            }
+          }
+        }
+      } catch (e) {
+        if (process.env.SW_DEBUG) console.error("[adapter]", pending.adapter.name, e.message);
+      }
+    }
   }
 }
 function poll(w) {
@@ -23296,7 +24443,7 @@ function poll(w) {
     if (!raw) continue;
     let entry = null;
     const head = raw.length > PRECHECK_LONG_LINE_BYTES ? raw.slice(0, PRECHECK_HEAD_CAP_BYTES) : raw;
-    if (head.includes('"uuid"') || raw.includes('"usage"') || boundaryPrecheck(raw)) {
+    if (head.includes('"uuid"') || head.includes('"usage"') || boundaryPrecheck(raw)) {
       try {
         entry = JSON.parse(raw);
       } catch {
@@ -23314,46 +24461,33 @@ function poll(w) {
   w._activeLeafUuid = currentLeaf;
   const needsReplay = hasTree && prevLeaf && currentLeaf && !isAncestorOf(w, prevLeaf, currentLeaf);
   if (needsReplay) {
-    replayActivePath(w);
+    replayActivePath(w, { isCompact: !!w._compactDetected });
+    return { newCalls: w._calls.length, changed: true };
+  }
+  if (!prevLeaf && w._compactDetected && w._firstRootUuid && currentLeaf) {
+    replayActivePath(w, { isCompact: true });
     return { newCalls: w._calls.length, changed: true };
   }
   const activePath = hasTree && currentLeaf ? resolveActivePath(w, currentLeaf) : null;
-  let newCalls = 0, changed = false;
-  for (const entry of batch) {
-    if (activePath && entry.uuid && !activePath.has(entry.uuid)) continue;
-    if (isUserTurnBoundary(entry)) {
-      w._pendingTurnBump = true;
-      continue;
-    }
-    const u = extractUsage(entry);
-    if (!u || u.isSidechain) continue;
-    const r = foldCall(w, u);
-    if (r.isNew) newCalls++;
-    if (r.changed) changed = true;
-  }
-  return { newCalls, changed };
+  return foldEntries(w, batch, activePath);
 }
 
 // lib/history.js
-function computeHistoryPoint(w, c, arr, lockedModel, fitWindow, latchStore) {
-  const { baseline, L, kAvg } = w._baselineAndKavg(arr, { latchStore });
-  const total = baseline.total;
-  const cRatio = w.ratioOverride ?? cRatioFor(lockedModel);
-  const Lstar = lStar(total, cRatio, kAvg);
-  const Lcap = contextWindowFor(lockedModel) - RESERVED_OUTPUT - CTX_SAFETY_MARGIN;
-  const Lthreshold = Math.min(Lstar, Lcap);
+function computeHistoryPoint(w, c, _arr, _lockedModel, _fitWindow, _latchStore) {
+  const B = Number.isFinite(c.B_at_call) ? c.B_at_call : 0;
+  const x = B > 0 ? c.L / B : 1;
   return {
     ts: c.ts,
     segment: c.segment,
-    L,
-    Lstar,
-    Lthreshold,
-    kAvg,
-    paybackP: paybackP(L, total),
-    phi: phi(L, total, cRatio, kAvg),
+    L: c.L,
+    B,
+    x,
+    g: Number.isFinite(c.g_at_call) ? c.g_at_call : 0,
     miss: c.miss === true,
     cacheRead: c.cacheRead,
-    cacheCreation: c.cacheCreation
+    cacheCreation: c.cacheCreation,
+    turnSeq: c.turnSeq,
+    foldedSeq: c.foldedSeq
   };
 }
 function getHistory(w, fitWindowOverride) {
@@ -23394,12 +24528,25 @@ function getHistory(w, fitWindowOverride) {
   return out.slice();
 }
 
+// lib/gitignore.js
+import path2 from "node:path";
+function outsideProject(cwd, filePath) {
+  if (!cwd || !filePath) return false;
+  const rel = path2.relative(cwd, filePath);
+  return rel.startsWith("..") || path2.isAbsolute(rel);
+}
+function discardReason(rel, isIgnored, cwd, filePath) {
+  if (outsideProject(cwd, filePath)) return "outside-project";
+  if (rel && typeof isIgnored === "function" && isIgnored(rel)) return "gitignore";
+  return null;
+}
+
 // lib/watcher.js
 var SessionWatcher = class {
   constructor(jsonlPath, lbase = null, opts = {}) {
     this.path = jsonlPath;
     this.injectedDead = lbase;
-    this.fitWindow = opts.fitWindow ?? CONSTANTS.FIT_WINDOW_DEFAULT;
+    this.fitWindow = opts.fitWindow ?? 20;
     this.ratioOverride = opts.ratioOverride ?? null;
     this._offset = 0;
     this._partial = "";
@@ -23410,18 +24557,33 @@ var SessionWatcher = class {
     this._foldedCallSeq = 0;
     this._turnSeq = 0;
     this._pendingTurnBump = false;
-    this._segmentMaxTotal = 0;
-    this._segmentMaxRead = 0;
     this._segmentModel = null;
     this._ino = null;
     this._transcriptSeen = false;
     this._foldRev = 0;
     this._historyCache = null;
-    this._latchedBaseline = /* @__PURE__ */ new Map();
     this._uuidToParent = /* @__PURE__ */ new Map();
     this._uuidChildren = /* @__PURE__ */ new Map();
     this._latestUuid = null;
     this._activeLeafUuid = null;
+    this._firstRootUuid = null;
+    this._compactDetected = false;
+    this.cwd = opts.cwd || null;
+    this._isIgnored = typeof opts.isIgnored === "function" ? opts.isIgnored : null;
+    this._bRebuild = new BRebuild();
+    this._ctp = null;
+    this._segmentEpoch = 0;
+    this._pendingTool = /* @__PURE__ */ new Map();
+    this._g_ema = null;
+    this._prevB = 0;
+    this._prevL = null;
+    this._ctpOvershoot = 0;
+    this._prevTotalStock = 0;
+    this._residualByTool = /* @__PURE__ */ new Map();
+    this._turnResidualTools = [];
+    this._pendingResidual = /* @__PURE__ */ new Map();
+    this._intervalPathDeltas = /* @__PURE__ */ new Map();
+    this._completedSkills = /* @__PURE__ */ new Map();
     this._startMs = this._nowMs();
   }
   // JSONL ingest + fold + segmentation live in fold.js (readNewText/foldCall/poll take this instance
@@ -23429,6 +24591,27 @@ var SessionWatcher = class {
   // `w._calls/_segment/_foldRev` post-poll reads are unchanged.
   poll() {
     return poll(this);
+  }
+  // v3 segment boundary (spec §6.6): compact = clear = reset. B's state follows the API's state.
+  segmentReset() {
+    this._bRebuild.clear();
+    this._bRebuild.setDead(0);
+    this._g_ema = G_FLOOR;
+    this._ctpOvershoot = 0;
+    this._prevB = 0;
+    this._prevL = null;
+    this._prevTotalStock = 0;
+    this._ctp = null;
+    this._segmentEpoch++;
+    this._segment++;
+    this._byId.clear();
+    this._pendingTool.clear();
+    this._residualByTool.clear();
+    this._turnResidualTools = [];
+    this._pendingResidual.clear();
+    this._intervalPathDeltas = /* @__PURE__ */ new Map();
+    if (this._completedSkills) this._completedSkills.clear();
+    this._reasoningAttributionDisabled = false;
   }
   _currentSegmentCalls() {
     return this._calls.filter((c) => c.segment === this._segment);
@@ -23458,193 +24641,143 @@ var SessionWatcher = class {
   rateLampSeqSamplesSince(sinceSeq, { unavailableReason }) {
     return this._currentSegmentCalls().filter((c) => (c.foldedSeq ?? 0) > sinceSeq).sort((a, b) => a.foldedSeq - b.foldedSeq).map((c) => ({ seq: c.foldedSeq, reliable: false, unavailableReason, turnSeq: c.turnSeq }));
   }
-  // Build the cacheRead sequence knee-detection runs on. If a dead bottom is injected, PREPEND it
-  // as a synthetic point WITHOUT dropping any real call (the old `[dead, ...seq.slice(1)]` silently
-  // lost the first real cacheRead — GPT review). kneeTurn is then an index into this same array,
-  // and callers must use it consistently (seq[0] is the synthetic/real dead point).
-  _baselineSeq(seg) {
-    const seq = seg.map((c) => effectiveL(c));
-    if (this.injectedDead != null) return [this.injectedDead, ...seq];
-    return seq;
-  }
-  // Single per-point metrics pipeline shared by getStatus (full current segment) and getHistory
-  // (each segment prefix). For a given array of current-segment call records it computes the SAME
-  // baselineSeq → detectKnee → segKnee → dead/task/total → kAvg, so the history chart's L*/kAvg can
-  // never drift from the status L*/kAvg (the two used to keep independent, divergent copies — QF1).
-  _baselineAndKavgLive(prefix) {
-    const seq = this._baselineSeq(prefix);
-    const dead = seq[0] ?? 0;
-    const { kneeTurn, taskCtx, isRealKnee, stableMedian } = detectKnee(seq.length ? seq : [dead]);
-    const source = this.injectedDead != null ? "carried" : "current_cold_start";
-    const confidence = source === "carried" ? 0.6 : 0.92;
-    const segKnee = this.injectedDead != null ? Math.max(0, kneeTurn - 1) : kneeTurn;
-    const baseline = { dead, task: taskCtx, total: dead + taskCtx, source, confidence, kneeTurn: segKnee, isRealKnee: isRealKnee === true, stableMedian };
-    const L = prefix.length ? effectiveL(prefix[prefix.length - 1]) : baseline.total;
-    const growthSteps = Math.max(0, prefix.length - segKnee - 1);
-    const apiCalls = Math.max(1, growthSteps);
-    const kAvg = Math.max(0, (L - baseline.total) / apiCalls);
-    return { baseline, L, kAvg, apiCalls };
-  }
-  // Return the frozen entry for this prefix's segment, latching at the EARLIEST gate-passing,
-  // real-knee prefix if not already latched. latchStore value per segment is {entry, scannedThrough};
-  // scannedThrough makes the scan incremental so a batch poll that skips intermediate prefixes still
-  // converges to the same earliest point getHistory reaches by walking prefix-by-prefix (QF1).
-  //
-  // COST (GPT-plan-review #9 / gemini #2): the scan returns as soon as it finds the earliest passing
-  // prefix, so for a segment that DOES latch, cost is O(latchPoint²) where latchPoint ≈ warmup length
-  // (a handful to low-tens of calls) — the per-slice _baselineAndKavgLive/_metricsReliable are O(n)
-  // each, run over slices up to latchPoint. True O(n²) only occurs for a segment that NEVER passes the
-  // gate (fallback-only steep growth) AND is very long: then every poll re-scans from scannedThrough
-  // to the end. That is the same class of session where v1 already runs O(n²) getHistory pre-H1, and
-  // it never hard-signals anyway. Acceptable for v1.1; if a pathological multi-thousand-call
-  // never-latching segment appears, revisit with an incremental knee detector (out of scope). No
-  // async yield is added — the architecture is synchronous by design.
-  ensureLatchForPrefix(prefix, latchStore) {
-    if (!prefix.length) return null;
-    const segmentId = prefix[prefix.length - 1].segment;
-    let state = latchStore.get(segmentId);
-    if (!state) {
-      state = { entry: null, scannedThrough: 0 };
-      latchStore.set(segmentId, state);
-    }
-    const valid = validateLatch(state.entry, prefix);
-    if (valid) return valid;
-    if (state.entry) {
-      state.entry = null;
-      state.scannedThrough = 0;
-    }
-    for (let n = Math.max(1, state.scannedThrough + 1); n <= prefix.length; n++) {
-      const slice = prefix.slice(0, n);
-      const live = this._baselineAndKavgLive(slice);
-      if (!live.baseline.isRealKnee) continue;
-      const postKneeGrowthCalls = Math.max(0, slice.length - live.baseline.kneeTurn - 1);
-      const gate = computeCalibrationGate({
-        confidence: live.baseline.confidence,
-        postKneeGrowthCalls,
-        baselineTotal: live.baseline.total,
-        L: live.L
-      });
-      if (gate.passed) {
-        const entry = makeLatchEntry(live, slice);
-        if (entry) {
-          state.entry = entry;
-          state.scannedThrough = n;
-          return entry;
-        }
+  // Sum of the default-selected B basis (spec §2.1): dead + selected file-path tokens + all skill tokens.
+  // Uses the SAME discardReason predicate as getBucketData so the panel and the position basis never diverge.
+  _computeBDefault() {
+    let sum = this._bRebuild.dead;
+    for (const { path: path0, tokens } of this._bRebuild.pathTokenPairs()) {
+      if (path0.startsWith("skill:")) {
+        sum += tokens;
+        continue;
       }
+      const abs = nodePath.isAbsolute(path0) ? path0 : this.cwd ? nodePath.resolve(this.cwd, path0) : path0;
+      const rel = this.cwd ? nodePath.relative(this.cwd, abs) : path0;
+      if (discardReason(rel, this._isIgnored, this.cwd, abs) === null) sum += tokens;
     }
-    state.scannedThrough = prefix.length;
-    return null;
+    return sum;
   }
-  // Latch-aware baseline. With no latchStore (or an empty prefix) it is IDENTICAL to
-  // _baselineAndKavgLive (latched:false) — so any caller without a store keeps the live path. When a
-  // store IS passed, it latches at the earliest gate-passing/real-knee prefix and returns the FROZEN
-  // baseline (via applyFrozen), recomputing kAvg with the frozen kneeTurn as denominator (spec §2.5).
-  _baselineAndKavg(prefix, opts = {}) {
-    const latchStore = opts.latchStore;
-    if (!latchStore || !prefix.length) {
-      const live = this._baselineAndKavgLive(prefix);
-      return { ...live, latched: false };
-    }
-    const entry = this.ensureLatchForPrefix(prefix, latchStore);
-    if (!entry) {
-      const live = this._baselineAndKavgLive(prefix);
-      return { ...live, latched: false };
-    }
-    const baseline = applyFrozen(entry);
-    const L = effectiveL(prefix[prefix.length - 1]);
-    const apiCalls = Math.max(1, prefix.length - baseline.kneeTurn - 1);
-    const kAvg = Math.max(0, (L - baseline.total) / apiCalls);
-    return { baseline, L, kAvg, apiCalls, latched: true };
-  }
-  getStatus(fitWindowOverride) {
-    const fitWindow = fitWindowOverride ?? this.fitWindow;
+  getStatus() {
     const seg = this._currentSegmentCalls();
-    const model = this._segmentModel || (seg.length ? seg[0].model : "");
+    const model = this._ctp ? seg.length ? seg[seg.length - 1].model : "" : seg.length ? seg[0].model : "";
     const cRatio = this.ratioOverride ?? cRatioFor(model);
-    const latchRes = this._baselineAndKavg(seg, { latchStore: this._latchedBaseline });
-    const { baseline, L, apiCalls, kAvg } = latchRes;
-    const { isRealKnee, ...baselineRest } = baseline;
-    const baselineOut = { ...baselineRest, fingerprint: latchRes.latched ? baselineFingerprint({ dead: baseline.dead, taskCtx: baseline.task, kneeTurn: baseline.kneeTurn }) : null };
-    const Lstar = lStar(baseline.total, cRatio, kAvg);
+    const L = seg.length ? effectiveL(seg[seg.length - 1]) : 0;
+    const B = this._bRebuild.B();
+    const bDefault = this._computeBDefault();
+    const g = gEffective(this._g_ema);
     const Lcap = contextWindowFor(model) - RESERVED_OUTPUT - CTX_SAFETY_MARGIN;
-    const Lthreshold = Math.min(Lstar, Lcap);
-    const kStableReliable = latchRes.latched && Number.isFinite(baseline.stableMedian);
-    const kStable = kStableReliable ? clampKStable(baseline.stableMedian) : null;
-    const lDead = baseline.dead;
-    const rateSnap = {
+    const baselineValid = B > 0 && cRatio > 0;
+    const bPos = bDefault > 0 ? bDefault : B;
+    const x = baselineValid ? L / bPos : 1;
+    const dhat = baselineValid ? nucleus(cRatio, g, bPos) : null;
+    const xSweet = dhat != null ? 1 + dhat : null;
+    const burnRate = baselineValid ? Math.max(0, L - bPos) / (cRatio * bPos) : null;
+    const mf = baselineValid ? computeMovableFrac(cRatio, bPos, g) : null;
+    const br = dhat > 0 && Number.isFinite(mf) ? computeBr(x, dhat, mf) : null;
+    const ctpOvershootRatio = L > 0 ? this._ctpOvershoot / L : 0;
+    const rateLamp = baselineValid ? {
+      reliable: true,
+      basis: "fullCarry",
       L_read: L,
-      lBase: baseline.total,
-      lDead,
-      cRatio,
-      lCap: Lcap,
-      kStable,
-      kStableReliable,
-      baselineValid: baseline.total > 0 && cRatio > 0
-    };
-    const rateLampInstant = computeRateLampInstant(rateSnap, { scenario: "fullCarry" });
-    if (rateLampInstant.reliable) rateLampInstant.kStable = kStable;
-    const crossed = L >= Lthreshold;
-    const postKneeGrowthCalls = Math.max(0, seg.length - baseline.kneeTurn - 1);
-    let calibratingReason;
-    if (latchRes.latched) calibratingReason = null;
-    else if (seg.length === 0 && !this._transcriptSeen) calibratingReason = "no_transcript";
-    else calibratingReason = computeCalibrationGate({
-      confidence: baseline.confidence,
-      postKneeGrowthCalls,
-      baselineTotal: baseline.total,
-      L
-    }).reason;
-    const restart = crossed && calibratingReason === null;
-    const restartReason = !restart ? null : Lcap < Lstar ? "context_cap" : "cost";
-    const rhoVal = rho(cRatio, kAvg, baseline.total);
-    const P = paybackP(L, baseline.total);
-    const sumOut = seg.reduce((a, c) => a + c.output, 0);
-    const paybackOutP = baseline.total > 0 ? sumOut / baseline.total : 0;
-    const nNow = seg.length;
-    const nStarVal = nStar(cRatio, baseline.total, kAvg);
+      L_cap: Lcap,
+      B_post: B,
+      B_rebuild: B,
+      B_default: bDefault,
+      lBase: B,
+      C_RATIO: cRatio,
+      x_display: x,
+      burnRate,
+      hBreak: burnRate > 0 ? 1 / burnRate : Infinity,
+      dhat,
+      xSweet,
+      mf,
+      br,
+      gEma: g,
+      inDeepWater: isInDeepWater(x, xSweet, br)
+    } : { reliable: false, unavailableReason: seg.length === 0 && !this._transcriptSeen ? "no_transcript" : "insufficient_data" };
     return {
       L,
-      Lstar,
-      Lcap,
-      Lthreshold,
-      restart,
-      restartReason,
-      calibratingReason,
+      B,
+      g,
+      x,
+      dhat,
+      xSweet,
+      burnRate,
+      mf,
+      br,
       model,
-      kAvg,
-      growth: seg.length ? Math.max(0, L - (seg.length >= 2 ? effectiveL(seg[seg.length - 2]) : L)) : 0,
-      apiCalls,
+      cRatio,
       segment: this._segment,
+      apiCalls: seg.length,
       uptime: this._uptimeSec(),
-      phi: phi(L, baseline.total, cRatio, kAvg),
-      paybackP: P,
-      paybackOutP,
-      rho: rhoVal,
-      timingWeight: timingWeight(rhoVal),
-      sweetP: 1 + rhoVal,
-      regret: regret(nNow, nStarVal),
-      baseline: baselineOut,
-      metricsReliable: true,
-      // hardcoded for API backward compat (v2.2: _metricsReliable retired from gate pipeline)
-      rateLamp: rateLampInstant
+      ctpOvershootRatio,
+      rateLamp,
+      transcriptPath: this.path
     };
   }
-  // DIAGNOSTIC ONLY — removed from latch/gate pipeline (v2.2 hotfix: gField formula is
-  // provider-specific, confidence gate covers data quality)
-  _metricsReliable(seg) {
-    if (seg.length < 3) return true;
-    const rates = [];
-    for (let i = 1; i < seg.length; i++) {
-      if (seg[i].miss || seg[i - 1].miss) continue;
-      const raw = seg[i].cacheRead - seg[i - 1].cacheRead;
-      if (raw < 0) continue;
-      const dL = raw;
-      const gFieldPrev = seg[i - 1].gField;
-      rates.push(Math.abs(dL - gFieldPrev) / Math.max(1, dL));
+  // Profile snapshot for GC archival (spec section 6.7). Called on each fold completion by server.js.
+  getTerminalSnapshot() {
+    const s = this.getStatus();
+    return {
+      b_total: s.B,
+      g_final: s.g,
+      l_peak: s.L,
+      c_ratio: s.cRatio,
+      turns: this._turnSeq,
+      mf: s.mf,
+      br_exit: s.br,
+      ctp_overshoot_ratio: s.ctpOvershootRatio,
+      paths: this._bRebuild.snapshot().map(({ path: path4, tokens }) => ({ path: path4, tokens })),
+      model: s.model
+    };
+  }
+  // Bucket panel data (spec §7.1 / §11.3.1). Read-only; residual tags are best-effort display metadata.
+  getBucketData() {
+    const s = this.getStatus();
+    const skills = [];
+    const paths = [];
+    for (const { path: path0, tokens, lastActiveTurn, lastActiveCallSeq, totalSpent, churn, efficiency, readCount, editCount, touchSeqs, pureRereads } of this._bRebuild.snapshot()) {
+      const common = { tokens, lastTurn: lastActiveTurn, lastCallSeq: lastActiveCallSeq, totalSpent, churn, efficiency, readCount, editCount, touchSeqs, pureRereads };
+      if (path0.startsWith("skill:")) {
+        skills.push({ name: path0.slice("skill:".length), ...common, defaultSelected: true, defaultDiscardReason: null });
+      } else {
+        const abs = nodePath.isAbsolute(path0) ? path0 : this.cwd ? nodePath.resolve(this.cwd, path0) : path0;
+        const rel = this.cwd ? nodePath.relative(this.cwd, abs) : path0;
+        const reason = discardReason(rel, this._isIgnored, this.cwd, abs);
+        paths.push({ path: path0, ...common, defaultSelected: reason === null, defaultDiscardReason: reason });
+      }
     }
-    if (rates.length < 2) return true;
-    return median(rates) < CONSTANTS.RESIDUAL_MAX;
+    paths.sort((a, b) => b.tokens - a.tokens);
+    skills.sort((a, b) => b.tokens - a.tokens);
+    const bash = [];
+    const mcp = [];
+    const agent = [];
+    for (const [key, r] of this._residualByTool) {
+      const tokens = Math.round(r.tokens);
+      if (tokens <= 0) continue;
+      if (r.kind === "bash") bash.push({ name: key, detail: r.detail || "", tokens, count: r.count || 1, lastTurn: r.lastTurn, lastCallSeq: r.lastCallSeq, touchSeqs: r.touchSeqs || [] });
+      else if (r.kind === "mcp") mcp.push({ tool: key, tokens, count: r.count || 1, lastTurn: r.lastTurn, lastCallSeq: r.lastCallSeq, touchSeqs: r.touchSeqs || [] });
+      else if (r.kind === "agent") agent.push({ name: key, detail: r.detail || "", tokens, count: r.count || 1, lastTurn: r.lastTurn, lastCallSeq: r.lastCallSeq, touchSeqs: r.touchSeqs || [] });
+    }
+    bash.sort((a, b) => b.tokens - a.tokens);
+    mcp.sort((a, b) => b.tokens - a.tokens);
+    agent.sort((a, b) => b.tokens - a.tokens);
+    const bDefault = this._computeBDefault();
+    return {
+      dead: this._bRebuild.dead,
+      skills,
+      paths,
+      residual: { bash, mcp, agent },
+      totalB: s.B,
+      totalL: s.L,
+      bDefault,
+      totalResidualRaw: s.L - s.B,
+      // signed — Task 4 drift-warn source (review GPT#7)
+      totalResidual: Math.max(0, s.L - s.B),
+      // clamped — UI display value
+      ctpOvershootRatio: s.ctpOvershootRatio,
+      currentTurnSeq: this._turnSeq,
+      segment: this._segment
+    };
   }
   _uptimeSec() {
     if (this._startMs == null) return 0;
@@ -23664,7 +24797,7 @@ var SessionWatcher = class {
 // lib/store.js
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname as dirname2 } from "node:path";
 import { homedir } from "node:os";
 var SCHEMA_V1_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -23730,6 +24863,13 @@ CREATE TABLE IF NOT EXISTS profile (
   turn_at_br_amber INTEGER
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS profile_paths (
+  session_id TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  tokens     REAL NOT NULL,
+  PRIMARY KEY (session_id, path)
+) WITHOUT ROWID;
+
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
 CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC);
 CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
@@ -23744,6 +24884,12 @@ function migrate(db) {
       db.exec(SCHEMA_V1_SQL);
       db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     }
+    db.exec(`CREATE TABLE IF NOT EXISTS profile_paths (
+      session_id TEXT NOT NULL,
+      path       TEXT NOT NULL,
+      tokens     REAL NOT NULL,
+      PRIMARY KEY (session_id, path)
+    ) WITHOUT ROWID`);
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -23794,6 +24940,8 @@ var Store = class _Store {
       // Sweep (GC)
       expiredSessions: db.prepare("SELECT session_id FROM sessions WHERE updated_at < ?"),
       loadSessionMeta: db.prepare("SELECT model, project_id FROM sessions WHERE session_id = ?"),
+      insertProfilePath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, path, tokens) VALUES (?, ?, ?)"),
+      loadState: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
       // Line-level operations (paths + lines tables)
       clearLines: db.prepare("DELETE FROM lines WHERE session_id = ? AND path = ?"),
       insertLine: db.prepare(`INSERT INTO lines (session_id, path, line_num, chars) VALUES (?, ?, ?, ?)
@@ -23966,8 +25114,21 @@ var Store = class _Store {
       if (isLiveSession && isLiveSession(session_id)) continue;
       this._db.exec("BEGIN IMMEDIATE");
       try {
+        const snapRow = this._stmts.loadState.get(session_id, "profile_snapshot");
+        const snap = snapRow ? JSON.parse(snapRow.value) : null;
         const sessRow = this._stmts.loadSessionMeta.get(session_id);
-        this.archiveSession(session_id, { model: sessRow?.model || null, projectId: sessRow?.project_id || null });
+        this.archiveSession(session_id, {
+          model: snap?.model || sessRow?.model || null,
+          projectId: sessRow?.project_id || null,
+          bTotal: snap?.b_total,
+          gFinal: snap?.g_final,
+          lPeak: snap?.l_peak,
+          cRatio: snap?.c_ratio,
+          turns: snap?.turns,
+          mf: snap?.mf,
+          brExit: snap?.br_exit
+        });
+        if (snap?.paths) for (const p of snap.paths) this._stmts.insertProfilePath.run(session_id, p.path, p.tokens);
         this._stmts.deleteSessionState.run(session_id);
         this._stmts.deleteSessionPaths.run(session_id);
         this._stmts.deleteSessionLines.run(session_id);
@@ -23984,14 +25145,14 @@ var Store = class _Store {
     return count;
   }
   // --- Line-level operations (paths + lines tables) ---
-  setLines(sessionId, path, entries) {
+  setLines(sessionId, path4, entries) {
     const now = Date.now();
     this._db.exec("BEGIN IMMEDIATE");
     try {
-      this._stmts.setDelta.run(sessionId, path, 0, now);
-      this._stmts.clearLines.run(sessionId, path);
+      this._stmts.setDelta.run(sessionId, path4, 0, now);
+      this._stmts.clearLines.run(sessionId, path4);
       for (const [lineNum, chars] of entries) {
-        this._stmts.insertLine.run(sessionId, path, lineNum, chars);
+        this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
       }
       this._stmts.touchSession.run(sessionId, now, now, null, null);
       this._db.exec("COMMIT");
@@ -24000,13 +25161,13 @@ var Store = class _Store {
       throw e;
     }
   }
-  updateLines(sessionId, path, entries) {
+  updateLines(sessionId, path4, entries) {
     const now = Date.now();
     this._db.exec("BEGIN IMMEDIATE");
     try {
-      this._stmts.upsertPath.run(sessionId, path, now);
+      this._stmts.upsertPath.run(sessionId, path4, now);
       for (const [lineNum, chars] of entries) {
-        this._stmts.insertLine.run(sessionId, path, lineNum, chars);
+        this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
       }
       this._stmts.touchSession.run(sessionId, now, now, null, null);
       this._db.exec("COMMIT");
@@ -24015,11 +25176,11 @@ var Store = class _Store {
       throw e;
     }
   }
-  addEditDelta(sessionId, path, delta) {
+  addEditDelta(sessionId, path4, delta) {
     const now = Date.now();
     this._db.exec("BEGIN IMMEDIATE");
     try {
-      this._stmts.addDelta.run(sessionId, path, delta, now);
+      this._stmts.addDelta.run(sessionId, path4, delta, now);
       this._stmts.touchSession.run(sessionId, now, now, null, null);
       this._db.exec("COMMIT");
     } catch (e) {
@@ -24027,8 +25188,8 @@ var Store = class _Store {
       throw e;
     }
   }
-  getPathTotal(sessionId, path) {
-    const row = this._stmts.pathTotal.get(sessionId, path);
+  getPathTotal(sessionId, path4) {
+    const row = this._stmts.pathTotal.get(sessionId, path4);
     return row ? row.total : 0;
   }
   getAllPathTotals(sessionId) {
@@ -24037,11 +25198,11 @@ var Store = class _Store {
     for (const row of rows) map.set(row.path, row.total);
     return map;
   }
-  clearPath(sessionId, path) {
+  clearPath(sessionId, path4) {
     this._db.exec("BEGIN IMMEDIATE");
     try {
-      this._stmts.clearLines.run(sessionId, path);
-      this._stmts.clearPathMeta.run(sessionId, path);
+      this._stmts.clearLines.run(sessionId, path4);
+      this._stmts.clearPathMeta.run(sessionId, path4);
       this._db.exec("COMMIT");
     } catch (e) {
       this._db.exec("ROLLBACK");
@@ -24064,7 +25225,7 @@ var Store = class _Store {
   }
 };
 function openStore(dbPath) {
-  mkdirSync(dirname(dbPath), { recursive: true });
+  mkdirSync(dirname2(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath, { timeout: 3e3 });
   try {
     const walResult = db.prepare("PRAGMA journal_mode=WAL").get();
@@ -24115,32 +25276,20 @@ var numFields = [
   "billProgress",
   "billCycleCount",
   "billAnchorLRead",
-  "billAnchorTurnSeq",
   "billAnchorFoldedCallSeq",
   "lastAppliedFoldedCallSeq",
   "currentTurnSeq",
-  "currentTurnDeltaW",
-  "pendingBillCountSinceBoundary",
   "cacheExpiryCount",
   "kStableFrozen"
 ];
 var intFields = [
   "billCycleCount",
-  "billAnchorTurnSeq",
   "billAnchorFoldedCallSeq",
   "lastAppliedFoldedCallSeq",
   "currentTurnSeq",
-  "pendingBillCountSinceBoundary",
   "cacheExpiryCount",
-  // v2.2-C (schema v2): monotonic settlement cursors + mutation counter, all non-negative ints.
-  "settledThroughTurnSeq",
-  "alertEvaluatedThroughTurnSeq",
   "ledgerRevision"
 ];
-var SUMMARY_BILL_KINDS = /* @__PURE__ */ new Set([null, "empty_burn", "non_idle_burn", "cache_unstable"]);
-function isNaNOrUnitInterval(x) {
-  return Number.isNaN(x) || Number.isFinite(x) && x >= 0 && x < 1;
-}
 var PAUSE_REASONS = /* @__PURE__ */ new Set([
   null,
   "folded_seq_gap",
@@ -24157,51 +25306,32 @@ function validateLedgerState(obj) {
   if (obj.schemaVersion !== 2) return null;
   if (typeof obj.stateKey !== "string") return null;
   if (obj.billingBasis !== "fullCarry") return null;
-  if (obj.settledThroughTurnSeq === void 0) obj.settledThroughTurnSeq = 0;
-  if (obj.alertEvaluatedThroughTurnSeq === void 0) obj.alertEvaluatedThroughTurnSeq = obj.settledThroughTurnSeq;
   if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
-  if (obj.pendingStopEvaluations === void 0) obj.pendingStopEvaluations = [];
-  if (obj.settledTurnSummaries === void 0) obj.settledTurnSummaries = [];
   if (obj.recentStopEvents === void 0) obj.recentStopEvents = [];
   if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
-  if (typeof obj.deepWaterDisplayLatched !== "boolean") obj.deepWaterDisplayLatched = false;
   for (const f of numFields) if (!Number.isFinite(obj[f])) return null;
   if (!(obj.billProgress >= 0 && obj.billProgress < 1)) return null;
   for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  for (const f of ["billAnchorLRead", "currentTurnDeltaW", "kStableFrozen"]) if (obj[f] < 0) return null;
+  for (const f of ["billAnchorLRead", "kStableFrozen"]) if (obj[f] < 0) return null;
+  if (typeof obj.hasDeepWaterGateFired !== "boolean") obj.hasDeepWaterGateFired = false;
+  if (obj.deepWaterDwell === void 0) obj.deepWaterDwell = 0;
+  if (!(Number.isInteger(obj.deepWaterDwell) && obj.deepWaterDwell >= 0)) obj.deepWaterDwell = 0;
+  if (obj.deepWaterDwellCycled === void 0) obj.deepWaterDwellCycled = 0;
+  if (!(Number.isInteger(obj.deepWaterDwellCycled) && obj.deepWaterDwellCycled >= 0)) obj.deepWaterDwellCycled = 0;
+  for (const f of ["dwBillsSinceLastAlert", "backstopLapCount"]) {
+    if (obj[f] === void 0) obj[f] = 0;
+  }
+  if (!(Number.isFinite(obj.dwBillsSinceLastAlert) && obj.dwBillsSinceLastAlert >= 0)) return null;
+  if (!(Number.isInteger(obj.backstopLapCount) && obj.backstopLapCount >= 0)) return null;
   if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
   if (obj.lastBurnRate !== null && !(Number.isFinite(obj.lastBurnRate) && obj.lastBurnRate >= 0)) return null;
   if (obj.lastAppliedLRead != null && !(Number.isFinite(obj.lastAppliedLRead) && obj.lastAppliedLRead >= 0)) return null;
   if (obj.lastBillEvent != null && typeof obj.lastBillEvent !== "object") return null;
   if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
-  if (!Array.isArray(obj.settledTurnSummaries) || obj.settledTurnSummaries.length > SETTLED_SUMMARY_HARD_LIMIT) return null;
-  for (const e of obj.settledTurnSummaries) {
-    if (!e || typeof e !== "object") return null;
-    if (!Number.isInteger(e.turnSeq) || e.turnSeq < 0) return null;
-    if (!Number.isInteger(e.foldedCallSeqStart) || e.foldedCallSeqStart < 0) return null;
-    if (!Number.isInteger(e.foldedCallSeqEnd) || e.foldedCallSeqEnd < e.foldedCallSeqStart) return null;
-    if (!Number.isFinite(e.deltaW)) return null;
-    if (!Number.isInteger(e.billCycleCountIncrement) || e.billCycleCountIncrement < 0) return null;
-    if (typeof e.inDeepWaterAtBoundary !== "boolean") return null;
-    if (!SUMMARY_BILL_KINDS.has(e.billKindAtBoundary)) return null;
-    if (!isNaNOrUnitInterval(e.billProgressBefore)) e.billProgressBefore = NaN;
-    if (!isNaNOrUnitInterval(e.billProgressAfter)) e.billProgressAfter = NaN;
-    if (!(e.hBreakAtBoundary === null || e.hBreakAtBoundary > 0)) e.hBreakAtBoundary = null;
-  }
-  if (!Array.isArray(obj.pendingStopEvaluations) || obj.pendingStopEvaluations.length > PENDING_STOP_EVALUATIONS_LIMIT) return null;
-  for (const e of obj.pendingStopEvaluations) {
-    if (!e || typeof e !== "object") return null;
-    if (typeof e.hookEventId !== "string") return null;
-    if (!Number.isInteger(e.beforeSettledThroughTurnSeq) || e.beforeSettledThroughTurnSeq < 0) return null;
-    if (!Number.isFinite(e.requestedAtWallMs)) return null;
-    if (!Number.isInteger(e.enqueueSeq) || e.enqueueSeq < 0) return null;
-    if (e.status !== "pending") return null;
-  }
   if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
   for (const e of obj.recentStopEvents) {
     if (!e || typeof e !== "object") return null;
     if (typeof e.kind !== "string") return null;
-    if (!Number.isInteger(e.turnSeq) || e.turnSeq < 0) return null;
   }
   if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
   for (const id of obj.recentProcessedHookEventIds) if (typeof id !== "string") return null;
@@ -24219,49 +25349,18 @@ function validateRateLampSample(obj) {
   return true;
 }
 
-// lib/stop-message.js
-var WALL = "Rate wall: one more call costs at least one full restart in avoidable context rent. Finish the current small step, then restart unless continuity is unusually valuable.";
-var DW = "Rate bill: this step triggered several underlying calls; accumulated avoidable rent \u2248 multiple full restarts. Consider restarting at the next natural checkpoint.";
-var EMPTY = "Rate idle-burn: about one billing cycle passed with little new context, yet high-position rent \u2248 one full restart. Consider restarting after the current small step.";
-var NON_IDLE = "Rate bill: this cycle's high-position rent \u2248 one full restart; context is still growing. Consider tidying up, compacting, or restarting at a natural checkpoint.";
-var CACHE_UNSTABLE = "Calibrating: context stock dropped (cache expiry / boundary); rate metering paused for this step.";
-var merge = (msg, gate) => gate?.notify && gate.message ? `${gate.message} \xB7 ${msg}` : msg;
-function resolveStopMessage({ gateResult, bill, burnRate, dwTurn, stockStep }) {
-  if (burnRate >= 1) {
-    if (stockStep) return { kind: "non_idle_burn", delivery: "statusline_pulse", message: NON_IDLE, billCount: bill?.billCount ?? 0 };
-    return { kind: "wall", delivery: "stop_hook", message: merge(WALL, gateResult), billCount: bill?.billCount ?? 0 };
-  }
-  if (dwTurn >= CONSTANTS.DW_TURN_BACKSTOP) {
-    if (stockStep) return { kind: "non_idle_burn", delivery: "statusline_pulse", message: NON_IDLE, billCount: bill?.billCount ?? 0 };
-    return { kind: "dw_backstop", delivery: "stop_hook", message: merge(DW, gateResult), billCount: bill?.billCount ?? 0 };
-  }
-  if (bill?.kind === "empty_burn" && bill.delivery === "stop_hook") {
-    return { kind: "empty_burn", delivery: "stop_hook", message: merge(EMPTY, gateResult), billCount: bill.billCount };
-  }
-  if (gateResult?.notify) {
-    return { kind: "gate", delivery: "stop_hook", message: gateResult.message, billCount: bill?.billCount ?? 0 };
-  }
-  if (bill?.kind === "non_idle_burn") {
-    return { kind: "non_idle_burn", delivery: "statusline_pulse", message: NON_IDLE, billCount: bill.billCount };
-  }
-  if (bill?.kind === "cache_unstable") {
-    return { kind: "cache_unstable", delivery: "statusline_pulse", message: CACHE_UNSTABLE, billCount: bill.billCount };
-  }
-  return null;
-}
-
 // lib/rate-lamp-store.js
 var SCHEMA_VERSION = 2;
-function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint: baselineFingerprint2, contextCap, schemaVersion = SCHEMA_VERSION }) {
-  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint2, contextCap, schemaVersion]);
+function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion = SCHEMA_VERSION }) {
+  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
 }
 function stateKeyForStatus(status) {
   return stateKeyOf({
     segmentId: status.segment,
-    model: status.model,
-    cRatio: status.rateLamp.C_RATIO,
-    baselineFingerprint: status.baseline?.fingerprint ?? null,
-    contextCap: status.rateLamp.L_cap,
+    model: null,
+    cRatio: null,
+    baselineFingerprint: null,
+    contextCap: null,
     schemaVersion: 1
   });
 }
@@ -24273,34 +25372,25 @@ function freshLedger(stateKey, kStableFrozen = 0) {
     billProgress: 0,
     billCycleCount: 0,
     billAnchorLRead: 0,
-    billAnchorTurnSeq: 0,
     billAnchorFoldedCallSeq: 0,
     lastBurnRate: null,
     lastAppliedFoldedCallSeq: 0,
     lastAppliedLRead: null,
     currentTurnSeq: 0,
-    currentTurnDeltaW: 0,
-    pendingBillCountSinceBoundary: 0,
+    hasDeepWaterGateFired: false,
+    dwBillsSinceLastAlert: 0,
+    backstopLapCount: 0,
+    deepWaterDwell: 0,
+    deepWaterDwellCycled: 0,
     pausedReason: null,
     cacheExpiryCount: 0,
     kStableFrozen,
-    // GPT#11: frozen at segment establishment; same-key restart reuses it (no xExit drift)
     lastBillEvent: null,
-    // round-2 GPT#7: TTL pulse channel for statusline (kind/billCount/deltaL/delivery/turnSeq)
     lastStopEvent: null,
-    // final-review GPT#2: full resolved Stop-message channel (only UI home w/ no OS notify)
-    // v2.2-C fields (schema v2). All serialized EXCEPT lastPersistedRevision (process-only, set in hydrate).
-    // `schemaVersion` above IS the version field (spec's `ledgerSchemaVersion` = same concept, one name).
-    // No field here is READ by settle/alert this sub-batch (C1-1): behavior/metric output byte-identical.
-    settledThroughTurnSeq: 0,
-    alertEvaluatedThroughTurnSeq: 0,
+    // condition-cleared: visible until next human turn boundary
     ledgerRevision: 0,
-    pendingStopEvaluations: [],
-    settledTurnSummaries: [],
     recentStopEvents: [],
-    recentProcessedHookEventIds: [],
-    deepWaterDisplayLatched: false
-    // DEPRECATED: kept for schema compat, not consumed by display/gate logic
+    recentProcessedHookEventIds: []
   };
 }
 function invalidPausedLedger(prev) {
@@ -24337,7 +25427,6 @@ function applyFoldedCallSample(prev, sample) {
   }
   if (sample.turnSeq !== s.currentTurnSeq) {
     s.currentTurnSeq = sample.turnSeq;
-    s.currentTurnDeltaW = 0;
   }
   if (!sample.reliable) {
     s.pausedReason = sample.unavailableReason || "insufficient_data";
@@ -24355,7 +25444,6 @@ function applyFoldedCallSample(prev, sample) {
     if (s.billAnchorFoldedCallSeq === 0) {
       s.billAnchorLRead = sample.L_read;
       s.billAnchorFoldedCallSeq = sample.seq;
-      s.billAnchorTurnSeq = sample.turnSeq;
     }
     return s;
   }
@@ -24363,71 +25451,41 @@ function applyFoldedCallSample(prev, sample) {
   let next = s.billProgress + trap;
   while (next >= 1) {
     next -= 1;
-    s.pendingBillCountSinceBoundary += 1;
     s.billCycleCount += 1;
   }
   s.billProgress = Math.floor(next * 1e6) / 1e6;
-  s.currentTurnDeltaW = Math.floor((s.currentTurnDeltaW + trap) * 1e6) / 1e6;
   s.lastBurnRate = br;
   s.lastAppliedFoldedCallSeq = sample.seq;
   s.lastAppliedLRead = sample.L_read;
   return s;
 }
-function settleMeterAtBoundary(prev, { L_readNow, kStable, foldedSeqNow, turnSeqNow, endedTurnSeq, inDeepWater }) {
-  if (!validateLedgerState(prev)) return { state: invalidPausedLedger(prev), summary: null };
-  if (endedTurnSeq <= prev.settledThroughTurnSeq) return { state: prev, summary: null };
-  const s = { ...prev };
-  const anchorBefore = s.billAnchorLRead;
-  const foldedCallSeqStart = s.billAnchorFoldedCallSeq;
-  const foldedCallSeqEnd = Number.isFinite(foldedSeqNow) ? foldedSeqNow : s.lastAppliedFoldedCallSeq;
-  const deltaW = L_readNow - anchorBefore;
-  const deltaL = deltaW;
-  const billProgressBefore = s.billProgress;
-  const billCycleCountIncrement = s.pendingBillCountSinceBoundary;
-  const reanchor = () => {
-    s.billAnchorLRead = L_readNow;
-    if (Number.isFinite(foldedSeqNow)) s.billAnchorFoldedCallSeq = foldedSeqNow;
-    if (Number.isFinite(turnSeqNow)) s.billAnchorTurnSeq = turnSeqNow;
-    s.pendingBillCountSinceBoundary = 0;
-  };
-  let billKindAtBoundary;
-  if (deltaL < 0) {
-    billKindAtBoundary = "cache_unstable";
-    s.pausedReason = "cache_unstable";
-    s.cacheExpiryCount += 1;
-  } else if (deltaL < kStable) {
-    billKindAtBoundary = "empty_burn";
-  } else {
-    billKindAtBoundary = "non_idle_burn";
+function advanceGateAndBackstop(draft, { inDeepWater, billCycleIncrement, mf }) {
+  if (!draft.hasDeepWaterGateFired) {
+    if (inDeepWater) {
+      draft.deepWaterDwell = (draft.deepWaterDwell || 0) + 1;
+      draft.deepWaterDwellCycled = (draft.deepWaterDwellCycled || 0) + billCycleIncrement;
+      if (draft.deepWaterDwell >= NOTIFY_DWELL && draft.deepWaterDwellCycled > 0) {
+        draft.hasDeepWaterGateFired = true;
+        draft.dwBillsSinceLastAlert = 0;
+        return { fired: true, kind: "gate" };
+      }
+    } else {
+      draft.deepWaterDwell = 0;
+      draft.deepWaterDwellCycled = 0;
+    }
+    return { fired: false };
   }
-  if (foldedCallSeqStart === foldedCallSeqEnd) billKindAtBoundary = null;
-  if (!Number.isFinite(kStable) || kStable <= 0) billKindAtBoundary = null;
-  reanchor();
-  s.currentTurnDeltaW = 0;
-  const hBreakAtBoundary = Number.isFinite(s.lastBurnRate) ? s.lastBurnRate > 0 ? 1 / s.lastBurnRate : Infinity : null;
-  const summary = {
-    turnSeq: endedTurnSeq,
-    foldedCallSeqStart,
-    foldedCallSeqEnd,
-    deltaW,
-    billProgressBefore,
-    billProgressAfter: s.billProgress,
-    // settle never touches billProgress → equal to before (byte-identical)
-    billCycleCountIncrement,
-    inDeepWaterAtBoundary: inDeepWater === true,
-    // F4 snapshot of the caller-derived boundary flag (strict bool for the validator)
-    hBreakAtBoundary,
-    billKindAtBoundary
-  };
-  const state = appendSettledTurnSummary(s, summary);
-  return { state, summary };
-}
-function appendSettledTurnSummary(ledger, summary) {
-  const summaries = [...ledger.settledTurnSummaries, summary];
-  if (summaries.length > SETTLED_SUMMARY_HARD_LIMIT) {
-    summaries.splice(0, summaries.length - SETTLED_SUMMARY_HARD_LIMIT);
+  if (!inDeepWater) return { fired: false };
+  draft.dwBillsSinceLastAlert += billCycleIncrement;
+  if (mf > 0) {
+    const interval = backstopIntervalFor(mf, BR_AMBER);
+    if (Number.isFinite(interval) && interval > 0 && draft.dwBillsSinceLastAlert >= interval) {
+      draft.dwBillsSinceLastAlert = 0;
+      draft.backstopLapCount += 1;
+      return { fired: true, kind: "backstop" };
+    }
   }
-  return { ...ledger, settledTurnSummaries: summaries };
+  return { fired: false };
 }
 function loadRateLampState(sessionId) {
   try {
@@ -24439,207 +25497,36 @@ function loadRateLampState(sessionId) {
 function saveRateLampState(sessionId, state) {
   getStore().save(sessionId, "ledger", state);
 }
-function settleableDistanceAfterWatermark(summaries, watermarkTurnSeq, candidateTurnSeq) {
-  const between = summaries.filter((s) => s.turnSeq > watermarkTurnSeq && s.turnSeq < candidateTurnSeq);
-  const expectedCount = candidateTurnSeq - watermarkTurnSeq - 1;
-  if (between.length < expectedCount) return Infinity;
-  const settleableBetween = between.filter((s) => s.foldedCallSeqStart !== s.foldedCallSeqEnd).length;
-  const candidateSummary = summaries.find((s) => s.turnSeq === candidateTurnSeq);
-  const candidateSettleable = candidateSummary && candidateSummary.foldedCallSeqStart !== candidateSummary.foldedCallSeqEnd ? 1 : 0;
-  return settleableBetween + candidateSettleable;
-}
-function matchPendingToSummary(ledger) {
-  const pending = [...ledger.pendingStopEvaluations || []];
-  const summaries = [...ledger.settledTurnSummaries || []];
-  pending.sort((a, b) => a.requestedAtWallMs - b.requestedAtWallMs || a.enqueueSeq - b.enqueueSeq || a.hookEventId.localeCompare(b.hookEventId));
-  summaries.sort((a, b) => a.turnSeq - b.turnSeq || a.foldedCallSeqEnd - b.foldedCallSeqEnd);
-  const assigned = [];
-  const expired = [];
-  const remainingPending = [];
-  const usedSummaryKeys = /* @__PURE__ */ new Set();
-  const usedWatermarks = /* @__PURE__ */ new Set();
-  for (const p of pending) {
-    if (usedWatermarks.has(p.beforeSettledThroughTurnSeq)) {
-      expired.push(p);
-      continue;
-    }
-    let matched = false;
-    for (const s of summaries) {
-      if (s.turnSeq <= p.beforeSettledThroughTurnSeq) continue;
-      const key = s.turnSeq;
-      if (usedSummaryKeys.has(key)) continue;
-      const dist = settleableDistanceAfterWatermark(summaries, p.beforeSettledThroughTurnSeq, s.turnSeq);
-      if (dist > PENDING_MAX_TURN_DISTANCE) {
-        expired.push(p);
-        matched = true;
-        break;
-      }
-      assigned.push({ hookEventId: p.hookEventId, summaryTurnSeq: s.turnSeq });
-      usedSummaryKeys.add(key);
-      usedWatermarks.add(p.beforeSettledThroughTurnSeq);
-      matched = true;
-      break;
-    }
-    if (!matched) {
-      remainingPending.push(p);
-    }
-  }
-  return { assigned, remainingPending, expired };
-}
-function enqueuePending(ledger, { hookEventId, requestedAtWallMs, requestedAtMonoMs, processNonce: processNonce2, beforeSettledThroughTurnSeq }) {
-  const arr = ledger.pendingStopEvaluations || [];
-  if (arr.length >= PENDING_STOP_EVALUATIONS_LIMIT) return { ok: false };
-  const enqueueSeq = 1 + Math.max(-1, ...arr.map((p) => p.enqueueSeq));
-  arr.push({
-    hookEventId,
-    requestedAtWallMs,
-    requestedAtMonoMs,
-    processNonce: processNonce2,
-    beforeSettledThroughTurnSeq,
-    assignedTurnSeq: null,
-    status: "pending",
-    enqueueSeq
-  });
-  return { ok: true };
-}
-function hasProcessedHookId(ledger, id) {
-  return (ledger.recentProcessedHookEventIds || []).includes(id);
-}
-function appendProcessedHookId(ledger, id) {
-  if (!ledger.recentProcessedHookEventIds) ledger.recentProcessedHookEventIds = [];
-  const arr = ledger.recentProcessedHookEventIds;
-  if (arr.includes(id)) return;
-  arr.push(id);
-  if (arr.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) arr.splice(0, arr.length - RECENT_PROCESSED_HOOK_IDS_LIMIT);
-}
-function alreadyAccepted(hookEventId, ledger) {
-  if (hasProcessedHookId(ledger, hookEventId)) return true;
-  return (ledger.pendingStopEvaluations || []).some((p) => p.hookEventId === hookEventId);
-}
-function expirePending(ledger, { nowMono, nowWall, processNonce: processNonce2 }) {
-  const arr = ledger.pendingStopEvaluations || [];
-  const removed = [];
-  const kept = [];
-  for (const p of arr) {
-    let expired = false;
-    if (p.processNonce === processNonce2) {
-      if (Number.isFinite(p.requestedAtMonoMs) && nowMono - p.requestedAtMonoMs > PENDING_STOP_TTL_MS) expired = true;
-    } else {
-      if (nowWall - p.requestedAtWallMs >= PENDING_STOP_TTL_MS) expired = true;
-    }
-    if (expired) removed.push(p);
-    else kept.push(p);
-  }
-  ledger.pendingStopEvaluations = kept;
-  return removed;
-}
-function chooseCurrentStopSummary(draft) {
-  const summaries = draft.settledTurnSummaries || [];
-  const pending = draft.pendingStopEvaluations || [];
-  let maxEvaluated = draft.alertEvaluatedThroughTurnSeq || 0;
-  for (const s of summaries) {
-    if (s.turnSeq <= maxEvaluated) continue;
-    const hasPending = pending.some((p) => s.turnSeq > p.beforeSettledThroughTurnSeq);
-    if (!hasPending) {
-      maxEvaluated = s.turnSeq;
-    } else {
-      break;
-    }
-  }
-  draft.alertEvaluatedThroughTurnSeq = maxEvaluated;
-}
-function resolveStopMessageFromSummary(summary) {
-  if (!summary || summary.billKindAtBoundary == null) return null;
-  const kind = summary.billKindAtBoundary;
-  const inDeepWater = summary.inDeepWaterAtBoundary === true;
-  const delivery = kind === "empty_burn" && inDeepWater ? "stop_hook" : "statusline_pulse";
-  const bill = { kind, delivery, billCount: summary.billCycleCountIncrement || 0, deltaL: summary.deltaW };
-  return resolveStopMessage({ gateResult: null, bill, burnRate: 0, dwTurn: 0, stockStep: false });
-}
-
-// lib/landmarks.js
-function nucleus(cRatio, kAvg, lBase) {
-  if (cRatio <= 0 || kAvg <= 0 || lBase <= 0) return 0;
-  return Math.sqrt(2 * cRatio * kAvg / lBase);
-}
-function landmarksFor(cRatio, kAvg, lBase, bRebuild) {
-  const b = bRebuild > 0 && lBase > 0 ? bRebuild / lBase : 0;
-  const dhat = nucleus(cRatio, kAvg, lBase) * Math.sqrt(b);
-  const M = CONSTANTS.EFFICIENCY_MULT;
-  return { dhat, xEntry: b + 0.5 * dhat, xSweet: b + dhat, xStar: b + M * dhat };
-}
-function hBreak(cRatio, bRebuild, L) {
-  const avoidable = L - bRebuild;
-  if (avoidable <= 0) return Infinity;
-  return cRatio * bRebuild / avoidable;
-}
-function bandOf(x, { xEntry, xSweet, xStar }) {
-  if (x < xEntry) return "below_entry";
-  if (x < xSweet) return "entry_to_sweet";
-  if (x < xStar) return "sweet_to_exit";
-  return "above_exit";
-}
-function landmarks(cRatio, kAvg, lBase, lDead, L) {
-  const x = lBase > 0 ? L / lBase : 1;
-  const full = landmarksFor(cRatio, kAvg, lBase, lBase);
-  const dead = landmarksFor(cRatio, kAvg, lBase, lDead);
-  return {
-    x,
-    fullCarry: { ...full, hBreak: hBreak(cRatio, lBase, L), band: bandOf(x, full) },
-    deadOnly: { ...dead, hBreak: hBreak(cRatio, lDead, L), band: bandOf(x, dead) }
-  };
-}
-
-// lib/bill-regret.js
-var BR_AMBER = 0.1;
-var BR_RED = 0.25;
-function computeMovableFrac(cRatio, lBase, kStable) {
-  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
-  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
-  return arm / (arm + lBase + cRatio * kStable);
-}
-function computeBr(x, dhat, mf) {
-  const d = x - 1;
-  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
-  const u = d / dhat;
-  const ppFrac = (u - 1) * (u - 1) / (2 * u);
-  return mf * ppFrac;
-}
-function xRightFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uRight = 1 + p + Math.sqrt(disc);
-  return 1 + uRight * dhat;
-}
-function xLeftFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uLeft = 1 + p - Math.sqrt(disc);
-  return 1 + uLeft * dhat;
-}
 
 // lib/rate-lamp-manager.js
-var EMA_ALPHA = 0.5;
-var _perCallEma = /* @__PURE__ */ new Map();
-function updatePerCallEma(state, { L }) {
-  if (!Number.isFinite(L)) return state.ema;
-  if (state.prevL === null) {
-    state.prevL = L;
-    state.callsSinceAnchor = 1;
-    return null;
+import { existsSync as _probeExists, appendFileSync as _probeAppend } from "node:fs";
+var _PROBE_OFF = Date.now() > (/* @__PURE__ */ new Date("2026-07-25T00:00:00Z")).getTime() || _probeExists("/tmp/sw-depth-probe/off");
+function _dProbe(msg) {
+  if (_PROBE_OFF) return;
+  try {
+    _probeAppend("/tmp/sw-depth-probe/depth.log", `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
+`);
+  } catch {
   }
-  const delta = Math.max(0, L - state.prevL);
-  state.prevL = L;
-  state.callsSinceAnchor++;
-  if (state.ema === null) {
-    state.ema = delta;
-  } else {
-    state.ema = EMA_ALPHA * delta + (1 - EMA_ALPHA) * state.ema;
-  }
-  return state.ema;
 }
+function _cProbe(msg) {
+  if (_PROBE_OFF) return;
+  try {
+    _probeAppend("/tmp/sw-depth-probe/depth.log", `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
+`);
+  } catch {
+  }
+}
+var RENT_METER_DEFAULT = () => ({
+  cycleProgress: 0,
+  rentRate: null,
+  sweetRentRate: null,
+  depthActive: false,
+  depthProgress: 0,
+  backstopInterval: null,
+  backstopLapCount: 0,
+  depthHot: false
+});
 var _ledgers = /* @__PURE__ */ new Map();
 var _ledgerLastAccess = /* @__PURE__ */ new Map();
 var LEDGER_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -24656,22 +25543,7 @@ var _counters = {
   revisionGateBlocks: 0,
   // writes refused by the revision gate
   enospcEngagements: 0,
-  enospcRecoveries: 0,
-  // Step 4 counters (spec-required):
-  stopAdvanceAttemptCount: 0,
-  // boundedIncrementalAdvance entries
-  stopAdvanceCaughtUpCount: 0,
-  // advance completed (caughtUp === true)
-  stopAdvanceTimeoutCount: 0,
-  // advance broke on maxMs budget
-  stopAdvanceMaxBytesHitCount: 0,
-  // not applicable in poll-based mode (always 0)
-  pendingCreatedCount: 0,
-  // enqueuePending calls that succeeded
-  pendingDrainedCount: 0,
-  // assigned matches in drainPendingStopEvaluations
-  pendingExpiredCount: 0
-  // expired entries in drainPendingStopEvaluations
+  enospcRecoveries: 0
 };
 var _testWriter = null;
 var _testScheduler = null;
@@ -24703,6 +25575,18 @@ function _flushCoalescedPersist() {
     }
   }
   _pendingPersistSids.clear();
+  for (const sid of _enospcPaused) {
+    try {
+      const ledger = _ledgers.get(sid);
+      if (!ledger) {
+        _enospcPaused.delete(sid);
+        continue;
+      }
+      persistLedger(sid, ledger, { force: true });
+      clearEnospcPause(sid);
+    } catch {
+    }
+  }
 }
 function schedulePersist(sessionId) {
   if (_enospcPaused.has(sessionId)) return;
@@ -24714,19 +25598,12 @@ function schedulePersist(sessionId) {
   }
   _startCoalescedTimer();
 }
-function cancelCoalescedPersist(sessionId) {
-  _pendingPersistSids.delete(sessionId);
-}
 function isEnospcPaused(sessionId) {
   return _enospcPaused.has(sessionId);
 }
 function clearEnospcPause(sessionId) {
   _enospcPaused.delete(sessionId);
   _counters.enospcRecoveries++;
-}
-function engageEnospcPause(sessionId) {
-  _enospcPaused.add(sessionId);
-  _counters.enospcEngagements++;
 }
 function persistLedger(sessionId, ledger, { force = false } = {}) {
   const ledgerRev = ledger.ledgerRevision ?? 0;
@@ -24759,17 +25636,8 @@ function persistLedger(sessionId, ledger, { force = false } = {}) {
 }
 function syncLedgerTurn(ledger, watcherTurnSeq) {
   const prev = ledger.currentTurnSeq ?? 0;
-  if (watcherTurnSeq > prev) return { ...ledger, currentTurnSeq: watcherTurnSeq, currentTurnDeltaW: 0 };
+  if (watcherTurnSeq > prev) return { ...ledger, currentTurnSeq: watcherTurnSeq };
   return { ...ledger, currentTurnSeq: Math.max(prev, watcherTurnSeq) };
-}
-function syncTurnCursorOnDraft(l, targetTurnSeq) {
-  const prev = l.currentTurnSeq ?? 0;
-  if (targetTurnSeq > prev) {
-    l.currentTurnSeq = targetTurnSeq;
-    l.currentTurnDeltaW = 0;
-  } else {
-    l.currentTurnSeq = Math.max(prev, targetTurnSeq);
-  }
 }
 function reanchorOnMismatch(persisted, { watcherFoldedSeq, watcherTurnSeq, lReadNow }) {
   if (process.env.SW_DEBUG) console.error("[rate-lamp] seq mismatch \u2192 re-anchored, cycleCount preserved");
@@ -24780,17 +25648,9 @@ function reanchorOnMismatch(persisted, { watcherFoldedSeq, watcherTurnSeq, lRead
     // from-now integration, no catch-up (P0-5)
     billAnchorFoldedCallSeq: watcherFoldedSeq,
     billAnchorLRead: lReadNow,
-    billAnchorTurnSeq: watcherTurnSeq,
-    pendingBillCountSinceBoundary: 0,
-    // pending across a seq break is untrustworthy → drop it (no phantom Stop bill)
-    // Null lastBurnRate AND lastAppliedLRead, exactly as anchorFresh/freshLedger leave them: the next call
-    // then takes the reducer's recovering first-frame (re-anchor only, no stale-rate trapezoid → P0-5),
-    // and nulling lastAppliedLRead also makes any same-seq robustness re-feed a clean idempotent no-op
-    // rather than a spurious folded_call_mutated pause against an L that belonged to the pre-break seq.
     lastBurnRate: null,
     lastAppliedLRead: null,
     pausedReason: null
-    // the deadlock break itself
   };
 }
 function resolveLedgerForKey(persisted, { currentKey, watcherFoldedSeq, watcherTurnSeq, kStableFrozen, lReadNow }) {
@@ -24799,7 +25659,6 @@ function resolveLedgerForKey(persisted, { currentKey, watcherFoldedSeq, watcherT
     s.lastAppliedFoldedCallSeq = watcherFoldedSeq;
     s.billAnchorFoldedCallSeq = watcherFoldedSeq;
     s.billAnchorLRead = lReadNow;
-    s.billAnchorTurnSeq = watcherTurnSeq;
     s.currentTurnSeq = watcherTurnSeq;
     return s;
   };
@@ -24811,66 +25670,59 @@ function resolveLedgerForKey(persisted, { currentKey, watcherFoldedSeq, watcherT
   return { ...persisted };
 }
 function mergeLedgerIntoStatus(status, ledger, currentKey) {
-  if (status.rateLamp?.reliable && ledger && ledger.stateKey === currentKey) {
-    if (ledger.kStableFrozen > 0 && status.baseline?.total > 0) {
-      const { xExit, L_exit_fullCarry } = deriveFrozenExit(
-        status.rateLamp.C_RATIO,
-        ledger.kStableFrozen,
-        status.baseline.total
-      );
-      status.rateLamp.kStable = ledger.kStableFrozen;
-      status.rateLamp.xExit = xExit;
-      status.rateLamp.L_exit_fullCarry = L_exit_fullCarry;
-    }
-    status.rateLamp.billProgress = ledger.billProgress;
-    status.rateLamp.billingCycle = { progress: ledger.billProgress };
-    status.rateLamp.billCycleCount = ledger.billCycleCount ?? 0;
-    const lBase = status.baseline?.total;
-    const cRatio = status.rateLamp.C_RATIO;
-    if (lBase > 0 && cRatio > 0) {
-      const x = status.rateLamp.L_read / lBase;
-      status.rateLamp.mf = computeMovableFrac(cRatio, lBase, ledger.kStableFrozen);
-      const kS = ledger.kStableFrozen;
-      const dhat = kS > 0 ? nucleus(cRatio, kS, lBase) : null;
-      status.rateLamp.dhat = dhat;
-      const br = dhat > 0 ? computeBr(x, dhat, status.rateLamp.mf) : NaN;
-      status.rateLamp.br = br;
-      status.rateLamp.inDeepWater = Number.isFinite(br) && br >= BR_AMBER;
-      const mfVal = status.rateLamp.mf;
-      if (dhat > 0 && mfVal > 0) {
-        status.rateLamp.xBrAmberR = xRightFromBr(BR_AMBER, dhat, mfVal);
-        status.rateLamp.xBrAmberL = xLeftFromBr(BR_AMBER, dhat, mfVal);
-        status.rateLamp.xBrRedR = xRightFromBr(BR_RED, dhat, mfVal);
+  status.rateLamp = status.rateLamp || {};
+  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
+  if (!status.rateLamp?.reliable || !ledger || ledger.stateKey !== currentKey) {
+    status.rateLamp.dhat = status.rateLamp.dhat ?? null;
+    return status;
+  }
+  status.rateLamp.billProgress = ledger.billProgress;
+  status.rateLamp.billingCycle = { progress: ledger.billProgress };
+  status.rateLamp.billCycleCount = ledger.billCycleCount ?? 0;
+  status.rateLamp.currentTurnSeq = ledger.currentTurnSeq;
+  if (ledger.lastBillEvent) status.rateLamp.lastBillEvent = ledger.lastBillEvent;
+  if (ledger.lastStopEvent) status.rateLamp.lastStopEvent = ledger.lastStopEvent;
+  status.rateLamp.dwBillsSinceLastAlert = ledger.dwBillsSinceLastAlert ?? 0;
+  status.rateLamp.hasDeepWaterGateFired = ledger.hasDeepWaterGateFired === true;
+  status.rateLamp.backstopLapCount = ledger.backstopLapCount ?? 0;
+  if (!_PROBE_OFF && ledger.hasDeepWaterGateFired && ledger.dwBillsSinceLastAlert > 0) {
+    const _int = status.rateLamp.mf > 0 ? backstopIntervalFor(status.rateLamp.mf, BR_AMBER) : null;
+    const _prog = _int ? Math.min(1, ledger.dwBillsSinceLastAlert / _int) : "?";
+    _dProbe(`[display] billCycle=${ledger.billCycleCount} dwBills=${ledger.dwBillsSinceLastAlert}/${_int?.toFixed(1) ?? "?"} progress=${typeof _prog === "number" ? _prog.toFixed(2) : _prog} laps=${ledger.backstopLapCount} billProgress=${ledger.billProgress?.toFixed(3)}`);
+  }
+  const B = status.rateLamp.B_default > 0 ? status.rateLamp.B_default : status.rateLamp.B_post, cRatio = status.rateLamp.C_RATIO, g = status.rateLamp.gEma;
+  if (B > 0 && cRatio > 0 && g > 0) {
+    const dhat = status.rateLamp.dhat ?? nucleus(cRatio, g, B);
+    const mf = status.rateLamp.mf ?? computeMovableFrac(cRatio, B, g);
+    status.rateLamp.dhat = dhat;
+    status.rateLamp.mf = mf;
+    if (dhat > 0 && mf > 0) {
+      if (!Number.isFinite(status.rateLamp.br)) {
+        const x = status.rateLamp.L_read / B;
+        status.rateLamp.br = computeBr(x, dhat, mf);
       }
-      status.rateLamp.xSweet = dhat != null ? 1 + dhat : null;
-      const kAvg = status.kAvg;
-      if (kAvg > 0) {
-        const lm = landmarksFor(cRatio, kAvg, lBase, lBase);
-        status.rateLamp.xEntry = lm.xEntry;
-      }
-      status.rateLamp.wallP = 1 + cRatio;
-      status.rateLamp.lBase = lBase;
+      status.rateLamp.xBrAmberR = xRightFromBr(BR_AMBER, dhat, mf);
+      status.rateLamp.xBrAmberL = xLeftFromBr(BR_AMBER, dhat, mf);
+      status.rateLamp.xBrRedR = xRightFromBr(BR_RED, dhat, mf);
     }
-    status.rateLamp.currentTurnSeq = ledger.currentTurnSeq;
-    if (ledger.lastBillEvent) status.rateLamp.lastBillEvent = ledger.lastBillEvent;
-    if (ledger.lastStopEvent) status.rateLamp.lastStopEvent = ledger.lastStopEvent;
-    status.rateLamp.kAvg = status.kAvg ?? null;
-    let emaState = _perCallEma.get(currentKey);
-    if (!emaState) {
-      emaState = { prevL: null, ema: null, callsSinceAnchor: 0, lastSeq: 0 };
-      _perCallEma.set(currentKey, emaState);
-    }
-    const seq = ledger.lastAppliedFoldedCallSeq ?? 0;
-    if (seq > emaState.lastSeq) {
-      updatePerCallEma(emaState, { L: status.rateLamp.L_read });
-      emaState.lastSeq = seq;
-    }
-    status.rateLamp.gEma = emaState.ema;
-  } else {
-    status.rateLamp = status.rateLamp || {};
-    status.rateLamp.kAvg = null;
-    status.rateLamp.dhat = null;
-    status.rateLamp.xEntry = null;
+    status.rateLamp.xSweet = status.rateLamp.xSweet ?? 1 + dhat;
+    status.rateLamp.wallP = 1 + cRatio;
+    status.rateLamp.lBase = B;
+    const interval = backstopIntervalFor(status.rateLamp.mf, BR_AMBER);
+    const dwBills = status.rateLamp.dwBillsSinceLastAlert ?? 0;
+    const depthProgress = Number.isFinite(interval) && interval > 0 ? Math.min(1, Math.max(0, dwBills / interval)) : 0;
+    const sweetRentRate = Number.isFinite(dhat) && cRatio > 0 ? dhat / cRatio : null;
+    const liveBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : Number.isFinite(status.rateLamp.burnRate) ? status.rateLamp.burnRate : null;
+    status.rateLamp.rentMeter = {
+      cycleProgress: status.rateLamp.billProgress ?? 0,
+      rentRate: liveBurnRate,
+      sweetRentRate,
+      depthActive: status.rateLamp.hasDeepWaterGateFired === true,
+      depthProgress,
+      backstopInterval: Number.isFinite(interval) ? interval : null,
+      backstopLapCount: status.rateLamp.backstopLapCount ?? 0,
+      depthHot: (status.rateLamp.backstopLapCount ?? 0) >= DEPTH_HOT_LAP_COUNT
+    };
   }
   return status;
 }
@@ -24896,31 +25748,6 @@ function hydrateLedger(watcher, sessionId) {
   _ledgers.set(sessionId, cleaned);
   return cleaned;
 }
-function settleEndedTurnBoundary(l, { endedTurnSeq, status }) {
-  const lReadAtBoundary = Number.isFinite(l.lastAppliedLRead) ? l.lastAppliedLRead : l.billAnchorLRead;
-  const seqAtBoundary = l.lastAppliedFoldedCallSeq;
-  const lBaseB = status.baseline?.total;
-  const cRatioB = Number.isFinite(status.rateLamp?.C_RATIO) ? status.rateLamp.C_RATIO : cRatioFor(status.model);
-  const inDeepWaterAtBoundary = (() => {
-    if (!(l.kStableFrozen > 0) || !(lBaseB > 0) || !(cRatioB > 0)) return false;
-    const mf = computeMovableFrac(cRatioB, lBaseB, l.kStableFrozen);
-    const dhat = nucleus(cRatioB, l.kStableFrozen, lBaseB);
-    const x = lReadAtBoundary / lBaseB;
-    const br = computeBr(x, dhat, mf);
-    return Number.isFinite(br) && br >= BR_AMBER;
-  })();
-  const { state } = settleMeterAtBoundary(l, {
-    L_readNow: lReadAtBoundary,
-    kStable: l.kStableFrozen,
-    foldedSeqNow: seqAtBoundary,
-    turnSeqNow: endedTurnSeq + 1,
-    endedTurnSeq,
-    inDeepWater: inDeepWaterAtBoundary
-  });
-  Object.assign(l, state);
-  l.settledThroughTurnSeq = endedTurnSeq;
-  l.currentTurnSeq = endedTurnSeq + 1;
-}
 function _advanceCore(watcher, sessionId, { doPoll, persist, loopOpts }) {
   if (doPoll) watcher.poll();
   const status = watcher.getStatus();
@@ -24932,7 +25759,7 @@ function _advanceCore(watcher, sessionId, { doPoll, persist, loopOpts }) {
       const seqSamples = watcher.rateLampSeqSamplesSince(ledger2.lastAppliedFoldedCallSeq, { unavailableReason: reason });
       ledger2 = mutateLedger(ledger2, "unreliable-drain", (l) => {
         for (const s of seqSamples) Object.assign(l, applyFoldedCallSample(l, s));
-        syncTurnCursorOnDraft(l, watcher._turnSeq);
+        if (watcher._turnSeq > l.currentTurnSeq) l.currentTurnSeq = watcher._turnSeq;
       });
       _ledgers.set(sessionId, ledger2);
       persist(sessionId, ledger2);
@@ -24949,26 +25776,52 @@ function _advanceCore(watcher, sessionId, { doPoll, persist, loopOpts }) {
     kStableFrozen,
     lReadNow: status.rateLamp.L_read
   });
+  const bPos = status.rateLamp.B_default > 0 ? status.rateLamp.B_default : status.rateLamp.B_post;
   const samples = watcher.rateLampSamplesSince(ledger.lastAppliedFoldedCallSeq, {
-    B_post: status.rateLamp.B_post,
-    B_rebuild: status.rateLamp.B_rebuild,
+    B_post: bPos,
+    B_rebuild: bPos,
     cRatio: status.rateLamp.C_RATIO,
     reliable: true
   });
   const startMs = loopOpts ? performance.now() : 0;
   let budgetExhausted = false;
+  const B_post = status.rateLamp?.B_post;
+  const B_gate = (status.rateLamp?.B_default > 0 ? status.rateLamp.B_default : null) ?? B_post;
+  const cRatioGate = Number.isFinite(status.rateLamp?.C_RATIO) ? status.rateLamp.C_RATIO : cRatioFor(status.model);
+  const gGate = status.rateLamp?.gEma;
+  const mfGate = gGate > 0 && B_gate > 0 && cRatioGate > 0 ? computeMovableFrac(cRatioGate, B_gate, gGate) : 0;
+  const dhatGate = gGate > 0 && B_gate > 0 && cRatioGate > 0 ? nucleus(cRatioGate, gGate, B_gate) : 0;
   ledger = mutateLedger(ledger, "advance-events", (l) => {
+    const preExistingStopEvent = l.lastStopEvent;
     for (const s of samples) {
       if (loopOpts && performance.now() - startMs > loopOpts.maxMs) {
         budgetExhausted = true;
         break;
       }
-      while (l.currentTurnSeq < s.turnSeq && l.currentTurnSeq > l.settledThroughTurnSeq) {
-        settleEndedTurnBoundary(l, { endedTurnSeq: l.currentTurnSeq, status });
-      }
+      if (s.turnSeq > l.currentTurnSeq && l.lastStopEvent && l.lastStopEvent === preExistingStopEvent) l.lastStopEvent = null;
+      if (s.turnSeq > l.currentTurnSeq) l.currentTurnSeq = s.turnSeq;
+      const _prevCycle = l.billCycleCount;
       Object.assign(l, applyFoldedCallSample(l, s));
+      const cycled = l.billCycleCount - _prevCycle;
+      if (!_PROBE_OFF && cycled > 0) {
+        _cProbe(`[cycle] bill=${l.billCycleCount} progress=${l.billProgress?.toFixed(3)} br=${l.lastBurnRate?.toFixed(3) ?? "?"} seq=${s.seq} turn=${s.turnSeq} inDeep=${l.hasDeepWaterGateFired} dwBills=${l.dwBillsSinceLastAlert}`);
+      }
+      if (B_gate > 0) {
+        const x = s.L_read / B_gate;
+        const br = dhatGate > 0 && mfGate > 0 ? computeBr(x, dhatGate, mfGate) : 0;
+        const inDeep = isInDeepWater(x, 1 + dhatGate, br);
+        const { fired, kind } = advanceGateAndBackstop(l, { inDeepWater: inDeep, billCycleIncrement: cycled, mf: mfGate });
+        if (fired) {
+          const message = kind === "gate" ? "Session Watcher: bill-regret above amber and holding. Consider restart/compact at the next natural boundary." : `Backstop lap ${l.backstopLapCount}: session in deep water`;
+          const stopEvent = { kind, delivery: "reader_path", message, billCount: kind === "gate" ? 0 : l.backstopLapCount, seq: s.seq };
+          l.lastStopEvent = stopEvent;
+          pushStopEventRing(l, stopEvent);
+        }
+      }
     }
-    if (!budgetExhausted) syncTurnCursorOnDraft(l, watcher._turnSeq);
+    if (!budgetExhausted && watcher._turnSeq > l.currentTurnSeq) {
+      l.currentTurnSeq = watcher._turnSeq;
+    }
   });
   _ledgers.set(sessionId, ledger);
   persist(sessionId, ledger);
@@ -24985,76 +25838,13 @@ function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}
   });
   return { ledger, status, bill: null };
 }
-function boundedIncrementalAdvance(watcher, sessionId, { maxMs = STOP_ADVANCE_MAX_MS, maxBytes = STOP_ADVANCE_MAX_BYTES } = {}) {
-  _counters.stopAdvanceAttemptCount++;
-  const { status, budgetExhausted } = _advanceCore(watcher, sessionId, {
-    doPoll: true,
-    // always poll (single-read architecture)
-    persist: (sid, l) => persistLedger(sid, l),
-    // synchronous persist
-    loopOpts: { maxMs }
-  });
-  if (budgetExhausted) _counters.stopAdvanceTimeoutCount++;
-  else _counters.stopAdvanceCaughtUpCount++;
-  return { caughtUp: !budgetExhausted, status };
-}
 function getLiveLedger(sessionId) {
   const ledger = _ledgers.get(sessionId) ?? null;
   if (ledger) _ledgerLastAccess.set(sessionId, _nowMono());
   return ledger;
 }
-function setLiveLedger(sessionId, ledger) {
-  _ledgers.set(sessionId, ledger);
-  _ledgerLastAccess.set(sessionId, _nowMono());
-  persistLedger(sessionId, ledger, { force: true });
-  if (_enospcPaused.has(sessionId)) {
-    clearEnospcPause(sessionId);
-  }
-}
-function commitLedgerMutationSync(sessionId, reason, fn) {
-  const current = _ledgers.get(sessionId);
-  const draft = mutateLedger(current, reason, fn);
-  if (draft === current) return current;
-  const validated = validateLedgerState(draft);
-  if (!validated) throw new Error(`commitLedgerMutationSync: validateLedgerState rejected draft (reason: ${reason})`);
-  cancelCoalescedPersist(sessionId);
-  persistLedger(sessionId, validated, { force: true });
-  _ledgers.set(sessionId, validated);
-  return validated;
-}
-var processNonce = performance.now();
-function drainPendingStopEvaluations(sessionId) {
-  const ledger = _ledgers.get(sessionId);
-  if (!ledger) return;
-  commitLedgerMutationSync(sessionId, "drain-pending-stop", (draft) => {
-    const nowMono = _nowMono();
-    const nowWall = Date.now();
-    const ttlExpired = expirePending(draft, { nowMono, nowWall, processNonce });
-    const { assigned, remainingPending, expired: matchExpired } = matchPendingToSummary(draft);
-    _counters.pendingDrainedCount += assigned.length;
-    _counters.pendingExpiredCount += ttlExpired.length + (matchExpired?.length || 0);
-    const summaries = draft.settledTurnSummaries || [];
-    let alertCursor = draft.alertEvaluatedThroughTurnSeq || 0;
-    for (const a of assigned) {
-      const summary = summaries.find((s) => s.turnSeq === a.summaryTurnSeq);
-      if (!summary) continue;
-      const resolved = resolveStopMessageFromSummary(summary);
-      if (resolved && resolved.delivery === "stop_hook") {
-        const stopEvt = { kind: resolved.kind, delivery: resolved.delivery, message: resolved.message, billCount: resolved.billCount ?? 0, turnSeq: a.summaryTurnSeq };
-        draft.lastStopEvent = stopEvt;
-        pushStopEventRing(draft, stopEvt);
-      }
-      alertCursor = Math.max(alertCursor, a.summaryTurnSeq);
-    }
-    draft.alertEvaluatedThroughTurnSeq = alertCursor;
-    draft.pendingStopEvaluations = remainingPending;
-  });
-}
 function getDebugCounters() {
   return { ..._counters };
-}
-function incrementCounter(name) {
-  if (name in _counters) _counters[name]++;
 }
 function flushAll() {
   for (const [sid, l] of _ledgers) {
@@ -25063,79 +25853,6 @@ function flushAll() {
     } catch {
     }
   }
-}
-
-// lib/notify-gate.js
-function fresh(segment) {
-  return { segment, turnSeq: 0, maxTierFired: 0, pendingCount: 0 };
-}
-function messageFor(tier) {
-  if (tier === 2) return "Session Watcher: far past the full-carry exit (+1\u0394). Consider a restart/compact at the next natural boundary \u2014 no more alerts this segment. Ask session-restart-advisor for details.";
-  return "Session Watcher: crossed the full-carry cost-optimal exit. Consider restarting at the next natural boundary. Ask session-restart-advisor for details.";
-}
-var finite = (...xs) => xs.every((v) => Number.isFinite(v));
-function rawTierFor(x, fc) {
-  const { xStar, dhat } = fc || {};
-  if (!Number.isFinite(x) || !Number.isFinite(xStar) || !Number.isFinite(dhat) || dhat <= 0 || xStar <= 0) return 0;
-  return x >= xStar + dhat ? 2 : x >= xStar ? 1 : 0;
-}
-function evaluateGate(snapshot, prevState) {
-  let state = !prevState || prevState.segment !== snapshot.segment ? fresh(snapshot.segment) : { ...prevState };
-  const done = (notify, tier, reason, message = null) => ({ notify, tier, reason, message, nextState: state });
-  if (snapshot.turnSeq <= state.turnSeq) return done(false, 0, "duplicate_turn");
-  const advance = () => {
-    state.turnSeq = snapshot.turnSeq;
-  };
-  if (snapshot.reliable === false) {
-    advance();
-    state.pendingCount = 0;
-    return done(false, 0, "not_reliable");
-  }
-  const fc = snapshot.landmarks?.fullCarry || {};
-  const { xStar, dhat } = fc;
-  if (!finite(snapshot.x, xStar, dhat) || dhat <= 0 || xStar <= 0) {
-    advance();
-    state.pendingCount = 0;
-    return done(false, 0, "invalid_landmarks");
-  }
-  const rawTier = rawTierFor(snapshot.x, snapshot.landmarks?.fullCarry);
-  if (rawTier <= state.maxTierFired) {
-    advance();
-    state.pendingCount = 0;
-    return done(false, rawTier, "below_or_fired");
-  }
-  if (rawTier === 1 && state.maxTierFired < 1) {
-    state.pendingCount += 1;
-    advance();
-    if (state.pendingCount < 2) return done(false, 1, "pending_confirm");
-  }
-  state.maxTierFired = rawTier;
-  state.pendingCount = 0;
-  advance();
-  return done(true, rawTier, "fire", messageFor(rawTier));
-}
-function validateGateState(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  for (const f of ["segment", "turnSeq", "maxTierFired", "pendingCount"]) {
-    if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  }
-  if (obj.maxTierFired > 2) return null;
-  if (obj.pendingCount > 2) return null;
-  return obj;
-}
-
-// lib/gate-store.js
-function loadGateState(sessionId) {
-  try {
-    const raw = getStore().load(sessionId, "gate");
-    if (!raw) return null;
-    return validateGateState(raw);
-  } catch {
-    return null;
-  }
-}
-function saveGateState(sessionId, state) {
-  getStore().save(sessionId, "gate", state);
 }
 
 // lib/legacy-cleanup.js
@@ -25278,7 +25995,6 @@ var kFmt = (n) => {
   return String(n);
 };
 function renderLamp(br, opts) {
-  if (opts?.calibrating) return "\u26AA";
   if (!Number.isFinite(br)) return "\u26AA";
   if (opts?.x != null && opts?.xSweet != null && opts.x < opts.xSweet) {
     if (opts.xBrAmberL != null && opts.x >= opts.xBrAmberL) return "\u{1F7E2}";
@@ -25301,9 +26017,13 @@ function renderMeterV3(billProgress) {
   const bar = "\u2593".repeat(filled) + "\u2591".repeat(10 - filled);
   return `${bar}${(pct + "%").padEnd(3)}`;
 }
-function renderBillCount(count) {
-  const n = Math.min(count ?? 0, 99);
-  return `\xD7${n}`.padEnd(3);
+function renderBackstopProgress(rl) {
+  if (!rl?.hasDeepWaterGateFired) return "-/-";
+  const interval = backstopIntervalFor(rl.mf, BR_AMBER);
+  if (!Number.isFinite(interval)) return "-/-";
+  const denom = Math.max(1, Math.round(interval));
+  const numer = Math.min(denom - 1, Math.floor(rl.dwBillsSinceLastAlert ?? 0));
+  return `${numer}/${denom}`;
 }
 function renderU(rl) {
   const x = rl?.x_display;
@@ -25313,8 +26033,8 @@ function renderU(rl) {
   if (!Number.isFinite(u)) return "u---";
   return `u${u.toFixed(1)}`;
 }
-function renderDelta(gEma, kAvgFallback) {
-  const d = Number.isFinite(gEma) && gEma >= 1 ? gEma : Number.isFinite(kAvgFallback) && kAvgFallback >= 1 ? kAvgFallback : null;
+function renderDelta(gEma) {
+  const d = Number.isFinite(gEma) && gEma >= 1 ? gEma : null;
   if (d === null) return "\u0394----";
   let val;
   if (d >= 1e3) {
@@ -25325,101 +26045,88 @@ function renderDelta(gEma, kAvgFallback) {
   }
   return `\u0394${val}`.padEnd(5);
 }
-function renderLB(L, baseline) {
-  return `L${kFmt(L)}/b${kFmt(baseline)}`.padEnd(11);
+function renderLB(L, B) {
+  return `L${kFmt(L)}/b${kFmt(B)}`.padEnd(11);
 }
 function renderAlertLine(rl) {
   const stop = rl?.lastStopEvent;
-  if (!stop || stop.turnSeq !== rl.currentTurnSeq) return null;
+  if (!stop) return null;
   return stop.message;
 }
-var CAROUSEL_FRAMES = ["\u26AA", "\u{1F7E2}", "\u{1F7E1}"];
-var _carouselFrame = 2;
-var _lastFrameTime = -Infinity;
-function getCarouselLamp(now) {
-  if (now - _lastFrameTime >= 2e3) {
-    _lastFrameTime = now;
-    _carouselFrame = (_carouselFrame + 1) % CAROUSEL_FRAMES.length;
-  }
-  return CAROUSEL_FRAMES[_carouselFrame];
-}
-function renderCalibratingV3(s, gate, { now } = {}) {
-  const timestamp = now ?? Date.now();
-  const tag = tagOf(s.model);
-  if (gate.hardUnavailable || gate.reason === "no_transcript") {
-    return `\u26A0\uFE0F no transcript found ${tag}`;
-  }
-  const lamp = getCarouselLamp(timestamp);
-  const meter = renderMeterV3(0);
-  const bill = renderBillCount(0);
-  const countdown = "b---%";
-  const u = "u---";
-  const delta = Number.isFinite(s.kAvg) ? renderDelta(null, s.kAvg) : "\u0394----";
-  const lb = Number.isFinite(s.L) ? renderLB(s.L, s.baseline?.total) : "";
-  let line = `${lamp} ${meter} ${bill} \xB7 ${countdown} ${u} \xB7 ${delta} ${lb} \xB7 ${tag}`;
-  return line;
-}
-var _wasCalibrating = true;
-var _prevTurnSeq = null;
-var _baseBillCount = 0;
-function perTurnBillCount(currentTurnSeq, billCycleCount) {
-  if (_prevTurnSeq === null) {
-    _prevTurnSeq = currentTurnSeq;
-    _baseBillCount = billCycleCount;
-    return 0;
-  }
-  if (currentTurnSeq !== _prevTurnSeq) {
-    _prevTurnSeq = currentTurnSeq;
-    _baseBillCount = billCycleCount;
-    return 0;
-  }
-  if (billCycleCount < _baseBillCount) {
-    _baseBillCount = billCycleCount;
-    return 0;
-  }
-  return billCycleCount - _baseBillCount;
-}
-function renderReliability(s) {
-  const cr = s.calibratingReason ?? null;
-  return {
-    hardUnavailable: cr === "no_transcript",
-    reason: cr
-  };
-}
 function formatLine(s) {
-  const gate = renderReliability(s);
-  if (gate.hardUnavailable) {
-    _wasCalibrating = true;
-    return renderCalibratingV3(s, gate, { now: Date.now() });
-  }
-  if (gate.reason != null) {
-    _wasCalibrating = true;
-    return renderCalibratingV3(s, gate, { now: Date.now() });
-  }
-  if (!s.rateLamp?.reliable) {
-    _wasCalibrating = true;
-    return renderCalibratingV3(s, gate, { now: Date.now() });
-  }
-  if (_wasCalibrating) {
-    _wasCalibrating = false;
-  }
   const rl = s.rateLamp;
-  const lamp = renderLamp(rl.br, { calibrating: !rl.reliable, x: rl.x_display, xSweet: rl.xSweet, xBrAmberL: rl.xBrAmberL });
+  if (!rl?.reliable) {
+    return `\u26AA measuring\u2026 \xB7 ${tagOf(s.model)}`;
+  }
+  const lamp = renderLamp(rl.br, { x: rl.x_display, xSweet: rl.xSweet, xBrAmberL: rl.xBrAmberL });
   const meter = renderMeterV3(rl.billProgress);
-  const turnBill = perTurnBillCount(rl.currentTurnSeq, rl.billCycleCount ?? 0);
-  const bill = renderBillCount(turnBill);
+  const bill = renderBackstopProgress(rl);
   const br = renderBr(rl.br);
   const u = renderU(rl);
-  const delta = renderDelta(rl.gEma, s.kAvg);
-  const lb = renderLB(s.L, s.baseline?.total);
+  const delta = renderDelta(rl.gEma);
+  const lb = renderLB(s.L, s.B);
   const tag = tagOf(s.model);
   let line = `${lamp} ${meter} ${bill} \xB7 ${br} ${u} \xB7 ${delta} ${lb} \xB7 ${tag}`;
   const alertMsg = renderAlertLine(rl);
-  if (alertMsg) {
-    line += `
+  if (alertMsg) line += `
 \u21BB ${alertMsg}`;
-  }
   return line;
+}
+
+// gitignore-loader.js
+var import_ignore = __toESM(require_ignore(), 1);
+import fs from "node:fs";
+import path3 from "node:path";
+function findGitRoot(cwd) {
+  let dir = cwd;
+  for (let i = 0; i < 64 && dir; i++) {
+    if (fs.existsSync(path3.join(dir, ".git"))) return dir;
+    const parent = path3.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+function dirsRootToCwd(root, cwd) {
+  const out = [];
+  let dir = cwd;
+  while (dir && dir.length >= root.length) {
+    out.unshift(dir);
+    if (dir === root) break;
+    const parent = path3.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return out;
+}
+function loadIsIgnored(cwd) {
+  try {
+    const root = findGitRoot(cwd) || cwd;
+    const ig = (0, import_ignore.default)();
+    let found = false;
+    for (const dir of dirsRootToCwd(root, cwd)) {
+      const gi = path3.join(dir, ".gitignore");
+      if (fs.existsSync(gi)) {
+        ig.add(fs.readFileSync(gi, "utf8"));
+        found = true;
+      }
+    }
+    const exclude = path3.join(root, ".git", "info", "exclude");
+    if (fs.existsSync(exclude)) {
+      ig.add(fs.readFileSync(exclude, "utf8"));
+      found = true;
+    }
+    if (!found) return null;
+    return (rel) => {
+      const abs = path3.resolve(cwd, rel);
+      const relToRoot = path3.relative(root, abs);
+      if (relToRoot.startsWith("..") || path3.isAbsolute(relToRoot)) return false;
+      const posix = relToRoot.split(path3.sep).join("/");
+      return posix ? ig.ignores(posix) : false;
+    };
+  } catch {
+    return null;
+  }
 }
 
 // server.js
@@ -25428,7 +26135,7 @@ if (_major < 22 || _major === 22 && _minor < 16) {
   console.error("Session Watcher requires Node >=22.16.0 (node:sqlite)");
   process.exit(1);
 }
-var __dirname = dirname2(fileURLToPath(import.meta.url));
+var __dirname = dirname3(fileURLToPath(import.meta.url));
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
   if (!s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..")) return "__invalid_session__";
@@ -25436,8 +26143,8 @@ function safeSessionId(sessionId) {
 }
 var PORT_DIR = process.env.SW_STATE_DIR || join4(homedir3(), ".session-watcher");
 var stateFileFor = (sessionId) => join4(PORT_DIR, `${safeSessionId(sessionId || "default")}.json`);
-function writeStateFileExclusive(path, record) {
-  const fd = openSync2(path, "wx");
+function writeStateFileExclusive(path4, record) {
+  const fd = openSync2(path4, "wx");
   try {
     writeSync(fd, JSON.stringify(record));
   } finally {
@@ -25526,7 +26233,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   };
   app.get("/api/status", (req, res, next) => {
     try {
-      const status = watcher.getStatus(parseFitWindow(req.query.fitWindow));
+      const status = watcher.getStatus();
       const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
       const ledger = getLiveLedger(sessionId);
       mergeLedgerIntoStatus(status, ledger, currentKey);
@@ -25556,6 +26263,13 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       if (!Number.isNaN(t)) h = h.filter((p) => Date.parse(p.ts) >= t);
     }
     res.json(h);
+  });
+  app.get("/api/buckets", (req, res, next) => {
+    try {
+      res.json(watcher.getBucketData());
+    } catch (e) {
+      next(e);
+    }
   });
   app.get("/api/stream", (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -25636,153 +26350,6 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     applyEffectiveRatio();
     res.json(buildPricingResponse());
   });
-  const gateSnapshotFor = (turnSeq, st) => {
-    const br = st.rateLamp?.br;
-    if (st.rateLamp?.reliable === true && Number.isFinite(br)) {
-      return {
-        segment: st.segment,
-        turnSeq,
-        reliable: true,
-        x: br,
-        landmarks: { fullCarry: { xStar: BR_AMBER, dhat: BR_RED - BR_AMBER } }
-      };
-    }
-    const lm = landmarks(st.rateLamp?.C_RATIO ?? cRatioFor(st.model), st.kAvg, st.baseline?.total ?? 0, st.baseline?.dead ?? 0, st.L);
-    return {
-      segment: st.segment,
-      turnSeq,
-      reliable: st.rateLamp?.reliable === true,
-      x: lm.x,
-      landmarks: { fullCarry: { xStar: lm.fullCarry.xStar, dhat: lm.fullCarry.dhat } }
-    };
-  };
-  const sessionMismatch = (req, res) => {
-    const bodySid = req.body?.session_id;
-    if (bodySid && bodySid !== sessionId && bodySid !== hookSessionId) {
-      res.status(409).json({ error: "session_mismatch" });
-      return true;
-    }
-    return false;
-  };
-  let _internalEventSeq = 0;
-  const mintInternalEventId = () => `internal-${Date.now()}-${++_internalEventSeq}`;
-  app.post("/api/notify-gate", (req, res, next) => {
-    try {
-      if (sessionMismatch(req, res)) return;
-      const hookEventId = req.body?.hook_event_id ?? mintInternalEventId();
-      let ledger = getLiveLedger(sessionId);
-      if (ledger && alreadyAccepted(hookEventId, ledger)) {
-        const snap2 = gateSnapshotFor(watcher._turnSeq, watcher.getStatus());
-        const gateResult2 = evaluateGate(snap2, loadGateState(sessionId));
-        res.json({
-          ok: true,
-          notify: false,
-          tier: gateResult2?.tier ?? 0,
-          kind: null,
-          delivery: null,
-          message: null,
-          gate: { notify: false, tier: gateResult2?.tier ?? 0, reason: "already_accepted" },
-          bill: null
-        });
-        return;
-      }
-      if (isEnospcPaused(sessionId)) {
-        try {
-          const currentLedger = getLiveLedger(sessionId);
-          if (currentLedger) setLiveLedger(sessionId, currentLedger);
-          try {
-            if (getLiveLedger(sessionId)) drainPendingStopEvaluations(sessionId);
-          } catch (drainErr) {
-            engageEnospcPause(sessionId);
-            res.status(503).json({ ok: false, degraded: "persist_failed" });
-            return;
-          }
-          res.json({ ok: true, recovered: true, accepted: false });
-          return;
-        } catch (probeErr) {
-          res.status(503).json({ ok: false, degraded: "persist_failed" });
-          return;
-        }
-      }
-      const { caughtUp, status: st } = boundedIncrementalAdvance(watcher, sessionId, { maxMs: STOP_ADVANCE_MAX_MS, maxBytes: STOP_ADVANCE_MAX_BYTES });
-      try {
-        if (getLiveLedger(sessionId)) drainPendingStopEvaluations(sessionId);
-      } catch (e) {
-        if (process.env.SW_DEBUG) console.error("[rate-lamp] drain throw (non-fatal):", e.message);
-      }
-      try {
-        if (getLiveLedger(sessionId)) commitLedgerMutationSync(sessionId, "choose-current-stop", (draft) => chooseCurrentStopSummary(draft));
-      } catch (e) {
-        if (process.env.SW_DEBUG) console.error("[rate-lamp] choose throw (non-fatal):", e.message);
-      }
-      ledger = getLiveLedger(sessionId);
-      const snap = gateSnapshotFor(watcher._turnSeq, st);
-      const gateResult = evaluateGate(snap, loadGateState(sessionId));
-      let dwTurn = 0, stockStep = false;
-      const currentKey = st.rateLamp?.reliable ? stateKeyForStatus(st) : null;
-      const matchingKeyLedger = st.rateLamp?.reliable && ledger && ledger.stateKey === currentKey;
-      if (matchingKeyLedger && ledger.pausedReason == null) {
-        dwTurn = st.rateLamp?.inDeepWater ? ledger.currentTurnDeltaW : 0;
-        stockStep = detectStockStep(watcher._currentSegmentCalls(), ledger.kStableFrozen, { sinceFoldedSeq: ledger.billAnchorFoldedCallSeq });
-      }
-      const inlineMsg = resolveStopMessage({ gateResult, bill: null, burnRate: st.rateLamp?.burnRate ?? 0, dwTurn, stockStep });
-      const firesInline = inlineMsg && inlineMsg.delivery === "stop_hook" && ["wall", "dw_backstop", "gate"].includes(inlineMsg.kind);
-      if (ledger && (ledger.pendingStopEvaluations || []).length >= PENDING_STOP_EVALUATIONS_LIMIT) {
-        res.status(503).json({ ok: false, degraded: "pending_backpressure" });
-        return;
-      }
-      cancelCoalescedPersist(sessionId);
-      try {
-        if (ledger && validateLedgerState(ledger)) {
-          commitLedgerMutationSync(sessionId, "stop-enqueue", (draft) => {
-            appendProcessedHookId(draft, hookEventId);
-            enqueuePending(draft, {
-              hookEventId,
-              requestedAtWallMs: Date.now(),
-              requestedAtMonoMs: performance.now(),
-              processNonce,
-              beforeSettledThroughTurnSeq: draft.settledThroughTurnSeq
-            });
-            incrementCounter("pendingCreatedCount");
-            if (firesInline) {
-              const stopEvt = { kind: inlineMsg.kind, delivery: inlineMsg.delivery, message: inlineMsg.message, billCount: inlineMsg.billCount ?? 0, turnSeq: draft.currentTurnSeq };
-              draft.lastStopEvent = stopEvt;
-              pushStopEventRing(draft, stopEvt);
-              draft.alertEvaluatedThroughTurnSeq = Math.max(draft.currentTurnSeq, draft.alertEvaluatedThroughTurnSeq || 0);
-            }
-          });
-        }
-      } catch (writeErr) {
-        res.status(503).json({ ok: false, degraded: "persist_failed" });
-        return;
-      }
-      saveGateState(sessionId, gateResult.nextState);
-      res.json({
-        ok: true,
-        notify: firesInline === true,
-        tier: gateResult?.tier ?? 0,
-        kind: inlineMsg?.kind ?? null,
-        delivery: inlineMsg?.delivery ?? null,
-        message: firesInline ? inlineMsg.message : null,
-        gate: { notify: gateResult.notify, tier: gateResult.tier, reason: gateResult.reason },
-        bill: null
-        // H-A: Stop settles NOTHING — no bill
-      });
-    } catch (e) {
-      next(e);
-    }
-  });
-  app.get("/api/notify-gate/peek", (req, res, next) => {
-    try {
-      const st = watcher.getStatus();
-      const snap = gateSnapshotFor(watcher._turnSeq, st);
-      const prev = loadGateState(sessionId);
-      const rawTier = rawTierFor(snap.x, snap.landmarks.fullCarry);
-      res.json({ rawTier, maxTierFired: prev?.maxTierFired ?? 0, reliable: snap.reliable });
-    } catch (e) {
-      next(e);
-    }
-  });
   app.get("/api/debug/rate-lamp/:sid", (req, res) => {
     const remote = req.socket.remoteAddress || "";
     const isLoopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
@@ -25794,8 +26361,6 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     const ledger = getLiveLedger(sid);
     const counters = getDebugCounters();
     const sizes = {
-      pendingStopEvaluations: (ledger?.pendingStopEvaluations || []).length,
-      settledTurnSummaries: (ledger?.settledTurnSummaries || []).length,
       recentStopEvents: (ledger?.recentStopEvents || []).length
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
@@ -25846,6 +26411,14 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
 `);
           } catch {
             sseClients.delete(c);
+          }
+        }
+        if (changed) {
+          try {
+            const snap = watcher.getTerminalSnapshot();
+            getStore().saveBatch(sessionId, [["profile_snapshot", snap]], { model: snap.model });
+          } catch (e) {
+            if (process.env.SW_DEBUG) console.error("[profile_snapshot]", e.message);
           }
         }
         if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
@@ -25925,7 +26498,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const jsonlPath = transcript ? resolve(transcript) : byId || resolveJsonl(resolve(project || projectsRoot));
   const sessionId = jsonlPath.endsWith(".jsonl") ? basename(jsonlPath).replace(/\.jsonl$/, "") : session || "default";
   const hookSessionId = session || null;
-  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride });
+  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride, cwd: project || null, isIgnored: project ? loadIsIgnored(project) : null });
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown;
   const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1e3, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });

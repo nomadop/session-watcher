@@ -14,6 +14,7 @@
 // health-probe reuse means no double-launch); the hook is the automatic path, the tool the manual one.
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { startWatcher } from '../lib/launcher.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,13 +30,17 @@ export function launchOptionsFor(payload = {}, baseEnv = process.env) {
   };
 }
 
-// True when this module is the process entry point. Compares via pathToFileURL, NOT
-// `file://${argv1}`: import.meta.url percent-encodes spaces (and other chars), so a raw string
-// concatenation never matches under an install path like /Users/First Last/… → the hook would
-// silently no-op (no dashboard, no error). pathToFileURL applies the SAME encoding to both sides.
-// Extracted + exported so the spaced-path case is unit-testable without renaming the file on disk.
+// True when this module is the process entry point. Uses realpath to resolve symlinks
+// (e.g. devcontainer plugin cache: ~/.claude/plugins/cache → ~/.claude-host/plugins/cache).
 export function isMainModule(metaUrl, argv1) {
-  return metaUrl === pathToFileURL(argv1).href;
+  if (!argv1) return false;
+  try {
+    const self = realpathSync(fileURLToPath(metaUrl));
+    const arg = realpathSync(argv1);
+    return self === arg;
+  } catch {
+    return metaUrl === pathToFileURL(argv1).href;
+  }
 }
 
 // Bounded stdin read. Resolves on 'end'/'error' (best-effort: whatever we got so far), and ALSO on a

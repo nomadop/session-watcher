@@ -16,7 +16,7 @@ process.env.CLAUDE_PLUGIN_DATA = RL_TMP;
 process.on('exit', () => { try { rmSync(RL_TMP, { recursive: true, force: true }); } catch {} });
 
 import { formatLine, createServer } from '../server.js';
-import { _resetRenderState, _resetCarousel } from '../lib/statusline-format.js';
+import { _resetRenderState } from '../lib/statusline-format.js';
 import { SessionWatcher } from '../lib/watcher.js';
 
 const execFileP = promisify(execFile);
@@ -25,7 +25,7 @@ const execFileP = promisify(execFile);
 const reliableBase = (rateLamp) => ({
   model: 'claude-opus-4-8', port: 38017, L: 137000, Lstar: 375000, Lthreshold: 375000, restart: false,
   metricsReliable: true, calibratingReason: null, phi: 2.4, paybackP: 0.6, etaCalls: 40,
-  baseline: { total: 55000 }, kAvg: 3000, rateLamp,
+  baseline: { total: 55000 }, B: 55000, kAvg: 3000, rateLamp,
 });
 
 const SCRIPT = 'statusline.js';
@@ -81,7 +81,7 @@ test('statusline appends full dashboard URL when server is up', async () => {
 // Task 10 (ER-2) → v3: kFit eta is retired; countdown renders from targetL/kAvg.
 // Validate that no kFit eta artifact leaks.
 test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 0,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 2.5, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -94,7 +94,7 @@ test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta',
 // v3: new layout renders lamp + meter (▮ bar + % + ×N) + countdown u + delta L/b + tag :port.
 // The old `break-even ~N turns` / `bill NN%` format is retired.
 test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill format', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 2,
     inDeepWater: true, br: 0.15, x_display: 2.5, dhat: 0.4,
     lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -111,7 +111,7 @@ test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill fo
 
 // Review A7#15 → v3: hBreak Infinity (burnRate=0, below the floor) — br renders b---% (no br data), never Infinity.
 test('A2 A7#15: hBreak Infinity (burnRate=0) renders br b---%, not Infinity', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: Infinity, billProgress: 0, billCycleCount: 0,
     inDeepWater: false, x_display: 1.2, dhat: 0.4,
     lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -126,7 +126,7 @@ test('A2 A7#15: hBreak Infinity (burnRate=0) renders br b---%, not Infinity', ()
 // v2.2 H-B + I-pt2: the neutral bill pulse (rent +Nx / idle / ctx growing) is RETIRED. The meter's ×N
 // shows the lifetime STOCK; per-turn increment is stop hook's job. These tests confirm the retirement.
 test('A2/I-pt2: neutral bill pulse retired — non_idle_burn lastBillEvent does NOT render rent/growing', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -138,7 +138,7 @@ test('A2/I-pt2: neutral bill pulse retired — non_idle_burn lastBillEvent does 
 });
 
 test('A2/I-pt2: neutral bill pulse retired — empty_burn lastBillEvent does NOT render rent/idle', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -151,7 +151,7 @@ test('A2/I-pt2: neutral bill pulse retired — empty_burn lastBillEvent does NOT
 
 // v2.2 H-B + I-pt2: cache_unstable bill events also do not render (the neutral pulse is fully retired).
 test('A2/I-pt2: neutral bill pulse retired — cache_unstable lastBillEvent silent', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -164,7 +164,7 @@ test('A2/I-pt2: neutral bill pulse retired — cache_unstable lastBillEvent sile
 
 // TTL: with neutral pulse retired, lastBillEvent has no rendering effect at all (stale or not).
 test('A2/I-pt2: stale lastBillEvent also renders nothing (neutral pulse retired)', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -179,7 +179,7 @@ test('A2/I-pt2: stale lastBillEvent also renders nothing (neutral pulse retired)
 // A deep-water empty_burn turn is BOTH a stop_hook alert AND leaves a bill pulse — render the prominent
 // alert and NOT a second bill-pulse line.
 test('B3 single-stack: a deep-water empty_burn turn renders the prominent stop alert, NOT a second bill pulse', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 8, billProgress: 0.9, billCycleCount: 1,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 3.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -192,7 +192,7 @@ test('B3 single-stack: a deep-water empty_burn turn renders the prominent stop a
 });
 
 test('B3 priority: with only a stop event this turn, the stop message renders', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.95, billCycleCount: 1,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -206,7 +206,7 @@ test('B3 priority: with only a stop event this turn, the stop message renders', 
 // v3: a reliable frame with no stop event renders the full layout without any alert second line.
 // The neutral bill pulse is retired.
 test('A2: a reliable frame with bill events but no stop event renders no alert line (neutral pulse retired)', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   const s = reliableBase({ reliable: true, hBreak: 15, billProgress: 0.6, billCycleCount: 3,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
@@ -217,22 +217,24 @@ test('A2: a reliable frame with bill events but no stop event renders no alert l
   assert.ok(!out.includes('\n'), 'no second line without a current-turn stop event');
 });
 
-// Unreliable rateLamp → calibrating path (v3 renders progressive fill, not the old L/L* bar).
-test('B3 fallback: an unreliable rateLamp renders calibrating (v3 progressive fill)', () => {
-  _resetRenderState(); _resetCarousel();
+// Unreliable rateLamp → v3 measuring… neutral line (no carousel, no progressive fill).
+test('B3 fallback: an unreliable rateLamp renders measuring… (v3 neutral line)', () => {
+  _resetRenderState();
   const s = reliableBase({ reliable: false, unavailableReason: 'insufficient_data' });
   const out = formatLine(s);
-  // v3: unreliable → renderCalibratingV3 (no full meter, progressive info only)
+  // v3: unreliable → single "⚪ measuring… · model" line
   assert.ok(out.length > 0, 'non-empty output');
+  assert.match(out, /measuring…/, 'measuring… line');
   assert.ok(!out.includes('▮'.repeat(5)), 'no full v3 meter bar when unreliable');
   assert.ok(!/break-even|bill \d|rent \+/.test(out), 'no rate-lamp segment when unreliable');
 });
 
-test('B3: an ABSENT rateLamp renders calibrating and does not throw', () => {
-  _resetRenderState(); _resetCarousel();
+test('B3: an ABSENT rateLamp renders measuring… and does not throw', () => {
+  _resetRenderState();
   const s = reliableBase(undefined);
   const out = formatLine(s);
   assert.ok(out.length > 0 && !/break-even/.test(out), 'no rate-lamp segment, still non-empty');
+  assert.match(out, /measuring…/, 'measuring… line');
 });
 
 // ── Step 4: statusline.js passes the fmt=line rate-lamp string through unmodified ───────────────────
@@ -391,7 +393,7 @@ test('D2: a SPACED model display_name stays whole (A5 IFS=TAB failure mode) — 
 
 // ── Task 3: u=2 at the exact lamp↔yellow transition (lamp/u alignment) ──────────────────────────────
 test('u=2.0 at the exact point where lamp turns yellow (kStable alignment)', () => {
-  _resetRenderState(); _resetCarousel();
+  _resetRenderState();
   // kStable drives both xExit and dhat → u=2 at lamp transition
   const cRatio = 10, kStable = 1382, lBase = 55000;
   const dhat = Math.sqrt(2 * cRatio * kStable / lBase);

@@ -1,10 +1,36 @@
-// public/elements/heroDiptych.js — EOQ U-curve chart + position display (spec §2 #1/#2/#5/#6)
-// Chart.js line chart with landmark vertical lines + current-x marker.
+// public/elements/heroDiptych.js — EOQ U-curve chart + position display
+// Dual-landmarks redesign: two complete curve groups (default + preview) with activation toggle.
 // Element contract: mount(root, ctx) → { update(snapshot), destroy() }
 
 import { computeEoqViewport, validateLandmarks } from '../lib/xScale.js';
+import { MIN_B_PREVIEW } from '../lib/uiConstants.js';
+import { computePreviewBr } from '../chart-helpers.js';
 
 const SAMPLE_POINTS = 50;
+
+// Dual-group activation styling (spec §6.2)
+const ACTIVE_OPACITY = 1.0;
+const INACTIVE_OPACITY = 0.25;
+const ACTIVE_LINE_WIDTH = 2.5;
+const INACTIVE_LINE_WIDTH = 1.2;
+const ACTIVE_DOT_RADIUS = 7;
+const INACTIVE_DOT_RADIUS = 4.5;
+const DOT_HIT_RADIUS = 15;
+const ACTIVE_LANDMARK_WIDTH = 1.6;
+const INACTIVE_LANDMARK_WIDTH = 1.0;
+const INACTIVE_DASH = [6, 4];
+const DOT_OVERLAP_THRESHOLD_PX = 4;
+
+// Draw order: lower number = rendered later = on top
+const ORDER = {
+  inactiveCurve:    50,
+  inactiveLandmark: 45,
+  activeCurve:      30,
+  activeLandmark:   25,
+  brLine:           15,
+  inactiveDot:      10,
+  activeDot:         0,
+};
 
 /** Resolve a CSS custom property to its computed value, with fallback. */
 function cssVar(el, name, fallback) {
@@ -13,14 +39,9 @@ function cssVar(el, name, fallback) {
 }
 
 /**
- * EOQ average cost per turn (renewal-reward, fig-eoq-curve.tex form):
+ * EOQ average cost per turn (renewal-reward):
  *   C(x) = A/(x-1) + (x-1)/(2R)
  * where A = (xSweet-1)^2 / (2R), ensuring minimum at x = xSweet.
- * Left arm = restart cost amortized (decays as 1/(x-1))
- * Right arm = average holding cost (grows linearly)
- * @param {number} x — position on x-axis (L/lBase), must be > 1
- * @param {number} R — effective ratio (C_RATIO)
- * @param {number} xSweet — sweet-spot position (curve minimum)
  */
 function eoqCost(x, R, xSweet) {
   const d = x - 1;
@@ -31,62 +52,97 @@ function eoqCost(x, R, xSweet) {
 }
 
 /**
- * Sample the EOQ curve with denser sampling near x=1 (left arm asymptote).
- * Uses logarithmic spacing in the (x-1) domain so the 1/(x-1) rise is well-resolved.
+ * Sample the EOQ curve with log-spaced x values (dense near left arm asymptote).
  */
 function sampleCurve(minX, maxX, R, xSweet, nPoints = SAMPLE_POINTS) {
   const points = [];
-  // Map [0,1] → [minX, maxX] with log-spacing in (x-1) to cluster points near left arm
-  const dMin = minX - 1;  // e.g. 0.005
-  const dMax = maxX - 1;  // e.g. 10
+  const dMin = minX - 1;
+  const dMax = maxX - 1;
   const logMin = Math.log(Math.max(dMin, 0.001));
   const logMax = Math.log(dMax);
   for (let i = 0; i < nPoints; i++) {
     const t = i / (nPoints - 1);
     const d = Math.exp(logMin + t * (logMax - logMin));
     const xVal = 1 + d;
-    // No y-clamp: Chart.js clips to chartArea naturally, so the curve
-    // exits the top smoothly instead of drawing a flat line at yMax.
     points.push({ x: xVal, y: eoqCost(xVal, R, xSweet) });
   }
   return points;
 }
 
 /**
- * Build a vertical line dataset (dashed) at a given x position
+ * Compute preview landmarks from a candidate B_preview token budget.
+ * Pure helper — exported for unit testing.
  */
-function verticalLine(xVal, yMax, color, dash = [4, 4], lineWidth = 1.5) {
-  return {
-    data: [{ x: xVal, y: 0 }, { x: xVal, y: yMax }],
-    borderColor: color,
-    borderWidth: lineWidth,
-    borderDash: dash,
-    pointRadius: 0,
-    fill: false,
-    showLine: true,
-    parsing: false,
-    spanGaps: false,
-  };
+export function computePreviewLandmarks({ B_preview, R, g, L, mf: mfOverride }) {
+  const B = Math.max(MIN_B_PREVIEW, B_preview || 0);
+  const dhat = Math.sqrt(2 * R * g / B);
+  const xSweet = 1 + dhat;
+  const x = L / B;
+  // Recompute mf from B_preview (same formula as lib/bill-regret.js computeMovableFrac)
+  let mf;
+  if (R > 0 && B > 0 && g > 0) {
+    const arm = Math.sqrt(2 * R * B * g);
+    mf = arm / (arm + B + R * g);
+  } else {
+    mf = mfOverride ?? 0.3;
+  }
+  // Amber/red positions from br formula (both arms)
+  const safeMf = mf > 0 ? mf : 0.01;
+  const uAmberR = solveUForBr(safeMf, 0.10);
+  const uRed = solveUForBr(safeMf, 0.25);
+  const xAmberR = 1 + uAmberR * dhat;
+  const xRedR = 1 + uRed * dhat;
+  // Left arm: u = (1+p) - √(p²+2p)
+  const pAmber = 0.10 / safeMf;
+  const discAmber = pAmber * pAmber + 2 * pAmber;
+  const uAmberL = (1 + pAmber) - Math.sqrt(discAmber);
+  const xAmberL = 1 + uAmberL * dhat;
+  return { dhat, xSweet, x, xAmberL, xAmberR, xRedR, mf };
+}
+
+/** Solve u for a target br given mf: br = mf*(u-1)^2/(2u) */
+function solveUForBr(mf, brTarget) {
+  const a = mf;
+  const b = -(2 * mf + 2 * brTarget);
+  const c = mf;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return 3;
+  return (-b + Math.sqrt(disc)) / (2 * a);
+}
+
+/**
+ * Convert a color string to rgba with the given alpha.
+ * Handles #rrggbb, #rrggbbaa, and rgba(...) forms.
+ */
+function colorWithAlpha(color, alpha) {
+  if (!color) return `rgba(79,224,176,${alpha})`;
+  if (color.startsWith('rgba(')) {
+    return color.replace(/,\s*[\d.]+\s*\)$/, `, ${alpha})`);
+  }
+  if (color.startsWith('rgb(')) {
+    return color.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`);
+  }
+  if (color.startsWith('#')) {
+    const hex = color.slice(1, 7);
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return `rgba(${r},${g},${b},${alpha})`;
+    }
+  }
+  return color;
 }
 
 const ZONE_LABELS = { green: 'Valley', warmup: 'Warming up', amber: 'Bill climbing', red: 'High premium', wall: 'At wall', calibrating: 'Calibrating' };
 
-/**
- * Determine verdict text from current br (bill premium) vs zones.
- * Left arm (x < xSweet) has high br too, but it's dropping naturally —
- * different messaging than the right arm where br is climbing.
- */
 function positionVerdict(br, x, wallP, xSweet) {
   if (!Number.isFinite(br)) return { zone: 'calibrating', caption: 'Calibrating…' };
   if (x >= wallP) return { zone: 'wall', caption: 'Bill premium ≥ 25% — consider restarting now.' };
-
-  // Left arm: cost is high but falling — session warming up, no action needed
   if (Number.isFinite(xSweet) && x < xSweet) {
     if (br >= 0.10) return { zone: 'warmup', caption: 'Warming up — cost is high but dropping each turn. Keep going.' };
     return { zone: 'green', caption: 'Approaching sweet spot — cost falling naturally.' };
   }
-
-  // Right arm: cost is rising — the usual br thresholds apply
   if (br >= 0.25) return { zone: 'red', caption: 'Bill premium ≥ 25% — consider restarting now.' };
   if (br >= 0.10) return { zone: 'amber', caption: 'Bill climbing — paying 10–24% extra. Finish the task, then restart.' };
   if (br >= 0.01) return { zone: 'green', caption: 'In the valley — bill impact near zero. No pressure.' };
@@ -96,10 +152,13 @@ function positionVerdict(br, x, wallP, xSweet) {
 export function mount(root, _ctx) {
   // Prev-state for no-change-skip guard in update()
   let prevX, prevR, prevEntry, prevSweet, prevExit;
-  let previousDomainMax = null;
+  let previousActualDomainMax = null;
   let prevSegment = null;
 
-  // Create DOM sub-container for this element within #sw-hero
+  // Dual-group state (spec §6.3)
+  let activeGroup = 'amber'; // 'amber' | 'mint'
+
+  // Create DOM
   const container = document.createElement('div');
   container.className = 'sw-hero-diptych';
   container.innerHTML = `
@@ -108,7 +167,7 @@ export function mount(root, _ctx) {
         <span class="lab">Position</span>
         <div class="sub">cost-rate valley · Harris 1913</div>
       </div>
-      <span class="eoq-u">u = <b class="sw-hero-uval">—</b> · <span class="sw-hero-mf">movable —%</span></span>
+      <span class="eoq-u"><span class="sw-hero-group-pill" style="display:none;"></span>u = <b class="sw-hero-uval">—</b> · <span class="sw-hero-mf">movable —%</span></span>
     </div>
     <div class="sw-hero-chart-wrap">
       <canvas class="sw-hero-canvas"></canvas>
@@ -116,7 +175,6 @@ export function mount(root, _ctx) {
   `;
   root.appendChild(container);
 
-  // Verdict row — spans full hero width (appended last; grid-column: 1/-1 applied in CSS)
   const verdictRow = document.createElement('div');
   verdictRow.className = 'sw-hero-verdict-row';
   verdictRow.innerHTML = `<span class="pill sw-verdict-pill">—</span><p class="sw-verdict-text">—</p>`;
@@ -124,15 +182,388 @@ export function mount(root, _ctx) {
 
   const canvas = container.querySelector('.sw-hero-canvas');
   const uvalEl = container.querySelector('.sw-hero-uval');
+  const groupPillEl = container.querySelector('.sw-hero-group-pill');
+  const mfEl = container.querySelector('.sw-hero-mf');
   const verdictPill = verdictRow.querySelector('.sw-verdict-pill');
   const verdictText = verdictRow.querySelector('.sw-verdict-text');
 
   let chart = null;
 
+  // Ghost preview state — set by sw-bucket-preview event; survives poll-driven re-renders.
+  let previewState = null;
+  let lastRl = null;
+
+  // Theme colors resolved once on first chart build
+  let mintColor, amberColor, sweetColor, entryColor, deepColor, wallColor;
+
+  function resolveColors() {
+    mintColor = cssVar(container, '--mint', '#4fe0b0');
+    amberColor = cssVar(container, '--amber', '#ffc24d');
+    sweetColor = cssVar(container, '--zone-sweet', '#4fe0b0');
+    entryColor = cssVar(container, '--zone-entry', '#6cc6f0');
+    deepColor = cssVar(container, '--zone-deep', '#ffc24d');
+    wallColor = cssVar(container, '--zone-wall', '#ff7566');
+  }
+
   /**
-   * Compute chart data (curve, yMax, domain) without creating/updating the Chart instance.
-   * Extracted so the incremental update path can reuse the same computation.
+   * Build datasets for one group (amber or mint).
+   * Returns an array of Chart.js dataset configs with _sw* metadata.
    */
+  function buildGroupDatasets(groupId, { curveData, xSweet, xAmberL, xAmberR, xRedR, x, costAtX, yMax, R, domainMin, isActive }) {
+    const op = isActive ? ACTIVE_OPACITY : INACTIVE_OPACITY;
+    const lw = isActive ? ACTIVE_LINE_WIDTH : INACTIVE_LINE_WIDTH;
+    const lmW = isActive ? ACTIVE_LANDMARK_WIDTH : INACTIVE_LANDMARK_WIDTH;
+    const dotR = isActive ? ACTIVE_DOT_RADIUS : INACTIVE_DOT_RADIUS;
+    const dotColor = groupId === 'amber' ? amberColor : mintColor;
+    const curveOrder = isActive ? ORDER.activeCurve : ORDER.inactiveCurve;
+    const lmOrder = isActive ? ORDER.activeLandmark : ORDER.inactiveLandmark;
+    const dotOrder = isActive ? ORDER.activeDot : ORDER.inactiveDot;
+    const dash = isActive ? [] : INACTIVE_DASH;
+
+    const datasets = [];
+
+    // Curve
+    datasets.push({
+      data: curveData,
+      borderColor: colorWithAlpha(mintColor, op),
+      backgroundColor: isActive ? colorWithAlpha(mintColor, op * 0.06) : 'transparent',
+      borderWidth: lw,
+      borderDash: dash,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      pointHitRadius: 0,
+      fill: isActive,
+      tension: 0.3,
+      parsing: false,
+      order: curveOrder,
+      _swId: `${groupId}.curve`,
+      _swGroup: groupId,
+      _swRole: 'curve',
+      _swLandmark: null,
+    });
+
+    // Sweet vertical
+    datasets.push({
+      data: [{ x: xSweet, y: 0 }, { x: xSweet, y: yMax }],
+      borderColor: colorWithAlpha(sweetColor, op * 0.7),
+      borderWidth: lmW,
+      borderDash: [4, 4],
+      pointRadius: 0,
+      pointHitRadius: 0,
+      showLine: true,
+      fill: false,
+      parsing: false,
+      order: lmOrder,
+      _swId: `${groupId}.sweet`,
+      _swGroup: groupId,
+      _swRole: 'landmark',
+      _swLandmark: 'sweet',
+    });
+
+    // Amber-L vertical (entry line)
+    if (Number.isFinite(xAmberL) && xAmberL > 1.01) {
+      datasets.push({
+        data: [{ x: xAmberL, y: 0 }, { x: xAmberL, y: yMax }],
+        borderColor: colorWithAlpha(entryColor, op * 0.7),
+        borderWidth: lmW,
+        borderDash: [3, 4],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        showLine: true,
+        fill: false,
+        parsing: false,
+        order: lmOrder,
+        _swId: `${groupId}.amberL`,
+        _swGroup: groupId,
+        _swRole: 'landmark',
+        _swLandmark: 'amberL',
+      });
+    }
+
+    // Amber-R vertical
+    if (Number.isFinite(xAmberR)) {
+      datasets.push({
+        data: [{ x: xAmberR, y: 0 }, { x: xAmberR, y: yMax }],
+        borderColor: colorWithAlpha(deepColor, op * 0.7),
+        borderWidth: lmW,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        showLine: true,
+        fill: false,
+        parsing: false,
+        order: lmOrder,
+        _swId: `${groupId}.amberR`,
+        _swGroup: groupId,
+        _swRole: 'landmark',
+        _swLandmark: 'amberR',
+      });
+    }
+
+    // Red-R vertical
+    if (Number.isFinite(xRedR)) {
+      datasets.push({
+        data: [{ x: xRedR, y: 0 }, { x: xRedR, y: yMax }],
+        borderColor: colorWithAlpha(wallColor, op * 0.7),
+        borderWidth: lmW,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        showLine: true,
+        fill: false,
+        parsing: false,
+        order: lmOrder,
+        _swId: `${groupId}.redR`,
+        _swGroup: groupId,
+        _swRole: 'landmark',
+        _swLandmark: 'redR',
+      });
+    }
+
+    // Position dot
+    if (costAtX != null) {
+      datasets.push({
+        data: [{ x: Math.min(x, curveData[curveData.length - 1]?.x ?? x), y: costAtX }],
+        borderColor: colorWithAlpha(dotColor, op),
+        backgroundColor: colorWithAlpha(dotColor, op),
+        pointRadius: dotR,
+        pointHoverRadius: dotR + 2,
+        pointHitRadius: DOT_HIT_RADIUS,
+        pointBorderWidth: 0,
+        showLine: false,
+        parsing: false,
+        order: dotOrder,
+        _swId: `${groupId}.dot`,
+        _swGroup: groupId,
+        _swRole: 'dot',
+        _swLandmark: null,
+      });
+    }
+
+    // Horizontal br reference line (only for active group)
+    if (isActive && costAtX != null) {
+      const brColor = groupId === 'amber' ? amberColor : mintColor;
+      datasets.push({
+        data: [{ x: domainMin, y: costAtX }, { x: Math.min(x, curveData[curveData.length - 1]?.x ?? x), y: costAtX }],
+        borderColor: colorWithAlpha(brColor, 0.5),
+        borderWidth: 1,
+        borderDash: [3, 3],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        showLine: true,
+        fill: false,
+        parsing: false,
+        order: ORDER.brLine,
+        _swId: `${groupId}.brLine`,
+        _swGroup: groupId,
+        _swRole: 'brLine',
+        _swLandmark: null,
+      });
+    }
+
+    return datasets;
+  }
+
+  /**
+   * Update topbar: group pill + u value + mf%, following activeGroup.
+   */
+  function updateTopbar(defaultU, defaultMf) {
+    const dirty = previewState?.dirty;
+
+    // Group pill visibility
+    if (dirty) {
+      groupPillEl.style.display = '';
+      groupPillEl.textContent = activeGroup === 'mint' ? 'preview' : 'default';
+      groupPillEl.className = `sw-hero-group-pill pill-${activeGroup}`;
+    } else {
+      groupPillEl.style.display = 'none';
+    }
+
+    // u and mf follow active group
+    if (dirty && activeGroup === 'mint' && previewState?.B_preview && lastRl) {
+      const R = lastRl.C_RATIO;
+      const g = lastRl.gEma ?? lastRl.g ?? 0;
+      const L = lastRl.L_read ?? 0;
+      const prev = computePreviewLandmarks({ B_preview: previewState.B_preview, R, g, L, mf: lastRl.mf });
+      const previewU = (prev.dhat > 0 && prev.x > 1) ? (prev.x - 1) / prev.dhat : null;
+      uvalEl.textContent = previewU != null ? previewU.toFixed(1) : '—';
+      if (Number.isFinite(prev.mf)) mfEl.textContent = `movable ${Math.floor(prev.mf * 100)}%`;
+    } else {
+      uvalEl.textContent = defaultU != null ? defaultU.toFixed(1) : '—';
+      if (Number.isFinite(defaultMf)) mfEl.textContent = `movable ${Math.floor(defaultMf * 100)}%`;
+    }
+  }
+
+  /**
+   * Render chart in dual state (dirty=true) or single state (dirty=false).
+   * Replaces the old applyGhost() — builds complete dataset arrays from scratch.
+   */
+  function renderDualState() {
+    if (!chart || !lastRl) return;
+
+    const R = lastRl.C_RATIO;
+    const x = lastRl.lBase > 0 ? lastRl.L_read / lastRl.lBase : (lastRl.x_display ?? 1);
+    const xSweet = lastRl.xSweet;
+    const xBrAmberL = lastRl.xBrAmberL;
+    const xBrAmberR = lastRl.xBrAmberR;
+    const xBrRedR = lastRl.xBrRedR;
+    const wallP = lastRl.wallP ?? (1 + R);
+
+    const dirty = previewState?.dirty;
+
+    // Compute preview landmarks if dirty
+    let prevLandmarks = null;
+    if (dirty && previewState?.B_preview) {
+      const g = lastRl.gEma ?? lastRl.g ?? 0;
+      const L = lastRl.L_read ?? 0;
+      prevLandmarks = computePreviewLandmarks({ B_preview: previewState.B_preview, R, g, L, mf: lastRl.mf });
+    }
+
+    // Viewport: ghost-aware expansion via previewGroup param
+    const viewport = computeEoqViewport({
+      xBrAmberR,
+      xSweet,
+      xBrRedR,
+      wallP,
+      xCurrent: x,
+      previousDomainMax: previousActualDomainMax,
+      previewGroup: prevLandmarks ? { xRedR: prevLandmarks.xRedR, x: prevLandmarks.x } : undefined,
+    });
+    // Only actual data advances the ratchet (spec §3.3).
+    // actualDomainMax is the pre-ghost domain max computed in the same call, no second invocation needed.
+    previousActualDomainMax = viewport.actualDomainMax;
+
+    const domain = viewport.mainDomain;
+
+    // Y-max: always use the same base formula as non-dirty (entry/wall * 1.3)
+    // so U-curve bottom stays stable across dirty toggle.
+    const costAtX = x > 1 ? eoqCost(x, R, xSweet) : null;
+    const xEntryFallback = lastRl.xBrAmberL > 1.01 ? lastRl.xBrAmberL : 1.2;
+    const costAtEntry = eoqCost(xEntryFallback, R, xSweet);
+    const costAtWall = eoqCost(wallP, R, xSweet);
+    let yMax = Math.max(costAtEntry, costAtWall) * 1.3;
+    // If preview dot is higher than base yMax, expand just enough to fit it
+    if (prevLandmarks) {
+      const costPrev = prevLandmarks.x > 1 ? eoqCost(prevLandmarks.x, R, prevLandmarks.xSweet) : 0;
+      if (costPrev > yMax) yMax = costPrev * 1.1;
+    }
+
+    // Sample curves
+    const amberCurveData = sampleCurve(domain.min, domain.max, R, xSweet, SAMPLE_POINTS);
+
+    // Build amber group (default state)
+    const amberDatasets = buildGroupDatasets('amber', {
+      curveData: amberCurveData,
+      xSweet,
+      xAmberL: xBrAmberL,
+      xAmberR: xBrAmberR,
+      xRedR: xBrRedR,
+      x,
+      costAtX,
+      yMax,
+      R,
+      domainMin: domain.min,
+      isActive: activeGroup === 'amber',
+    });
+
+    let allDatasets = [...amberDatasets];
+
+    // Build mint group (preview state) if dirty
+    if (dirty && prevLandmarks) {
+      const mintCurveData = sampleCurve(domain.min, domain.max, R, prevLandmarks.xSweet, SAMPLE_POINTS);
+      const costAtPreview = prevLandmarks.x > 1 ? eoqCost(prevLandmarks.x, R, prevLandmarks.xSweet) : null;
+
+      const mintDatasets = buildGroupDatasets('mint', {
+        curveData: mintCurveData,
+        xSweet: prevLandmarks.xSweet,
+        xAmberL: prevLandmarks.xAmberL,
+        xAmberR: prevLandmarks.xAmberR,
+        xRedR: prevLandmarks.xRedR,
+        x: prevLandmarks.x,
+        costAtX: costAtPreview,
+        yMax,
+        R,
+        domainMin: domain.min,
+        isActive: activeGroup === 'mint',
+      });
+
+      allDatasets = [...allDatasets, ...mintDatasets];
+    }
+
+    // Determine active group's cost + br for brLabel
+    let activeCostAtX = costAtX;
+    let activeBr = lastRl.br ?? lastRl.billRegret ?? null;
+    if (activeGroup === 'mint' && prevLandmarks) {
+      activeCostAtX = prevLandmarks.x > 1 ? eoqCost(prevLandmarks.x, R, prevLandmarks.xSweet) : null;
+      const mf = prevLandmarks.mf ?? lastRl.mf ?? 0.3;
+      const dhat = prevLandmarks.dhat;
+      if (dhat > 0 && prevLandmarks.x > 1) {
+        const u = (prevLandmarks.x - 1) / dhat;
+        activeBr = computePreviewBr(mf, u);
+      }
+    }
+
+    // Apply to chart
+    chart.data.datasets = allDatasets;
+    chart.options.scales.x.min = domain.min;
+    chart.options.scales.x.max = domain.max;
+    chart.options.scales.y.min = -yMax * 0.06;
+    chart.options.scales.y.max = yMax;
+    if (chart.options.plugins.brLabel) {
+      chart.options.plugins.brLabel.br = activeBr;
+      chart.options.plugins.brLabel.costAtX = activeCostAtX;
+    }
+    chart.update();
+
+    // Update topbar to reflect active group
+    const dhat = lastRl.dhat;
+    const defaultU = (Number.isFinite(dhat) && dhat > 0 && x > 1) ? (x - 1) / dhat : null;
+    updateTopbar(defaultU, lastRl.mf);
+  }
+
+  /**
+   * Check if amber and mint dots overlap (within DOT_OVERLAP_THRESHOLD_PX).
+   */
+  function dotsOverlap() {
+    if (!chart) return false;
+    const metas = chart.data.datasets.map((_, i) => chart.getDatasetMeta(i));
+    let amberPt = null, mintPt = null;
+    for (let i = 0; i < chart.data.datasets.length; i++) {
+      const ds = chart.data.datasets[i];
+      if (ds._swRole !== 'dot') continue;
+      const el = metas[i].data[0];
+      if (!el) continue;
+      if (ds._swGroup === 'amber') amberPt = { x: el.x, y: el.y };
+      if (ds._swGroup === 'mint') mintPt = { x: el.x, y: el.y };
+    }
+    if (!amberPt || !mintPt) return false;
+    const dx = amberPt.x - mintPt.x;
+    const dy = amberPt.y - mintPt.y;
+    return Math.sqrt(dx * dx + dy * dy) < DOT_OVERLAP_THRESHOLD_PX;
+  }
+
+  /**
+   * Handle chart click — activation toggle on dots only.
+   */
+  function handleChartClick(evt) {
+    if (!chart) return;
+    const hits = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+    const dotHit = hits.find(({ datasetIndex }) =>
+      chart.data.datasets[datasetIndex]?._swRole === 'dot'
+    );
+    if (!dotHit) return;
+
+    const group = chart.data.datasets[dotHit.datasetIndex]._swGroup;
+
+    if (dotsOverlap()) {
+      activeGroup = activeGroup === 'mint' ? 'amber' : 'mint';
+    } else {
+      activeGroup = group;
+    }
+    document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    renderDualState();
+  }
+
   function computeChartData(rl) {
     const R = rl.C_RATIO;
     const x = rl.lBase > 0 ? rl.L_read / rl.lBase : (rl.x_display ?? 1);
@@ -142,22 +573,18 @@ export function mount(root, _ctx) {
     const xBrRedR = rl.xBrRedR;
     const wallP = rl.wallP ?? (1 + R);
 
-    const viewport = computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent: x, previousDomainMax });
-    previousDomainMax = viewport.mainDomain.max;
+    const viewport = computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent: x, previousDomainMax: previousActualDomainMax });
+    previousActualDomainMax = viewport.mainDomain.max;
 
-    // Legacy domain object for backward compat with verticalLine datasets
     const domain = { minX: viewport.mainDomain.min, maxX: viewport.mainDomain.max, overflow: viewport.isPastWall ? 'right' : 'none' };
 
-    // Y-max: use cost at entry as anchor
     const xEntryFallback = xBrAmberL > 1.01 ? xBrAmberL : 1.2;
     const costAtEntry = eoqCost(xEntryFallback, R, xSweet);
     const costAtWall = eoqCost(wallP, R, xSweet);
     const yMax = Math.max(costAtEntry, costAtWall) * 1.3;
-    // Sample from domain min (not 1) so curve fills the focused viewport
     const curveData = sampleCurve(viewport.mainDomain.min, viewport.mainDomain.max, R, xSweet, SAMPLE_POINTS);
     const costAtX = x > 1 ? eoqCost(x, R, xSweet) : null;
 
-    // u = (x - 1) / dhat — EOQ normalized coordinate (matches statusline renderU)
     const dhat = rl.dhat;
     const u = (Number.isFinite(dhat) && dhat > 0 && x > 1) ? (x - 1) / dhat : null;
 
@@ -172,7 +599,15 @@ export function mount(root, _ctx) {
       return;
     }
 
-    const { R, x, xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP } = { R: rl.C_RATIO, x: rl.lBase > 0 ? rl.L_read / rl.lBase : (rl.x_display ?? 1), xBrAmberL: rl.xBrAmberL, xSweet: rl.xSweet, xBrAmberR: rl.xBrAmberR, xBrRedR: rl.xBrRedR, wallP: rl.wallP ?? (1 + rl.C_RATIO) };
+    const { R, x, xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP } = {
+      R: rl.C_RATIO,
+      x: rl.lBase > 0 ? rl.L_read / rl.lBase : (rl.x_display ?? 1),
+      xBrAmberL: rl.xBrAmberL,
+      xSweet: rl.xSweet,
+      xBrAmberR: rl.xBrAmberR,
+      xBrRedR: rl.xBrRedR,
+      wallP: rl.wallP ?? (1 + rl.C_RATIO),
+    };
 
     const validation = validateLandmarks({ xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP });
     if (!validation.ok) {
@@ -182,91 +617,28 @@ export function mount(root, _ctx) {
     }
 
     const { domain, curveData, yMax, costAtX, u } = computeChartData(rl);
-    uvalEl.textContent = u != null ? u.toFixed(1) : '—';
+    updateTopbar(u, status?.rateLamp?.mf);
 
-    // mf display in topbar
-    const mfEl = container.querySelector('.sw-hero-mf');
-    if (mfEl && Number.isFinite(status?.rateLamp?.mf)) {
-      mfEl.textContent = `movable ${Math.floor(status.rateLamp.mf * 100)}%`;
-    }
+    if (!chart) {
+      // Resolve theme colors once
+      resolveColors();
 
-    // Fix #6: if chart already exists with valid landmarks, update datasets in-place instead of
-    // destroy+rebuild. With a 2s poll on an active session this prevents a destroy+rebuild every tick.
-    if (chart) {
-      chart.data.datasets[0].data = curveData;
-      chart.data.datasets[1].data = Number.isFinite(xBrAmberL) ? [{ x: xBrAmberL, y: 0 }, { x: xBrAmberL, y: yMax }] : [];
-      chart.data.datasets[2].data = [{ x: xSweet, y: 0 }, { x: xSweet, y: yMax }];
-      chart.data.datasets[3].data = [{ x: xBrAmberR, y: 0 }, { x: xBrAmberR, y: yMax }];
-      chart.data.datasets[4].data = Number.isFinite(xBrRedR) ? [{ x: xBrRedR, y: 0 }, { x: xBrRedR, y: yMax }] : [];
-      chart.data.datasets[5].data = costAtX != null ? [{ x: Math.min(x, domain.maxX), y: costAtX }] : [];
-      // 6: horizontal line at current cost level
-      chart.data.datasets[6].data = costAtX != null
-        ? [{ x: domain.minX, y: costAtX }, { x: Math.min(x, domain.maxX), y: costAtX }]
-        : [];
-      chart.options.scales.x.min = domain.minX;
-      chart.options.scales.x.max = domain.maxX;
-      chart.options.scales.y.min = -yMax * 0.06;
-      chart.options.scales.y.max = yMax;
-      // Update br label stored in plugin config
-      chart.options.plugins.brLabel.br = status?.rateLamp?.br;
-      chart.options.plugins.brLabel.costAtX = costAtX;
-      chart.update('none');
-    } else {
-      // Theme colors for chart datasets
-      const mintColor = cssVar(container, '--mint', '#4fe0b0');
-      const amberColor = cssVar(container, '--amber', '#ffc24d');
+      // Initial datasets — single amber group (non-dirty default state)
+      const initDatasets = buildGroupDatasets('amber', {
+        curveData,
+        xSweet,
+        xAmberL: xBrAmberL,
+        xAmberR: xBrAmberR,
+        xRedR: xBrRedR,
+        x,
+        costAtX,
+        yMax,
+        R,
+        domainMin: domain.minX,
+        isActive: true,
+      });
 
-      // Datasets
-      const datasets = [
-        // 0: EOQ U-curve
-        {
-          label: 'EOQ cost',
-          data: curveData,
-          borderColor: mintColor,
-          backgroundColor: mintColor.startsWith('#') ? mintColor + '14' : 'rgba(79,224,176,0.08)',
-          borderWidth: 2.5,
-          pointRadius: 0,
-          fill: true,
-          tension: 0.3,
-          parsing: false,
-        },
-        // 1: br=-10% left arm vertical (entry color)
-        verticalLine(Number.isFinite(xBrAmberL) ? xBrAmberL : -1, yMax, cssVar(container, '--zone-entry', '#6cc6f0'), [3, 4]),
-        // 2: br=0 sweet vertical
-        verticalLine(xSweet, yMax, cssVar(container, '--zone-sweet', '#4fe0b0'), [3, 4]),
-        // 3: br=+10% right arm vertical (deep/amber color)
-        verticalLine(xBrAmberR, yMax, cssVar(container, '--zone-deep', '#ffc24d'), [3, 4], 1.4),
-        // 4: br=+25% red threshold vertical (wall color)
-        verticalLine(Number.isFinite(xBrRedR) ? xBrRedR : -1, yMax, cssVar(container, '--zone-wall', '#ff7566'), [3, 4], 1.4),
-        // 5: current x marker (amber dot on curve) — drawn last (top layer)
-        {
-          data: costAtX != null ? [{ x: Math.min(x, domain.maxX), y: costAtX }] : [],
-          borderColor: amberColor,
-          backgroundColor: amberColor,
-          pointRadius: 6.5,
-          pointHoverRadius: 8,
-          pointBorderWidth: 0,
-          showLine: false,
-          parsing: false,
-          order: -1,
-        },
-        // 6: horizontal line at current cost level (from y-axis to current dot)
-        {
-          data: costAtX != null
-            ? [{ x: domain.minX, y: costAtX }, { x: Math.min(x, domain.maxX), y: costAtX }]
-            : [],
-          borderColor: amberColor.startsWith('#') ? amberColor + '88' : 'rgba(255,194,77,0.53)',
-          borderWidth: 1.2,
-          borderDash: [3, 3],
-          pointRadius: 0,
-          fill: false,
-          showLine: true,
-          parsing: false,
-        },
-
-      ];
-
-      // Plugin: draw br% label at the current cost level on the y-axis + "bill premium" axis title
+      // Plugin: draw br% label at current cost level on y-axis + "bill premium" axis title
       const brLabelPlugin = {
         id: 'brLabel',
         afterDraw(chartInstance) {
@@ -312,7 +684,7 @@ export function mount(root, _ctx) {
 
       chart = new Chart(canvas, {
         type: 'line',
-        data: { datasets },
+        data: { datasets: initDatasets },
         plugins: [brLabelPlugin],
         options: {
           animation: false,
@@ -320,7 +692,25 @@ export function mount(root, _ctx) {
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: { enabled: false },
+            tooltip: {
+              enabled: true,
+              filter: (tooltipItem) => {
+                return chart.data.datasets[tooltipItem.datasetIndex]?._swRole === 'dot';
+              },
+              callbacks: {
+                label: (ctx) => {
+                  const group = chart.data.datasets[ctx.datasetIndex]._swGroup;
+                  return group === 'amber' ? 'Current state' : 'Preview state';
+                },
+                title: () => '',
+              },
+              displayColors: false,
+              backgroundColor: 'rgba(20, 26, 30, 0.9)',
+              bodyFont: { family: '"JetBrains Mono", monospace', size: 11 },
+              bodyColor: '#eef3f6',
+              padding: { x: 8, y: 5 },
+              cornerRadius: 6,
+            },
             brLabel: { br: status?.rateLamp?.br, costAtX },
           },
           scales: {
@@ -339,11 +729,49 @@ export function mount(root, _ctx) {
               grid: { display: false },
             },
           },
+          onClick: handleChartClick,
         },
       });
 
       // Expose chart for depthAux ResizeObserver sync and e2e
       if (window.__SW_dashboard) window.__SW_dashboard.charts.hero = chart;
+
+      // If entering buildChart with an active preview (race: event fired before first poll),
+      // apply dual state on the freshly created chart.
+      if (previewState?.dirty) {
+        renderDualState();
+      }
+    } else {
+      // Chart exists — incremental update
+      if (previewState?.dirty) {
+        // Dirty: rebuild both groups via renderDualState
+        renderDualState();
+      } else {
+        // Non-dirty: update single amber group in-place (stable yMax, no jumps)
+        const datasets = buildGroupDatasets('amber', {
+          curveData,
+          xSweet,
+          xAmberL: xBrAmberL,
+          xAmberR: xBrAmberR,
+          xRedR: xBrRedR,
+          x,
+          costAtX,
+          yMax,
+          R,
+          domainMin: domain.minX,
+          isActive: true,
+        });
+        chart.data.datasets = datasets;
+        chart.options.scales.x.min = domain.minX;
+        chart.options.scales.x.max = domain.maxX;
+        chart.options.scales.y.min = -yMax * 0.06;
+        chart.options.scales.y.max = yMax;
+        if (chart.options.plugins.brLabel) {
+          chart.options.plugins.brLabel.br = status?.rateLamp?.br;
+          chart.options.plugins.brLabel.costAtX = costAtX;
+        }
+        chart.update('none');
+      }
     }
 
     // Update verdict row
@@ -352,12 +780,40 @@ export function mount(root, _ctx) {
     verdictText.innerHTML = verdict.caption;
   }
 
+  function onBucketPreview(e) {
+    const detail = e.detail ?? null;
+    const wasDirty = previewState?.dirty;
+    previewState = detail;
+
+    if (detail?.dirty && !wasDirty) {
+      // Entering dirty: activate mint (show user the result of their action)
+      activeGroup = 'mint';
+      document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    } else if (!detail?.dirty && wasDirty) {
+      // Leaving dirty: revert to amber
+      activeGroup = 'amber';
+      document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    }
+    // dirty → dirty: activeGroup unchanged (user's choice preserved)
+
+    renderDualState();
+  }
+
+  function onExternalActiveGroup(e) {
+    const newGroup = e.detail?.activeGroup;
+    if (!newGroup || newGroup === activeGroup) return;
+    activeGroup = newGroup;
+    renderDualState();
+  }
+
+  document.addEventListener('sw-bucket-preview', onBucketPreview);
+  document.addEventListener('sw-active-group', onExternalActiveGroup);
+
   function update(snapshot) {
-    // Segment change resets ratchet — uses snapshot.status.segment (available in all API responses)
     const currentSegment = snapshot?.status?.segment ?? null;
     let segmentChanged = false;
     if (currentSegment !== prevSegment) {
-      previousDomainMax = null;
+      previousActualDomainMax = null;
       prevSegment = currentSegment;
       segmentChanged = true;
     }
@@ -366,11 +822,10 @@ export function mount(root, _ctx) {
     const capabilities = snapshot?.capabilities;
     if (!rl) return;
     const newX = rl.lBase > 0 ? rl.L_read / rl.lBase : (rl.x_display ?? 1);
-    // Fix #11: NaN defeats the skip-guard — NaN === NaN is false, so every tick rebuilds the chart.
-    // Guard early: if lBase=0 and x_display is undefined, newX = NaN. Same for C_RATIO being absent.
     if (!Number.isFinite(newX)) return;
     const newR = rl.C_RATIO;
     if (!Number.isFinite(newR)) return;
+    lastRl = rl;  // Always cache latest for preview/topbar computations
     if (
       !segmentChanged &&
       newX === prevX &&
@@ -384,6 +839,8 @@ export function mount(root, _ctx) {
   }
 
   function destroy() {
+    document.removeEventListener('sw-bucket-preview', onBucketPreview);
+    document.removeEventListener('sw-active-group', onExternalActiveGroup);
     if (chart) { chart.destroy(); chart = null; }
     container.remove();
     verdictRow.remove();

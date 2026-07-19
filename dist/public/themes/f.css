@@ -15,6 +15,7 @@
   --amber: #ffcf4a;
   --amber-dim: #7a5a10;
   --coral: #ff7a59;
+  --coral-dim: #7a2f22;
 
   /* Text hierarchy */
   --txt: #dce8e0;
@@ -396,6 +397,7 @@ body {
   width: 2px;
   background: #fff;
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+  transition: opacity 0.15s;
 }
 
 .sw-aux-marker::before {
@@ -406,6 +408,16 @@ body {
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   border-top: 6px solid #fff;
+}
+
+.sw-aux-marker::after {
+  content: "";
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  top: -8px;
+  bottom: -8px;
+  cursor: pointer;
 }
 
 .sw-aux-flag {
@@ -500,99 +512,202 @@ body {
   margin-top: 2px;
 }
 
-.sw-burn-turns {
-  font-family: "Archivo", sans-serif;
-  font-weight: 700;
-  font-size: 52px;
-  line-height: 0.9;
-  color: var(--amber);
-  margin-top: 10px;
+/* ── Dual-bar rent meter: bar groups ──────────────────────────────────────── */
+.bar-group { margin-top: 16px; }
+.bar-group + .bar-group { margin-top: 14px; }
+
+.bar-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--mute);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 4px;
 }
 
-.sw-burn-turns small {
-  font-size: 19px;
-  color: var(--txt-dim);
-  font-weight: 500;
-}
+/* ── Cycle bar (inline: track + tail) ─────────────────────────────────────── */
+.bar-inline { display: flex; align-items: center; gap: 6px; }
+.bar-inline .bar-track { flex: 1; }
 
-.sw-burn-meter-lab {
-  font-size: 13px;
-  color: var(--txt-dim);
-  margin-top: 4px;
-}
-
-.sw-burn-meter-lab b {
-  color: var(--amber);
-}
-
-.sw-burn-bar-wrap {
-  margin-top: 16px;
-  height: 22px;
-  border-radius: 8px;
-  background: #060a08;
-  border: 1px solid var(--edge);
-  overflow: hidden;
-  position: relative;
-}
-
-.sw-burn-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--amber-dim), var(--amber));
-  position: relative;
-  transition: width 0.2s ease;
-}
-
-.sw-burn-fill::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: #fff5dd;
-  opacity: 0.5;
-}
-
-.sw-burn-cap {
+.bar-tail {
+  flex-shrink: 0;
+  width: 46px;
   display: flex;
-  justify-content: space-between;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  color: var(--mute);
-  margin-top: 7px;
-}
-
-.sw-burn-odometer {
-  display: inline-flex;
-  gap: 2px;
-  margin-top: 12px;
   align-items: center;
+  justify-content: flex-start;
 }
 
-.sw-burn-odometer .roll {
-  font-family: "JetBrains Mono", monospace;
-  font-weight: 600;
-  font-size: 13px;
-  background: #060a08;
-  border: 1px solid var(--edge);
-  border-radius: 4px;
-  padding: 2px 6px;
-  color: var(--sky);
-}
-
-.sw-burn-odometer .olab {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  color: var(--mute);
-  margin-left: 6px;
-}
-
-.sw-burn-pulse {
+.bar-inline-value {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
-  color: var(--amber);
-  margin-top: 10px;
+  color: var(--txt-dim);
+  font-weight: 400;
 }
+
+/* ── Bar track (vehicle gauge style) ─────────────────────────────────────── */
+.bar-track {
+  height: 18px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #0a0d10 0%, #141a1e 40%, #0e1215 100%);
+  border: 1px solid var(--edge);
+  overflow: visible;
+  position: relative;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.03);
+}
+
+/* Background 10% notch marks — only on cycle bar (depth uses dynamic ticks) */
+.bar-inline .bar-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0px, transparent 9.8%,
+    rgba(255,255,255,0.04) 9.8%, rgba(255,255,255,0.04) 10%
+  );
+}
+
+/* ── Depth bar (with magazine tail) ──────────────────────────────────────── */
+.bar-with-mag { display: flex; align-items: center; gap: 6px; }
+.bar-with-mag > .bar-track { flex: 1; }
+
+/* ── Bar fill ────────────────────────────────────────────────────────────── */
+.bar-fill {
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  transition: width 0.2s;
+  border-radius: 2px;
+}
+
+/* Cycle bar: mint with edge glow */
+.bar-fill.cycle {
+  background: linear-gradient(180deg, var(--mint) 0%, var(--mint-dim) 100%);
+  box-shadow: 0 0 8px rgba(79,224,176,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+.bar-fill.cycle::after {
+  content: "";
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #c8fff0, var(--mint));
+  box-shadow: 0 0 6px rgba(200,255,240,0.6);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Depth bar: amber glow */
+.bar-fill.depth {
+  background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);
+  box-shadow: 0 0 8px rgba(255,194,77,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+}
+
+.bar-fill.depth::after {
+  content: "";
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #fff5dd, var(--amber));
+  box-shadow: 0 0 6px rgba(255,245,221,0.6);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Depth bar hot: coral gradient */
+.bar-fill.depth-hot {
+  background: linear-gradient(180deg, var(--coral) 0%, #a33a2f 100%);
+  box-shadow: 0 0 10px rgba(255,117,102,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
+}
+
+.bar-fill.depth-hot::after {
+  content: "";
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #ffd5d0, var(--coral));
+  box-shadow: 0 0 8px rgba(255,213,208,0.7);
+  border-radius: 0 2px 2px 0;
+}
+
+/* ── Bar tick segments (internal backstop divisions) ─────────────────────── */
+.bar-ticks {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+}
+
+.bar-tick-segment {
+  flex: 1;
+  border-right: 2px solid rgba(238,243,246,0.2);
+}
+
+.bar-tick-segment:last-child { border-right: none; }
+
+/* ── Bar detail line ──────────────────────────────────────────────────────── */
+.bar-detail {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--mute);
+  margin-top: 5px;
+}
+
+.bar-detail .hl { color: var(--txt-dim); }
+
+/* ── Disabled depth group ─────────────────────────────────────────────────── */
+.bar-group.disabled .bar-name { color: #3a4550; }
+.bar-group.disabled .bar-track { opacity: 0.3; }
+.bar-group.disabled .bar-track::before { opacity: 0.3; }
+
+/* ── Magazine tail ────────────────────────────────────────────────────────── */
+.mag-tail {
+  flex-shrink: 0;
+  width: 46px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mag-ticks {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+
+.mag-tick {
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  border: 1px solid var(--edge);
+  background: linear-gradient(180deg, #1a2028 0%, #0e1215 100%);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+  transition: all 0.2s;
+}
+
+.mag-tick.spent {
+  background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);
+  border-color: var(--amber-dim);
+  box-shadow: 0 0 6px rgba(255,194,77,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+.mag-tick.spent.hot {
+  background: linear-gradient(180deg, var(--coral) 0%, var(--coral-dim) 100%);
+  border-color: var(--coral-dim);
+  box-shadow: 0 0 8px rgba(255,117,102,0.6), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+
+.mag-overflow {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--coral);
+}
+
 
 /* ── Verdict row (spans hero columns) ──────────────────────────────────────── */
 .sw-hero-verdict-row {
@@ -634,6 +749,9 @@ body {
   border: 1px solid var(--edge);
   border-radius: 18px;
   padding: 18px 20px;
+  height: 360px;
+  display: flex;
+  flex-direction: column;
 }
 
 .sw-history-header {
@@ -656,7 +774,8 @@ body {
 .sw-history-container {
   position: relative;
   width: 100%;
-  height: 200px;
+  flex: 1;
+  min-height: 0;
 }
 
 .sw-history-canvas {
@@ -713,6 +832,7 @@ body {
   border-top: 1px dotted var(--edge);
   margin-top: 12px;
   padding-top: 10px;
+  padding-bottom: 14px;
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   color: var(--mute);
@@ -724,94 +844,9 @@ body {
 }
 
 /* ── Buckets card ──────────────────────────────────────────────────────────── */
-#sw-buckets {
-  background: var(--card);
-  border: 1px solid var(--edge);
-  border-radius: 18px;
-  padding: 18px 20px;
-  position: relative;
-}
-
-.sw-buckets-header {
-  font-family: "Archivo", sans-serif;
-  font-weight: 600;
-  font-size: 14px;
-  margin: 0 0 2px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--txt);
-}
-
-.sw-buckets-subtitle {
-  font-size: 11px;
-  color: var(--mute);
-  margin: 3px 0 12px;
-}
-
-.sw-buckets-lock {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  font-weight: 400;
-  color: var(--amber);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px dashed var(--amber-dim);
-  border-radius: 20px;
-  padding: 2px 9px;
-}
-
-.sw-buckets-tree {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-  line-height: 2;
-  color: var(--txt-dim);
-  filter: grayscale(1);
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.sw-buckets-tree .n {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sw-buckets-tree .cb {
-  width: 13px;
-  height: 13px;
-  border: 1.5px solid var(--mute);
-  border-radius: 3px;
-  flex: none;
-}
-
-.sw-buckets-tree .cb.on {
-  background: var(--mint);
-  border-color: var(--mint);
-}
-
-.sw-buckets-tree .cb.half {
-  background: linear-gradient(135deg, var(--mint) 50%, transparent 50%);
-}
-
-.sw-buckets-tree .cb.lock {
-  background: var(--mute);
-  border-color: var(--mute);
-}
-
-.sw-buckets-tree .indent {
-  margin-left: 20px;
-}
-
-.sw-buckets-tree .tok {
-  margin-left: auto;
-  color: var(--mute);
-}
-
-.sw-buckets-tree .special {
-  color: var(--amber);
-}
+/* Old .sw-buckets-* placeholder removed. Bucket panel styles live in h.css
+   (namespaced under #sw-buckets) — all values are CSS custom properties and
+   apply to this theme via its :root token definitions. */
 
 /* ── Terms ──────────────────────────────────────────────────────────────────── */
 #sw-terms .sw-terms {

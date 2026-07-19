@@ -22,10 +22,10 @@ import { resolveLedgerForKey, mergeLedgerIntoStatus, recordBillEvent,
   getDebugCounters } from '../lib/rate-lamp-manager.js';
 import { freshLedger, saveRateLampState, stateKeyOf, applyFoldedCallSample } from '../lib/rate-lamp-store.js';
 
-// KEY is the real state key the fakeWatcher's snapshot computes (segment/model/cRatio/fingerprint/cap).
+// KEY is the real state key stateKeyForStatus computes for segment 0 in v3 (only segment + schema).
 // The pure resolveLedgerForKey/merge tests treat it as an opaque key string; the advance tests need it
 // to EQUAL advanceRateLampToCurrent's computed currentKey so the ledger is reused, not reset.
-const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'fp-A', contextCap: 1000000, schemaVersion: 1 });
+const KEY = stateKeyOf({ segmentId: 0, model: null, cRatio: null, baselineFingerprint: null, contextCap: null, schemaVersion: 1 });
 const SID = 'sid-manager-test';
 // reducer sample helper (New#3 re-anchor tests) — field is L_read (effectiveL), never cacheRead.
 const rs = (seq, burnRate, L_read, turnSeq = 1) => ({ seq, reliable: true, burnRate, L_read, turnSeq });
@@ -34,7 +34,7 @@ const rs = (seq, burnRate, L_read, turnSeq = 1) => ({ seq, reliable: true, burnR
 // returns a reliable-latched rateLamp whose {segment,model,C_RATIO,fingerprint,L_cap} compute to KEY, so a
 // same-key ledger is reused. rateLampSamplesSince/rateLampSeqSamplesSince return the provided `samples`.
 function fakeWatcher({ turnSeq, foldedSeq, samples = [], reliable = true, unavailableReason,
-  cRatio = 10, kStable = 940, L_read = 300000, L_cap = 1000000, baselineTotal = 250000,
+  cRatio = 10, kStable = 940, gEma = 940, L_read = 300000, L_cap = 1000000, baselineTotal = 250000,
   model = 'opus', segment = 0, fingerprint = 'fp-A' } = {}) {
   return {
     _turnSeq: turnSeq,
@@ -42,7 +42,7 @@ function fakeWatcher({ turnSeq, foldedSeq, samples = [], reliable = true, unavai
     poll() { return { changed: false, newCalls: 0 }; },
     getStatus() {
       const rateLamp = reliable
-        ? { reliable: true, C_RATIO: cRatio, L_cap, L_read, B_post: baselineTotal, B_rebuild: baselineTotal, kStable }
+        ? { reliable: true, C_RATIO: cRatio, L_cap, L_read, B_post: baselineTotal, B_rebuild: baselineTotal, kStable, gEma }
         : { reliable: false, unavailableReason };
       return { segment, model, baseline: { fingerprint, total: baselineTotal }, rateLamp };
     },
@@ -57,7 +57,6 @@ test('R2-3: fresh ledger (no persisted) anchors at CURRENT seq, does NOT catch u
   assert.equal(led.lastAppliedFoldedCallSeq, 20, 'anchored at current seq — the next drain only sees seq>20');
   assert.equal(led.billProgress, 0, 'no retroactive integration of the existing 20-call history');
   assert.equal(led.billAnchorLRead, 250000);
-  assert.equal(led.billAnchorTurnSeq, 4, 'R5 GPT#7: billAnchorTurnSeq set at anchor, not left at 0');
   assert.equal(led.kStableFrozen, 940);
 });
 
@@ -79,39 +78,31 @@ test('R2-1: same key + watcher seq ≥ lastApplied → reuse (continue integrati
   _resetRateLampManagerForTest();
   const SIDR = 'sid-r2-1-trailing-sync';
   setLiveLedger(SIDR, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 3,
-    currentTurnDeltaW: 1.5, billProgress: 0.4 });
+    billProgress: 0.4 });
   const w = fakeWatcher({ turnSeq: 5, foldedSeq: 12, samples: [] });
   const { ledger } = advanceRateLampToCurrent(w, SIDR, { forcePoll: false });
   assert.equal(ledger.currentTurnSeq, 5, 'TTL/pulse cursor reaches the watcher turn at the END of the advance (trailing sync)');
-  assert.equal(ledger.currentTurnDeltaW, 0, 'ΔW zeroed on the real turn advance (no leaked dw_backstop) — R7-1 preserved');
   assert.equal(ledger.billProgress, 0.4, 'no integration happened — billProgress untouched');
 });
 
 test('New#3: same key but watcher seq < lastApplied → in-place re-anchor (NOT a stuck seq_history_mismatch pause)', () => {
-  // Pre-fix this branch set pausedReason:'seq_history_mismatch', which BOTH drain gates in
-  // advanceRateLampToCurrent refuse — and the only code that clears pausedReason (the reducer's recovering
-  // branch) is exactly what those gates prevent. So the pause never self-cleared: billing + ΔW/stock alerts
-  // silently lost until the segment changed. Fix: re-anchor in place, preserving the lifetime cycleCount and
-  // the billProgress remainder, moving the seq/anchors to NOW, clearing pending + the pause.
   const persisted = { ...freshLedger(KEY, 940), lastAppliedFoldedCallSeq: 20, billProgress: 0.4,
-    billCycleCount: 5, pendingBillCountSinceBoundary: 3, lastBurnRate: 1.3, currentTurnSeq: 6 };
+    billCycleCount: 5, lastBurnRate: 1.3, currentTurnSeq: 6 };
   const led = resolveLedgerForKey(persisted, { currentKey: KEY, watcherFoldedSeq: 10, watcherTurnSeq: 9, kStableFrozen: 940, lReadNow: 100000 });
   assert.equal(led.pausedReason, null, 'deadlock broken: mismatch no longer wedges the ledger');
-  assert.equal(led.billCycleCount, 5, 'lifetime billCycleCount PRESERVED (planned dashboard N→0 jump avoided)');
+  assert.equal(led.billCycleCount, 5, 'lifetime billCycleCount PRESERVED');
   assert.equal(led.billProgress, 0.4, 'billProgress remainder preserved for seamless continuity');
-  assert.equal(led.lastAppliedFoldedCallSeq, 10, 're-anchored to the CURRENT watcher folded seq (from-now, no replay)');
+  assert.equal(led.lastAppliedFoldedCallSeq, 10, 're-anchored to the CURRENT watcher folded seq');
   assert.equal(led.billAnchorFoldedCallSeq, 10, 'bill anchor folded seq re-anchored to now');
   assert.equal(led.billAnchorLRead, 100000, 'bill anchor L_read re-anchored to lReadNow');
-  assert.equal(led.billAnchorTurnSeq, 9, 'bill anchor turn seq re-anchored to the current watcher turn');
-  assert.equal(led.pendingBillCountSinceBoundary, 0, 'pending across the seq break cleared (untrustworthy → no phantom Stop bill)');
-  assert.equal(led.lastBurnRate, null, 'lastBurnRate nulled so the first post-re-anchor call re-anchors (P0-5 no-catch-up), not integrate a stale-rate trapezoid');
-  assert.equal(led.stateKey, KEY, 'stateKey unchanged — the precondition to reach this branch');
+  assert.equal(led.lastBurnRate, null, 'lastBurnRate nulled (P0-5 no-catch-up)');
+  assert.equal(led.stateKey, KEY, 'stateKey unchanged');
   assert.equal(led.kStableFrozen, 940, 'frozen k_stable kept');
 });
 
 test('New#3: no double-settlement after re-anchor — historical seq≤now are no-ops; integration resumes clean', () => {
   const persisted = { ...freshLedger(KEY, 940), lastAppliedFoldedCallSeq: 20, billProgress: 0.4,
-    billCycleCount: 5, pendingBillCountSinceBoundary: 3, lastBurnRate: 1.3, currentTurnSeq: 6 };
+    billCycleCount: 5, lastBurnRate: 1.3, currentTurnSeq: 6 };
   let led = resolveLedgerForKey(persisted, { currentKey: KEY, watcherFoldedSeq: 10, watcherTurnSeq: 9, kStableFrozen: 940, lReadNow: 100000 });
   // Re-feeding calls at or below the re-anchored cursor (seq ≤ 10) must be idempotent no-ops — the pause
   // guarded against re-integrating already-settled calls, and the re-anchor keeps that protection.
@@ -181,7 +172,6 @@ test('R2-1: key mismatch → reset fresh anchored at current seq', () => {
   assert.equal(led.stateKey, KEY);
   assert.equal(led.billProgress, 0, 'new billing epoch');
   assert.equal(led.lastAppliedFoldedCallSeq, 8);
-  assert.equal(led.billAnchorTurnSeq, 2, 'R5 GPT#7: reset also anchors billAnchorTurnSeq at current turn');
   assert.equal(led.kStableFrozen, 940, 'froze the NEW segment k_stable');
 });
 
@@ -207,17 +197,15 @@ test('R2-7: recordBillEvent stamps a TTL-able pulse; stale event not shown next 
 // These exercise advanceRateLampToCurrent against a fake watcher; call _resetRateLampManagerForTest()
 // in t.beforeEach so the module-level _ledgers Map does not bleed between tests (GPT#7).
 
-test('R6-A1 (gemini#1) + R7-1 (GPT#1): a zero-eligible-call turn advances currentTurnSeq AND zeroes currentTurnDeltaW', () => {
+test('R6-A1 (gemini#1): a zero-eligible-call turn advances currentTurnSeq', () => {
   _resetRateLampManagerForTest();
   // fake watcher: reliable-latched, but rateLampSamplesSince returns [] (no new eligible call this turn),
-  // and _turnSeq has advanced from the persisted ledger's currentTurnSeq. The prior turn left a high ΔW.
+  // and _turnSeq has advanced from the persisted ledger's currentTurnSeq.
   const w = fakeWatcher({ turnSeq: 8, foldedSeq: 12, samples: [] });
   setLiveLedger(SID, { ...freshLedger(KEY, 940), stateKey: KEY, lastAppliedFoldedCallSeq: 12, currentTurnSeq: 7,
-    currentTurnDeltaW: 1.9,  // prior turn's ΔW, near the DW_TURN_BACKSTOP=2 threshold
     lastBillEvent: { kind: 'non_idle_burn', billCount: 1, deltaL: 3000, delivery: 'statusline_pulse', turnSeq: 7 } });
   const { ledger } = advanceRateLampToCurrent(w, SID, { forcePoll: false });
   assert.equal(ledger.currentTurnSeq, 8, 'currentTurnSeq followed the real turn even though nothing integrated');
-  assert.equal(ledger.currentTurnDeltaW, 0, 'R7-1: prior turn ΔW zeroed on the real advance — no leaked dw_backstop next turn');
   // → the Task-7 TTL (event.turnSeq===currentTurnSeq) now MISMATCHES the turn-7 pulse → it stops rendering.
   assert.notEqual(ledger.lastBillEvent.turnSeq, ledger.currentTurnSeq, 'stale pulse expires on the empty new turn');
 });
@@ -281,6 +269,99 @@ test('#6: an advance that DOES change the ledger still writes (gate never suppre
   flushPendingPersistsSync(); // C5a: write-behind → flush to verify the write happens
   assert.ok(getDebugCounters().diskWrites > writesBeforeChange, 'a real ledger change wrote the checkpoint (gate did not suppress it)');
   assert.equal(ledger.lastAppliedFoldedCallSeq, 13, 'the new call was integrated (cursor advanced)');
+});
+
+// --- Task 8 (B4-server): rentMeter render object ---
+
+test('mergeLedgerIntoStatus builds rentMeter render object when reliable', () => {
+  // Fixture: a reliable rateLamp status with br-family fields populated.
+  // backstopLapCount=1 (< 3 → depthHot false), dwBillsSinceLastAlert=2, hasDeepWaterGateFired=true.
+  const cRatio = 10, gEma = 940, B = 250000, dhat = 0.35, mf = 0.5;
+  const status = {
+    rateLamp: {
+      reliable: true,
+      C_RATIO: cRatio,
+      gEma,
+      B_post: B,
+      B_rebuild: B,
+      dhat,
+      mf,
+      burnRate: 0.25,
+      billProgress: 0.6,
+      xSweet: 1 + dhat,
+      L_read: 300000,
+      // Task 7 fields
+      dwBillsSinceLastAlert: 2,
+      hasDeepWaterGateFired: true,
+      backstopLapCount: 1,
+    },
+  };
+  const ledger = {
+    ...freshLedger(KEY, 940),
+    stateKey: KEY,
+    billProgress: 0.6,
+    billCycleCount: 3,
+    dwBillsSinceLastAlert: 2,
+    hasDeepWaterGateFired: true,
+    backstopLapCount: 1,
+  };
+  mergeLedgerIntoStatus(status, ledger, KEY);
+  const rm = status.rateLamp.rentMeter;
+  assert.ok(rm, 'rentMeter present after reliable merge');
+  // cycleProgress = billProgress
+  assert.equal(rm.cycleProgress, 0.6, 'cycleProgress === ledger.billProgress');
+  // rentRate = burnRate
+  assert.equal(rm.rentRate, 0.25, 'rentRate === burnRate');
+  // sweetRentRate = dhat / cRatio
+  assert.ok(Math.abs(rm.sweetRentRate - dhat / cRatio) < 1e-12, 'sweetRentRate === dhat/cRatio');
+  // depthActive = hasDeepWaterGateFired
+  assert.equal(rm.depthActive, true, 'depthActive === hasDeepWaterGateFired');
+  // depthProgress clamped [0,1]
+  assert.ok(rm.depthProgress >= 0 && rm.depthProgress <= 1, 'depthProgress in [0,1]');
+  // depthHot = backstopLapCount >= 3
+  assert.equal(rm.depthHot, false, 'depthHot false when lapCount(1) < 3');
+  // backstopLapCount mirrored
+  assert.equal(rm.backstopLapCount, 1, 'backstopLapCount mirrored from rateLamp');
+  // backstopInterval is a finite number (mf > 0 so backstopIntervalFor returns a real number)
+  assert.ok(Number.isFinite(rm.backstopInterval), 'backstopInterval is finite');
+
+  // Verify depthHot=true when lapCount >= 3
+  const status2 = {
+    rateLamp: { ...status.rateLamp, backstopLapCount: 3, dwBillsSinceLastAlert: 5 },
+  };
+  const ledger2 = { ...ledger, backstopLapCount: 3, dwBillsSinceLastAlert: 5 };
+  mergeLedgerIntoStatus(status2, ledger2, KEY);
+  assert.equal(status2.rateLamp.rentMeter.depthHot, true, 'depthHot true when lapCount(3) >= 3');
+});
+
+test('rentMeter is present with null-safe defaults when status is unreliable', () => {
+  const status = { rateLamp: { reliable: false } };
+  mergeLedgerIntoStatus(status, null, 'k');
+  assert.ok(status.rateLamp.rentMeter, 'rentMeter present even when unreliable');
+  assert.equal(status.rateLamp.rentMeter.depthActive, false, 'depthActive defaults false');
+  assert.equal(status.rateLamp.rentMeter.cycleProgress, 0, 'cycleProgress defaults 0');
+  assert.equal(status.rateLamp.rentMeter.rentRate, null, 'rentRate defaults null');
+  assert.equal(status.rateLamp.rentMeter.sweetRentRate, null, 'sweetRentRate defaults null');
+  assert.equal(status.rateLamp.rentMeter.depthProgress, 0, 'depthProgress defaults 0');
+  assert.equal(status.rateLamp.rentMeter.backstopInterval, null, 'backstopInterval defaults null');
+  assert.equal(status.rateLamp.rentMeter.backstopLapCount, 0, 'backstopLapCount defaults 0');
+  assert.equal(status.rateLamp.rentMeter.depthHot, false, 'depthHot defaults false');
+});
+
+test('rentMeter: depthProgress clamped to 1 when dwBills >= backstopInterval', () => {
+  // Large dwBillsSinceLastAlert exceeds interval → clamp to 1
+  const cRatio = 10, gEma = 940, B = 250000, dhat = 0.35, mf = 0.5;
+  const status = {
+    rateLamp: {
+      reliable: true, C_RATIO: cRatio, gEma, B_post: B, B_rebuild: B,
+      dhat, mf, burnRate: 0.3, billProgress: 0.4, xSweet: 1 + dhat, L_read: 290000,
+      dwBillsSinceLastAlert: 99999, hasDeepWaterGateFired: false, backstopLapCount: 0,
+    },
+  };
+  const ledger = { ...freshLedger(KEY, 940), stateKey: KEY, billProgress: 0.4,
+    dwBillsSinceLastAlert: 99999, hasDeepWaterGateFired: false, backstopLapCount: 0 };
+  mergeLedgerIntoStatus(status, ledger, KEY);
+  assert.equal(status.rateLamp.rentMeter.depthProgress, 1, 'depthProgress clamped to 1 when overflow');
 });
 
 test('RV-C8: sweepStaleLedgers evicts entries older than TTL', () => {

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'; const require = createRequire(impor
 // hooks/session-start.js
 import { pathToFileURL, fileURLToPath as fileURLToPath2 } from "node:url";
 import { dirname as dirname2, join as join2 } from "node:path";
+import { realpathSync } from "node:fs";
 
 // lib/launcher.js
 import { spawn } from "node:child_process";
@@ -146,7 +147,14 @@ function launchOptionsFor(payload = {}, baseEnv = process.env) {
   };
 }
 function isMainModule(metaUrl, argv1) {
-  return metaUrl === pathToFileURL(argv1).href;
+  if (!argv1) return false;
+  try {
+    const self = realpathSync(fileURLToPath2(metaUrl));
+    const arg = realpathSync(argv1);
+    return self === arg;
+  } catch {
+    return metaUrl === pathToFileURL(argv1).href;
+  }
 }
 function readStdin(stream, timeoutMs = 2e3) {
   return new Promise((resolve) => {

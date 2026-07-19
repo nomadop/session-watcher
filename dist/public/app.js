@@ -9,7 +9,7 @@ import { mount as mountBurnMeter } from './elements/burnMeter.js';
 import { mount as mountPricingChip } from './elements/pricingChip.js';
 import { mount as mountChrome } from './elements/chrome.js';
 import { mount as mountThemeChip } from './elements/themeChip.js';
-import { mount as mountBucketTree } from './elements/bucketTree.js';
+import { mount as mountBucketPanel } from './elements/bucketPanel.js';
 import { mount as mountTerms } from './elements/terms.js';
 
 const store = createStore();
@@ -32,9 +32,9 @@ function bootstrap() {
   }
 
   // Wire data flow: transport → capabilities → store → elements
-  transport.onData((status, history) => {
+  transport.onData((status, history, _capabilities, bucketData) => {
     const capabilities = buildCapabilities(status);
-    store.update(status, history, capabilities);
+    store.update(status, history, capabilities, bucketData);
   });
 
   store.subscribe((snapshot) => {
@@ -66,7 +66,7 @@ function bootstrap() {
 registerElement(mountChrome, 'sw-chrome');
 registerElement(mountThemeChip, 'sw-chrome');
 registerElement(mountPricingChip, 'sw-chrome');
-registerElement(mountBucketTree, 'sw-buckets');
+registerElement(mountBucketPanel, 'sw-buckets');
 registerElement(mountTerms, 'sw-terms');
 registerElement(mountHeroDiptych, 'sw-hero');
 registerElement(mountDepthAux, 'sw-hero');

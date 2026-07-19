@@ -1,5 +1,8 @@
 // public/elements/depthAux.js — Full-domain [1, wallP] overview bar with viewport frame (spec §3)
 import { computeEoqViewport, computeLandmarkPositions, validateLandmarks } from '../lib/xScale.js';
+import { computePreviewLandmarks } from './heroDiptych.js';
+import { MIN_B_PREVIEW } from '../lib/uiConstants.js';
+import { computePreviewBr } from '../chart-helpers.js';
 
 /** Resolve a CSS custom property to its computed value, with fallback. */
 function cssVar(el, name, fallback) {
@@ -16,7 +19,8 @@ export function mount(root, _ctx) {
         <div class="sw-aux-gradient"></div>
         <div class="sw-aux-viewport-frame"></div>
         <div class="sw-aux-ticks" style="position:absolute;top:0;bottom:0;left:0;right:0;pointer-events:none;overflow:visible;"></div>
-        <div class="sw-aux-marker" style="display:none;"></div>
+        <div class="sw-aux-marker sw-aux-marker-amber" style="display:none;"></div>
+        <div class="sw-aux-marker sw-aux-marker-mint" style="display:none;"></div>
       </div>
     </div>
   `;
@@ -25,12 +29,39 @@ export function mount(root, _ctx) {
   const barWrap = container.querySelector('.sw-aux-bar-wrap');
   const gradientEl = container.querySelector('.sw-aux-gradient');
   const frameEl = container.querySelector('.sw-aux-viewport-frame');
-  const markerEl = container.querySelector('.sw-aux-marker');
+  const amberMarkerEl = container.querySelector('.sw-aux-marker-amber');
+  const mintMarkerEl = container.querySelector('.sw-aux-marker-mint');
   const ticksEl = container.querySelector('.sw-aux-ticks');
+
+  // Overlap threshold in pixels — matches heroDiptych DOT_OVERLAP_THRESHOLD_PX (4px).
+  // offsetLeft gives position relative to the offsetParent (the bar container), which is
+  // exactly what we want; no layout thrashing vs getBoundingClientRect.
+  const MARKER_OVERLAP_PX = 4;
+
+  function markersOverlap() {
+    return Math.abs(amberMarkerEl.offsetLeft - mintMarkerEl.offsetLeft) < MARKER_OVERLAP_PX;
+  }
+
+  function handleMarkerClick(clickedGroup) {
+    if (markersOverlap()) {
+      // Toggle when overlapping (same logic as heroDiptych dotsOverlap)
+      activeGroup = activeGroup === 'mint' ? 'amber' : 'mint';
+    } else {
+      activeGroup = clickedGroup;
+    }
+    document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    if (lastSnapshot) renderBar(lastSnapshot);
+  }
+
+  amberMarkerEl.addEventListener('click', () => handleMarkerClick('amber'));
+  mintMarkerEl.addEventListener('click', () => handleMarkerClick('mint'));
 
   let resizeObserver = null;
   let previousDomainMax = null;
   let prevSegment = null;
+  let previewState = null;
+  let lastSnapshot = null;
+  let activeGroup = 'amber';
 
   function syncToChartArea() {
     const heroChart = window.__SW_dashboard?.charts?.hero;
@@ -81,7 +112,8 @@ export function mount(root, _ctx) {
 
     if (!available || !rl) {
       gradientEl.style.background = 'none';
-      markerEl.style.display = 'none';
+      amberMarkerEl.style.display = 'none';
+      mintMarkerEl.style.display = 'none';
       frameEl.style.display = 'none';
       ticksEl.innerHTML = '';
       barWrap.style.display = 'none';
@@ -111,8 +143,20 @@ export function mount(root, _ctx) {
       prevSegment = currentSegment;
     }
 
-    const viewport = computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent: x, previousDomainMax });
-    previousDomainMax = viewport.mainDomain.max;
+    // Ghost-aware viewport expansion (syncs with heroDiptych)
+    let previewGroup = undefined;
+    let prevLandmarks = null;
+    if (previewState?.dirty && previewState?.B_preview) {
+      const g = rl.gEma ?? rl.g ?? 0;
+      const L = rl.L_read ?? 0;
+      prevLandmarks = computePreviewLandmarks({ B_preview: previewState.B_preview, R, g, L, mf: rl.mf });
+      previewGroup = { xRedR: prevLandmarks.xRedR, x: prevLandmarks.x };
+    }
+
+    const viewport = computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent: x, previousDomainMax, previewGroup });
+    // Only actual data advances ratchet (ghost expansion is ephemeral).
+    // actualDomainMax is the pre-ghost domain max, so it's safe to use directly.
+    previousDomainMax = viewport.actualDomainMax;
 
     // Overview always uses [1, wallP] domain for gradient + labels
     const overviewDomain = { minX: viewport.overviewDomain.min, maxX: viewport.overviewDomain.max };
@@ -134,25 +178,82 @@ export function mount(root, _ctx) {
       positions.brAmberLPct, positions.sweetPct, positions.brRedRPct, positions.wallPct, barWidth
     );
 
-    // Marker + flag (x + br suffix — spec §3.5)
-    markerEl.style.display = '';
-    markerEl.style.left = `${viewport.markerPct.toFixed(1)}%`;
-    const brVal = snapshot?.status?.rateLamp?.br;
+    // Dual markers: amber (current) + mint (preview)
+    const overviewRange = viewport.overviewDomain.max - viewport.overviewDomain.min;
+    const toPct = (xVal) => overviewRange > 0
+      ? Math.max(0, Math.min(100, ((xVal - viewport.overviewDomain.min) / overviewRange) * 100))
+      : 0;
+
+    const amberPct = toPct(x);
+    const dirty = !!(previewGroup && prevLandmarks);
+
+    // Amber marker — always visible
+    amberMarkerEl.style.display = '';
+    amberMarkerEl.style.left = `${amberPct.toFixed(1)}%`;
+    amberMarkerEl.style.opacity = (dirty && activeGroup === 'mint') ? '0.35' : '1';
+    amberMarkerEl.style.pointerEvents = dirty ? 'auto' : 'none';
+
+    // Mint marker — only when preview dirty
+    if (dirty) {
+      const mintPct = toPct(prevLandmarks.x);
+      mintMarkerEl.style.display = '';
+      mintMarkerEl.style.left = `${mintPct.toFixed(1)}%`;
+      mintMarkerEl.style.opacity = activeGroup === 'amber' ? '0.35' : '1';
+      mintMarkerEl.style.pointerEvents = 'auto';
+    } else {
+      mintMarkerEl.style.display = 'none';
+    }
+
+    // Flag label — only on active marker
+    const activeX = (activeGroup === 'mint' && dirty) ? prevLandmarks.x : x;
+    const activeMarkerEl = (activeGroup === 'mint' && dirty) ? mintMarkerEl : amberMarkerEl;
+    const inactiveMarkerEl = (activeGroup === 'mint' && dirty) ? amberMarkerEl : mintMarkerEl;
+
+    // Compute br for active group
+    let brVal = snapshot?.status?.rateLamp?.br;
+    if (activeGroup === 'mint' && prevLandmarks) {
+      const dhat = prevLandmarks.dhat;
+      if (dhat > 0 && prevLandmarks.x > 1) {
+        const mf = prevLandmarks.mf ?? rl.mf ?? 0.3;
+        const u = (prevLandmarks.x - 1) / dhat;
+        brVal = computePreviewBr(mf, u);
+      }
+    }
+
     const brSuffix = Number.isFinite(brVal) ? ` · b+${Math.floor(brVal * 100)}%` : '';
-    const flagText = viewport.isPastWall
-      ? `x <b>${x.toFixed(2)}×</b> · past wall`
-      : `x <b>${x.toFixed(2)}×</b>${brSuffix}`;
-    markerEl.innerHTML = `<span class="sw-aux-flag">${flagText}</span>`;
+    const flagText = activeX >= wallP
+      ? `x <b>${activeX.toFixed(2)}×</b> · past wall`
+      : `x <b>${activeX.toFixed(2)}×</b>${brSuffix}`;
+    activeMarkerEl.innerHTML = `<span class="sw-aux-flag">${flagText}</span>`;
+    inactiveMarkerEl.innerHTML = '';
 
     syncToChartArea();
   }
 
+  function onBucketPreview(e) {
+    previewState = e.detail ?? null;
+    if (lastSnapshot) renderBar(lastSnapshot);
+  }
+
+  function onActiveGroup(e) {
+    const newGroup = e.detail?.activeGroup ?? 'amber';
+    if (newGroup === activeGroup) return;
+    activeGroup = newGroup;
+    if (lastSnapshot) renderBar(lastSnapshot);
+  }
+
+  document.addEventListener('sw-bucket-preview', onBucketPreview);
+  document.addEventListener('sw-active-group', onActiveGroup);
+
   function update(snapshot) {
+    lastSnapshot = snapshot;
     if (!resizeObserver) setupResizeObserver();
     renderBar(snapshot);
   }
 
   function destroy() {
+    document.removeEventListener('sw-bucket-preview', onBucketPreview);
+    document.removeEventListener('sw-active-group', onActiveGroup);
     if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
     container.remove();
   }

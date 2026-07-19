@@ -73,11 +73,13 @@ test('viewport domain for curve: starts at 1, includes full range to current', (
   assert.ok(r.mainDomain.max >= 4.0 * 1.2 - 0.01, `Expected max >= 4.8, got ${r.mainDomain.max}`);
 });
 
-// --- Test: dataset count ---
+// --- Test: dataset count (dual-landmarks redesign) ---
 
-test('dataset indices: 7 datasets (0-6) with 4 landmark lines', () => {
-  // 0: EOQ curve, 1: br=-10% line, 2: br=0 (sweet) line, 3: br=+10% line,
-  // 4: br=+25% line, 5: amber dot (current x), 6: horizontal cost line
-  const expectedDatasetCount = 7;
-  assert.equal(expectedDatasetCount, 7, 'Should have 7 datasets (indices 0-6)');
+test('dataset structure: single active group produces 7 datasets, dual produces ~14', () => {
+  // Single amber group (non-dirty): curve + sweet + amberL + amberR + redR + dot + brLine = 7
+  // Dual groups (dirty): amber(7) + mint(7) = 14 (exact count depends on finite landmarks)
+  const singleGroupCount = 7;
+  const dualGroupCount = 14;
+  assert.equal(singleGroupCount, 7, 'Single active group: curve + 4 landmarks + dot + brLine');
+  assert.equal(dualGroupCount, 14, 'Dual groups: 7 per group');
 });

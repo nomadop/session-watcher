@@ -1,7 +1,7 @@
 // test/chart-helpers.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeYMax, buildMissMarkers, buildProjectionData } from '../public/chart-helpers.js';
+import { computeYMax, buildMissMarkers, buildProjectionData, computePreviewBr } from '../public/chart-helpers.js';
 
 test('computeYMax uses only L (ignores Lthreshold), floored at 1', () => {
   const hist = [ { L: 50000, Lthreshold: 60000 }, { L: 80000, Lthreshold: 70000 } ];
@@ -27,23 +27,19 @@ test('computeYMax does NOT throw RangeError on a very long history (no spread) �
   assert.equal(computeYMax(big), 199999, 'for-loop handles 200k points without a call-stack blowup');
 });
 
-test('buildMissMarkers emits 3 points per miss: (x,0),(x,yMax),(x,null), all with historyIndex', () => {
+test('buildMissMarkers emits 1 point per miss at y=0, each with historyIndex', () => {
   const hist = [ { miss: false }, { miss: true }, { miss: false }, { miss: true } ];
-  const m = buildMissMarkers(hist, 90000);
-  assert.equal(m.length, 6, '2 miss rows × 3 points');
+  const m = buildMissMarkers(hist);
+  assert.equal(m.length, 2, '2 miss rows → 2 triangle marker points');
   // first miss at history-index 1 → x: 2 (1-based, aligned to the chart axis min:1 with turn labels)
-  // Fix #2: x was previously 0-based (x: i), now 1-based (x: i+1) to align with the chart's x-axis
   assert.deepEqual(m[0], { x: 2, y: 0, historyIndex: 1 });
-  assert.deepEqual(m[1], { x: 2, y: 90000, historyIndex: 1 });
-  assert.deepEqual(m[2], { x: 2, y: null, historyIndex: 1 });
   // second miss at history-index 3 → x: 4
-  assert.equal(m[3].x, 4); assert.equal(m[3].historyIndex, 3);
-  assert.equal(m[5].y, null, 'null separator prevents a cross-miss slanted line');
+  assert.deepEqual(m[1], { x: 4, y: 0, historyIndex: 3 });
 });
 
 test('buildMissMarkers is empty when no miss rows (DeepSeek structural no-op path)', () => {
   const hist = [ { miss: false }, { miss: false } ];
-  assert.deepEqual(buildMissMarkers(hist, 1000), [], 'no miss → no markers → no red line');
+  assert.deepEqual(buildMissMarkers(hist), [], 'no miss → no markers → no red line');
 });
 
 
@@ -54,12 +50,12 @@ test('buildProjectionData returns empty array for empty points', () => {
 });
 
 test('buildProjectionData returns empty array when slope is zero', () => {
-  const points = [{ L: 50000, kAvg: 0 }];
-  assert.deepEqual(buildProjectionData(points, 0, 100, 200000), [], 'zero gEma and zero kAvg → no projection');
+  const points = [{ L: 50000, g: 0 }];
+  assert.deepEqual(buildProjectionData(points, 0, 100, 200000), [], 'zero gEma and zero g → no projection');
 });
 
 test('buildProjectionData uses lastGEma as slope when positive', () => {
-  const points = [{ L: 50000, kAvg: 3000 }, { L: 60000, kAvg: 5000 }];
+  const points = [{ L: 50000, g: 3000 }, { L: 60000, g: 5000 }];
   const result = buildProjectionData(points, 8000, 100, 200000);
   assert.equal(result.length, 2, 'two endpoints');
   assert.equal(result[0].x, 2, 'starts at last turn (1-based)');
@@ -70,17 +66,17 @@ test('buildProjectionData uses lastGEma as slope when positive', () => {
   assert.equal(result[1].x, 19.5, 'X shortened to true slope intercept at ratchetY');
 });
 
-test('buildProjectionData falls back to last kAvg when lastGEma is not positive', () => {
-  const points = [{ L: 50000, kAvg: 3000 }, { L: 60000, kAvg: 4000 }];
+test('buildProjectionData falls back to last g when lastGEma is not positive', () => {
+  const points = [{ L: 50000, g: 3000 }, { L: 60000, g: 4000 }];
   const result = buildProjectionData(points, 0, 100, 200000);
   assert.equal(result.length, 2);
-  // slope = last kAvg = 4000; projectedY = 60000 + 4000 * (100 - 2) = 60000 + 392000 = 452000, clamped to 200000
+  // slope = last g = 4000; projectedY = 60000 + 4000 * (100 - 2) = 60000 + 392000 = 452000, clamped to 200000
   assert.equal(result[1].y, 200000, 'clamped to ratchetY');
 });
 
 test('buildProjectionData extends ratchetX when less than 5 turns ahead of last point', () => {
   // 10 points, ratchetX = 12 → effectiveRatchetX - lastTurn = 12 - 10 = 2 < 5 → extend to lastTurn + 20 = 30
-  const points = Array.from({ length: 10 }, (_, i) => ({ L: 10000 + i * 1000, kAvg: 1000 }));
+  const points = Array.from({ length: 10 }, (_, i) => ({ L: 10000 + i * 1000, g: 1000 }));
   const result = buildProjectionData(points, 2000, 12, 200000);
   assert.equal(result[1].x, 30, 'extended to lastTurn + 20 when ratchetX is too close');
   // projectedY = 19000 + 2000 * (30 - 10) = 19000 + 40000 = 59000
@@ -88,8 +84,34 @@ test('buildProjectionData extends ratchetX when less than 5 turns ahead of last 
 });
 
 test('buildProjectionData does not exceed ratchetY', () => {
-  const points = [{ L: 180000, kAvg: 50000 }];
+  const points = [{ L: 180000, g: 50000 }];
   const result = buildProjectionData(points, 50000, 100, 200000);
   assert.equal(result[1].y, 200000, 'Y clamped to ratchetY');
+});
+
+
+// --- computePreviewBr (EOQ formula: br = mf*(u-1)^2/(2u)) ---
+
+test('computePreviewBr returns 0 at u=1 (cost minimum)', () => {
+  // At u=1 the EOQ formula yields (1-1)^2 = 0, so br = 0 regardless of mf
+  assert.equal(computePreviewBr(0.3, 1), 0, 'u=1 is the cost minimum → zero regret');
+  assert.equal(computePreviewBr(0.7, 1), 0, 'holds for any mf');
+});
+
+test('computePreviewBr returns correct value for u=2', () => {
+  // br = mf * (2-1)^2 / (2*2) = mf * 1 / 4 = mf/4
+  const mf = 0.4;
+  assert.equal(computePreviewBr(mf, 2), mf / 4, 'u=2: br = mf/4');
+});
+
+test('computePreviewBr returns correct value for u=0.5', () => {
+  // br = mf * (0.5-1)^2 / (2*0.5) = mf * 0.25 / 1 = mf*0.25
+  const mf = 0.4;
+  assert.equal(computePreviewBr(mf, 0.5), mf * 0.25, 'u=0.5: br = mf*0.25');
+});
+
+test('computePreviewBr returns 0 for u<=0 (degenerate guard)', () => {
+  assert.equal(computePreviewBr(0.3, 0), 0, 'u=0 returns 0 (division by zero guard)');
+  assert.equal(computePreviewBr(0.3, -1), 0, 'u<0 returns 0 (degenerate input guard)');
 });
 

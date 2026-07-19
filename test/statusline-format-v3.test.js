@@ -1,86 +1,37 @@
-import { describe, test } from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderLamp, renderBr, formatLine } from '../lib/statusline-format.js';
+import { renderLB, renderDelta, renderLamp, renderBackstopProgress } from '../lib/statusline-format.js';
 
-describe('renderLamp (br-based)', () => {
-  test('calibrating → ⚪', () => {
-    assert.equal(renderLamp(0.05, { calibrating: true }), '⚪');
-  });
-  test('NaN → ⚪', () => {
-    assert.equal(renderLamp(NaN), '⚪');
-  });
-  test('br < 0.10 → 🟢', () => {
-    assert.equal(renderLamp(0.09), '🟢');
-  });
-  test('br = 0.10 → 🟡', () => {
-    assert.equal(renderLamp(0.10), '🟡');
-  });
-  test('br = 0.24 → 🟡', () => {
-    assert.equal(renderLamp(0.24), '🟡');
-  });
-  test('br = 0.25 → 🔴', () => {
-    assert.equal(renderLamp(0.25), '🔴');
-  });
-  test('br = 0.50 → 🔴', () => {
-    assert.equal(renderLamp(0.50), '🔴');
-  });
-  test('left arm before entry (x < xBrAmberL) → ⚪', () => {
-    assert.equal(renderLamp(0.30, { x: 1.2, xSweet: 1.6, xBrAmberL: 1.3 }), '⚪');
-  });
-  test('left arm past entry (xBrAmberL ≤ x < xSweet) → 🟢', () => {
-    assert.equal(renderLamp(0.15, { x: 1.4, xSweet: 1.6, xBrAmberL: 1.3 }), '🟢');
-  });
-  test('left arm without xBrAmberL → ⚪ (fallback)', () => {
-    assert.equal(renderLamp(0.30, { x: 1.2, xSweet: 1.6 }), '⚪');
-  });
-  test('right arm (x >= xSweet) → normal br thresholds', () => {
-    assert.equal(renderLamp(0.30, { x: 2.0, xSweet: 1.6 }), '🔴');
-    assert.equal(renderLamp(0.05, { x: 2.0, xSweet: 1.6 }), '🟢');
-  });
+test('renderLB uses B as denominator label', () => {
+  assert.ok(renderLB(142000, 25300).includes('b25')); // L142k/b25.3k form
 });
 
-describe('renderBr', () => {
-  test('NaN → b---%', () => {
-    assert.equal(renderBr(NaN), 'b---%');
-  });
-  test('negative → b---%', () => {
-    assert.equal(renderBr(-0.01), 'b---%');
-  });
-  test('0.00 → b+00%', () => {
-    assert.equal(renderBr(0.00), 'b+00%');
-  });
-  test('0.086 floors to b+08%', () => {
-    assert.equal(renderBr(0.086), 'b+08%');
-  });
-  test('0.096 floors to b+09% (not 10 — floor prevents threshold mismatch)', () => {
-    assert.equal(renderBr(0.096), 'b+09%');
-  });
-  test('0.10 → b+10%', () => {
-    assert.equal(renderBr(0.10), 'b+10%');
-  });
-  test('1.5 → b+99% (cap)', () => {
-    assert.equal(renderBr(1.5), 'b+99%');
-  });
+test('renderDelta shows g_ema, no kAvg fallback', () => {
+  assert.ok(renderDelta(940).startsWith('Δ'));
+  assert.equal(renderDelta(null), 'Δ----');
 });
 
-describe('formatLine with br', () => {
-  test('reliable session includes lamp + br + u', () => {
-    const s = {
-      rateLamp: {
-        reliable: true, br: 0.08, mf: 0.28, C_RATIO: 10,
-        billProgress: 0.3, billCycleCount: 2, currentTurnSeq: 5,
-        x_display: 1.3, dhat: 0.4167, L_read: 104000,
-        L_cap: 960000, inDeepWater: false, gEma: 700,
-      },
-      baseline: { total: 80000 },
-      kAvg: 684,
-      L: 104000,
-      model: 'claude-sonnet-4-20250514',
-    };
-    const line = formatLine(s);
-    assert.ok(line.includes('🟢'), 'should have green lamp');
-    assert.ok(line.includes('b+08%'), 'should have br display');
-    assert.ok(line.includes('u'), 'should have u value');
-    assert.ok(!line.includes('~'), 'should not have countdown');
-  });
+test('renderLamp: br thresholds without calibrating param', () => {
+  assert.equal(renderLamp(0.3, { x: 2, xSweet: 1.1 }), '🔴');
+  assert.equal(renderLamp(0.15, { x: 2, xSweet: 1.1 }), '🟡');
+  assert.equal(renderLamp(0.01, { x: 1.05, xSweet: 1.1 }), '⚪'); // left arm (x<xSweet) whitening
+});
+
+test('renderBackstopProgress shows -/- before gate fires', () => {
+  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: false, dwBillsSinceLastAlert: 0, mf: 0.4 }), '-/-');
+});
+
+test('renderBackstopProgress shows n/N after gate, capped below denom', () => {
+  // mf=0.4 → interval 4.0 → denom 4. numer = min(3, floor(3)) = 3.
+  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 3, mf: 0.4 }), '3/4');
+});
+
+test('renderBackstopProgress never shows N/N (numer capped at denom-1)', () => {
+  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 4, mf: 0.4 }), '3/4');
+});
+
+test('renderBackstopProgress denom floors at 1 for degenerate mf', () => {
+  const s = renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 0, mf: 0 });
+  // mf=0 → interval Infinity → denom max(1, round(Inf)) → guard to -/- (no meaningful reminder).
+  assert.equal(s, '-/-');
 });

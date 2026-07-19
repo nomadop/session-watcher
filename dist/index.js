@@ -22405,29 +22405,48 @@ var init_stdio2 = __esm({
 
 // index.js
 init_launcher();
-import { pathToFileURL } from "node:url";
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+import { pathToFileURL, fileURLToPath as fileURLToPath2 } from "node:url";
+import { realpathSync } from "node:fs";
+var __selfReal = realpathSync(fileURLToPath2(import.meta.url));
+var __argvReal = (() => {
+  try {
+    return realpathSync(process.argv[1]);
+  } catch {
+    return "";
+  }
+})();
+if (__selfReal === __argvReal) {
   const { McpServer: McpServer2 } = await Promise.resolve().then(() => (init_mcp(), mcp_exports));
   const { StdioServerTransport: StdioServerTransport2 } = await Promise.resolve().then(() => (init_stdio2(), stdio_exports));
   const { z } = await Promise.resolve().then(() => (init_zod(), zod_exports));
   const { startWatcher: startWatcher2, stopWatcher: stopWatcher2, watcherStatus: watcherStatus2 } = await Promise.resolve().then(() => (init_launcher(), launcher_exports));
-  const server = new McpServer2({ name: "session-watcher", version: "0.3.0" });
+  const server = new McpServer2({ name: "session-watcher", version: "0.4.0" });
   const reply = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
-  server.registerTool(
-    "start_watcher",
-    { description: "Start (or reuse) the Session Watcher dashboard server; returns its URL. Never returns metric values.", inputSchema: {}, annotations: { readOnlyHint: true } },
-    async () => reply(await startWatcher2())
-  );
-  server.registerTool(
-    "stop_watcher",
-    { description: "Stop the managed Session Watcher server.", inputSchema: {}, annotations: { readOnlyHint: true } },
-    async () => reply(await stopWatcher2())
-  );
-  server.registerTool(
-    "watcher_status",
-    { description: "Report whether the Session Watcher server is running and its URL.", inputSchema: {}, annotations: { readOnlyHint: true } },
-    async () => reply(await watcherStatus2())
-  );
+  const SessionIdSchema = { sessionId: z.string().optional().describe("Override session ID (used when resume changes the ID)") };
+  server.registerTool("start_watcher", {
+    description: "Start (or reuse) the Session Watcher dashboard server; returns its URL. Never returns metric values.",
+    inputSchema: { ...SessionIdSchema, transcript: z.string().optional().describe("Explicit transcript .jsonl path (overrides session ID lookup)") },
+    annotations: { readOnlyHint: true }
+  }, async ({ sessionId, transcript } = {}) => {
+    const env = sessionId ? { ...process.env, CLAUDE_CODE_SESSION_ID: sessionId } : process.env;
+    return reply(await startWatcher2(env, { transcript }));
+  });
+  server.registerTool("stop_watcher", {
+    description: "Stop the managed Session Watcher server.",
+    inputSchema: SessionIdSchema,
+    annotations: { readOnlyHint: true }
+  }, async ({ sessionId } = {}) => {
+    const env = sessionId ? { ...process.env, CLAUDE_CODE_SESSION_ID: sessionId } : process.env;
+    return reply(await stopWatcher2(env));
+  });
+  server.registerTool("watcher_status", {
+    description: "Report whether the Session Watcher server is running and its URL.",
+    inputSchema: SessionIdSchema,
+    annotations: { readOnlyHint: true }
+  }, async ({ sessionId } = {}) => {
+    const env = sessionId ? { ...process.env, CLAUDE_CODE_SESSION_ID: sessionId } : process.env;
+    return reply(await watcherStatus2(env));
+  });
   await server.connect(new StdioServerTransport2());
   console.error("session-watcher MCP server ready");
 }
