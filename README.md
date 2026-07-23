@@ -6,7 +6,7 @@
 
 Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory to tell you whether the current context is still *worth carrying*, and when to restart. Works with any session-based coding agent.
 
-<img src="assets/dashboard.png" alt="Session Watcher dashboard" width="820">
+<img src="assets/dashboard.gif" alt="Session Watcher dashboard" width="820">
 
 </div>
 
@@ -17,9 +17,11 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#install">Install</a> ·
   <a href="#how-it-works">How It Works</a> ·
+  <a href="#context-buckets">Context Buckets</a> ·
+  <a href="#handoff">Handoff</a> ·
   <a href="#mcp-tools">MCP Tools</a> ·
   <a href="#agent-support">Agents</a> ·
   <a href="#paper">Paper</a> ·
@@ -30,35 +32,47 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
 
 ## What it does
 
-Session Watcher monitors your agent's session transcript in real time and answers one question: **should I restart this session?**
+Session Watcher reads your Claude Code transcript in real time and answers one question: **is this session still worth carrying?**
 
-- **Real-time dashboard** — Chart.js SPA with SSE streaming: token stock `L`, exit line `L*`, per-turn cost, bill progress, rate-lamp interrupt meter
-- **Statusline widget** — one-line shell command for your terminal status bar: lamp · progress bar · turn counter · cost rate · `L/b` · model
-- **Zero context pollution** — the MCP tools return only a URL. No metric number, no transcript content, no session state ever re-enters the model's context
-- **Fully local** — all state lives in a sidecar JSON file; no cloud, no telemetry, no API calls
+Most context tools optimize *how* you consume tokens — Headroom compresses, `/compact` shrinks, RTK filters. Session Watcher answers *when* to restart. They compose: run any pruning strategy you like, SW tells you when it's time to `/clear`.
+
+SW reads from the transcript, never writes to it. The dashboard and statusline are pure observers; MCP tools return data for you to act on. Metrics stay on your screen, not in the model's context window.
 
 ## How it works
 
 ```
-Your coding agent (Claude Code, OpenCode, OpenClaw, etc.)
-        │  writes session transcripts
+Your coding agent (Claude Code)
+        │  writes session transcript
         ▼
 ┌──────────────────────────────────────────┐
-│  Session Watcher (local sidecar daemon)   │
+│  Session Watcher (in-process MCP server)  │
 │  ─────────────────────────────────────── │
 │  fold.js     — tail JSONL, fold usage    │
-│  baseline.js — detect cold-start L_base  │
-│  metrics.js  — compute L* (EOQ-optimal)  │
-│  rate-lamp.js — interrupt meter (burn)   │
+│  measure.js  — B (context belief)        │
+│  rate-lamp   — bill premium (br) + gate  │
 │  server.js   — Express + SSE dashboard   │
-│  statusline.js — one-line shell client   │
+│  statusline  — one-line shell client     │
 └──────────────────────────────────────────┘
-        │  dashboard :31393  ·  statusline  ·  MCP
+        │  dashboard  ·  statusline  ·  MCP
         ▼
    Your browser / terminal status bar
 ```
 
-**Core model:** `L = cache_read_input_tokens` (your context stock, rent-free while cached). When `L` crosses the EOQ-optimal restart line `L*`, the dashboard and statusline signal restart. See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
+**Core model:** `B = cache_read_input_tokens` (your context inventory). `g = ΔL − ΔB` (growth gap). `x = L / B` (position on the EOQ cost curve). `br = mf × pp` (bill premium — the percentage you're overpaying relative to optimal).
+
+Three thresholds: green valley (br < 10%), amber attention (10–15%), red restart (≥ 25%). See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
+
+## Quick Start
+
+```bash
+# Try without installing — self-contained demo
+npx @nomadop/session-watcher demo
+
+# Replay your own transcript
+npx @nomadop/session-watcher replay ~/.claude/projects/<project>/<session>.jsonl
+```
+
+Opens a browser dashboard. The demo uses a pre-built anonymized session; replay uses your real transcript. Both are read-only — nothing is modified or uploaded.
 
 ## Install
 
@@ -80,35 +94,12 @@ Or from within a Claude Code session:
 ```
 
 This registers:
-- **MCP tools** (`start_watcher`, `stop_watcher`, `watcher_status`) — available in every session
+- **MCP tools** — available in every session
 - **SessionStart hook** — auto-launches the dashboard server on each session
-- **Stop hook** — evaluates the restart gate on each stop boundary
 
 If you installed or updated in an already-running session, run `/reload-plugins` to activate.
 
-### Manual MCP
-
-```json
-{
-  "mcpServers": {
-    "session-watcher": { "command": "node", "args": ["/path/to/index.js"] }
-  }
-}
-```
-
-Add to your project's `.mcp.json` or `~/.claude/settings.json`. Then call `start_watcher` — it launches the dashboard and returns its URL.
-
-### Auto-launch with every session
-
-```json
-{
-  "hooks": { "SessionStart": [{ "command": "<path>/hooks/session-start.js" }] }
-}
-```
-
-Add to `~/.claude/settings.json`. The watcher starts automatically, fire-and-forget.
-
-### Statusline
+## Statusline
 
 The plugin system does not yet support declaring a statusline. Add to your `~/.claude/settings.json`:
 
@@ -134,32 +125,42 @@ One compact line:
 
 <img src="assets/statusline.png" alt="Statusline example" width="820">
 
-## Quick Start
+## Context Buckets
 
-```bash
-git clone https://github.com/nomadop/session-watcher.git
-cd session-watcher
-npm install
-node server.js --project ~/.claude/projects/<project> --open
-```
+The bucket panel shows exactly which files, skills, and tools are consuming your context budget. Each path carries a token count — check or uncheck to preview how the restart cost changes. The U-curve ghost line updates in real time as you toggle.
 
-Additional flags: `--ratio <N>` (override C_RATIO), `--port <N>` (fixed port), `--lbase <N>` (override baseline — only when transcript has no cold start).
+<img src="assets/preview_u.gif" alt="Context bucket selection preview" width="820">
 
-Then open `http://localhost:31393` in your browser. The dashboard updates in real time as your agent runs.
+## Handoff
 
-## MCP tools
+When it's time to restart, handoff preserves the state you want to keep. Run `/sw-handoff` to prepare a package — selected paths, working summary, next task. Then `/clear`, and in the fresh session run `/sw-load` to restore. Only what you chose is rebuilt — less ramp-up, less waste.
+
+<img src="assets/handoff.gif" alt="Handoff workflow" width="820">
+
+## MCP Tools
+
+**Server lifecycle**
 
 | Tool | Description |
 |------|-------------|
 | `start_watcher` | Start (or reuse) the dashboard server; returns its URL |
 | `stop_watcher` | Stop the managed server |
 | `watcher_status` | Report whether the server is running and its URL |
+| `rotate_session` | Rotate to a new session ID |
 
-All three are read-only — they never return metric values or session content into the model's context.
+**Handoff workflow**
+
+| Tool | Description |
+|------|-------------|
+| `get_bucket_summary` | Return current context bucket structure (files, skills, tools) with metrics |
+| `prepare_handoff` | Persist selected paths + summary as a handoff package; returns a semantic token |
+| `load_handoff` | Load a handoff by token, free-text search, or auto-match for the current project |
+
+Tools return data for you to decide on — only handoff injects context back into the model, and only the paths you explicitly selected.
 
 ## Agent support
 
-Session Watcher is agent-agnostic. The measurement pipeline (fold, baseline, `L*`, rate-lamp) only needs `cache_read_input_tokens` from each turn — it doesn't care which agent produced the transcript.
+Session Watcher is agent-agnostic. The measurement pipeline only needs `cache_read_input_tokens` from each turn — it doesn't care which agent produced the transcript.
 
 | Agent | Driver | Status |
 |-------|--------|--------|
@@ -177,8 +178,6 @@ Adding a new agent requires implementing one interface: extract `cache_read_inpu
 > Longju Cheng (2026) · DOI: [`10.5281/zenodo.21236704`](https://doi.org/10.5281/zenodo.21236704)
 
 The paper derives the full theoretical specification: EOQ→LLM mapping, the 41.4% movable-cost bound, the ski-rental restart strategy, and measurements on 1,016 real session transcripts. See [`paper/paper.pdf`](paper/paper.pdf).
-
-The current release implements the full paper specification: the measurement pipeline (fold, baseline, `L*`, `φ`), the billing gauge (`billProgress`), the rate-lamp interrupt meter with wall-position scaling, model-tier-specific pricing ratios, deep-water latching, and the restart recommendation signal via dashboard and statusline.
 
 ## Uninstall
 
