@@ -1,7 +1,7 @@
 {
   "name": "session-watcher",
   "description": "EOQ-optimal context restart advisor for Claude Code \u2014 statusline, dashboard, and MCP tools with zero context pollution.",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "author": {
     "name": "nomad"
   },
