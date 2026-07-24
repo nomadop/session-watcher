@@ -11,12 +11,24 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
+};
 var __commonJS = (cb, mod) => function __require2() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   } catch (e) {
     throw mod = 0, e;
   }
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -4948,10 +4960,10 @@ var require_raw_body = __commonJS({
       if (done) {
         return readStream(stream, encoding, length, limit, wrap(done));
       }
-      return new Promise(function executor(resolve2, reject) {
+      return new Promise(function executor(resolve3, reject) {
         readStream(stream, encoding, length, limit, function onRead(err, buf) {
           if (err) return reject(err);
-          resolve2(buf);
+          resolve3(buf);
         });
       });
     }
@@ -18487,7 +18499,7 @@ var require_view = __commonJS({
     var basename2 = path4.basename;
     var extname = path4.extname;
     var join5 = path4.join;
-    var resolve2 = path4.resolve;
+    var resolve3 = path4.resolve;
     module.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -18521,7 +18533,7 @@ var require_view = __commonJS({
       debug('lookup "%s"', name);
       for (var i = 0; i < roots.length && !path5; i++) {
         var root = roots[i];
-        var loc = resolve2(root, name);
+        var loc = resolve3(root, name);
         var dir = dirname4(loc);
         var file = basename2(loc);
         path5 = this.resolve(dir, file);
@@ -18532,7 +18544,7 @@ var require_view = __commonJS({
       debug('render "%s"', this.path);
       this.engine(this.path, options, callback);
     };
-    View.prototype.resolve = function resolve3(dir, file) {
+    View.prototype.resolve = function resolve4(dir, file) {
       var ext = this.ext;
       var path5 = join5(dir, file);
       var stat = tryStat(path5);
@@ -19174,7 +19186,7 @@ var require_send = __commonJS({
     var extname = path4.extname;
     var join5 = path4.join;
     var normalize = path4.normalize;
-    var resolve2 = path4.resolve;
+    var resolve3 = path4.resolve;
     var sep = path4.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
@@ -19211,7 +19223,7 @@ var require_send = __commonJS({
       this._maxage = opts.maxAge || opts.maxage;
       this._maxage = typeof this._maxage === "string" ? ms(this._maxage) : Number(this._maxage);
       this._maxage = !isNaN(this._maxage) ? Math.min(Math.max(0, this._maxage), MAX_MAXAGE) : 0;
-      this._root = opts.root ? resolve2(opts.root) : null;
+      this._root = opts.root ? resolve3(opts.root) : null;
       if (!this._root && opts.from) {
         this.from(opts.from);
       }
@@ -19235,7 +19247,7 @@ var require_send = __commonJS({
       return this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function root(path5) {
-      this._root = resolve2(String(path5));
+      this._root = resolve3(String(path5));
       debug("root %s", this._root);
       return this;
     };
@@ -19399,7 +19411,7 @@ var require_send = __commonJS({
           return res;
         }
         parts = normalize(path5).split(sep);
-        path5 = resolve2(path5);
+        path5 = resolve3(path5);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
@@ -20679,7 +20691,7 @@ var require_application = __commonJS({
     var deprecate = require_depd()("express");
     var flatten = require_array_flatten();
     var merge = require_utils_merge();
-    var resolve2 = __require("path").resolve;
+    var resolve3 = __require("path").resolve;
     var setPrototypeOf = require_setprototypeof();
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     var slice = Array.prototype.slice;
@@ -20718,7 +20730,7 @@ var require_application = __commonJS({
       this.mountpath = "/";
       this.locals.settings = this.settings;
       this.set("view", View);
-      this.set("views", resolve2("views"));
+      this.set("views", resolve3("views"));
       this.set("jsonp callback name", "callback");
       if (env === "production") {
         this.enable("view cache");
@@ -21963,7 +21975,7 @@ var require_response = __commonJS({
     var send = require_send();
     var extname = path4.extname;
     var mime = send.mime;
-    var resolve2 = path4.resolve;
+    var resolve3 = path4.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module.exports = res;
@@ -22222,7 +22234,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve2(path5) : path5;
+      var fullPath = !opts.root ? resolve3(path5) : path5;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -22488,7 +22500,7 @@ var require_serve_static = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var parseUrl = require_parseurl();
-    var resolve2 = __require("path").resolve;
+    var resolve3 = __require("path").resolve;
     var send = require_send();
     var url = __require("url");
     module.exports = serveStatic;
@@ -22508,7 +22520,7 @@ var require_serve_static = __commonJS({
         throw new TypeError("option setHeaders must be function");
       }
       opts.maxage = opts.maxage || opts.maxAge || 0;
-      opts.root = resolve2(root);
+      opts.root = resolve3(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function serveStatic2(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -22660,6 +22672,1498 @@ var require_express2 = __commonJS({
   "node_modules/express/index.js"(exports, module) {
     "use strict";
     module.exports = require_express();
+  }
+});
+
+// lib/constants.js
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, PENDING_MAX_TURN_DISTANCE, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, PRECHECK_LONG_LINE_BYTES, PRECHECK_HEAD_CAP_BYTES, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_FLOOR, MISS_CR_DROP, SEGMENT_DROP_EPSILON, NOTIFY_DWELL, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, HANDOFF_TOKEN_MAX_RETRIES;
+var init_constants = __esm({
+  "lib/constants.js"() {
+    RECENT_STOP_EVENTS_LIMIT = 32;
+    RECENT_PROCESSED_HOOK_IDS_LIMIT = 128;
+    PENDING_MAX_TURN_DISTANCE = 2;
+    C_RATIO_TABLE = [
+      { match: /claude|opus|sonnet|haiku/i, ratio: 12.5 },
+      { match: /deepseek.*pro/i, ratio: 120 },
+      { match: /deepseek/i, ratio: 50 }
+    ];
+    DEFAULT_C_RATIO = 10;
+    MODEL_PRICING_PRESETS = [
+      {
+        id: "opus-4.8",
+        label: "Claude Opus 4.8",
+        readPrice: 0.5,
+        writePrice: 6.25
+      },
+      { id: "sonnet-5", label: "Claude Sonnet 5", readPrice: 0.2, writePrice: 2.5 },
+      {
+        id: "sonnet-4.6",
+        label: "Claude Sonnet 4.6",
+        readPrice: 0.3,
+        writePrice: 3.75
+      },
+      {
+        id: "haiku-4.5",
+        label: "Claude Haiku 4.5",
+        readPrice: 0.1,
+        writePrice: 1.25
+      },
+      { id: "fable-5", label: "Claude Fable 5", readPrice: 1, writePrice: 12.5 },
+      {
+        id: "deepseek-v4-flash",
+        label: "DeepSeek v4 Flash",
+        readPrice: 0.02,
+        writePrice: 1
+      },
+      {
+        id: "deepseek-v4-pro",
+        label: "DeepSeek v4 Pro",
+        readPrice: 0.025,
+        writePrice: 3
+      }
+    ];
+    CONTEXT_WINDOW_TABLE = [
+      { match: /test-short-window/i, window: 2e5 },
+      // test-only vehicle for cap-binding tests
+      { match: /1m|-1m|opus-4-8/i, window: 1e6 },
+      { match: /claude|opus|sonnet|haiku/i, window: 1e6 },
+      { match: /deepseek/i, window: 1e6 }
+    ];
+    DEFAULT_CONTEXT_WINDOW = 1e6;
+    RESERVED_OUTPUT = 32e3;
+    CTX_SAFETY_MARGIN = 8e3;
+    PRECHECK_LONG_LINE_BYTES = 1048576;
+    PRECHECK_HEAD_CAP_BYTES = 8192;
+    COALESCED_PERSIST_MS = 2e3;
+    IDLE_HEARTBEAT_MS = 5e3;
+    CTP_TABLE = {
+      claude: { ascii: 2.45, cjk: 0.59 },
+      // Anthropic tokenizer (n=5881)
+      deepseek: { ascii: 3.24, cjk: 0.94 }
+      // DeepSeek tokenizer (n=5265)
+    };
+    DEFAULT_CTP = { ascii: 3, cjk: 1 };
+    TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40 };
+    DEPTH_HOT_LAP_COUNT = 3;
+    ALPHA_EMA = 0.12;
+    G_FLOOR = 100;
+    MISS_CR_DROP = 0.95;
+    SEGMENT_DROP_EPSILON = 100;
+    NOTIFY_DWELL = 3;
+    GC_BATCH_LIMIT = 3;
+    GC_REPLAY_MAX_FILE_BYTES = 5e7;
+    GC_HANDOFF_MAX_AGE_DAYS = 90;
+    HANDOFF_MAX_PATHS = 50;
+    HANDOFF_MAX_SUMMARY_CHARS = 1e4;
+    HANDOFF_MAX_NEXT_TASK_CHARS = 2e3;
+    HANDOFF_HOOK_TTL_DAYS = 7;
+    HANDOFF_HOOK_MAX_DISPLAY = 3;
+    HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1;
+    HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200;
+    HANDOFF_TOKEN_MAX_RETRIES = 5;
+  }
+});
+
+// lib/bill-regret.js
+function computeMovableFrac(cRatio, lBase, kStable) {
+  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
+  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
+  return arm / (arm + lBase + cRatio * kStable);
+}
+function computeBr(x, dhat, mf) {
+  const d = x - 1;
+  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
+  const u = d / dhat;
+  const ppFrac = (u - 1) * (u - 1) / (2 * u);
+  return mf * ppFrac;
+}
+function computePp(x, dhat) {
+  if (!Number.isFinite(x) || !Number.isFinite(dhat) || dhat <= 0) return null;
+  const u = (x - 1) / dhat;
+  if (!Number.isFinite(u) || u <= 0) return null;
+  return (u - 1) * (u - 1) / (2 * u);
+}
+function xRightFromBr(brTarget, dhat, mf) {
+  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
+  const p = brTarget / mf;
+  const disc = p * p + 2 * p;
+  const uRight = 1 + p + Math.sqrt(disc);
+  return 1 + uRight * dhat;
+}
+function xLeftFromBr(brTarget, dhat, mf) {
+  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
+  const p = brTarget / mf;
+  const disc = p * p + 2 * p;
+  const uLeft = 1 + p - Math.sqrt(disc);
+  return 1 + uLeft * dhat;
+}
+function isInDeepWater(x, xSweet, br) {
+  if (!Number.isFinite(br) || !Number.isFinite(x) || !Number.isFinite(xSweet)) return false;
+  if (x < xSweet) return false;
+  return br >= BR_AMBER;
+}
+function uAtBr(mf, brTarget) {
+  if (!Number.isFinite(mf) || mf <= 0) return Infinity;
+  if (!Number.isFinite(brTarget)) return Infinity;
+  if (brTarget <= 0) return 1;
+  const a = mf;
+  const b = -(2 * mf + 2 * brTarget);
+  const c = mf;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  return (-b + Math.sqrt(disc)) / (2 * a);
+}
+function backstopIntervalFor(mf, brTarget) {
+  const u = uAtBr(mf, brTarget);
+  if (!Number.isFinite(u)) return Infinity;
+  return u * u;
+}
+var BR_AMBER, BR_RED;
+var init_bill_regret = __esm({
+  "lib/bill-regret.js"() {
+    BR_AMBER = 0.1;
+    BR_RED = 0.25;
+  }
+});
+
+// lib/store.js
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { performance as performance2 } from "node:perf_hooks";
+function migrateProfileToSegment(db) {
+  db.exec("ALTER TABLE profile RENAME TO profile_v1");
+  db.exec(`CREATE TABLE profile (
+    session_id TEXT NOT NULL, segment INTEGER NOT NULL, archived_at INTEGER NOT NULL,
+    model TEXT, project_id TEXT, l_floor REAL, b_total REAL, l_peak REAL, g_final REAL,
+    o_avg REAL, c_ratio REAL, turns INTEGER, duration_ms INTEGER, total_tokens_read REAL,
+    mf REAL, pp_exit REAL, br_exit REAL, br_peak REAL, pp_peak REAL, p0 REAL, b_axis REAL,
+    x_axis REAL, g_min REAL, turn_at_br_amber INTEGER, archive_source TEXT,
+    archive_priority INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (session_id, segment)) WITHOUT ROWID`);
+  db.exec(`INSERT INTO profile (
+    session_id, segment, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
+    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
+    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, archive_source, archive_priority)
+    SELECT session_id, 0, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
+    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
+    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, 'snapshot', 1 FROM profile_v1`);
+  db.exec("DROP TABLE profile_v1");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_project_archived ON profile(project_id, archived_at DESC)");
+}
+function migrateProfilePaths(db) {
+  db.exec("ALTER TABLE profile_paths RENAME TO profile_paths_v1");
+  db.exec(`CREATE TABLE profile_paths (
+    session_id TEXT NOT NULL, segment INTEGER NOT NULL, path TEXT NOT NULL, tokens REAL NOT NULL,
+    PRIMARY KEY (session_id, segment, path)) WITHOUT ROWID`);
+  db.exec("INSERT INTO profile_paths (session_id, segment, path, tokens) SELECT session_id, 0, path, tokens FROM profile_paths_v1");
+  db.exec("DROP TABLE profile_paths_v1");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_paths_path ON profile_paths(path, session_id, segment)");
+}
+function createHandoffTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS handoff (
+    handoff_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, segment INTEGER NOT NULL,
+    load_token TEXT NOT NULL, created_at INTEGER NOT NULL, paths_to_keep TEXT NOT NULL,
+    summary TEXT NOT NULL, next_task TEXT, summary_tokens INTEGER NOT NULL,
+    kept_tokens REAL, discarded_tokens REAL, prepared_at_turn INTEGER,
+    previous_stats TEXT, prepared_stats TEXT, search_terms TEXT, project_id TEXT,
+    delivered_at INTEGER, delivered_segment INTEGER)`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_session ON handoff(session_id, created_at DESC)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_token ON handoff(load_token)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_created_at ON handoff(created_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_project ON handoff(project_id, created_at DESC)");
+}
+function createHandoffLoadTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS handoff_load (
+    handoff_id         INTEGER NOT NULL,
+    session_id         TEXT NOT NULL,
+    loaded_at          INTEGER NOT NULL,
+    loader_version     TEXT,
+    claim_result       TEXT NOT NULL CHECK (claim_result IN ('primary','duplicate','legacy_unattributed')),
+    primary_session_id TEXT,
+    consumer_segment   INTEGER,
+    PRIMARY KEY (handoff_id, session_id, loaded_at)
+  ) WITHOUT ROWID`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_load_session ON handoff_load(session_id)");
+}
+function createTelemetryTables(db) {
+  const has = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+  const wasMissing = [];
+  if (!has("profile_path_event")) wasMissing.push("profile_path_event");
+  if (!has("profile_step_usage")) wasMissing.push("profile_step_usage");
+  db.exec(`CREATE TABLE IF NOT EXISTS profile_path_event (
+    session_id    TEXT NOT NULL,
+    segment       INTEGER NOT NULL,
+    folded_seq    INTEGER NOT NULL,
+    event_ordinal INTEGER NOT NULL,
+    path          TEXT NOT NULL,
+    raw_path      TEXT,
+    tool_type     TEXT NOT NULL,
+    is_full_read  INTEGER CHECK (is_full_read IN (0,1) OR is_full_read IS NULL),
+    PRIMARY KEY (session_id, segment, folded_seq, event_ordinal)
+  ) WITHOUT ROWID`);
+  db.exec(`CREATE TABLE IF NOT EXISTS profile_step_usage (
+    session_id     TEXT NOT NULL,
+    segment        INTEGER NOT NULL,
+    folded_seq     INTEGER NOT NULL,
+    ts             INTEGER,
+    cache_read     REAL,
+    cache_creation REAL,
+    input          REAL,
+    output         REAL,
+    tool_calls     INTEGER,
+    load_token     TEXT,
+    PRIMARY KEY (session_id, segment, folded_seq)
+  ) WITHOUT ROWID`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_step_usage_load_token ON profile_step_usage(load_token)");
+  return wasMissing;
+}
+function addColumnIfMissing(db, table, name, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+}
+function ensureV3Shape(db) {
+  for (const [name, type] of V3_HANDOFF_COLUMNS) addColumnIfMissing(db, "handoff", name, type);
+  addColumnIfMissing(db, "profile", "telemetry_status", "TEXT");
+  addColumnIfMissing(db, "profile", "capture_source", "TEXT");
+  createHandoffLoadTable(db);
+  const recreated = createTelemetryTables(db);
+  if (recreated.length) {
+    db.prepare("UPDATE profile SET telemetry_status='pending' WHERE telemetry_status IN ('complete','complete_empty')").run();
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_delivered_session ON handoff(delivered_session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_telemetry ON profile(telemetry_status, archived_at)");
+}
+function createHandoffFts(db) {
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS handoff_fts USING fts5(
+    summary, next_task, load_token, search_terms,
+    content='handoff', content_rowid='handoff_id')`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_insert AFTER INSERT ON handoff BEGIN
+    INSERT INTO handoff_fts(rowid, summary, next_task, load_token, search_terms)
+    VALUES (new.handoff_id, new.summary, new.next_task, new.load_token, new.search_terms);
+  END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_delete AFTER DELETE ON handoff BEGIN
+    INSERT INTO handoff_fts(handoff_fts, rowid, summary, next_task, load_token, search_terms)
+    VALUES ('delete', old.handoff_id, old.summary, old.next_task, old.load_token, old.search_terms);
+  END`);
+}
+function ensureV2Shape(db) {
+  const hasHandoff = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff'").get();
+  const profileCols = db.prepare("PRAGMA table_info(profile)").all().map((c) => c.name);
+  const profileOk = profileCols.includes("segment") && profileCols.includes("archive_priority");
+  if (!hasHandoff || !profileOk) {
+    if (!profileOk && profileCols.includes("session_id") && !profileCols.includes("segment")) {
+      migrateProfileToSegment(db);
+      migrateProfilePaths(db);
+    }
+    if (!hasHandoff) createHandoffTable(db);
+  }
+}
+function migrate(db) {
+  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    const version = row ? parseInt(row.value) : 0;
+    if (version < 1) {
+      db.exec(SCHEMA_V1_SQL);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    if (version < 2) {
+      db.exec(`CREATE TABLE IF NOT EXISTS profile_paths (
+        session_id TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        tokens     REAL NOT NULL,
+        PRIMARY KEY (session_id, path)
+      ) WITHOUT ROWID`);
+      migrateProfileToSegment(db);
+      migrateProfilePaths(db);
+      createHandoffTable(db);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    if (version < 3) {
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    ensureV2Shape(db);
+    ensureV3Shape(db);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  let ftsAvailable = false;
+  try {
+    createHandoffFts(db);
+    db.exec("INSERT INTO handoff_fts(handoff_fts) VALUES('rebuild')");
+    ftsAvailable = true;
+  } catch (ftsErr) {
+    console.warn("[store] FTS5 unavailable, handoff search disabled:", ftsErr.message);
+  }
+  return ftsAvailable;
+}
+function openStore(dbPath) {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath, { timeout: 3e3 });
+  try {
+    const walResult = db.prepare("PRAGMA journal_mode=WAL").get();
+    const actualMode = String(walResult.journal_mode ?? "").toLowerCase();
+    if (actualMode !== "wal" && dbPath !== ":memory:") {
+      console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`);
+    }
+    db.exec("PRAGMA synchronous=NORMAL");
+    db.exec("PRAGMA auto_vacuum=INCREMENTAL");
+    const ftsOk = migrate(db);
+    const store = new Store(db);
+    store.ftsAvailable = ftsOk;
+    return store;
+  } catch (err) {
+    try {
+      db.close();
+    } catch {
+    }
+    throw err;
+  }
+}
+function closeStore(store) {
+  if (store._closed) return;
+  store._closed = true;
+  store._db.close();
+}
+function defaultDbPath() {
+  return join(homedir(), ".session-watcher", "store.sqlite");
+}
+function initStore(dbPath) {
+  if (_instance) closeStore(_instance);
+  _instance = openStore(dbPath || defaultDbPath());
+  return _instance;
+}
+function getStore() {
+  if (!_instance) throw new Error("Store not initialized");
+  return _instance;
+}
+function closeStoreGlobal() {
+  if (_instance) {
+    closeStore(_instance);
+    _instance = null;
+  }
+}
+var yieldTick, ARCHIVE_PRIORITY, SCHEMA_V1_SQL, V3_HANDOFF_COLUMNS, Store, _instance;
+var init_store = __esm({
+  "lib/store.js"() {
+    init_constants();
+    yieldTick = () => new Promise((r) => setImmediate(r));
+    ARCHIVE_PRIORITY = { snapshot: 1, replay: 2, live: 3 };
+    SCHEMA_V1_SQL = `
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id  TEXT PRIMARY KEY,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  model       TEXT,
+  project_id  TEXT
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS state (
+  session_id TEXT    NOT NULL,
+  key        TEXT    NOT NULL,
+  value      TEXT    NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS config (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS lines (
+  session_id TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  line_num   INTEGER NOT NULL,
+  chars      INTEGER NOT NULL,
+  PRIMARY KEY (session_id, path, line_num)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS paths (
+  session_id TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  edit_delta  INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, path)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS profile (
+  session_id   TEXT PRIMARY KEY,
+  archived_at  INTEGER NOT NULL,
+  model        TEXT,
+  project_id   TEXT,
+  l_floor      REAL,
+  b_total      REAL,
+  l_peak       REAL,
+  g_final      REAL,
+  o_avg        REAL,
+  c_ratio      REAL,
+  turns        INTEGER,
+  duration_ms  INTEGER,
+  total_tokens_read REAL,
+  mf           REAL,
+  pp_exit      REAL,
+  br_exit      REAL,
+  br_peak      REAL,
+  pp_peak      REAL,
+  p0           REAL,
+  b_axis       REAL,
+  x_axis       REAL,
+  g_min        REAL,
+  turn_at_br_amber INTEGER
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS profile_paths (
+  session_id TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  tokens     REAL NOT NULL,
+  PRIMARY KEY (session_id, path)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
+CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
+`;
+    V3_HANDOFF_COLUMNS = [
+      ["delivered_session_id", "TEXT"],
+      ["loader_version", "TEXT"],
+      ["bucket_snapshot", "TEXT"]
+    ];
+    Store = class _Store {
+      constructor(db) {
+        this._db = db;
+        this._closed = false;
+        this._stmts = {
+          touchSession: db.prepare(`INSERT INTO sessions (session_id, created_at, updated_at, model, project_id) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at, model = COALESCE(excluded.model, sessions.model), project_id = COALESCE(excluded.project_id, sessions.project_id)`),
+          load: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
+          save: db.prepare(`INSERT INTO state (session_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+          delete: db.prepare("DELETE FROM state WHERE session_id = ? AND key = ?"),
+          loadAll: db.prepare("SELECT key, value FROM state WHERE session_id = ?"),
+          deleteSessionState: db.prepare("DELETE FROM state WHERE session_id = ?"),
+          deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
+          deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
+          deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
+          // Config CRUD
+          loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
+          saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`),
+          deleteConfig: db.prepare("DELETE FROM config WHERE key = ?"),
+          // Profile archival — v2 composite PK (session_id, segment)
+          loadProfile: db.prepare("SELECT * FROM profile WHERE session_id = ? AND segment = 0"),
+          loadAllProfiles: db.prepare("SELECT * FROM profile WHERE segment = 0 ORDER BY archived_at DESC"),
+          archiveSegment: db.prepare(`INSERT INTO profile (session_id, segment, archived_at, model, project_id,
+        l_floor, b_total, l_peak, g_final, o_avg, c_ratio, turns, duration_ms, total_tokens_read,
+        mf, pp_exit, br_exit, br_peak, pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber,
+        archive_source, archive_priority)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(session_id, segment) DO UPDATE SET
+          archived_at=excluded.archived_at, model=excluded.model, project_id=excluded.project_id,
+          l_floor=excluded.l_floor, b_total=excluded.b_total, l_peak=excluded.l_peak,
+          g_final=excluded.g_final, o_avg=excluded.o_avg, c_ratio=excluded.c_ratio,
+          turns=excluded.turns, duration_ms=excluded.duration_ms, total_tokens_read=excluded.total_tokens_read,
+          mf=excluded.mf, pp_exit=excluded.pp_exit, br_exit=excluded.br_exit, br_peak=excluded.br_peak,
+          pp_peak=excluded.pp_peak, p0=excluded.p0, b_axis=excluded.b_axis, x_axis=excluded.x_axis,
+          g_min=excluded.g_min, turn_at_br_amber=excluded.turn_at_br_amber,
+          archive_source=excluded.archive_source, archive_priority=excluded.archive_priority
+        WHERE excluded.archive_priority >= profile.archive_priority`),
+          deleteSegmentPaths: db.prepare("DELETE FROM profile_paths WHERE session_id = ? AND segment = ?"),
+          insertSegmentPath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?,?,?,?)"),
+          loadProfileSegments: db.prepare("SELECT * FROM profile WHERE session_id = ? ORDER BY segment ASC"),
+          // --- Segment telemetry (TXN2): profile_step_usage / profile_path_event + telemetry_status ---
+          deleteSegmentStepUsage: db.prepare("DELETE FROM profile_step_usage WHERE session_id = ? AND segment = ?"),
+          deleteSegmentPathEvents: db.prepare("DELETE FROM profile_path_event WHERE session_id = ? AND segment = ?"),
+          // plain INSERT (not INSERT OR REPLACE) — after the per-segment DELETE the table is clear for
+          //   this segment, so a duplicate (session,segment,folded_seq) can ONLY come from a real fold/replay
+          //   bug; let it THROW → the txn rolls back → failed_retryable (observable), not silent overwrite.
+          insertStepUsage: db.prepare(`INSERT INTO profile_step_usage
+        (session_id, segment, folded_seq, ts, cache_read, cache_creation, input, output, tool_calls, load_token)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`),
+          insertPathEvent: db.prepare(`INSERT INTO profile_path_event
+        (session_id, segment, folded_seq, event_ordinal, path, raw_path, tool_type, is_full_read)
+        VALUES (?,?,?,?,?,?,?,?)`),
+          // capture_source stamped WITH the status so provenance and status move together.
+          setTelemetryStatus: db.prepare("UPDATE profile SET telemetry_status = ?, capture_source = ? WHERE session_id = ? AND segment = ?"),
+          // Task 8 TXN1 handshake: a just-(re)written profile is needs-telemetry until TXN2 flips it. Clear
+          // capture_source too so a re-written pending row never shows the PRIOR capture's provenance
+          // (a crash between TXN1 and TXN2 would otherwise leave pending + a stale cc-live/cc-replay source).
+          markTelemetryPending: db.prepare("UPDATE profile SET telemetry_status = 'pending', capture_source = NULL WHERE session_id = ? AND segment = ?"),
+          setTelemetryStatusOnly: db.prepare("UPDATE profile SET telemetry_status = ? WHERE session_id = ? AND segment = ?"),
+          // reused by the Task 8 getTelemetryStatus reader.
+          getTelemetryStatusRow: db.prepare("SELECT telemetry_status FROM profile WHERE session_id=? AND segment=?"),
+          // Task 10 startup sweep: DISTINCT sessions with ANY pending/failed_retryable/NULL segment,
+          // newest-first, capped by a SQL LIMIT. The (? IS NULL OR session_id <> ?) clause pushes the common
+          // single-live-id exclusion into SQL so the excluded session's rows do NOT consume the LIMIT (a
+          // multi-id Set is JS-filtered after). Session granularity — the production replay archives every
+          // occurred segment of a session in one pass, so the sweep issues ONE replay per DISTINCT session.
+          pendingTelemetrySessions: db.prepare(`SELECT DISTINCT session_id FROM profile
+        WHERE (telemetry_status IS NULL OR telemetry_status IN ('pending','failed_retryable'))
+          AND (? IS NULL OR session_id <> ?)
+        ORDER BY MAX(archived_at) OVER (PARTITION BY session_id) DESC
+        LIMIT ?`),
+          // Handoff CRUD
+          insertHandoff: db.prepare(`INSERT INTO handoff
+        (session_id, segment, load_token, created_at, paths_to_keep, summary, next_task,
+         summary_tokens, kept_tokens, discarded_tokens, prepared_at_turn, previous_stats, prepared_stats, search_terms, project_id, bucket_snapshot)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+          // Step 3d: `AND delivered_at IS NULL` makes a DELIVERED handoff's telemetry immutable — a
+          // re-prepare with an already-consumed token gets changes===0 and the caller mints a fresh token
+          // via the insert path (never rewrites bucket_snapshot/hp at a different instant than delivery).
+          updateHandoff: db.prepare(`UPDATE handoff SET paths_to_keep = ?, summary = ?, next_task = ?,
+         summary_tokens = ?, kept_tokens = ?, discarded_tokens = ?, prepared_at_turn = ?,
+         previous_stats = ?, prepared_stats = ?, search_terms = ?, bucket_snapshot = ?
+         WHERE load_token = ? AND delivered_at IS NULL`),
+          // Stamp ONLY paths_to_keep (per-entry telemetry back-fill: hp at prepare / hl at load). Keyed by
+          // handoff_id so a load-side stamp does not need the token in scope.
+          stampPathsToKeep: db.prepare("UPDATE handoff SET paths_to_keep = ? WHERE handoff_id = ?"),
+          loadHandoffToken: db.prepare("SELECT * FROM handoff WHERE load_token = ?"),
+          handoffExists: db.prepare("SELECT 1 FROM handoff WHERE load_token = ?"),
+          loadHandoffSession: db.prepare("SELECT * FROM handoff WHERE session_id = ? AND (project_id = ? OR ? IS NULL) ORDER BY created_at DESC LIMIT 1"),
+          loadHandoffByProject: db.prepare(`SELECT * FROM handoff
+        WHERE project_id = ? AND delivered_at IS NULL AND session_id <> ? AND created_at > ?
+        ORDER BY created_at DESC LIMIT 5`),
+          // Two stamps. markDelivered is the CAS for a never-delivered row. markDeliveredLegacy binds the
+          //   consumer of a v2 row that already has delivered_at but NULL consumer, WITHOUT touching the
+          //   historical delivered_at (guarded on delivered_session_id IS NULL so it fires at most once).
+          markDelivered: db.prepare("UPDATE handoff SET delivered_at = ?, delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NULL"),
+          markDeliveredLegacy: db.prepare("UPDATE handoff SET delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NOT NULL AND delivered_session_id IS NULL"),
+          insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
+        (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
+        VALUES (?,?,?,?,?,?,?)`),
+          // Sweep (GC)
+          expiredSessions: db.prepare("SELECT session_id FROM sessions WHERE updated_at < ? ORDER BY updated_at ASC"),
+          deleteOldHandoffs: db.prepare("DELETE FROM handoff WHERE created_at < ?"),
+          loadSessionMeta: db.prepare("SELECT model, project_id FROM sessions WHERE session_id = ?"),
+          insertProfilePath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?, 0, ?, ?)"),
+          loadState: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
+          // Line-level operations (paths + lines tables)
+          clearLines: db.prepare("DELETE FROM lines WHERE session_id = ? AND path = ?"),
+          insertLine: db.prepare(`INSERT INTO lines (session_id, path, line_num, chars) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path, line_num) DO UPDATE SET chars = excluded.chars`),
+          upsertPath: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, 0, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET updated_at = excluded.updated_at`),
+          setDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = excluded.edit_delta, updated_at = excluded.updated_at`),
+          addDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = edit_delta + excluded.edit_delta, updated_at = excluded.updated_at`),
+          pathTotal: db.prepare(`SELECT COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
+        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
+        WHERE p.session_id = ? AND p.path = ?`),
+          allTotals: db.prepare(`SELECT p.path, COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
+        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
+        WHERE p.session_id = ? GROUP BY p.path`),
+          clearPathMeta: db.prepare("DELETE FROM paths WHERE session_id = ? AND path = ?"),
+          clearAllLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
+          clearAllPathsMeta: db.prepare("DELETE FROM paths WHERE session_id = ?")
+        };
+      }
+      load(sessionId, key) {
+        const row = this._stmts.load.get(sessionId, key);
+        if (!row) return null;
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return null;
+        }
+      }
+      save(sessionId, key, value, { model, projectId } = {}) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
+          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      saveBatch(sessionId, entries, { model, projectId } = {}) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          for (const [key, value] of entries) {
+            this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      delete(sessionId, key) {
+        this._stmts.delete.run(sessionId, key);
+      }
+      loadSession(sessionId) {
+        const rows = this._stmts.loadAll.all(sessionId);
+        const map = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          try {
+            map.set(row.key, JSON.parse(row.value));
+          } catch {
+          }
+        }
+        return map;
+      }
+      deleteSession(sessionId) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.deleteSessionState.run(sessionId);
+          this._stmts.deleteSessionPaths.run(sessionId);
+          this._stmts.deleteSessionLines.run(sessionId);
+          this._stmts.deleteSessionRecord.run(sessionId);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // --- Config CRUD ---
+      loadConfig(key) {
+        const row = this._stmts.loadConfig.get(key);
+        if (!row) return null;
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return null;
+        }
+      }
+      saveConfig(key, value) {
+        this._stmts.saveConfig.run(key, JSON.stringify(value));
+      }
+      deleteConfig(key) {
+        this._stmts.deleteConfig.run(key);
+      }
+      // --- Profile archival ---
+      archiveSession(sessionId, snapshot) {
+        const snap = { ...snapshot, archivedAt: Date.now(), archiveSource: snapshot.archiveSource || "snapshot" };
+        this._db.exec("SAVEPOINT archive_session");
+        try {
+          this._archiveSegmentProfileInner(sessionId, 0, snap, []);
+          this._db.exec("RELEASE archive_session");
+        } catch (e) {
+          this._db.exec("ROLLBACK TO archive_session");
+          throw e;
+        }
+      }
+      _segmentArgs(sessionId, segment, s) {
+        const priority = ARCHIVE_PRIORITY[s.archiveSource] ?? 1;
+        return [
+          sessionId,
+          segment,
+          s.archivedAt ?? Date.now(),
+          s.model ?? null,
+          s.projectId ?? null,
+          s.lFloor ?? null,
+          s.bTotal ?? null,
+          s.lPeak ?? null,
+          s.gFinal ?? null,
+          s.oAvg ?? null,
+          s.cRatio ?? null,
+          s.turns ?? null,
+          s.durationMs ?? null,
+          s.totalTokensRead ?? null,
+          s.mf ?? null,
+          s.ppExit ?? null,
+          s.brExit ?? null,
+          s.brPeak ?? null,
+          s.ppPeak ?? null,
+          s.p0 ?? null,
+          s.bAxis ?? null,
+          s.xAxis ?? null,
+          s.gMin ?? null,
+          s.turnAtBrAmber ?? null,
+          s.archiveSource ?? null,
+          priority
+        ];
+      }
+      // R1-B: Single priority-guarded upsert. No `replace` flag — priority enforces in SQL.
+      // A lower-priority writer can NEVER clobber a higher one. Paths are rewritten (DELETE+INSERT)
+      // iff res.changes > 0 (a fresh insert or a qualifying higher-priority update).
+      // Returns { status: 'archived' | 'already_archived', source } per R1-D.
+      _archiveSegmentProfileInner(sessionId, segment, snapshot, paths) {
+        const args = this._segmentArgs(sessionId, segment, snapshot);
+        const res = this._stmts.archiveSegment.run(...args);
+        if (res.changes > 0) {
+          this._stmts.deleteSegmentPaths.run(sessionId, segment);
+          for (const p of paths) this._stmts.insertSegmentPath.run(sessionId, segment, p.path, p.tokens);
+          this._stmts.markTelemetryPending.run(sessionId, segment);
+          return { status: "archived", source: snapshot.archiveSource };
+        }
+        return { status: "already_archived", source: snapshot.archiveSource };
+      }
+      archiveSegmentProfile(sessionId, segment, snapshot, paths = []) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          const result = this._archiveSegmentProfileInner(sessionId, segment, snapshot, paths);
+          this._db.exec("COMMIT");
+          return result;
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // captureSource: 'cc-live' from the live archival wiring (Task 8), 'cc-replay' from the sweep
+      // (Task 10). Recorded WITH the terminal status so provenance and status are consistent.
+      archiveSegmentTelemetry(sessionId, segment, payload, captureSource = "cc-live") {
+        const steps = payload?.steps || [];
+        const events = payload?.events || [];
+        let txnOpen = false;
+        try {
+          this._db.exec("BEGIN IMMEDIATE");
+          txnOpen = true;
+          const cur = this._stmts.getTelemetryStatusRow.get(sessionId, segment);
+          if (cur && (cur.telemetry_status === "complete" || cur.telemetry_status === "complete_empty")) {
+            this._db.exec("ROLLBACK");
+            txnOpen = false;
+            return { status: "skipped_stale" };
+          }
+          this._stmts.deleteSegmentStepUsage.run(sessionId, segment);
+          this._stmts.deleteSegmentPathEvents.run(sessionId, segment);
+          for (const s of steps) {
+            this._stmts.insertStepUsage.run(
+              sessionId,
+              segment,
+              s.foldedSeq,
+              s.ts ?? null,
+              s.cacheRead ?? null,
+              s.cacheCreation ?? null,
+              s.input ?? null,
+              s.output ?? null,
+              s.toolCalls ?? null,
+              s.loadToken ?? null
+            );
+          }
+          for (const e of events) {
+            this._stmts.insertPathEvent.run(
+              sessionId,
+              segment,
+              e.foldedSeq,
+              e.eventOrdinal,
+              e.path,
+              e.rawPath ?? e.path ?? null,
+              e.toolType,
+              e.isFullRead ?? null
+            );
+          }
+          const status = events.length === 0 ? "complete_empty" : "complete";
+          this._stmts.setTelemetryStatus.run(status, captureSource, sessionId, segment);
+          this._db.exec("COMMIT");
+          txnOpen = false;
+          return { status };
+        } catch (e) {
+          if (txnOpen) {
+            try {
+              this._db.exec("ROLLBACK");
+            } catch {
+            }
+          }
+          try {
+            this._stmts.setTelemetryStatusOnly.run("failed_retryable", sessionId, segment);
+          } catch (e2) {
+            if (process.env.SW_DEBUG) console.error("[telemetry-status]", e2.message);
+          }
+          if (process.env.SW_DEBUG) console.error("[archiveSegmentTelemetry]", e.message);
+          return { status: "failed_retryable" };
+        }
+      }
+      // Task 8: small reader for the fold-side TXN2 pre-read gate (fast-path skip before the transform).
+      // Returns the telemetry_status string ('pending'|'complete'|'complete_empty'|'failed_retryable') or
+      // null (no profile row yet, or a legacy row that predates the column). Uses the prepared stmt shared
+      // with archiveSegmentTelemetry's in-txn re-check (the authoritative anti-clobber guard).
+      getTelemetryStatus(sessionId, segment) {
+        const row = this._stmts.getTelemetryStatusRow.get(sessionId, segment);
+        return row ? row.telemetry_status ?? null : null;
+      }
+      // Startup compensating sweep (spec §Startup compensating sweep). Runs AFTER open; MUST NOT be called
+      // inside the migration transaction. Selects DISTINCT sessions with any pending/failed/NULL segment and
+      // calls the injected replaySession ONCE per session — the PRODUCTION replay (carry-sweep) re-folds the
+      // transcript and archives every occurred segment via handleSegmentBoundary/TXN2. A never-occurred
+      // segment never boundaries → stays pending (no observed flag). The in-txn guard makes re-archiving an
+      // already-complete segment a no-op. Budgets on REAL wall-clock (performance.now()); yields between
+      // sessions (setImmediate) so it is genuinely chunked. Injected replaySession keeps store.js free of
+      // any fold/watcher import. Returns a work summary. ASYNC.
+      async backfillPendingTelemetry({
+        resolveTranscript,
+        replaySession,
+        excludeSessionIds = null,
+        limit = 200,
+        budgetMs = 1500,
+        yieldBetweenSessions = true
+      } = {}) {
+        const empty = { examined: 0, replayed: 0, missing: 0, aborted: false };
+        if (typeof resolveTranscript !== "function" || typeof replaySession !== "function") return empty;
+        const excluded = excludeSessionIds == null ? /* @__PURE__ */ new Set() : excludeSessionIds instanceof Set ? excludeSessionIds : /* @__PURE__ */ new Set([excludeSessionIds]);
+        const sqlExclude = excluded.size === 1 ? [...excluded][0] : null;
+        const sessions = this._stmts.pendingTelemetrySessions.all(sqlExclude, sqlExclude, limit).map((r) => r.session_id).filter((sid) => !excluded.has(sid));
+        const summary = { examined: 0, replayed: 0, missing: 0, aborted: false };
+        const deadline = performance2.now() + budgetMs;
+        for (const session_id of sessions) {
+          if (performance2.now() >= deadline) {
+            summary.aborted = true;
+            break;
+          }
+          summary.examined += 1;
+          try {
+            let txPath;
+            try {
+              txPath = resolveTranscript(session_id);
+            } catch {
+              txPath = null;
+            }
+            if (!txPath) {
+              summary.missing += 1;
+              continue;
+            }
+            const res = replaySession(session_id, txPath);
+            if (res == null) {
+              summary.missing += 1;
+              continue;
+            }
+            summary.replayed += 1;
+          } catch (e) {
+            summary.missing += 1;
+            if (process.env.SW_DEBUG) console.error("[telemetry-sweep session]", session_id, e.message);
+          }
+          if (yieldBetweenSessions) await yieldTick();
+        }
+        return summary;
+      }
+      getProfileSegments(sessionId) {
+        return this._stmts.loadProfileSegments.all(sessionId).map(_Store._camelizeProfile);
+      }
+      // #21: camelize profile rows from DB (snake_case columns -> camelCase JS API)
+      static _camelizeProfile(row) {
+        if (!row) return null;
+        return {
+          sessionId: row.session_id,
+          segment: row.segment,
+          archivedAt: row.archived_at,
+          model: row.model,
+          projectId: row.project_id,
+          lFloor: row.l_floor,
+          bTotal: row.b_total,
+          lPeak: row.l_peak,
+          gFinal: row.g_final,
+          oAvg: row.o_avg,
+          cRatio: row.c_ratio,
+          turns: row.turns,
+          durationMs: row.duration_ms,
+          totalTokensRead: row.total_tokens_read,
+          mf: row.mf,
+          ppExit: row.pp_exit,
+          brExit: row.br_exit,
+          brPeak: row.br_peak,
+          ppPeak: row.pp_peak,
+          p0: row.p0,
+          bAxis: row.b_axis,
+          xAxis: row.x_axis,
+          gMin: row.g_min,
+          turnAtBrAmber: row.turn_at_br_amber,
+          archiveSource: row.archive_source,
+          archivePriority: row.archive_priority
+        };
+      }
+      getProfile(sessionId) {
+        return _Store._camelizeProfile(this._stmts.loadProfile.get(sessionId));
+      }
+      getAllProfiles() {
+        return this._stmts.loadAllProfiles.all().map(_Store._camelizeProfile);
+      }
+      // --- Sweep (GC): replay-first archive-then-delete expired sessions ---
+      sweep(maxAgeMs, {
+        now = Date.now(),
+        isLiveSession,
+        resolveTranscriptPath: resolveTranscriptPath2,
+        replaySession,
+        limit = GC_BATCH_LIMIT
+      } = {}) {
+        try {
+          const handoffCutoff = now - GC_HANDOFF_MAX_AGE_DAYS * 24 * 3600 * 1e3;
+          this._stmts.deleteOldHandoffs.run(handoffCutoff);
+        } catch (e) {
+          if (process.env.SW_DEBUG) console.error("[sweep] handoff GC", e.message);
+        }
+        const cutoff = now - maxAgeMs;
+        const expired = this._stmts.expiredSessions.all(cutoff);
+        let count = 0;
+        for (const { session_id } of expired) {
+          if (count >= limit) break;
+          if (isLiveSession && isLiveSession(session_id)) continue;
+          const transcriptPath = resolveTranscriptPath2 ? resolveTranscriptPath2(session_id) : null;
+          const canReplay = transcriptPath && replaySession && this._canReplay(transcriptPath);
+          let archiveOk = false;
+          try {
+            if (canReplay) {
+              replaySession(session_id, transcriptPath);
+              archiveOk = true;
+            } else {
+              archiveOk = this._gcFromSnapshot(session_id);
+            }
+          } catch (e) {
+            if (process.env.SW_DEBUG) console.error("[sweep] archive", session_id, e.message);
+          }
+          if (archiveOk) {
+            this._cascadeDelete(session_id);
+            count++;
+          }
+        }
+        if (count > 0) {
+          try {
+            this._db.exec("PRAGMA incremental_vacuum");
+          } catch {
+          }
+        }
+        return count;
+      }
+      _canReplay(transcriptPath) {
+        try {
+          const st = statSync(transcriptPath);
+          return st.isFile() && st.size <= GC_REPLAY_MAX_FILE_BYTES;
+        } catch {
+          return false;
+        }
+      }
+      _gcFromSnapshot(sessionId) {
+        const snapRow = this._stmts.loadState.get(sessionId, "profile_snapshot");
+        const sessRow = this._stmts.loadSessionMeta.get(sessionId);
+        if (!snapRow && !sessRow) return true;
+        const snap = snapRow ? JSON.parse(snapRow.value) : {};
+        this.archiveSegmentProfile(sessionId, snap.segment ?? 0, {
+          archiveSource: "snapshot",
+          model: snap.model || sessRow?.model || null,
+          projectId: sessRow?.project_id || null,
+          bTotal: snap.b_total,
+          gFinal: snap.g_final,
+          lPeak: snap.l_peak,
+          cRatio: snap.c_ratio,
+          turns: snap.turns,
+          mf: snap.mf,
+          brExit: snap.br_exit
+        }, snap.paths || []);
+        return true;
+      }
+      _cascadeDelete(sessionId) {
+        this.deleteSession(sessionId);
+      }
+      // --- Line-level operations (paths + lines tables) ---
+      setLines(sessionId, path4, entries) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.setDelta.run(sessionId, path4, 0, now);
+          this._stmts.clearLines.run(sessionId, path4);
+          for (const [lineNum, chars] of entries) {
+            this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      updateLines(sessionId, path4, entries) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.upsertPath.run(sessionId, path4, now);
+          for (const [lineNum, chars] of entries) {
+            this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      addEditDelta(sessionId, path4, delta) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.addDelta.run(sessionId, path4, delta, now);
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      getPathTotal(sessionId, path4) {
+        const row = this._stmts.pathTotal.get(sessionId, path4);
+        return row ? row.total : 0;
+      }
+      getAllPathTotals(sessionId) {
+        const rows = this._stmts.allTotals.all(sessionId);
+        const map = /* @__PURE__ */ new Map();
+        for (const row of rows) map.set(row.path, row.total);
+        return map;
+      }
+      clearPath(sessionId, path4) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.clearLines.run(sessionId, path4);
+          this._stmts.clearPathMeta.run(sessionId, path4);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      clearAllPaths(sessionId) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.clearAllLines.run(sessionId);
+          this._stmts.clearAllPathsMeta.run(sessionId);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // --- Handoff CRUD ---
+      static _camelizeHandoff(r) {
+        if (!r) return null;
+        return {
+          handoffId: r.handoff_id,
+          sessionId: r.session_id,
+          segment: r.segment,
+          loadToken: r.load_token,
+          createdAt: r.created_at,
+          pathsToKeep: r.paths_to_keep,
+          summary: r.summary,
+          nextTask: r.next_task,
+          summaryTokens: r.summary_tokens,
+          keptTokens: r.kept_tokens,
+          discardedTokens: r.discarded_tokens,
+          preparedAtTurn: r.prepared_at_turn,
+          previousStats: r.previous_stats,
+          preparedStats: r.prepared_stats,
+          searchTerms: r.search_terms,
+          projectId: r.project_id,
+          deliveredAt: r.delivered_at,
+          deliveredSegment: r.delivered_segment,
+          deliveredSessionId: r.delivered_session_id,
+          loaderVersion: r.loader_version,
+          bucketSnapshot: r.bucket_snapshot
+        };
+      }
+      insertHandoff(row) {
+        const res = this._stmts.insertHandoff.run(
+          row.sessionId,
+          row.segment,
+          row.loadToken,
+          row.createdAt,
+          row.pathsToKeep,
+          row.summary,
+          row.nextTask ?? null,
+          row.summaryTokens,
+          row.keptTokens ?? null,
+          row.discardedTokens ?? null,
+          row.preparedAtTurn ?? null,
+          row.previousStats ?? null,
+          row.preparedStats ?? null,
+          row.searchTerms ?? null,
+          row.projectId ?? null,
+          row.bucketSnapshot ?? null
+        );
+        return { handoffId: Number(res.lastInsertRowid) };
+      }
+      // Overwrite paths_to_keep with per-entry telemetry (content_hash_load stamping). Fire-and-forget:
+      // the caller has already committed the claim; this is a post-txn back-fill of hl on the stored row.
+      stampContentHashLoad(handoffId, pathsToKeepJson) {
+        this._stmts.stampPathsToKeep.run(pathsToKeepJson, handoffId);
+      }
+      insertHandoffLoad({ handoffId, sessionId, loadedAt, loaderVersion, claimResult, primarySessionId, consumerSegment }) {
+        this._stmts.insertHandoffLoad.run(
+          handoffId,
+          sessionId,
+          loadedAt,
+          loaderVersion ?? null,
+          claimResult,
+          primarySessionId ?? null,
+          consumerSegment ?? null
+        );
+      }
+      updateHandoff(token, row) {
+        const res = this._stmts.updateHandoff.run(
+          row.pathsToKeep,
+          row.summary,
+          row.nextTask ?? null,
+          row.summaryTokens,
+          row.keptTokens ?? null,
+          row.discardedTokens ?? null,
+          row.preparedAtTurn ?? null,
+          row.previousStats ?? null,
+          row.preparedStats ?? null,
+          row.searchTerms ?? null,
+          row.bucketSnapshot ?? null,
+          token
+        );
+        return res.changes > 0;
+      }
+      // PURE classifier: given the committed handoff row + this caller's session, what is the claim
+      // relationship? Used by the txn body AND the catch path so both agree on committed state.
+      static _classifyClaim(row, sessionId) {
+        if (row.delivered_session_id != null && row.delivered_session_id !== sessionId) {
+          return { claimResult: "duplicate", primarySessionId: row.delivered_session_id };
+        }
+        return { claimResult: "primary", primarySessionId: null };
+      }
+      loadHandoffByToken(token, opts = {}) {
+        const row = this._stmts.loadHandoffToken.get(token);
+        if (!row) return null;
+        const { sessionId = null, loaderVersion = null, consumerSegment = null } = opts;
+        if (sessionId == null) {
+          const out2 = _Store._camelizeHandoff(row);
+          out2.claimResult = "primary";
+          out2.claimedNow = false;
+          return out2;
+        }
+        const now = Date.now();
+        let claimResult = "primary";
+        let primarySessionId = null;
+        let claimedNow = false;
+        let legacyBind = false;
+        try {
+          this._db.exec("BEGIN IMMEDIATE");
+          if (row.delivered_at == null) {
+            const { changes } = this._stmts.markDelivered.run(now, sessionId, consumerSegment, loaderVersion, row.handoff_id);
+            if (changes > 0) {
+              claimedNow = true;
+              row.delivered_at = now;
+              row.delivered_session_id = sessionId;
+              row.delivered_segment = consumerSegment;
+              row.loader_version = loaderVersion;
+            } else {
+              Object.assign(row, this._stmts.loadHandoffToken.get(token));
+            }
+          } else if (row.delivered_session_id == null) {
+            const { changes } = this._stmts.markDeliveredLegacy.run(sessionId, consumerSegment, loaderVersion, row.handoff_id);
+            if (changes > 0) {
+              legacyBind = true;
+              claimedNow = true;
+              row.delivered_session_id = sessionId;
+              row.delivered_segment = consumerSegment;
+              row.loader_version = loaderVersion;
+            } else {
+              Object.assign(row, this._stmts.loadHandoffToken.get(token));
+            }
+          }
+          ({ claimResult, primarySessionId } = _Store._classifyClaim(row, sessionId));
+          if (legacyBind) claimResult = "legacy_unattributed";
+          this._stmts.insertHandoffLoad.run(
+            row.handoff_id,
+            sessionId,
+            now,
+            loaderVersion ?? null,
+            claimResult,
+            primarySessionId ?? null,
+            consumerSegment ?? null
+          );
+          this._db.exec("COMMIT");
+        } catch (e) {
+          try {
+            this._db.exec("ROLLBACK");
+          } catch {
+          }
+          if (process.env.SW_DEBUG) console.error("[handoff_load]", e.message);
+          const fresh = this._stmts.loadHandoffToken.get(token);
+          if (fresh) Object.assign(row, fresh);
+          ({ claimResult, primarySessionId } = _Store._classifyClaim(row, sessionId));
+          claimedNow = false;
+        }
+        const out = _Store._camelizeHandoff(row);
+        out.claimResult = claimResult;
+        out.claimedNow = claimedNow;
+        return out;
+      }
+      hasHandoff(token) {
+        return !!this._stmts.handoffExists.get(token);
+      }
+      // R1-H: project-scoped — filters by project_id when provided (NULL = any project).
+      loadHandoffBySession(sid, { projectId = null } = {}) {
+        return _Store._camelizeHandoff(this._stmts.loadHandoffSession.get(sid, projectId, projectId));
+      }
+      loadHandoffByProject(projectId, sessionId, { ttlMs = 7 * 864e5 } = {}) {
+        if (!projectId) return { rows: [], ambiguous: false };
+        const cutoff = Date.now() - ttlMs;
+        const rows = this._stmts.loadHandoffByProject.all(projectId, sessionId, cutoff).map(_Store._camelizeHandoff);
+        return { rows, ambiguous: rows.length > 1 };
+      }
+      // R1-H: project-scoped FTS search. Statement prepared LAZILY (handoff_fts may not exist).
+      searchHandoff(matchExpr, { projectId = null, limit = 3 } = {}) {
+        if (!this.ftsAvailable) return [];
+        if (!this._searchStmt) {
+          this._searchStmt = this._db.prepare(`SELECT h.load_token, h.created_at, h.next_task,
+        substr(h.summary, 1, 200) AS summary_preview
+        FROM handoff_fts JOIN handoff h ON h.handoff_id = handoff_fts.rowid
+        WHERE handoff_fts MATCH ? AND (h.project_id = ? OR ? IS NULL)
+        ORDER BY rank LIMIT ?`);
+        }
+        return this._searchStmt.all(matchExpr, projectId, projectId, limit).map((r) => ({
+          loadToken: r.load_token,
+          createdAt: r.created_at,
+          nextTask: r.next_task,
+          summaryPreview: r.summary_preview
+        }));
+      }
+      resetForTesting() {
+        closeStoreGlobal();
+      }
+    };
+    _instance = null;
+  }
+});
+
+// lib/ledger-schema.js
+function validateLedgerState(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  if (obj.schemaVersion !== 2) return null;
+  if (typeof obj.stateKey !== "string") return null;
+  if (obj.billingBasis !== "fullCarry") return null;
+  if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
+  if (obj.recentStopEvents === void 0) obj.recentStopEvents = [];
+  if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
+  for (const f of numFields) if (!Number.isFinite(obj[f])) return null;
+  if (!(obj.billProgress >= 0 && obj.billProgress < 1)) return null;
+  for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
+  for (const f of ["billAnchorLRead", "kStableFrozen"]) if (obj[f] < 0) return null;
+  if (typeof obj.hasDeepWaterGateFired !== "boolean") obj.hasDeepWaterGateFired = false;
+  if (obj.deepWaterDwell === void 0) obj.deepWaterDwell = 0;
+  if (!(Number.isInteger(obj.deepWaterDwell) && obj.deepWaterDwell >= 0)) obj.deepWaterDwell = 0;
+  if (obj.deepWaterDwellCycled === void 0) obj.deepWaterDwellCycled = 0;
+  if (!(Number.isInteger(obj.deepWaterDwellCycled) && obj.deepWaterDwellCycled >= 0)) obj.deepWaterDwellCycled = 0;
+  for (const f of ["dwBillsSinceLastAlert", "backstopLapCount"]) {
+    if (obj[f] === void 0) obj[f] = 0;
+  }
+  if (!(Number.isFinite(obj.dwBillsSinceLastAlert) && obj.dwBillsSinceLastAlert >= 0)) return null;
+  if (!(Number.isInteger(obj.backstopLapCount) && obj.backstopLapCount >= 0)) return null;
+  if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
+  if (obj.lastBurnRate !== null && !(Number.isFinite(obj.lastBurnRate) && obj.lastBurnRate >= 0)) return null;
+  if (obj.lastAppliedLRead != null && !(Number.isFinite(obj.lastAppliedLRead) && obj.lastAppliedLRead >= 0)) return null;
+  if (obj.lastBillEvent != null && typeof obj.lastBillEvent !== "object") return null;
+  if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
+  if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
+  for (const e of obj.recentStopEvents) {
+    if (!e || typeof e !== "object") return null;
+    if (typeof e.kind !== "string") return null;
+  }
+  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
+  for (const id of obj.recentProcessedHookEventIds) if (typeof id !== "string") return null;
+  return obj;
+}
+function validateRateLampSample(obj) {
+  if (!obj || typeof obj !== "object") return false;
+  if (typeof obj.reliable !== "boolean") return false;
+  if (!Number.isInteger(obj.seq) || obj.seq < 0) return false;
+  if (!Number.isInteger(obj.turnSeq) || obj.turnSeq < 0) return false;
+  if (obj.reliable) {
+    if (!(Number.isFinite(obj.burnRate) && obj.burnRate >= 0)) return false;
+    if (!(Number.isFinite(obj.L_read) && obj.L_read >= 0)) return false;
+  }
+  return true;
+}
+var numFields, intFields, PAUSE_REASONS;
+var init_ledger_schema = __esm({
+  "lib/ledger-schema.js"() {
+    init_constants();
+    numFields = [
+      "billProgress",
+      "billCycleCount",
+      "billAnchorLRead",
+      "billAnchorFoldedCallSeq",
+      "lastAppliedFoldedCallSeq",
+      "currentTurnSeq",
+      "cacheExpiryCount",
+      "kStableFrozen"
+    ];
+    intFields = [
+      "billCycleCount",
+      "billAnchorFoldedCallSeq",
+      "lastAppliedFoldedCallSeq",
+      "currentTurnSeq",
+      "cacheExpiryCount",
+      "ledgerRevision"
+    ];
+    PAUSE_REASONS = /* @__PURE__ */ new Set([
+      null,
+      "folded_seq_gap",
+      "metrics_unreliable",
+      "invalid_baseline",
+      "insufficient_data",
+      "cache_unstable",
+      "seq_history_mismatch",
+      "invalid_sample",
+      "folded_call_mutated"
+    ]);
+  }
+});
+
+// lib/rate-lamp-store.js
+function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion = SCHEMA_VERSION }) {
+  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
+}
+function stateKeyForStatus(status) {
+  return stateKeyOf({
+    segmentId: status.segment,
+    model: null,
+    cRatio: null,
+    baselineFingerprint: null,
+    contextCap: null,
+    schemaVersion: 1
+  });
+}
+function freshLedger(stateKey, kStableFrozen = 0) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    stateKey,
+    billingBasis: "fullCarry",
+    billProgress: 0,
+    billCycleCount: 0,
+    billAnchorLRead: 0,
+    billAnchorFoldedCallSeq: 0,
+    lastBurnRate: null,
+    lastAppliedFoldedCallSeq: 0,
+    lastAppliedLRead: null,
+    currentTurnSeq: 0,
+    hasDeepWaterGateFired: false,
+    dwBillsSinceLastAlert: 0,
+    backstopLapCount: 0,
+    deepWaterDwell: 0,
+    deepWaterDwellCycled: 0,
+    pausedReason: null,
+    cacheExpiryCount: 0,
+    kStableFrozen,
+    lastBillEvent: null,
+    lastStopEvent: null,
+    // condition-cleared: visible until next human turn boundary
+    ledgerRevision: 0,
+    recentStopEvents: [],
+    recentProcessedHookEventIds: []
+  };
+}
+function invalidPausedLedger(prev) {
+  const stateKey = prev && typeof prev === "object" && typeof prev.stateKey === "string" ? prev.stateKey : "__invalid__";
+  const kStable = prev && Number.isFinite(prev.kStableFrozen) && prev.kStableFrozen >= 0 ? prev.kStableFrozen : 0;
+  const s = freshLedger(stateKey, kStable);
+  s.pausedReason = "invalid_sample";
+  return s;
+}
+function pushStopEventRing(ledgerOrDraft, evt) {
+  if (!ledgerOrDraft.recentStopEvents) ledgerOrDraft.recentStopEvents = [];
+  ledgerOrDraft.recentStopEvents.push(evt);
+  if (ledgerOrDraft.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) {
+    ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - RECENT_STOP_EVENTS_LIMIT);
+  }
+}
+function applyFoldedCallSample(prev, sample) {
+  if (!validateLedgerState(prev)) return invalidPausedLedger(prev);
+  const s = { ...prev };
+  if (!validateRateLampSample(sample)) {
+    s.pausedReason = "invalid_sample";
+    return s;
+  }
+  if (sample.seq === s.lastAppliedFoldedCallSeq && sample.reliable && Number.isFinite(s.lastAppliedLRead) && Number.isFinite(sample.L_read) && sample.L_read !== s.lastAppliedLRead) {
+    s.pausedReason = "folded_call_mutated";
+    return s;
+  }
+  if (sample.seq <= s.lastAppliedFoldedCallSeq) return s;
+  if (s.lastAppliedFoldedCallSeq !== 0 && sample.seq !== s.lastAppliedFoldedCallSeq + 1) {
+    s.pausedReason = "folded_seq_gap";
+    s.lastAppliedFoldedCallSeq = sample.seq;
+    if (sample.reliable && Number.isFinite(sample.L_read)) s.lastAppliedLRead = sample.L_read;
+    return s;
+  }
+  if (sample.turnSeq !== s.currentTurnSeq) {
+    s.currentTurnSeq = sample.turnSeq;
+  }
+  if (!sample.reliable) {
+    s.pausedReason = sample.unavailableReason || "insufficient_data";
+    s.lastBurnRate = null;
+    s.lastAppliedFoldedCallSeq = sample.seq;
+    return s;
+  }
+  const br = Number.isFinite(sample.burnRate) ? Math.max(0, sample.burnRate) : 0;
+  const recovering = s.pausedReason != null || s.lastBurnRate == null;
+  if (recovering) {
+    s.pausedReason = null;
+    s.lastBurnRate = br;
+    s.lastAppliedFoldedCallSeq = sample.seq;
+    s.lastAppliedLRead = sample.L_read;
+    if (s.billAnchorFoldedCallSeq === 0) {
+      s.billAnchorLRead = sample.L_read;
+      s.billAnchorFoldedCallSeq = sample.seq;
+    }
+    return s;
+  }
+  const trap = 0.5 * (s.lastBurnRate + br);
+  let next = s.billProgress + trap;
+  while (next >= 1) {
+    next -= 1;
+    s.billCycleCount += 1;
+  }
+  s.billProgress = Math.floor(next * 1e6) / 1e6;
+  s.lastBurnRate = br;
+  s.lastAppliedFoldedCallSeq = sample.seq;
+  s.lastAppliedLRead = sample.L_read;
+  return s;
+}
+function advanceGateAndBackstop(draft, { inDeepWater, billCycleIncrement, mf }) {
+  if (!draft.hasDeepWaterGateFired) {
+    if (inDeepWater) {
+      draft.deepWaterDwell = (draft.deepWaterDwell || 0) + 1;
+      draft.deepWaterDwellCycled = (draft.deepWaterDwellCycled || 0) + billCycleIncrement;
+      if (draft.deepWaterDwell >= NOTIFY_DWELL && draft.deepWaterDwellCycled > 0) {
+        draft.hasDeepWaterGateFired = true;
+        draft.dwBillsSinceLastAlert = 0;
+        return { fired: true, kind: "gate" };
+      }
+    } else {
+      draft.deepWaterDwell = 0;
+      draft.deepWaterDwellCycled = 0;
+    }
+    return { fired: false };
+  }
+  if (!inDeepWater) return { fired: false };
+  draft.dwBillsSinceLastAlert += billCycleIncrement;
+  if (mf > 0) {
+    const interval = backstopIntervalFor(mf, BR_AMBER);
+    if (Number.isFinite(interval) && interval > 0 && draft.dwBillsSinceLastAlert >= interval) {
+      draft.dwBillsSinceLastAlert = 0;
+      draft.backstopLapCount += 1;
+      return { fired: true, kind: "backstop" };
+    }
+  }
+  return { fired: false };
+}
+function loadRateLampState(sessionId) {
+  try {
+    return validateLedgerState(getStore().load(sessionId, "ledger"));
+  } catch {
+    return null;
+  }
+}
+function saveRateLampState(sessionId, state) {
+  getStore().save(sessionId, "ledger", state);
+}
+var SCHEMA_VERSION;
+var init_rate_lamp_store = __esm({
+  "lib/rate-lamp-store.js"() {
+    init_store();
+    init_ledger_schema();
+    init_constants();
+    init_bill_regret();
+    SCHEMA_VERSION = 2;
   }
 });
 
@@ -23121,91 +24625,187 @@ var require_ignore = __commonJS({
   }
 });
 
+// lib/replay.js
+var replay_exports = {};
+__export(replay_exports, {
+  ReplayController: () => ReplayController,
+  indexTranscript: () => indexTranscript
+});
+import { readFileSync as readFileSync3 } from "node:fs";
+function indexTranscript(filePath) {
+  const buf = readFileSync3(filePath);
+  const steps = [];
+  let pos = 0;
+  let lastTs = null;
+  const idToIndex = /* @__PURE__ */ new Map();
+  while (pos < buf.length) {
+    const nlIdx = buf.indexOf(10, pos);
+    const lineEnd = nlIdx === -1 ? buf.length : nlIdx + 1;
+    const head = buf.slice(pos, Math.min(pos + 8192, lineEnd)).toString("utf8");
+    const tsMatch = head.match(/"timestamp"\s*:\s*"([^"]+)"/);
+    if (tsMatch) {
+      const p = Date.parse(tsMatch[1]);
+      if (!Number.isNaN(p)) lastTs = p;
+    }
+    if (head.includes('"usage"')) {
+      const idMatch = head.match(/"id"\s*:\s*"(msg_[^"]+)"/);
+      const msgId = idMatch ? idMatch[1] : null;
+      if (msgId && idToIndex.has(msgId)) {
+        const prevIdx = idToIndex.get(msgId);
+        steps[prevIdx] = { byteEnd: lineEnd, ts: lastTs };
+      } else {
+        const idx = steps.length;
+        steps.push({ byteEnd: lineEnd, ts: lastTs });
+        if (msgId) idToIndex.set(msgId, idx);
+      }
+    }
+    pos = lineEnd;
+  }
+  return steps;
+}
+var ReplayController;
+var init_replay = __esm({
+  "lib/replay.js"() {
+    init_rate_lamp_store();
+    init_bill_regret();
+    ReplayController = class {
+      constructor(watcher, index, { speed = 4, onAdvance = null } = {}) {
+        this._watcher = watcher;
+        this._index = index;
+        this._speed = Math.max(0.1, speed);
+        this._cursor = 0;
+        this._timer = null;
+        this._onAdvance = onAdvance;
+        this._paused = false;
+        this._done = false;
+        this._billProgress = 0;
+        this._prevBurnRate = null;
+        this._gateDraft = {
+          hasDeepWaterGateFired: false,
+          dwBillsSinceLastAlert: 0,
+          backstopLapCount: 0,
+          deepWaterDwell: 0,
+          deepWaterDwellCycled: 0
+        };
+        this._lastNotify = null;
+        this._notifyTTL = 0;
+        watcher._replayByteLimit = 0;
+      }
+      /** Current billProgress [0,1) for rentMeter cycleProgress */
+      get billProgress() {
+        return this._billProgress;
+      }
+      /** Gate/backstop state for depth meter */
+      get gateState() {
+        return this._gateDraft;
+      }
+      /** Last notification fired (or null) */
+      get lastNotify() {
+        return this._lastNotify;
+      }
+      get speed() {
+        return this._speed;
+      }
+      set speed(v) {
+        this._speed = Math.max(0.1, v);
+      }
+      get progress() {
+        return { current: this._cursor, total: this._index.length, done: this._done, paused: this._paused, speed: this._speed };
+      }
+      start() {
+        if (this._timer) return;
+        this._paused = false;
+        this._scheduleNext();
+      }
+      pause() {
+        this._paused = true;
+        if (this._timer) {
+          clearTimeout(this._timer);
+          this._timer = null;
+        }
+      }
+      stop() {
+        this.pause();
+        this._done = true;
+        delete this._watcher._replayByteLimit;
+      }
+      _scheduleNext() {
+        if (this._paused || this._done) return;
+        if (this._cursor >= this._index.length) {
+          this._done = true;
+          this._watcher._replayByteLimit = Infinity;
+          this._watcher.poll();
+          if (this._onAdvance) this._onAdvance();
+          return;
+        }
+        const step = this._index[this._cursor];
+        this._watcher._replayByteLimit = step.byteEnd;
+        this._cursor++;
+        this._watcher.poll();
+        const status = this._watcher.getStatus();
+        const currBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : 0;
+        let billCycleIncrement = 0;
+        if (this._prevBurnRate == null) {
+          this._prevBurnRate = currBurnRate;
+        } else {
+          const trap = 0.5 * (this._prevBurnRate + currBurnRate);
+          this._billProgress += trap;
+          while (this._billProgress >= 1) {
+            this._billProgress -= 1;
+            billCycleIncrement++;
+          }
+          this._prevBurnRate = currBurnRate;
+        }
+        const rl = status.rateLamp;
+        const deepWater = rl?.reliable ? isInDeepWater(rl.x_display, rl.xSweet, rl.br) : false;
+        const { fired, kind } = advanceGateAndBackstop(this._gateDraft, {
+          inDeepWater: deepWater,
+          billCycleIncrement,
+          mf: rl?.mf ?? 0
+        });
+        if (fired) {
+          this._lastNotify = { kind };
+          this._notifyTTL = 6;
+        } else if (this._lastNotify) {
+          this._notifyTTL--;
+          if (this._notifyTTL <= 0) this._lastNotify = null;
+        }
+        if (this._onAdvance) this._onAdvance();
+        if (this._cursor < this._index.length) {
+          const next = this._index[this._cursor];
+          const rawGap = next.ts && step.ts ? Math.max(0, next.ts - step.ts) : 0;
+          const clampedGap = Math.min(1e4, rawGap);
+          const minDelay = this._speed >= 20 ? 50 : 500;
+          const delay = Math.max(minDelay, clampedGap / this._speed);
+          this._timer = setTimeout(() => {
+            this._timer = null;
+            this._scheduleNext();
+          }, delay).unref();
+        } else {
+          this._timer = setTimeout(() => {
+            this._timer = null;
+            this._scheduleNext();
+          }, 100).unref();
+        }
+      }
+    };
+  }
+});
+
 // server.js
 var import_express = __toESM(require_express2(), 1);
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname as dirname3, join as join4, resolve, basename } from "node:path";
-import { readdirSync as readdirSync3, statSync as statSync2, mkdirSync as mkdirSync2, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2 } from "node:fs";
+import { dirname as dirname3, join as join4, resolve as resolve2, basename } from "node:path";
+import { readdirSync as readdirSync3, statSync as statSync5, readFileSync as readFileSync4, mkdirSync as mkdirSync2, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync, realpathSync } from "node:fs";
 import { homedir as homedir3 } from "node:os";
+import { randomInt } from "node:crypto";
 
 // lib/watcher.js
 import nodePath from "node:path";
 
-// lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT = 32;
-var RECENT_PROCESSED_HOOK_IDS_LIMIT = 128;
-var PENDING_MAX_TURN_DISTANCE = 2;
-var C_RATIO_TABLE = [
-  { match: /claude|opus|sonnet|haiku/i, ratio: 12.5 },
-  { match: /deepseek.*pro/i, ratio: 120 },
-  { match: /deepseek/i, ratio: 50 }
-];
-var DEFAULT_C_RATIO = 10;
-var MODEL_PRICING_PRESETS = [
-  {
-    id: "opus-4.8",
-    label: "Claude Opus 4.8",
-    readPrice: 0.5,
-    writePrice: 6.25
-  },
-  { id: "sonnet-5", label: "Claude Sonnet 5", readPrice: 0.2, writePrice: 2.5 },
-  {
-    id: "sonnet-4.6",
-    label: "Claude Sonnet 4.6",
-    readPrice: 0.3,
-    writePrice: 3.75
-  },
-  {
-    id: "haiku-4.5",
-    label: "Claude Haiku 4.5",
-    readPrice: 0.1,
-    writePrice: 1.25
-  },
-  { id: "fable-5", label: "Claude Fable 5", readPrice: 1, writePrice: 12.5 },
-  {
-    id: "deepseek-v4-flash",
-    label: "DeepSeek v4 Flash",
-    readPrice: 0.02,
-    writePrice: 1
-  },
-  {
-    id: "deepseek-v4-pro",
-    label: "DeepSeek v4 Pro",
-    readPrice: 0.025,
-    writePrice: 3
-  }
-];
-var CONTEXT_WINDOW_TABLE = [
-  { match: /test-short-window/i, window: 2e5 },
-  // test-only vehicle for cap-binding tests
-  { match: /1m|-1m|opus-4-8/i, window: 1e6 },
-  { match: /claude|opus|sonnet|haiku/i, window: 1e6 },
-  { match: /deepseek/i, window: 1e6 }
-];
-var DEFAULT_CONTEXT_WINDOW = 1e6;
-var RESERVED_OUTPUT = 32e3;
-var CTX_SAFETY_MARGIN = 8e3;
-var PRECHECK_LONG_LINE_BYTES = 1048576;
-var PRECHECK_HEAD_CAP_BYTES = 8192;
-var COALESCED_PERSIST_MS = 2e3;
-var IDLE_HEARTBEAT_MS = 5e3;
-var CTP_TABLE = {
-  claude: { ascii: 2.45, cjk: 0.59 },
-  // Anthropic tokenizer (n=5881)
-  deepseek: { ascii: 3.24, cjk: 0.94 }
-  // DeepSeek tokenizer (n=5265)
-};
-var DEFAULT_CTP = { ascii: 3, cjk: 1 };
-var TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40 };
-var DEPTH_HOT_LAP_COUNT = 3;
-var ALPHA_EMA = 0.03;
-var G_FLOOR = 100;
-var MISS_CR_DROP = 0.95;
-var SEGMENT_DROP_EPSILON = 100;
-var NOTIFY_DWELL = 3;
-
 // lib/extract.js
+init_constants();
 var KNOWN_USAGE_FIELDS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"];
 function cRatioFor(model = "") {
   const hit = C_RATIO_TABLE.find((r) => r.match.test(model));
@@ -23273,7 +24873,11 @@ function extractUsage(entry) {
   };
 }
 
+// lib/watcher.js
+init_constants();
+
 // lib/l-measure.js
+init_constants();
 function effectiveL(c) {
   return Number.isFinite(c?.L) ? c.L : c?.cacheRead ?? 0;
 }
@@ -23284,58 +24888,12 @@ function classifyMiss({ cacheRead, totalStock, prevL, prevTotalStock }) {
   return crDropped && stockPreserved;
 }
 
-// lib/bill-regret.js
-var BR_AMBER = 0.1;
-var BR_RED = 0.25;
-function computeMovableFrac(cRatio, lBase, kStable) {
-  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
-  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
-  return arm / (arm + lBase + cRatio * kStable);
-}
-function computeBr(x, dhat, mf) {
-  const d = x - 1;
-  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
-  const u = d / dhat;
-  const ppFrac = (u - 1) * (u - 1) / (2 * u);
-  return mf * ppFrac;
-}
-function xRightFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uRight = 1 + p + Math.sqrt(disc);
-  return 1 + uRight * dhat;
-}
-function xLeftFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uLeft = 1 + p - Math.sqrt(disc);
-  return 1 + uLeft * dhat;
-}
-function isInDeepWater(x, xSweet, br) {
-  if (!Number.isFinite(br) || !Number.isFinite(x) || !Number.isFinite(xSweet)) return false;
-  if (x < xSweet) return false;
-  return br >= BR_AMBER;
-}
-function uAtBr(mf, brTarget) {
-  if (!Number.isFinite(mf) || mf <= 0) return Infinity;
-  if (!Number.isFinite(brTarget)) return Infinity;
-  if (brTarget <= 0) return 1;
-  const a = mf;
-  const b = -(2 * mf + 2 * brTarget);
-  const c = mf;
-  const disc = b * b - 4 * a * c;
-  if (disc < 0) return Infinity;
-  return (-b + Math.sqrt(disc)) / (2 * a);
-}
-function backstopIntervalFor(mf, brTarget) {
-  const u = uAtBr(mf, brTarget);
-  if (!Number.isFinite(u)) return Infinity;
-  return u * u;
-}
+// lib/rate-lamp.js
+init_constants();
+init_bill_regret();
 
 // lib/landmarks.js
+init_constants();
 function nucleus(cRatio, kAvg, lBase) {
   if (cRatio <= 0 || kAvg <= 0 || lBase <= 0) return 0;
   return Math.sqrt(2 * cRatio * kAvg / lBase);
@@ -23349,10 +24907,12 @@ function computeFullCarryBurnRate({ L_read, B_post, B_rebuild, cRatio }) {
 
 // lib/fold.js
 import { readSync, openSync, closeSync, fstatSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname as dirname2 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+init_constants();
 
 // lib/measure.js
+init_constants();
 import path from "node:path";
 var CJK_RE = /[\u3000-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/g;
 function charsToTokens(text, ctp, { asciiOnly = false } = {}) {
@@ -23798,10 +25358,6 @@ var BRebuild = class {
     this._editedSinceFullSnapshot.clear();
   }
 };
-function applyResidual(deltaL, deltaB) {
-  const raw = deltaL - deltaB;
-  return raw >= 0 ? { residual: raw, overshoot: 0 } : { residual: 0, overshoot: -raw };
-}
 function emaStep(prevG, residual, alpha = ALPHA_EMA) {
   return alpha * residual + (1 - alpha) * prevG;
 }
@@ -23909,6 +25465,77 @@ function bashFeature(command) {
 }
 
 // lib/fold.js
+init_store();
+init_bill_regret();
+
+// lib/settle.js
+function settleDeferred(deltaL, deltaB, pathDeltas, ledger, { epsilon = 1e-6 } = {}) {
+  const dL = Math.max(0, deltaL);
+  const bSurplus = Math.max(0, deltaB - dL);
+  const lSurplus = Math.max(0, dL - deltaB);
+  let posTotal = 0;
+  if (pathDeltas) {
+    for (const d of pathDeltas.values()) if (d > 0) posTotal += d;
+  }
+  const banked = Math.min(bSurplus, posTotal);
+  const ctpImmediate = bSurplus - banked;
+  if (banked > 0 && posTotal > 0) {
+    for (const [p, d] of pathDeltas) {
+      if (d <= 0) continue;
+      ledger.byPath.set(p, (ledger.byPath.get(p) || 0) + banked * (d / posTotal));
+    }
+  }
+  const retired = Math.min(ledger.total, lSurplus);
+  const residual = lSurplus - retired;
+  if (retired > 0 && ledger.total > 0) {
+    const frac = retired / ledger.total;
+    for (const [p, amt] of ledger.byPath) {
+      const next = amt - amt * frac;
+      if (next > epsilon) ledger.byPath.set(p, next);
+      else ledger.byPath.delete(p);
+    }
+  }
+  let sum = 0;
+  for (const v of ledger.byPath.values()) sum += v;
+  ledger.total = sum;
+  return { residual, banked, retired, ctpImmediate };
+}
+
+// lib/carry-outcome.js
+function buildTelemetryPayload(segmentCalls, pathEvents) {
+  const bySeq = /* @__PURE__ */ new Map();
+  for (const c of segmentCalls) {
+    const total = (c.cacheRead || 0) + (c.cacheCreation || 0) + (c.input || 0) + (c.output || 0);
+    const prev = bySeq.get(c.foldedSeq);
+    const prevTotal = prev ? (prev.cacheRead || 0) + (prev.cacheCreation || 0) + (prev.input || 0) + (prev.output || 0) : -1;
+    if (!prev || total >= prevTotal) {
+      bySeq.set(c.foldedSeq, {
+        foldedSeq: c.foldedSeq,
+        ts: c.ts ?? null,
+        cacheRead: c.cacheRead ?? null,
+        cacheCreation: c.cacheCreation ?? null,
+        input: c.input ?? null,
+        output: c.output ?? null,
+        toolCalls: c.toolCalls ?? null,
+        // load_token is sticky across revisions — a later revision with null must not erase it.
+        loadToken: c.loadToken ?? (prev ? prev.loadToken : null)
+      });
+    } else if (c.loadToken && prev && !prev.loadToken) {
+      prev.loadToken = c.loadToken;
+    }
+  }
+  const steps = [...bySeq.values()].sort((a, b) => a.foldedSeq - b.foldedSeq);
+  const ordinalBySeq = /* @__PURE__ */ new Map();
+  const events = [];
+  for (const e of pathEvents) {
+    const ord = ordinalBySeq.get(e.foldedSeq) || 0;
+    ordinalBySeq.set(e.foldedSeq, ord + 1);
+    events.push({ foldedSeq: e.foldedSeq, eventOrdinal: ord, path: e.path, rawPath: e.rawPath ?? e.path ?? null, toolType: e.toolType, isFullRead: e.isFullRead ?? null });
+  }
+  return { steps, events };
+}
+
+// lib/fold.js
 function boundaryPrecheck(raw) {
   if (typeof raw !== "string" || raw.length === 0) return false;
   const scan = raw.length > PRECHECK_LONG_LINE_BYTES ? raw.slice(0, PRECHECK_HEAD_CAP_BYTES) : raw;
@@ -23929,11 +25556,13 @@ function readNewText(w) {
       w._offset = 0;
       w._partial = "";
       if (w._decoder) w._decoder = new StringDecoder("utf8");
-      resetFoldState(w, { bumpSegment: true, clearCalls: false });
+      handleSegmentBoundary(w, { replayMode: false });
+      resetFoldState(w, { bumpSegment: false, clearCalls: false });
     }
     w._ino = st.ino;
-    if (size === w._offset) return "";
-    const len = size - w._offset;
+    const effectiveSize = w._replayByteLimit != null ? Math.min(size, w._replayByteLimit) : size;
+    if (effectiveSize <= w._offset) return "";
+    const len = effectiveSize - w._offset;
     const buf = Buffer.allocUnsafe(len);
     const read = readSync(fd, buf, 0, len, w._offset);
     w._offset += read;
@@ -23948,7 +25577,87 @@ function extractTurnToolEvents(w) {
   w._turnToolEvents = [];
   return evs;
 }
-function foldCall(w, u) {
+function buildSegmentSnapshot(w, { source, terminal = false, archivedAt } = {}) {
+  const s = w.getStatus();
+  const safeNum = (v) => Number.isFinite(v) ? v : null;
+  const segTurns = w._turnSeq - w._segmentStartTurn;
+  const oAvg = w._segmentUsageCount > 0 ? w._segmentOutputSum / w._segmentUsageCount : null;
+  const f = w._segmentFirstTs ? Date.parse(w._segmentFirstTs) : NaN;
+  const l = w._segmentLastTs ? Date.parse(w._segmentLastTs) : NaN;
+  const durationMs = Number.isFinite(f) && Number.isFinite(l) ? l - f : null;
+  const at = archivedAt ?? (source === "replay" ? Number.isFinite(l) ? l : Date.now() : Date.now());
+  return {
+    archivedAt: at,
+    archiveSource: source,
+    model: s.model,
+    projectId: w._projectId || null,
+    // #2 archive-口径: b_total must equal the belief the paths sum to (dead + Σpaths), i.e. the UNCAPPED
+    // B_full. The read-time cap (getStatus().B = Breported) is for the live dashboard only; persistence
+    // and carry-over need the paths-consistent value or dead+Σpaths > b_total. See plan Global Constraints.
+    bTotal: w._bRebuild.B(),
+    gFinal: s.g,
+    cRatio: s.cRatio,
+    turns: segTurns,
+    durationMs,
+    totalTokensRead: safeNum(w._segmentInputTokens),
+    // R1-C: accumulated per-call, NOT s.L - start
+    mf: s.mf,
+    ppExit: computePp(s.x, s.dhat),
+    brExit: s.br,
+    lPeak: w._segmentLPeak,
+    brPeak: w._segmentBrPeak,
+    ppPeak: w._segmentPpPeak,
+    gMin: safeNum(w._segmentGMin),
+    turnAtBrAmber: w._segmentTurnAtBrAmber,
+    lFloor: w._bRebuild.dead,
+    p0: s.cRatio > 0 && s.g > 0 ? w._bRebuild.dead / (s.cRatio * s.g) : null,
+    bAxis: s.g > 0 && w._segmentUsageCount > 0 ? 2 * oAvg / s.g : null,
+    xAxis: w._bRebuild.dead > 0 ? w._segmentLPeak / w._bRebuild.dead : null,
+    oAvg
+  };
+}
+function handleSegmentBoundary(w, { replayMode = false } = {}) {
+  if (!w._segmentStepUsage || w._segmentStepUsage.length === 0) {
+    w.segmentReset();
+    return;
+  }
+  if (w._bLagLedger.total > 0) {
+    for (const [p, amt] of w._bLagLedger.byPath) {
+      if (amt > 0) w._bRebuild.addCorrection(p, amt);
+    }
+    w._bLagLedger = { total: 0, byPath: /* @__PURE__ */ new Map() };
+  }
+  if (w._sessionId && w._segment !== w._lastArchivedSegment) {
+    const replaying = replayMode || w._replayMode;
+    const store = w._store || getStore();
+    const source = replaying ? "replay" : "live";
+    const snap = buildSegmentSnapshot(w, { source });
+    const paths = w._bRebuild.snapshot().map(({ path: path4, tokens }) => ({ path: path4, tokens }));
+    const archivedSegment = w._segment;
+    const segCalls = (w._segmentStepUsage || []).slice();
+    const segEvents = (w._segmentPathEvents || []).slice();
+    try {
+      const result = store.archiveSegmentProfile(w._sessionId, archivedSegment, snap, paths);
+      if (result.status === "archived" || result.status === "already_archived") {
+        w._lastArchivedSegment = archivedSegment;
+        const tstatus = store.getTelemetryStatus(w._sessionId, archivedSegment);
+        const shouldWriteTelemetry = result.status === "archived" || tstatus == null || tstatus === "pending" || tstatus === "failed_retryable";
+        if (shouldWriteTelemetry) {
+          try {
+            const payload = buildTelemetryPayload(segCalls, segEvents);
+            store.archiveSegmentTelemetry(w._sessionId, archivedSegment, payload, replaying ? "cc-replay" : "cc-live");
+          } catch (e) {
+            if (process.env.SW_DEBUG) console.error("[segment-telemetry]", e.message);
+          }
+        }
+      }
+    } catch (e) {
+      if (process.env.SW_DEBUG) console.error("[segment-archive]", e.message);
+    }
+  }
+  w.segmentReset();
+}
+function foldCall(w, u, stepMeta = { toolUseCount: 0, loadToken: null }) {
   const foldKey = u.messageId ?? u.requestId ?? null;
   if (foldKey != null && w._byId.has(foldKey)) {
     const idx = w._byId.get(foldKey);
@@ -23956,6 +25665,10 @@ function foldCall(w, u) {
     let changed = false;
     if (totalTok >= w._calls[idx]._total) {
       const prev = w._calls[idx];
+      const outputDelta = u.output - prev.output;
+      const inputDelta = u.input - prev.input;
+      if (outputDelta > 0) w._segmentOutputSum += outputDelta;
+      if (inputDelta > 0) w._segmentInputTokens += inputDelta;
       w._calls[idx] = {
         ...prev,
         cacheRead: u.cacheRead,
@@ -23967,24 +25680,38 @@ function foldCall(w, u) {
       };
       changed = true;
       w._foldRev++;
+      if (u.ts) w._segmentLastTs = u.ts;
+      if (Array.isArray(w._segmentStepUsage)) {
+        const seq = w._calls[idx].foldedSeq;
+        const buf = w._segmentStepUsage.find((s) => s.foldedSeq === seq);
+        if (buf) {
+          buf.cacheRead = u.cacheRead;
+          buf.cacheCreation = u.cacheCreation;
+          buf.input = u.input;
+          buf.output = u.output;
+          if (u.ts) buf.ts = Date.parse(u.ts) || buf.ts;
+          if (stepMeta && stepMeta.toolUseCount) buf.toolCalls = stepMeta.toolUseCount;
+          if (stepMeta && stepMeta.loadToken && buf.loadToken == null) buf.loadToken = stepMeta.loadToken;
+        }
+      }
     }
     return { isNew: false, changed };
   }
   const totalStock = u.cacheRead + u.cacheCreation + u.input;
   if (!w._segmentModel) w._segmentModel = u.model;
   if (w._compactDetected) {
-    w.segmentReset();
+    handleSegmentBoundary(w, { replayMode: false });
     w._segmentModel = u.model;
     w._compactDetected = false;
   } else if (w._prevTotalStock > 0 && totalStock < w._prevTotalStock - SEGMENT_DROP_EPSILON) {
     if (w._firstRootUuid) {
       const looksLikeEviction = w._prevL > 0 && u.cacheRead < w._prevL * MISS_CR_DROP;
       if (!looksLikeEviction) {
-        w.segmentReset();
+        handleSegmentBoundary(w, { replayMode: false });
         w._segmentModel = u.model;
       }
     } else {
-      w.segmentReset();
+      handleSegmentBoundary(w, { replayMode: false });
       w._segmentModel = u.model;
     }
   }
@@ -24003,28 +25730,12 @@ function foldCall(w, u) {
     if (ceiling > 0 && w._prevL < ceiling && deltaL > 0) {
       deltaL = Math.max(0, L - ceiling);
     }
-    const rawDeltaB = B_current - prevB;
-    if (deltaL >= 0 && rawDeltaB > deltaL && rawDeltaB > 0 && w._intervalPathDeltas?.size) {
-      const overshoot = rawDeltaB - deltaL;
-      const totalPathDelta = [...w._intervalPathDeltas.values()].reduce((s, d) => s + d, 0);
-      if (totalPathDelta > 0) {
-        const uncached = totalStock - L;
-        const unexplained = Math.max(0, overshoot - uncached);
-        const effectiveOvershoot = Math.min(unexplained, totalPathDelta);
-        if (effectiveOvershoot > 0) {
-          for (const [p, d] of w._intervalPathDeltas) {
-            if (d <= 0) continue;
-            w._bRebuild.addCorrection(p, effectiveOvershoot * (d / totalPathDelta));
-          }
-          B_current = w._bRebuild.B();
-        }
-      }
-    }
-    w._intervalPathDeltas = /* @__PURE__ */ new Map();
     const deltaB = B_current - prevB;
-    const applied = applyResidual(deltaL, deltaB);
-    residual = applied.residual;
-    w._ctpOvershoot += applied.overshoot;
+    const pathDeltas = w._intervalPathDeltas;
+    w._intervalPathDeltas = /* @__PURE__ */ new Map();
+    const st = settleDeferred(deltaL, deltaB, pathDeltas, w._bLagLedger);
+    residual = st.residual;
+    w._ctpOvershoot += st.ctpImmediate;
     w._g_ema = emaStep(w._g_ema == null ? residual : w._g_ema, residual);
     const resTools = w._turnResidualTools || [];
     if (resTools.length && residual > 0) {
@@ -24076,12 +25787,32 @@ function foldCall(w, u) {
     foldedSeq: w._foldedCallSeq,
     turnSeq: w._turnSeq,
     // v3 per-call metadata (display layer):
-    B_at_call: B_current,
+    // §I read-time cap: history/display reads the invariant-safe value; reconciliation (_prevB, set
+    // below) keeps the uncapped belief so the next row's ΔB is correct.
+    B_at_call: Math.min(B_current, totalStock),
     g_at_call: gEffective(w._g_ema),
     deltaResidual: residual,
     toolEvents
   };
   w._calls.push(rec);
+  (w._segmentStepUsage ||= []).push({
+    foldedSeq: w._foldedCallSeq,
+    ts: u.ts ? Date.parse(u.ts) || null : null,
+    cacheRead: u.cacheRead,
+    cacheCreation: u.cacheCreation,
+    input: u.input,
+    output: u.output,
+    toolCalls: stepMeta.toolUseCount || 0,
+    loadToken: stepMeta.loadToken || null
+  });
+  w._segmentOutputSum += u.output;
+  w._segmentUsageCount++;
+  w._segmentInputTokens += u.input;
+  if (u.ts) {
+    if (!w._segmentFirstTs) w._segmentFirstTs = u.ts;
+    w._segmentLastTs = u.ts;
+  }
+  w._updateSegmentPeaks(L, B_current);
   if (!w._reasoningAttributionDisabled && w._bRebuild._totalSpentReasoning.size > 0) {
     const reasoningSum = w._bRebuild.totalReasoningSpentSum();
     if (reasoningSum > L) {
@@ -24197,7 +25928,7 @@ function resetFoldState(w, { bumpSegment = false, bumpFoldRev = true, clearCalls
   if (clearCalls) w._calls.length = 0;
   w._byId.clear();
   if (bumpSegment) w._segment++;
-  else w._segment = 0;
+  else if (clearCalls) w._segment = 0;
   w._segmentModel = null;
   if (clearCalls) {
     w._foldedCallSeq = 0;
@@ -24220,6 +25951,7 @@ function resetFoldState(w, { bumpSegment = false, bumpFoldRev = true, clearCalls
     w._prevL = null;
     w._prevTotalStock = 0;
     w._ctpOvershoot = 0;
+    w._bLagLedger = { total: 0, byPath: /* @__PURE__ */ new Map() };
     w._pendingTool.clear();
     w._segmentEpoch++;
     w._turnToolEvents = [];
@@ -24229,6 +25961,8 @@ function resetFoldState(w, { bumpSegment = false, bumpFoldRev = true, clearCalls
     w._intervalPathDeltas = /* @__PURE__ */ new Map();
     w._completedSkills = /* @__PURE__ */ new Map();
     w._reasoningAttributionDisabled = false;
+    w._resetSegmentAccumulators();
+    w._lastArchivedSegment = -1;
   }
 }
 function foldEntries(w, entries, pathFilter) {
@@ -24238,7 +25972,7 @@ function foldEntries(w, entries, pathFilter) {
     if (w._ctp == null && entry.type === "assistant" && entry.message?.usage && entry.message?.model) {
       w._ctp = ctpForModel(entry.message.model);
     }
-    processToolEvents(w, entry, w._turnSeq);
+    const stepMeta = processToolEvents(w, entry, w._turnSeq, { isSidechain: entry.isSidechain === true });
     if (entry.isMeta === true && entry.sourceToolUseID && w._completedSkills?.has(entry.sourceToolUseID)) {
       const sk = w._completedSkills.get(entry.sourceToolUseID);
       if (sk.epoch === w._segmentEpoch) {
@@ -24266,7 +26000,7 @@ function foldEntries(w, entries, pathFilter) {
     }
     const u = extractUsage(entry);
     if (!u || u.isSidechain) continue;
-    const r = foldCall(w, u);
+    const r = foldCall(w, u, stepMeta);
     if (r.isNew) newCalls++;
     if (r.changed) changed = true;
   }
@@ -24286,10 +26020,11 @@ function replayActivePath(w, { isCompact = false } = {}) {
   w._partial = "";
   try {
     const st = fstatSync(fd);
-    const buf = Buffer.allocUnsafe(st.size);
-    const bytesRead = readSync(fd, buf, 0, st.size, 0);
+    const readSize = w._replayByteLimit != null ? Math.min(st.size, w._replayByteLimit) : st.size;
+    const buf = Buffer.allocUnsafe(readSize);
+    const bytesRead = readSync(fd, buf, 0, readSize, 0);
     const safeBuf = buf.subarray(0, bytesRead);
-    const { events } = readCompleteJsonlEventsFromBuffer(safeBuf, { atEof: true });
+    const { events } = readCompleteJsonlEventsFromBuffer(safeBuf, { atEof: w._replayByteLimit == null });
     for (const entry of events) indexRow(w, entry);
     w._activeLeafUuid = detectActiveLeaf(w);
     const activePath = w._uuidChildren.size > 0 ? resolveActivePath(w, w._activeLeafUuid) : null;
@@ -24301,7 +26036,7 @@ function replayActivePath(w, { isCompact = false } = {}) {
       w._compactDetected = false;
       for (let i = 0; i < roots.length; i++) {
         if (i > 0) {
-          w.segmentReset();
+          handleSegmentBoundary(w, { replayMode: true });
           w._ctp = null;
           w._pendingTurnBump = false;
         }
@@ -24326,11 +26061,13 @@ function extractSkillText(entry) {
   }
   return text || null;
 }
-function processToolEvents(w, entry, turn) {
+function processToolEvents(w, entry, turn, { isSidechain = false } = {}) {
   const msg = entry?.message;
-  if (!msg) return;
+  if (!msg) return { toolUseCount: 0, loadToken: null };
   const blocks = Array.isArray(msg.content) ? msg.content : null;
-  if (!blocks) return;
+  if (!blocks) return { toolUseCount: 0, loadToken: null };
+  let stepToolUseCount = 0;
+  let stepLoadToken = null;
   let lastToolPath = null;
   let accReasoningChars = 0;
   let accReasoningCjk = 0;
@@ -24344,6 +26081,17 @@ function processToolEvents(w, entry, turn) {
       continue;
     }
     if (block?.type === "tool_use") {
+      stepToolUseCount++;
+      if (typeof block.name === "string" && block.name.endsWith("load_handoff")) {
+        if (block.input && typeof block.input.load_token === "string") {
+          if (stepLoadToken == null) stepLoadToken = block.input.load_token;
+          else if (stepLoadToken !== block.input.load_token && process.env.SW_DEBUG) {
+            console.error("[telemetry] multiple load_handoff tokens in one step; keeping first");
+          }
+        } else {
+          (w._pendingLoadHandoff ||= /* @__PURE__ */ new Set()).add(block.id);
+        }
+      }
       const adapter = matchAdapter(block.name);
       if (!adapter) {
         const isBash = block.name === "Bash";
@@ -24366,7 +26114,7 @@ function processToolEvents(w, entry, turn) {
         accReasoningCjk = 0;
         continue;
       }
-      const cwd = entry.cwd || w.cwd || dirname(w.path);
+      const cwd = entry.cwd || w.cwd || dirname2(w.path);
       const path4 = adapter.extractPath(block.input || {}, cwd);
       if (path4 == null && block.name === "Bash") {
         const f = bashFeature(block.input?.command);
@@ -24389,6 +26137,20 @@ function processToolEvents(w, entry, turn) {
       accReasoningChars = 0;
       accReasoningCjk = 0;
     } else if (block?.type === "tool_result") {
+      if (w._pendingLoadHandoff && w._pendingLoadHandoff.has(block.tool_use_id)) {
+        w._pendingLoadHandoff.delete(block.tool_use_id);
+        const resultText = extractToolResultText(block);
+        let resolved = null;
+        try {
+          const parsed = JSON.parse(resultText);
+          if (parsed && typeof parsed.load_token === "string") resolved = parsed.load_token;
+        } catch {
+        }
+        if (resolved && Array.isArray(w._segmentStepUsage)) {
+          const buf = w._segmentStepUsage.find((s) => s.foldedSeq === w._foldedCallSeq && s.loadToken == null);
+          if (buf) buf.loadToken = resolved;
+        }
+      }
       const pendResidual = w._pendingResidual?.get(block.tool_use_id);
       if (pendResidual) {
         w._pendingResidual.delete(block.tool_use_id);
@@ -24411,6 +26173,28 @@ function processToolEvents(w, entry, turn) {
           const beforeTotal = pending.path ? w._bRebuild.pathTotal(pending.path) : 0;
           w._bRebuild.apply(update, pending.path, turn, w._foldedCallSeq);
           (w._turnToolEvents ||= []).push({ name: pending.adapter.name, path: pending.path || null, isError: false });
+          if (!isSidechain) {
+            if (update.type === "grepMultiFile" && update.files) {
+              for (const fpath of Object.keys(update.files)) {
+                (w._segmentPathEvents ||= []).push({
+                  foldedSeq: w._foldedCallSeq,
+                  path: fpath,
+                  rawPath: fpath,
+                  toolType: pending.adapter.name,
+                  isFullRead: 0
+                });
+              }
+            } else if (pending.path) {
+              const isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
+              (w._segmentPathEvents ||= []).push({
+                foldedSeq: w._foldedCallSeq,
+                path: pending.path,
+                rawPath: pending.input && (pending.input.file_path || pending.input.path) || pending.path,
+                toolType: pending.adapter.name,
+                isFullRead
+              });
+            }
+          }
           if (pending.adapter.name === "Skill" && pending.path) {
             (w._completedSkills ||= /* @__PURE__ */ new Map()).set(block.tool_use_id, { path: pending.path, epoch: pending.epoch });
           }
@@ -24427,6 +26211,10 @@ function processToolEvents(w, entry, turn) {
       }
     }
   }
+  return { toolUseCount: stepToolUseCount, loadToken: stepLoadToken };
+}
+function archiveCurrentSegment(w) {
+  handleSegmentBoundary(w, { replayMode: false });
 }
 function poll(w) {
   const chunk = readNewText(w);
@@ -24528,6 +26316,9 @@ function getHistory(w, fitWindowOverride) {
   return out.slice();
 }
 
+// lib/watcher.js
+init_bill_regret();
+
 // lib/gitignore.js
 import path2 from "node:path";
 function outsideProject(cwd, filePath) {
@@ -24554,6 +26345,8 @@ var SessionWatcher = class {
     this._calls = [];
     this._byId = /* @__PURE__ */ new Map();
     this._segment = 0;
+    this._segmentStepUsage = [];
+    this._segmentPathEvents = [];
     this._foldedCallSeq = 0;
     this._turnSeq = 0;
     this._pendingTurnBump = false;
@@ -24578,6 +26371,7 @@ var SessionWatcher = class {
     this._prevB = 0;
     this._prevL = null;
     this._ctpOvershoot = 0;
+    this._bLagLedger = { total: 0, byPath: /* @__PURE__ */ new Map() };
     this._prevTotalStock = 0;
     this._residualByTool = /* @__PURE__ */ new Map();
     this._turnResidualTools = [];
@@ -24585,6 +26379,12 @@ var SessionWatcher = class {
     this._intervalPathDeltas = /* @__PURE__ */ new Map();
     this._completedSkills = /* @__PURE__ */ new Map();
     this._startMs = this._nowMs();
+    this._sessionId = opts.sessionId || null;
+    this._projectId = opts.projectId || process.env.CLAUDE_PROJECT_ID || null;
+    this._store = null;
+    this._replayMode = false;
+    this._lastArchivedSegment = -1;
+    this._resetSegmentAccumulators();
   }
   // JSONL ingest + fold + segmentation live in fold.js (readNewText/foldCall/poll take this instance
   // and mutate its private state identically). poll() delegates so the public method surface and all
@@ -24592,12 +26392,66 @@ var SessionWatcher = class {
   poll() {
     return poll(this);
   }
+  getSegmentIndex() {
+    return this._segment;
+  }
+  // Carry-sweep store injection (Task 9). Point this watcher's fold-archival boundary at a specific
+  // store connection instead of the global getStore() singleton. Used ONLY by the crash-recovery sweep
+  // (lib/carry-sweep.js) so a replayed session's boundaries write to the DB the sweep is reconciling.
+  // Minimal by design: it stores the handle; fold.js's handleSegmentBoundary reads `w._store || getStore()`.
+  setStore(store) {
+    this._store = store;
+  }
+  // Single source of truth for the segment-local accumulator fields (11 peak/sum scalars + the two
+  // carry-staleness telemetry buffers + the auto-match _pendingLoadHandoff set).
+  // Called from: constructor, segmentReset(), and resetFoldState() in fold.js.
+  // NOTE: _lastArchivedSegment is intentionally NOT here (different semantics per call site).
+  _resetSegmentAccumulators() {
+    this._segmentStartTurn = this._turnSeq;
+    this._segmentLPeak = 0;
+    this._segmentBrPeak = 0;
+    this._segmentPpPeak = 0;
+    this._segmentGMin = Infinity;
+    this._segmentTurnAtBrAmber = null;
+    this._segmentOutputSum = 0;
+    this._segmentUsageCount = 0;
+    this._segmentInputTokens = 0;
+    this._segmentFirstTs = null;
+    this._segmentLastTs = null;
+    this._segmentStepUsage = [];
+    this._segmentPathEvents = [];
+    this._pendingLoadHandoff = null;
+  }
+  // Per-call segment peak update (post-v3 §3.2). Called from foldCall with the current call's
+  // effectiveL and B_current. Recomputes only the scalars needed — no _calls scan (replay-safe).
+  _updateSegmentPeaks(L, B) {
+    this._segmentLPeak = Math.max(this._segmentLPeak, L);
+    const cRatio = this.ratioOverride ?? cRatioFor(this._segmentModel || "");
+    const g = gEffective(this._g_ema);
+    this._segmentGMin = Math.min(this._segmentGMin, g);
+    const bPos = this._computeBDefault() || B;
+    if (!(bPos > 0) || !(cRatio > 0)) return;
+    const x = L / bPos;
+    const dhat = nucleus(cRatio, g, bPos);
+    const mf = computeMovableFrac(cRatio, bPos, g);
+    const br = dhat > 0 && Number.isFinite(mf) ? computeBr(x, dhat, mf) : null;
+    const pp = computePp(x, dhat);
+    if (Number.isFinite(br)) {
+      this._segmentBrPeak = Math.max(this._segmentBrPeak, br);
+      if (br >= BR_AMBER && this._segmentTurnAtBrAmber === null) {
+        this._segmentTurnAtBrAmber = this._turnSeq - this._segmentStartTurn;
+      }
+    }
+    if (Number.isFinite(pp)) this._segmentPpPeak = Math.max(this._segmentPpPeak, pp);
+  }
   // v3 segment boundary (spec §6.6): compact = clear = reset. B's state follows the API's state.
   segmentReset() {
+    this._resetSegmentAccumulators();
     this._bRebuild.clear();
     this._bRebuild.setDead(0);
     this._g_ema = G_FLOOR;
     this._ctpOvershoot = 0;
+    this._bLagLedger = { total: 0, byPath: /* @__PURE__ */ new Map() };
     this._prevB = 0;
     this._prevL = null;
     this._prevTotalStock = 0;
@@ -24612,6 +26466,31 @@ var SessionWatcher = class {
     this._intervalPathDeltas = /* @__PURE__ */ new Map();
     if (this._completedSkills) this._completedSkills.clear();
     this._reasoningAttributionDisabled = false;
+  }
+  // In-process rotation: reset file-reading state to point at a new transcript.
+  // Caller (doRotation) handles archival BEFORE calling this.
+  // _calls preserved (cross-segment history for getHistory).
+  switchTranscript(newPath) {
+    this.path = newPath;
+    this._offset = 0;
+    this._partial = "";
+    if (this._decoder && typeof this._decoder.end === "function") {
+      this._decoder.end();
+    }
+    this._decoder = null;
+    this._ino = null;
+    this._transcriptSeen = false;
+    this._activeLeafUuid = null;
+    this._uuidToParent = /* @__PURE__ */ new Map();
+    this._uuidChildren = /* @__PURE__ */ new Map();
+    this._firstRootUuid = null;
+    this._compactDetected = false;
+    this._latestUuid = null;
+    try {
+      this.poll();
+    } catch (e) {
+      if (process.env.SW_DEBUG) console.error("[switchTranscript]", e.message);
+    }
   }
   _currentSegmentCalls() {
     return this._calls.filter((c) => c.segment === this._segment);
@@ -24661,12 +26540,13 @@ var SessionWatcher = class {
     const model = this._ctp ? seg.length ? seg[seg.length - 1].model : "" : seg.length ? seg[0].model : "";
     const cRatio = this.ratioOverride ?? cRatioFor(model);
     const L = seg.length ? effectiveL(seg[seg.length - 1]) : 0;
-    const B = this._bRebuild.B();
+    const Bfull = this._bRebuild.B();
+    const Breported = this._prevTotalStock > 0 ? Math.min(Bfull, this._prevTotalStock) : Bfull;
     const bDefault = this._computeBDefault();
     const g = gEffective(this._g_ema);
     const Lcap = contextWindowFor(model) - RESERVED_OUTPUT - CTX_SAFETY_MARGIN;
-    const baselineValid = B > 0 && cRatio > 0;
-    const bPos = bDefault > 0 ? bDefault : B;
+    const baselineValid = Bfull > 0 && cRatio > 0;
+    const bPos = bDefault > 0 ? bDefault : Bfull;
     const x = baselineValid ? L / bPos : 1;
     const dhat = baselineValid ? nucleus(cRatio, g, bPos) : null;
     const xSweet = dhat != null ? 1 + dhat : null;
@@ -24679,10 +26559,10 @@ var SessionWatcher = class {
       basis: "fullCarry",
       L_read: L,
       L_cap: Lcap,
-      B_post: B,
-      B_rebuild: B,
+      B_post: Breported,
+      B_rebuild: Breported,
       B_default: bDefault,
-      lBase: B,
+      lBase: Breported,
       C_RATIO: cRatio,
       x_display: x,
       burnRate,
@@ -24696,7 +26576,7 @@ var SessionWatcher = class {
     } : { reliable: false, unavailableReason: seg.length === 0 && !this._transcriptSeen ? "no_transcript" : "insufficient_data" };
     return {
       L,
-      B,
+      B: Breported,
       g,
       x,
       dhat,
@@ -24718,7 +26598,10 @@ var SessionWatcher = class {
   getTerminalSnapshot() {
     const s = this.getStatus();
     return {
-      b_total: s.B,
+      // #2 archive-口径: b_total must equal the belief the paths sum to (dead + Σpaths), i.e. the UNCAPPED
+      // B_full. The read-time cap (getStatus().B = Breported) is for the live dashboard only; persistence
+      // and carry-over need the paths-consistent value or dead+Σpaths > b_total. See plan Global Constraints.
+      b_total: this._bRebuild.B(),
       g_final: s.g,
       l_peak: s.L,
       c_ratio: s.cRatio,
@@ -24727,7 +26610,8 @@ var SessionWatcher = class {
       br_exit: s.br,
       ctp_overshoot_ratio: s.ctpOvershootRatio,
       paths: this._bRebuild.snapshot().map(({ path: path4, tokens }) => ({ path: path4, tokens })),
-      model: s.model
+      model: s.model,
+      segment: this._segment
     };
   }
   // Bucket panel data (spec §7.1 / §11.3.1). Read-only; residual tags are best-effort display metadata.
@@ -24794,711 +26678,11 @@ var SessionWatcher = class {
   }
 };
 
-// lib/store.js
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { join, dirname as dirname2 } from "node:path";
-import { homedir } from "node:os";
-var SCHEMA_V1_SQL = `
-CREATE TABLE IF NOT EXISTS sessions (
-  session_id  TEXT PRIMARY KEY,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  model       TEXT,
-  project_id  TEXT
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS state (
-  session_id TEXT    NOT NULL,
-  key        TEXT    NOT NULL,
-  value      TEXT    NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_id, key)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS config (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS lines (
-  session_id TEXT    NOT NULL,
-  path       TEXT    NOT NULL,
-  line_num   INTEGER NOT NULL,
-  chars      INTEGER NOT NULL,
-  PRIMARY KEY (session_id, path, line_num)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS paths (
-  session_id TEXT    NOT NULL,
-  path       TEXT    NOT NULL,
-  edit_delta  INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_id, path)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS profile (
-  session_id   TEXT PRIMARY KEY,
-  archived_at  INTEGER NOT NULL,
-  model        TEXT,
-  project_id   TEXT,
-  l_floor      REAL,
-  b_total      REAL,
-  l_peak       REAL,
-  g_final      REAL,
-  o_avg        REAL,
-  c_ratio      REAL,
-  turns        INTEGER,
-  duration_ms  INTEGER,
-  total_tokens_read REAL,
-  mf           REAL,
-  pp_exit      REAL,
-  br_exit      REAL,
-  br_peak      REAL,
-  pp_peak      REAL,
-  p0           REAL,
-  b_axis       REAL,
-  x_axis       REAL,
-  g_min        REAL,
-  turn_at_br_amber INTEGER
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS profile_paths (
-  session_id TEXT NOT NULL,
-  path       TEXT NOT NULL,
-  tokens     REAL NOT NULL,
-  PRIMARY KEY (session_id, path)
-) WITHOUT ROWID;
-
-CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
-CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC);
-CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
-`;
-function migrate(db) {
-  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    const version = row ? parseInt(row.value) : 0;
-    if (version < 1) {
-      db.exec(SCHEMA_V1_SQL);
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    db.exec(`CREATE TABLE IF NOT EXISTS profile_paths (
-      session_id TEXT NOT NULL,
-      path       TEXT NOT NULL,
-      tokens     REAL NOT NULL,
-      PRIMARY KEY (session_id, path)
-    ) WITHOUT ROWID`);
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
-}
-var Store = class _Store {
-  constructor(db) {
-    this._db = db;
-    this._closed = false;
-    this._stmts = {
-      touchSession: db.prepare(`INSERT INTO sessions (session_id, created_at, updated_at, model, project_id) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at, model = COALESCE(excluded.model, sessions.model), project_id = COALESCE(excluded.project_id, sessions.project_id)`),
-      load: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
-      save: db.prepare(`INSERT INTO state (session_id, key, value, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
-      delete: db.prepare("DELETE FROM state WHERE session_id = ? AND key = ?"),
-      loadAll: db.prepare("SELECT key, value FROM state WHERE session_id = ?"),
-      deleteSessionState: db.prepare("DELETE FROM state WHERE session_id = ?"),
-      deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
-      deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
-      deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
-      // Config CRUD
-      loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
-      saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value`),
-      deleteConfig: db.prepare("DELETE FROM config WHERE key = ?"),
-      // Profile archival
-      archiveSession: db.prepare(`INSERT INTO profile (session_id, archived_at, model, project_id,
-        l_floor, b_total, l_peak, g_final, o_avg, c_ratio, turns, duration_ms, total_tokens_read,
-        mf, pp_exit, br_exit, br_peak, pp_peak,
-        p0, b_axis, x_axis, g_min, turn_at_br_amber)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(session_id) DO UPDATE SET
-          archived_at = excluded.archived_at, model = excluded.model,
-          project_id = excluded.project_id,
-          l_floor = excluded.l_floor, b_total = excluded.b_total,
-          l_peak = excluded.l_peak, g_final = excluded.g_final,
-          o_avg = excluded.o_avg, c_ratio = excluded.c_ratio,
-          turns = excluded.turns, duration_ms = excluded.duration_ms,
-          total_tokens_read = excluded.total_tokens_read,
-          mf = excluded.mf, pp_exit = excluded.pp_exit, br_exit = excluded.br_exit,
-          br_peak = excluded.br_peak, pp_peak = excluded.pp_peak,
-          p0 = excluded.p0, b_axis = excluded.b_axis, x_axis = excluded.x_axis,
-          g_min = excluded.g_min, turn_at_br_amber = excluded.turn_at_br_amber`),
-      loadProfile: db.prepare("SELECT * FROM profile WHERE session_id = ?"),
-      loadAllProfiles: db.prepare("SELECT * FROM profile ORDER BY archived_at DESC"),
-      // Sweep (GC)
-      expiredSessions: db.prepare("SELECT session_id FROM sessions WHERE updated_at < ?"),
-      loadSessionMeta: db.prepare("SELECT model, project_id FROM sessions WHERE session_id = ?"),
-      insertProfilePath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, path, tokens) VALUES (?, ?, ?)"),
-      loadState: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
-      // Line-level operations (paths + lines tables)
-      clearLines: db.prepare("DELETE FROM lines WHERE session_id = ? AND path = ?"),
-      insertLine: db.prepare(`INSERT INTO lines (session_id, path, line_num, chars) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path, line_num) DO UPDATE SET chars = excluded.chars`),
-      upsertPath: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, 0, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET updated_at = excluded.updated_at`),
-      setDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = excluded.edit_delta, updated_at = excluded.updated_at`),
-      addDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = edit_delta + excluded.edit_delta, updated_at = excluded.updated_at`),
-      pathTotal: db.prepare(`SELECT COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
-        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
-        WHERE p.session_id = ? AND p.path = ?`),
-      allTotals: db.prepare(`SELECT p.path, COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
-        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
-        WHERE p.session_id = ? GROUP BY p.path`),
-      clearPathMeta: db.prepare("DELETE FROM paths WHERE session_id = ? AND path = ?"),
-      clearAllLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
-      clearAllPathsMeta: db.prepare("DELETE FROM paths WHERE session_id = ?")
-    };
-  }
-  load(sessionId, key) {
-    const row = this._stmts.load.get(sessionId, key);
-    if (!row) return null;
-    try {
-      return JSON.parse(row.value);
-    } catch {
-      return null;
-    }
-  }
-  save(sessionId, key, value, { model, projectId } = {}) {
-    const now = Date.now();
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
-      this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  saveBatch(sessionId, entries, { model, projectId } = {}) {
-    const now = Date.now();
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      for (const [key, value] of entries) {
-        this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
-      }
-      this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  delete(sessionId, key) {
-    this._stmts.delete.run(sessionId, key);
-  }
-  loadSession(sessionId) {
-    const rows = this._stmts.loadAll.all(sessionId);
-    const map = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      try {
-        map.set(row.key, JSON.parse(row.value));
-      } catch {
-      }
-    }
-    return map;
-  }
-  deleteSession(sessionId) {
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.deleteSessionState.run(sessionId);
-      this._stmts.deleteSessionPaths.run(sessionId);
-      this._stmts.deleteSessionLines.run(sessionId);
-      this._stmts.deleteSessionRecord.run(sessionId);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  // --- Config CRUD ---
-  loadConfig(key) {
-    const row = this._stmts.loadConfig.get(key);
-    if (!row) return null;
-    try {
-      return JSON.parse(row.value);
-    } catch {
-      return null;
-    }
-  }
-  saveConfig(key, value) {
-    this._stmts.saveConfig.run(key, JSON.stringify(value));
-  }
-  deleteConfig(key) {
-    this._stmts.deleteConfig.run(key);
-  }
-  // --- Profile archival ---
-  archiveSession(sessionId, snapshot) {
-    const now = Date.now();
-    this._stmts.archiveSession.run(
-      sessionId,
-      now,
-      snapshot.model || null,
-      snapshot.projectId || null,
-      snapshot.lFloor ?? null,
-      snapshot.bTotal ?? null,
-      snapshot.lPeak ?? null,
-      snapshot.gFinal ?? null,
-      snapshot.oAvg ?? null,
-      snapshot.cRatio ?? null,
-      snapshot.turns ?? null,
-      snapshot.durationMs ?? null,
-      snapshot.totalTokensRead ?? null,
-      snapshot.mf ?? null,
-      snapshot.ppExit ?? null,
-      snapshot.brExit ?? null,
-      snapshot.brPeak ?? null,
-      snapshot.ppPeak ?? null,
-      snapshot.p0 ?? null,
-      snapshot.bAxis ?? null,
-      snapshot.xAxis ?? null,
-      snapshot.gMin ?? null,
-      snapshot.turnAtBrAmber ?? null
-    );
-  }
-  // #21: camelize profile rows from DB (snake_case columns -> camelCase JS API)
-  static _camelizeProfile(row) {
-    if (!row) return null;
-    return {
-      sessionId: row.session_id,
-      archivedAt: row.archived_at,
-      model: row.model,
-      projectId: row.project_id,
-      lFloor: row.l_floor,
-      bTotal: row.b_total,
-      lPeak: row.l_peak,
-      gFinal: row.g_final,
-      oAvg: row.o_avg,
-      cRatio: row.c_ratio,
-      turns: row.turns,
-      durationMs: row.duration_ms,
-      totalTokensRead: row.total_tokens_read,
-      mf: row.mf,
-      ppExit: row.pp_exit,
-      brExit: row.br_exit,
-      brPeak: row.br_peak,
-      ppPeak: row.pp_peak,
-      p0: row.p0,
-      bAxis: row.b_axis,
-      xAxis: row.x_axis,
-      gMin: row.g_min,
-      turnAtBrAmber: row.turn_at_br_amber
-    };
-  }
-  getProfile(sessionId) {
-    return _Store._camelizeProfile(this._stmts.loadProfile.get(sessionId));
-  }
-  getAllProfiles() {
-    return this._stmts.loadAllProfiles.all().map(_Store._camelizeProfile);
-  }
-  // --- Sweep (GC): archive-then-delete expired sessions ---
-  sweep(maxAgeMs, { now = Date.now(), isLiveSession } = {}) {
-    const cutoff = now - maxAgeMs;
-    const expired = this._stmts.expiredSessions.all(cutoff);
-    let count = 0;
-    for (const { session_id } of expired) {
-      if (isLiveSession && isLiveSession(session_id)) continue;
-      this._db.exec("BEGIN IMMEDIATE");
-      try {
-        const snapRow = this._stmts.loadState.get(session_id, "profile_snapshot");
-        const snap = snapRow ? JSON.parse(snapRow.value) : null;
-        const sessRow = this._stmts.loadSessionMeta.get(session_id);
-        this.archiveSession(session_id, {
-          model: snap?.model || sessRow?.model || null,
-          projectId: sessRow?.project_id || null,
-          bTotal: snap?.b_total,
-          gFinal: snap?.g_final,
-          lPeak: snap?.l_peak,
-          cRatio: snap?.c_ratio,
-          turns: snap?.turns,
-          mf: snap?.mf,
-          brExit: snap?.br_exit
-        });
-        if (snap?.paths) for (const p of snap.paths) this._stmts.insertProfilePath.run(session_id, p.path, p.tokens);
-        this._stmts.deleteSessionState.run(session_id);
-        this._stmts.deleteSessionPaths.run(session_id);
-        this._stmts.deleteSessionLines.run(session_id);
-        this._stmts.deleteSessionRecord.run(session_id);
-        this._db.exec("COMMIT");
-        count++;
-      } catch (e) {
-        this._db.exec("ROLLBACK");
-        console.error("[store] sweep: failed to archive/delete session", session_id, e.message);
-        continue;
-      }
-    }
-    if (count > 0) this._db.exec("PRAGMA incremental_vacuum");
-    return count;
-  }
-  // --- Line-level operations (paths + lines tables) ---
-  setLines(sessionId, path4, entries) {
-    const now = Date.now();
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.setDelta.run(sessionId, path4, 0, now);
-      this._stmts.clearLines.run(sessionId, path4);
-      for (const [lineNum, chars] of entries) {
-        this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
-      }
-      this._stmts.touchSession.run(sessionId, now, now, null, null);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  updateLines(sessionId, path4, entries) {
-    const now = Date.now();
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.upsertPath.run(sessionId, path4, now);
-      for (const [lineNum, chars] of entries) {
-        this._stmts.insertLine.run(sessionId, path4, lineNum, chars);
-      }
-      this._stmts.touchSession.run(sessionId, now, now, null, null);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  addEditDelta(sessionId, path4, delta) {
-    const now = Date.now();
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.addDelta.run(sessionId, path4, delta, now);
-      this._stmts.touchSession.run(sessionId, now, now, null, null);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  getPathTotal(sessionId, path4) {
-    const row = this._stmts.pathTotal.get(sessionId, path4);
-    return row ? row.total : 0;
-  }
-  getAllPathTotals(sessionId) {
-    const rows = this._stmts.allTotals.all(sessionId);
-    const map = /* @__PURE__ */ new Map();
-    for (const row of rows) map.set(row.path, row.total);
-    return map;
-  }
-  clearPath(sessionId, path4) {
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.clearLines.run(sessionId, path4);
-      this._stmts.clearPathMeta.run(sessionId, path4);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  clearAllPaths(sessionId) {
-    this._db.exec("BEGIN IMMEDIATE");
-    try {
-      this._stmts.clearAllLines.run(sessionId);
-      this._stmts.clearAllPathsMeta.run(sessionId);
-      this._db.exec("COMMIT");
-    } catch (e) {
-      this._db.exec("ROLLBACK");
-      throw e;
-    }
-  }
-  resetForTesting() {
-    closeStoreGlobal();
-  }
-};
-function openStore(dbPath) {
-  mkdirSync(dirname2(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath, { timeout: 3e3 });
-  try {
-    const walResult = db.prepare("PRAGMA journal_mode=WAL").get();
-    const actualMode = String(walResult.journal_mode ?? "").toLowerCase();
-    if (actualMode !== "wal") {
-      console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`);
-    }
-    db.exec("PRAGMA synchronous=NORMAL");
-    db.exec("PRAGMA auto_vacuum=INCREMENTAL");
-    migrate(db);
-    return new Store(db);
-  } catch (err) {
-    try {
-      db.close();
-    } catch {
-    }
-    throw err;
-  }
-}
-function closeStore(store) {
-  if (store._closed) return;
-  store._closed = true;
-  store._db.close();
-}
-var _instance = null;
-function defaultDbPath() {
-  const base = process.env.CLAUDE_PLUGIN_DATA || join(homedir(), ".session-watcher");
-  return join(base, "store.sqlite");
-}
-function initStore(dbPath) {
-  if (_instance) closeStore(_instance);
-  _instance = openStore(dbPath || defaultDbPath());
-  return _instance;
-}
-function getStore() {
-  if (!_instance) throw new Error("Store not initialized");
-  return _instance;
-}
-function closeStoreGlobal() {
-  if (_instance) {
-    closeStore(_instance);
-    _instance = null;
-  }
-}
-
-// lib/ledger-schema.js
-var numFields = [
-  "billProgress",
-  "billCycleCount",
-  "billAnchorLRead",
-  "billAnchorFoldedCallSeq",
-  "lastAppliedFoldedCallSeq",
-  "currentTurnSeq",
-  "cacheExpiryCount",
-  "kStableFrozen"
-];
-var intFields = [
-  "billCycleCount",
-  "billAnchorFoldedCallSeq",
-  "lastAppliedFoldedCallSeq",
-  "currentTurnSeq",
-  "cacheExpiryCount",
-  "ledgerRevision"
-];
-var PAUSE_REASONS = /* @__PURE__ */ new Set([
-  null,
-  "folded_seq_gap",
-  "metrics_unreliable",
-  "invalid_baseline",
-  "insufficient_data",
-  "cache_unstable",
-  "seq_history_mismatch",
-  "invalid_sample",
-  "folded_call_mutated"
-]);
-function validateLedgerState(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  if (obj.schemaVersion !== 2) return null;
-  if (typeof obj.stateKey !== "string") return null;
-  if (obj.billingBasis !== "fullCarry") return null;
-  if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
-  if (obj.recentStopEvents === void 0) obj.recentStopEvents = [];
-  if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
-  for (const f of numFields) if (!Number.isFinite(obj[f])) return null;
-  if (!(obj.billProgress >= 0 && obj.billProgress < 1)) return null;
-  for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  for (const f of ["billAnchorLRead", "kStableFrozen"]) if (obj[f] < 0) return null;
-  if (typeof obj.hasDeepWaterGateFired !== "boolean") obj.hasDeepWaterGateFired = false;
-  if (obj.deepWaterDwell === void 0) obj.deepWaterDwell = 0;
-  if (!(Number.isInteger(obj.deepWaterDwell) && obj.deepWaterDwell >= 0)) obj.deepWaterDwell = 0;
-  if (obj.deepWaterDwellCycled === void 0) obj.deepWaterDwellCycled = 0;
-  if (!(Number.isInteger(obj.deepWaterDwellCycled) && obj.deepWaterDwellCycled >= 0)) obj.deepWaterDwellCycled = 0;
-  for (const f of ["dwBillsSinceLastAlert", "backstopLapCount"]) {
-    if (obj[f] === void 0) obj[f] = 0;
-  }
-  if (!(Number.isFinite(obj.dwBillsSinceLastAlert) && obj.dwBillsSinceLastAlert >= 0)) return null;
-  if (!(Number.isInteger(obj.backstopLapCount) && obj.backstopLapCount >= 0)) return null;
-  if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
-  if (obj.lastBurnRate !== null && !(Number.isFinite(obj.lastBurnRate) && obj.lastBurnRate >= 0)) return null;
-  if (obj.lastAppliedLRead != null && !(Number.isFinite(obj.lastAppliedLRead) && obj.lastAppliedLRead >= 0)) return null;
-  if (obj.lastBillEvent != null && typeof obj.lastBillEvent !== "object") return null;
-  if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
-  if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
-  for (const e of obj.recentStopEvents) {
-    if (!e || typeof e !== "object") return null;
-    if (typeof e.kind !== "string") return null;
-  }
-  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
-  for (const id of obj.recentProcessedHookEventIds) if (typeof id !== "string") return null;
-  return obj;
-}
-function validateRateLampSample(obj) {
-  if (!obj || typeof obj !== "object") return false;
-  if (typeof obj.reliable !== "boolean") return false;
-  if (!Number.isInteger(obj.seq) || obj.seq < 0) return false;
-  if (!Number.isInteger(obj.turnSeq) || obj.turnSeq < 0) return false;
-  if (obj.reliable) {
-    if (!(Number.isFinite(obj.burnRate) && obj.burnRate >= 0)) return false;
-    if (!(Number.isFinite(obj.L_read) && obj.L_read >= 0)) return false;
-  }
-  return true;
-}
-
-// lib/rate-lamp-store.js
-var SCHEMA_VERSION = 2;
-function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion = SCHEMA_VERSION }) {
-  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
-}
-function stateKeyForStatus(status) {
-  return stateKeyOf({
-    segmentId: status.segment,
-    model: null,
-    cRatio: null,
-    baselineFingerprint: null,
-    contextCap: null,
-    schemaVersion: 1
-  });
-}
-function freshLedger(stateKey, kStableFrozen = 0) {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    stateKey,
-    billingBasis: "fullCarry",
-    billProgress: 0,
-    billCycleCount: 0,
-    billAnchorLRead: 0,
-    billAnchorFoldedCallSeq: 0,
-    lastBurnRate: null,
-    lastAppliedFoldedCallSeq: 0,
-    lastAppliedLRead: null,
-    currentTurnSeq: 0,
-    hasDeepWaterGateFired: false,
-    dwBillsSinceLastAlert: 0,
-    backstopLapCount: 0,
-    deepWaterDwell: 0,
-    deepWaterDwellCycled: 0,
-    pausedReason: null,
-    cacheExpiryCount: 0,
-    kStableFrozen,
-    lastBillEvent: null,
-    lastStopEvent: null,
-    // condition-cleared: visible until next human turn boundary
-    ledgerRevision: 0,
-    recentStopEvents: [],
-    recentProcessedHookEventIds: []
-  };
-}
-function invalidPausedLedger(prev) {
-  const stateKey = prev && typeof prev === "object" && typeof prev.stateKey === "string" ? prev.stateKey : "__invalid__";
-  const kStable = prev && Number.isFinite(prev.kStableFrozen) && prev.kStableFrozen >= 0 ? prev.kStableFrozen : 0;
-  const s = freshLedger(stateKey, kStable);
-  s.pausedReason = "invalid_sample";
-  return s;
-}
-function pushStopEventRing(ledgerOrDraft, evt) {
-  if (!ledgerOrDraft.recentStopEvents) ledgerOrDraft.recentStopEvents = [];
-  ledgerOrDraft.recentStopEvents.push(evt);
-  if (ledgerOrDraft.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) {
-    ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - RECENT_STOP_EVENTS_LIMIT);
-  }
-}
-function applyFoldedCallSample(prev, sample) {
-  if (!validateLedgerState(prev)) return invalidPausedLedger(prev);
-  const s = { ...prev };
-  if (!validateRateLampSample(sample)) {
-    s.pausedReason = "invalid_sample";
-    return s;
-  }
-  if (sample.seq === s.lastAppliedFoldedCallSeq && sample.reliable && Number.isFinite(s.lastAppliedLRead) && Number.isFinite(sample.L_read) && sample.L_read !== s.lastAppliedLRead) {
-    s.pausedReason = "folded_call_mutated";
-    return s;
-  }
-  if (sample.seq <= s.lastAppliedFoldedCallSeq) return s;
-  if (s.lastAppliedFoldedCallSeq !== 0 && sample.seq !== s.lastAppliedFoldedCallSeq + 1) {
-    s.pausedReason = "folded_seq_gap";
-    s.lastAppliedFoldedCallSeq = sample.seq;
-    if (sample.reliable && Number.isFinite(sample.L_read)) s.lastAppliedLRead = sample.L_read;
-    return s;
-  }
-  if (sample.turnSeq !== s.currentTurnSeq) {
-    s.currentTurnSeq = sample.turnSeq;
-  }
-  if (!sample.reliable) {
-    s.pausedReason = sample.unavailableReason || "insufficient_data";
-    s.lastBurnRate = null;
-    s.lastAppliedFoldedCallSeq = sample.seq;
-    return s;
-  }
-  const br = Number.isFinite(sample.burnRate) ? Math.max(0, sample.burnRate) : 0;
-  const recovering = s.pausedReason != null || s.lastBurnRate == null;
-  if (recovering) {
-    s.pausedReason = null;
-    s.lastBurnRate = br;
-    s.lastAppliedFoldedCallSeq = sample.seq;
-    s.lastAppliedLRead = sample.L_read;
-    if (s.billAnchorFoldedCallSeq === 0) {
-      s.billAnchorLRead = sample.L_read;
-      s.billAnchorFoldedCallSeq = sample.seq;
-    }
-    return s;
-  }
-  const trap = 0.5 * (s.lastBurnRate + br);
-  let next = s.billProgress + trap;
-  while (next >= 1) {
-    next -= 1;
-    s.billCycleCount += 1;
-  }
-  s.billProgress = Math.floor(next * 1e6) / 1e6;
-  s.lastBurnRate = br;
-  s.lastAppliedFoldedCallSeq = sample.seq;
-  s.lastAppliedLRead = sample.L_read;
-  return s;
-}
-function advanceGateAndBackstop(draft, { inDeepWater, billCycleIncrement, mf }) {
-  if (!draft.hasDeepWaterGateFired) {
-    if (inDeepWater) {
-      draft.deepWaterDwell = (draft.deepWaterDwell || 0) + 1;
-      draft.deepWaterDwellCycled = (draft.deepWaterDwellCycled || 0) + billCycleIncrement;
-      if (draft.deepWaterDwell >= NOTIFY_DWELL && draft.deepWaterDwellCycled > 0) {
-        draft.hasDeepWaterGateFired = true;
-        draft.dwBillsSinceLastAlert = 0;
-        return { fired: true, kind: "gate" };
-      }
-    } else {
-      draft.deepWaterDwell = 0;
-      draft.deepWaterDwellCycled = 0;
-    }
-    return { fired: false };
-  }
-  if (!inDeepWater) return { fired: false };
-  draft.dwBillsSinceLastAlert += billCycleIncrement;
-  if (mf > 0) {
-    const interval = backstopIntervalFor(mf, BR_AMBER);
-    if (Number.isFinite(interval) && interval > 0 && draft.dwBillsSinceLastAlert >= interval) {
-      draft.dwBillsSinceLastAlert = 0;
-      draft.backstopLapCount += 1;
-      return { fired: true, kind: "backstop" };
-    }
-  }
-  return { fired: false };
-}
-function loadRateLampState(sessionId) {
-  try {
-    return validateLedgerState(getStore().load(sessionId, "ledger"));
-  } catch {
-    return null;
-  }
-}
-function saveRateLampState(sessionId, state) {
-  getStore().save(sessionId, "ledger", state);
-}
-
 // lib/rate-lamp-manager.js
+init_rate_lamp_store();
+init_ledger_schema();
+init_bill_regret();
+init_constants();
 import { existsSync as _probeExists, appendFileSync as _probeAppend } from "node:fs";
 var _PROBE_OFF = Date.now() > (/* @__PURE__ */ new Date("2026-07-25T00:00:00Z")).getTime() || _probeExists("/tmp/sw-depth-probe/off");
 function _dProbe(msg) {
@@ -25690,40 +26874,45 @@ function mergeLedgerIntoStatus(status, ledger, currentKey) {
     const _prog = _int ? Math.min(1, ledger.dwBillsSinceLastAlert / _int) : "?";
     _dProbe(`[display] billCycle=${ledger.billCycleCount} dwBills=${ledger.dwBillsSinceLastAlert}/${_int?.toFixed(1) ?? "?"} progress=${typeof _prog === "number" ? _prog.toFixed(2) : _prog} laps=${ledger.backstopLapCount} billProgress=${ledger.billProgress?.toFixed(3)}`);
   }
+  enrichStatusLandmarks(status);
+  return status;
+}
+function enrichStatusLandmarks(status) {
+  status.rateLamp = status.rateLamp || {};
+  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
   const B = status.rateLamp.B_default > 0 ? status.rateLamp.B_default : status.rateLamp.B_post, cRatio = status.rateLamp.C_RATIO, g = status.rateLamp.gEma;
-  if (B > 0 && cRatio > 0 && g > 0) {
-    const dhat = status.rateLamp.dhat ?? nucleus(cRatio, g, B);
-    const mf = status.rateLamp.mf ?? computeMovableFrac(cRatio, B, g);
-    status.rateLamp.dhat = dhat;
-    status.rateLamp.mf = mf;
-    if (dhat > 0 && mf > 0) {
-      if (!Number.isFinite(status.rateLamp.br)) {
-        const x = status.rateLamp.L_read / B;
-        status.rateLamp.br = computeBr(x, dhat, mf);
-      }
-      status.rateLamp.xBrAmberR = xRightFromBr(BR_AMBER, dhat, mf);
-      status.rateLamp.xBrAmberL = xLeftFromBr(BR_AMBER, dhat, mf);
-      status.rateLamp.xBrRedR = xRightFromBr(BR_RED, dhat, mf);
+  if (!(B > 0 && cRatio > 0 && g > 0)) return status;
+  const dhat = status.rateLamp.dhat ?? nucleus(cRatio, g, B);
+  const mf = status.rateLamp.mf ?? computeMovableFrac(cRatio, B, g);
+  status.rateLamp.dhat = dhat;
+  status.rateLamp.mf = mf;
+  if (dhat > 0 && mf > 0) {
+    if (!Number.isFinite(status.rateLamp.br)) {
+      const x = status.rateLamp.L_read / B;
+      status.rateLamp.br = computeBr(x, dhat, mf);
     }
-    status.rateLamp.xSweet = status.rateLamp.xSweet ?? 1 + dhat;
-    status.rateLamp.wallP = 1 + cRatio;
-    status.rateLamp.lBase = B;
-    const interval = backstopIntervalFor(status.rateLamp.mf, BR_AMBER);
-    const dwBills = status.rateLamp.dwBillsSinceLastAlert ?? 0;
-    const depthProgress = Number.isFinite(interval) && interval > 0 ? Math.min(1, Math.max(0, dwBills / interval)) : 0;
-    const sweetRentRate = Number.isFinite(dhat) && cRatio > 0 ? dhat / cRatio : null;
-    const liveBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : Number.isFinite(status.rateLamp.burnRate) ? status.rateLamp.burnRate : null;
-    status.rateLamp.rentMeter = {
-      cycleProgress: status.rateLamp.billProgress ?? 0,
-      rentRate: liveBurnRate,
-      sweetRentRate,
-      depthActive: status.rateLamp.hasDeepWaterGateFired === true,
-      depthProgress,
-      backstopInterval: Number.isFinite(interval) ? interval : null,
-      backstopLapCount: status.rateLamp.backstopLapCount ?? 0,
-      depthHot: (status.rateLamp.backstopLapCount ?? 0) >= DEPTH_HOT_LAP_COUNT
-    };
+    status.rateLamp.xBrAmberR = xRightFromBr(BR_AMBER, dhat, mf);
+    status.rateLamp.xBrAmberL = xLeftFromBr(BR_AMBER, dhat, mf);
+    status.rateLamp.xBrRedR = xRightFromBr(BR_RED, dhat, mf);
   }
+  status.rateLamp.xSweet = status.rateLamp.xSweet ?? 1 + dhat;
+  status.rateLamp.wallP = 1 + cRatio;
+  status.rateLamp.lBase = B;
+  const interval = backstopIntervalFor(status.rateLamp.mf, BR_AMBER);
+  const dwBills = status.rateLamp.dwBillsSinceLastAlert ?? 0;
+  const depthProgress = Number.isFinite(interval) && interval > 0 ? Math.min(1, Math.max(0, dwBills / interval)) : 0;
+  const sweetRentRate = Number.isFinite(dhat) && cRatio > 0 ? dhat / cRatio : null;
+  const liveBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : Number.isFinite(status.rateLamp.burnRate) ? status.rateLamp.burnRate : null;
+  status.rateLamp.rentMeter = {
+    cycleProgress: status.rateLamp.billProgress ?? 0,
+    rentRate: liveBurnRate,
+    sweetRentRate,
+    depthActive: status.rateLamp.hasDeepWaterGateFired === true,
+    depthProgress,
+    backstopInterval: Number.isFinite(interval) ? interval : null,
+    backstopLapCount: status.rateLamp.backstopLapCount ?? 0,
+    depthHot: (status.rateLamp.backstopLapCount ?? 0) >= DEPTH_HOT_LAP_COUNT
+  };
   return status;
 }
 function mutateLedger(ledger, reason, fn) {
@@ -25855,6 +27044,21 @@ function flushAll() {
   }
 }
 
+// server.js
+init_rate_lamp_store();
+init_constants();
+
+// lib/project-key.js
+import { resolve } from "node:path";
+function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
+  const raw = claudeProjectDir || cwd;
+  if (!raw) return null;
+  return resolve(raw);
+}
+
+// server.js
+init_store();
+
 // lib/legacy-cleanup.js
 import { readdirSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -25884,10 +27088,11 @@ function cleanupLegacyJson(baseDir) {
   }
 }
 function defaultBaseDir() {
-  return process.env.CLAUDE_PLUGIN_DATA || join2(homedir2(), ".session-watcher");
+  return join2(homedir2(), ".session-watcher");
 }
 
 // lib/pricing-store.js
+init_store();
 function tryGetStore() {
   try {
     return getStore();
@@ -25926,7 +27131,9 @@ function deletePricingOverride(model) {
 }
 
 // lib/state-reaper.js
-import { readdirSync as readdirSync2, statSync, unlinkSync as unlinkSync2, readFileSync } from "node:fs";
+init_store();
+init_constants();
+import { readdirSync as readdirSync2, statSync as statSync2, unlinkSync as unlinkSync2, readFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function isPidAlive(pid) {
@@ -25949,11 +27156,32 @@ function isLivePortFile(sessionId, portDir) {
     return false;
   }
 }
-function sweepStaleState({ maxAgeMs = MAX_AGE_MS, now = Date.now(), portDir = null } = {}) {
+function resolveTranscriptPath(sessionId, portDir) {
+  if (!portDir || !sessionId) return null;
+  try {
+    const p = join3(portDir, `${sessionId}.json`);
+    const record = JSON.parse(readFileSync(p, "utf8"));
+    return record.transcriptPath || null;
+  } catch {
+    return null;
+  }
+}
+function sweepStaleState({
+  maxAgeMs = MAX_AGE_MS,
+  now = Date.now(),
+  portDir = null,
+  limit = GC_BATCH_LIMIT
+} = {}) {
   const store = getStore();
   return store.sweep(maxAgeMs, {
     now,
-    isLiveSession: portDir ? (sid) => isLivePortFile(sid, portDir) : void 0
+    isLiveSession: portDir ? (sid) => isLivePortFile(sid, portDir) : void 0,
+    resolveTranscriptPath: portDir ? (sid) => resolveTranscriptPath(sid, portDir) : void 0,
+    // TODO: replaySession callback — requires SessionWatcher import (spec §14).
+    // Replay-first GC exercised via unit test injection; production gains it when
+    // transcript-path resolution lands.
+    replaySession: void 0,
+    limit
   });
 }
 function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS } = {}) {
@@ -25968,7 +27196,7 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
     if (!f.endsWith(".json")) continue;
     const p = join3(portDir, f);
     try {
-      const st = statSync(p);
+      const st = statSync2(p);
       if (now - st.mtimeMs > maxAgeMs) {
         try {
           const record = JSON.parse(readFileSync(p, "utf8"));
@@ -25985,6 +27213,7 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
 }
 
 // lib/statusline-format.js
+init_bill_regret();
 var tagOf = (model) => {
   const m = model || "";
   return m ? m.match(/opus|sonnet|haiku|deepseek/i)?.[0] || m : "model";
@@ -26121,13 +27350,586 @@ function loadIsIgnored(cwd) {
       const abs = path3.resolve(cwd, rel);
       const relToRoot = path3.relative(root, abs);
       if (relToRoot.startsWith("..") || path3.isAbsolute(relToRoot)) return false;
-      const posix = relToRoot.split(path3.sep).join("/");
-      return posix ? ig.ignores(posix) : false;
+      const posix2 = relToRoot.split(path3.sep).join("/");
+      return posix2 ? ig.ignores(posix2) : false;
     };
   } catch {
     return null;
   }
 }
+
+// lib/carry-sweep.js
+import { existsSync as existsSync2, statSync as statSync3 } from "node:fs";
+var REPLAY_GUARD_MAX = 1e5;
+function replaySessionTelemetry(sessionId, transcriptPath, { store } = {}) {
+  if (!transcriptPath || !existsSync2(transcriptPath)) return null;
+  try {
+    const st = statSync3(transcriptPath);
+    if (!st.isFile() || st.size === 0) return { archivedSegments: 0 };
+  } catch {
+    return null;
+  }
+  let w;
+  try {
+    w = new SessionWatcher(transcriptPath, null, {});
+    w._sessionId = sessionId;
+    w._replayMode = true;
+    if (store && typeof w.setStore === "function") w.setStore(store);
+  } catch {
+    return { archivedSegments: 0 };
+  }
+  let guard = 0;
+  try {
+    while (guard++ < REPLAY_GUARD_MAX) {
+      const r = poll(w);
+      if (!r || r.newCalls === 0 && r.changed === false) break;
+    }
+    archiveCurrentSegment(w);
+  } catch (e) {
+    if (process.env.SW_DEBUG) console.error("[carry-sweep]", sessionId, e.message);
+  }
+  return { archivedSegments: (w._lastArchivedSegment ?? -1) + 1 };
+}
+
+// server.js
+init_bill_regret();
+
+// lib/handoff.js
+import { posix } from "node:path";
+import { readFileSync as readFileSync2, statSync as statSync4 } from "node:fs";
+import { createHash } from "node:crypto";
+var STOP_WORDS = /* @__PURE__ */ new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "need",
+  "must",
+  "let",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "under",
+  "over",
+  "out",
+  "up",
+  "down",
+  "off",
+  "then",
+  "once",
+  "here",
+  "there",
+  "when",
+  "where",
+  "why",
+  "how",
+  "all",
+  "each",
+  "every",
+  "both",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "because",
+  "but",
+  "and",
+  "or",
+  "if",
+  "while",
+  "about",
+  "this",
+  "that",
+  "these",
+  "those",
+  "it",
+  "its",
+  "i",
+  "we",
+  "they",
+  "them",
+  "my",
+  "our",
+  "your",
+  "his",
+  "her",
+  "what",
+  "which",
+  "implement",
+  "add",
+  "fix",
+  "update",
+  "refactor",
+  "create",
+  "make",
+  "use",
+  "using",
+  "new",
+  "file",
+  "code",
+  "function",
+  "method"
+]);
+var SUFFIX_WORDS = [
+  // animals (40)
+  "fox",
+  "owl",
+  "elk",
+  "hare",
+  "wren",
+  "lynx",
+  "seal",
+  "moth",
+  "crab",
+  "toad",
+  "hawk",
+  "deer",
+  "bass",
+  "crow",
+  "dove",
+  "frog",
+  "goat",
+  "lark",
+  "mule",
+  "newt",
+  "puma",
+  "slug",
+  "swan",
+  "wasp",
+  "wolf",
+  "bear",
+  "colt",
+  "duck",
+  "finch",
+  "heron",
+  "orca",
+  "pike",
+  "robin",
+  "stoat",
+  "crane",
+  "grebe",
+  "egret",
+  "bison",
+  "raven",
+  "shark",
+  // colors (24)
+  "blue",
+  "jade",
+  "rust",
+  "teal",
+  "plum",
+  "gold",
+  "ruby",
+  "sage",
+  "amber",
+  "coral",
+  "ivory",
+  "peach",
+  "blush",
+  "azure",
+  "cedar",
+  "onyx",
+  "opal",
+  "mauve",
+  "wine",
+  "lilac",
+  "mocha",
+  "khaki",
+  "cream",
+  "ebony",
+  // materials (24)
+  "iron",
+  "oak",
+  "clay",
+  "silk",
+  "tin",
+  "wax",
+  "jute",
+  "lime",
+  "flint",
+  "steel",
+  "brass",
+  "hemp",
+  "linen",
+  "glass",
+  "stone",
+  "slate",
+  "pine",
+  "birch",
+  "maple",
+  "ash",
+  "wool",
+  "suede",
+  "tweed",
+  "balsa",
+  // weather & sky (24)
+  "rain",
+  "mist",
+  "dusk",
+  "dawn",
+  "snow",
+  "hail",
+  "gale",
+  "frost",
+  "storm",
+  "sleet",
+  "fog",
+  "cloud",
+  "dew",
+  "blaze",
+  "lunar",
+  "solar",
+  "comet",
+  "flare",
+  "wind",
+  "north",
+  "south",
+  "east",
+  "west",
+  "gust",
+  // nature & terrain (40)
+  "reef",
+  "dune",
+  "moss",
+  "fern",
+  "peak",
+  "cove",
+  "glen",
+  "bay",
+  "cliff",
+  "ridge",
+  "creek",
+  "lake",
+  "pond",
+  "marsh",
+  "brook",
+  "grove",
+  "vale",
+  "knoll",
+  "bluff",
+  "ledge",
+  "shoal",
+  "delta",
+  "gorge",
+  "field",
+  "trail",
+  "basin",
+  "heath",
+  "scrub",
+  "peat",
+  "ford",
+  "cape",
+  "isle",
+  "spur",
+  "mesa",
+  "falls",
+  "inlet",
+  "shore",
+  "gully",
+  "atoll",
+  "fjord",
+  // food & plants (24)
+  "mint",
+  "fig",
+  "plumb",
+  "seed",
+  "root",
+  "herb",
+  "grain",
+  "berry",
+  "olive",
+  "mango",
+  "basil",
+  "thyme",
+  "pecan",
+  "cocoa",
+  "clove",
+  "acorn",
+  "gourd",
+  "kelp",
+  "lotus",
+  "tulip",
+  "poppy",
+  "daisy",
+  "ivy",
+  "palm",
+  // tools & objects (24)
+  "axle",
+  "gear",
+  "reel",
+  "bell",
+  "lens",
+  "flag",
+  "coin",
+  "rope",
+  "knot",
+  "ring",
+  "lamp",
+  "nail",
+  "hook",
+  "arch",
+  "hinge",
+  "lever",
+  "wheel",
+  "valve",
+  "gauge",
+  "lathe",
+  "anvil",
+  "wedge",
+  "clamp",
+  "prism",
+  // shapes & concepts (24)
+  "cube",
+  "node",
+  "grid",
+  "mesh",
+  "link",
+  "loop",
+  "dome",
+  "arc",
+  "span",
+  "tier",
+  "slab",
+  "core",
+  "edge",
+  "axis",
+  "plane",
+  "helix",
+  "facet",
+  "nexus",
+  "orbit",
+  "pulse",
+  "surge",
+  "flux",
+  "drift",
+  "spark",
+  // music & sound (16)
+  "harp",
+  "lute",
+  "flute",
+  "horn",
+  "chime",
+  "tempo",
+  "chord",
+  "fife",
+  "lyric",
+  "hymn",
+  "tune",
+  "note",
+  "gong",
+  "viola",
+  "cello",
+  "oboe",
+  // misc (16)
+  "latch",
+  "quill",
+  "torch",
+  "flask",
+  "pouch",
+  "staff",
+  "crown",
+  "badge",
+  "crest",
+  "manor",
+  "forge",
+  "vault",
+  "haven",
+  "guild",
+  "helm",
+  "craft"
+];
+var SECRET_PATTERNS = [
+  /sk-[A-Za-z0-9]{16,}/g,
+  /ghp_[A-Za-z0-9]{20,}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
+  /AKIA[0-9A-Z]{16}/g,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
+  /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]*/g,
+  /xox[baprs]-[A-Za-z0-9-]+/g,
+  /^[A-Z_]{2,}=[^\s]{4,}$/gm
+];
+function redactSecrets(text) {
+  if (typeof text !== "string") return text;
+  let out = text;
+  for (const re of SECRET_PATTERNS) {
+    re.lastIndex = 0;
+    out = out.replace(re, "[REDACTED]");
+  }
+  return out;
+}
+function generateLoadToken(summary, nextTask, randomInt2) {
+  const source = nextTask && nextTask.trim() || String(summary || "").split("\n")[0] || "";
+  const words = (source.toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || []).filter((w) => !STOP_WORDS.has(w) && w.length > 3).slice(0, 2);
+  while (words.length < 2) words.push(SUFFIX_WORDS[randomInt2(SUFFIX_WORDS.length)]);
+  const suffix = SUFFIX_WORDS[randomInt2(SUFFIX_WORDS.length)];
+  return [...words, suffix].join("-").toLowerCase();
+}
+function normalizeKeepPath(p, projectDir) {
+  const raw = String(p || "").replace(/\\/g, "/");
+  const norm = posix.normalize(raw);
+  if (norm.startsWith("..") || norm.split("/").includes(".."))
+    return { path: norm, invalid: true };
+  if (projectDir && norm.startsWith("/")) {
+    const pd = projectDir.replace(/\/+$/, "");
+    if (norm === pd || norm.startsWith(pd + "/"))
+      return { path: norm.slice(pd.length + 1) || ".", invalid: false };
+    return { path: norm, invalid: false, external: true };
+  }
+  if (norm.startsWith("/"))
+    return { path: norm, invalid: false, external: true };
+  return { path: norm.replace(/^\/+/, ""), invalid: false };
+}
+var isCjk = (ch) => {
+  const c = ch.codePointAt(0);
+  return c >= 13312 && c <= 40959 || c >= 12352 && c <= 12543 || c >= 44032 && c <= 55203 || c >= 63744 && c <= 64255;
+};
+function cjkBigrams(text) {
+  const out = [];
+  const s = String(text || "");
+  let run = "";
+  const flush = () => {
+    for (let i = 0; i + 1 < run.length; i++) out.push(run.slice(i, i + 2));
+    run = "";
+  };
+  for (const ch of s) {
+    if (isCjk(ch)) run += ch;
+    else flush();
+  }
+  flush();
+  return out.join(" ");
+}
+function buildFtsMatch(query, mode = "plain") {
+  const q = String(query || "");
+  if (mode === "advanced") return q;
+  const terms = q.split(/\s+/).filter(Boolean);
+  const parts = [];
+  for (const t of terms) {
+    const bg = cjkBigrams(t);
+    if (bg) parts.push(...bg.split(" ").map((b) => `"${b.replace(/"/g, "")}"`));
+    else parts.push(`"${t.replace(/"/g, "")}"`);
+  }
+  return parts.join(" ");
+}
+var HASH_MAX_BYTES = 8 * 1024 * 1024;
+function hashFileContent(absPath) {
+  try {
+    const st = statSync4(absPath);
+    if (!st.isFile() || st.size > HASH_MAX_BYTES) return null;
+    return createHash("sha256").update(readFileSync2(absPath)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+// package.json
+var package_default = {
+  name: "@nomadop/session-watcher",
+  version: "0.5.4",
+  description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
+  type: "module",
+  license: "MIT",
+  author: "Longju Cheng",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/nomadop/session-watcher.git"
+  },
+  homepage: "https://nomadop.github.io/session-watcher/",
+  bugs: {
+    url: "https://github.com/nomadop/session-watcher/issues"
+  },
+  keywords: [
+    "claude-code",
+    "context-window",
+    "prompt-caching",
+    "transcript-replay",
+    "handoff",
+    "mcp",
+    "developer-tools"
+  ],
+  bin: {
+    "session-watcher": "./dist/bin/session-watcher.js"
+  },
+  files: [
+    "dist/bin/",
+    "dist/public/",
+    "README.md",
+    "LICENSE"
+  ],
+  publishConfig: {
+    access: "public"
+  },
+  scripts: {
+    build: "node scripts/build.js",
+    test: 'node --test "test/**/*.test.js"',
+    "test:watch": 'node --test --watch "test/**/*.test.js"',
+    start: "node server.js",
+    e2e: "playwright test"
+  },
+  engines: {
+    node: ">=22.16.0"
+  },
+  dependencies: {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    express: "^4.19.2",
+    ignore: "^7.0.6",
+    zod: "^3.23.8"
+  },
+  devDependencies: {
+    "@playwright/test": "^1.45.0",
+    esbuild: "^0.28.1"
+  }
+};
+
+// lib/version.js
+var PLUGIN_VERSION = package_default.version;
 
 // server.js
 var [_major, _minor] = process.versions.node.split(".").map(Number);
@@ -26136,10 +27938,70 @@ if (_major < 22 || _major === 22 && _minor < 16) {
   process.exit(1);
 }
 var __dirname = dirname3(fileURLToPath(import.meta.url));
+function countFileLinesBounded(absPath) {
+  try {
+    const st = statSync5(absPath);
+    if (!st.isFile() || st.size > HASH_MAX_BYTES) return null;
+    if (st.size === 0) return 0;
+    const buf = readFileSync4(absPath);
+    let nl = 0;
+    for (let i = 0; i < buf.length; i++) if (buf[i] === 10) nl++;
+    return buf[buf.length - 1] === 10 ? nl : nl + 1;
+  } catch {
+    return null;
+  }
+}
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
   if (!s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..")) return "__invalid_session__";
   return s;
+}
+function collapseLineRanges(linesMap) {
+  const sorted = [...linesMap.keys()].sort((a, b) => a - b);
+  if (!sorted.length) return void 0;
+  const ranges = [];
+  let start = sorted[0], end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] <= end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push([start, end]);
+      start = sorted[i];
+      end = sorted[i];
+    }
+  }
+  ranges.push([start, end]);
+  return ranges;
+}
+var AGENT_ENTRY_KEYS = ["path", "symbols", "lines"];
+function projectEntry(e) {
+  if (!e || typeof e !== "object") return e;
+  const out = {};
+  for (const k of AGENT_ENTRY_KEYS) if (e[k] !== void 0) out[k] = e[k];
+  return out;
+}
+function formatHandoffFull(h) {
+  let parsed;
+  try {
+    parsed = JSON.parse(h.pathsToKeep || "{}");
+  } catch {
+    return { found: false, status: "error", error: "corrupt_handoff" };
+  }
+  const rawPaths = Array.isArray(parsed) ? parsed : parsed.paths || [];
+  const paths = (Array.isArray(rawPaths) ? rawPaths : []).map(projectEntry);
+  const skills = Array.isArray(parsed) ? void 0 : parsed.skills?.length ? parsed.skills : void 0;
+  const out = {
+    found: true,
+    handoff_id: h.handoffId,
+    load_token: h.loadToken,
+    created_at: h.createdAt,
+    summary: h.summary,
+    next_task: h.nextTask,
+    paths_to_keep: paths
+  };
+  if (h.projectId) out.project_dir = h.projectId;
+  if (skills) out.skills_to_keep = skills;
+  return out;
 }
 var PORT_DIR = process.env.SW_STATE_DIR || join4(homedir3(), ".session-watcher");
 var stateFileFor = (sessionId) => join4(PORT_DIR, `${safeSessionId(sessionId || "default")}.json`);
@@ -26154,7 +28016,7 @@ function writeStateFileExclusive(path4, record) {
 function resolveJsonl(target) {
   let targetStat;
   try {
-    targetStat = statSync2(target);
+    targetStat = statSync5(target);
   } catch {
     return target;
   }
@@ -26175,7 +28037,7 @@ function resolveJsonl(target) {
   const decorated = found.map((p) => {
     let mtime = -Infinity;
     try {
-      mtime = statSync2(p).mtimeMs;
+      mtime = statSync5(p).mtimeMs;
     } catch {
     }
     return { p, mtime };
@@ -26207,14 +28069,17 @@ function resolveBySessionId(projectsRoot, sessionId) {
 var _globalTestClockMono = null;
 var _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
 var IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1e3;
+var SNAPSHOT_THROTTLE_MS = 3e4;
 function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
   return sseClientsSize === 0 && now - lastRequestMono > IDLE_SHUTDOWN_MS;
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null }) {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, projectsRoot = null, stateDir = null, publicDir = join4(__dirname, "public"), store = null, disableTelemetrySweep = false }) {
   const app = (0, import_express.default)();
   const startMs = Date.now();
   const sseClients = /* @__PURE__ */ new Set();
   const server = createHttpServer(app);
+  const resolveStore = () => store || getStore();
+  let activeWatcher = watcher;
   let lastRequestMono = performance.now();
   app.use((req, res, next) => {
     lastRequestMono = performance.now();
@@ -26233,12 +28098,30 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   };
   app.get("/api/status", (req, res, next) => {
     try {
-      const status = watcher.getStatus();
-      const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-      const ledger = getLiveLedger(sessionId);
-      mergeLedgerIntoStatus(status, ledger, currentKey);
+      const status = activeWatcher.getStatus();
+      if (activeWatcher !== watcher && _replayController) {
+        status.rateLamp = status.rateLamp || {};
+        status.rateLamp.billProgress = _replayController.billProgress;
+        const gate = _replayController.gateState;
+        status.rateLamp.hasDeepWaterGateFired = gate.hasDeepWaterGateFired;
+        status.rateLamp.dwBillsSinceLastAlert = gate.dwBillsSinceLastAlert;
+        status.rateLamp.backstopLapCount = gate.backstopLapCount;
+        const notify = _replayController.lastNotify;
+        if (notify) {
+          status.rateLamp.lastStopEvent = {
+            kind: notify.kind,
+            message: notify.kind === "gate" ? "Deep water \u2014 bill premium is accumulating." : "Still in deep water \u2014 consider restarting."
+          };
+        }
+        enrichStatusLandmarks(status);
+      } else {
+        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
+        const ledger = getLiveLedger(currentSessionId);
+        mergeLedgerIntoStatus(status, ledger, currentKey);
+      }
       if (req.query.debug && status.rateLamp?.billingCycle) {
-        status.rateLamp.billingCycle.cycleCountInSegment = ledger?.billCycleCount ?? 0;
+        const debugLedger = activeWatcher === watcher ? getLiveLedger(currentSessionId) : null;
+        status.rateLamp.billingCycle.cycleCountInSegment = debugLedger?.billCycleCount ?? 0;
       }
       if (req.query.fmt === "line") {
         status.port = server.address()?.port ?? null;
@@ -26257,7 +28140,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     }
   });
   app.get("/api/history", (req, res) => {
-    let h = watcher.getHistory(parseFitWindow(req.query.fitWindow));
+    let h = activeWatcher.getHistory(parseFitWindow(req.query.fitWindow));
     if (req.query.since) {
       const t = Date.parse(req.query.since);
       if (!Number.isNaN(t)) h = h.filter((p) => Date.parse(p.ts) >= t);
@@ -26266,7 +28149,18 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   });
   app.get("/api/buckets", (req, res, next) => {
     try {
-      res.json(watcher.getBucketData());
+      const bd = activeWatcher.getBucketData();
+      const s = activeWatcher.getStatus();
+      let paths = bd.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
+      res.json({
+        ...bd,
+        paths,
+        session_id: currentSessionId,
+        segment: bd.segment,
+        current_turn: bd.currentTurnSeq,
+        generated_at: Date.now(),
+        metrics: { br: s.br, mf: s.mf, pp: computePp(s.x, s.dhat), g: s.g, b_total: s.B, c_ratio: s.cRatio }
+      });
     } catch (e) {
       next(e);
     }
@@ -26282,7 +28176,379 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     res.on("error", del);
     if (req.socket) req.socket.setTimeout(3e4, () => req.socket.destroy());
   });
-  app.use(import_express.default.json({ limit: "4kb" }));
+  app.use(import_express.default.json({ limit: "64kb" }));
+  let _replayController = null;
+  app.post("/api/replay/start", async (req, res) => {
+    const { transcript, speed = 4 } = req.body || {};
+    const replayPath = transcript || watcher.path;
+    if (!replayPath) return res.status(400).json({ error: "no transcript available" });
+    if (_replayController) {
+      _replayController.stop();
+      _replayController = null;
+    }
+    activeWatcher = watcher;
+    try {
+      const { indexTranscript: indexTranscript2, ReplayController: ReplayController2 } = await Promise.resolve().then(() => (init_replay(), replay_exports));
+      const index = indexTranscript2(replayPath);
+      if (index.length === 0) return res.status(400).json({ error: "no usage rows in transcript" });
+      const replayWatcher = new SessionWatcher(replayPath, null, { cwd: watcher.cwd });
+      activeWatcher = replayWatcher;
+      _replayController = new ReplayController2(replayWatcher, index, {
+        speed,
+        onAdvance: () => {
+          if (sseClients.size > 0) {
+            const prog = _replayController?.progress;
+            const tick = JSON.stringify({ type: "tick", uptime: activeWatcher._uptimeSec(), replay: prog ? { current: prog.current, total: prog.total, speed: prog.speed, paused: prog.paused } : void 0 });
+            for (const c of sseClients) {
+              try {
+                c.write(`data: ${tick}
+
+data: ${JSON.stringify({ type: "scan" })}
+
+`);
+              } catch {
+                sseClients.delete(c);
+              }
+            }
+          }
+        }
+      });
+      _replayController.start();
+      res.json({ ok: true, total: index.length, speed });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+  app.post("/api/replay/stop", (req, res) => {
+    if (_replayController) {
+      _replayController.stop();
+      _replayController = null;
+    }
+    activeWatcher = watcher;
+    res.json({ ok: true });
+  });
+  app.post("/api/replay/speed", (req, res) => {
+    const { speed } = req.body || {};
+    if (!_replayController) return res.status(400).json({ error: "no active replay" });
+    if (typeof speed !== "number" || speed <= 0) return res.status(400).json({ error: "invalid speed" });
+    _replayController.speed = speed;
+    res.json({ ok: true, speed: _replayController.speed });
+  });
+  app.post("/api/replay/pause", (req, res) => {
+    if (!_replayController) return res.status(400).json({ error: "no active replay" });
+    _replayController.pause();
+    res.json({ ok: true, paused: true });
+  });
+  app.post("/api/replay/resume", (req, res) => {
+    if (!_replayController) return res.status(400).json({ error: "no active replay" });
+    _replayController.start();
+    res.json({ ok: true, paused: false });
+  });
+  app.get("/api/replay/status", (req, res) => {
+    if (!_replayController) return res.json({ active: false });
+    res.json({ active: true, ..._replayController.progress });
+  });
+  app.post("/api/handoff/prepare", (req, res, next) => {
+    try {
+      const { paths_to_keep = [], skills_to_keep, summary = "", next_task = null, observed_segment, load_token: existingToken } = req.body || {};
+      if (typeof observed_segment === "number" && observed_segment !== watcher.getSegmentIndex())
+        return res.status(409).json({ status: "error", error: "stale_bucket_summary", instruction: "Call get_bucket_summary again before preparing handoff." });
+      if (!Array.isArray(paths_to_keep))
+        return res.status(400).json({ status: "error", error: "invalid_paths_to_keep" });
+      if (paths_to_keep.length > HANDOFF_MAX_PATHS)
+        return res.status(400).json({ status: "error", error: "too_many_paths", max_paths: HANDOFF_MAX_PATHS, actual_paths: paths_to_keep.length });
+      if (typeof summary !== "string" || summary.length === 0)
+        return res.status(400).json({ status: "error", error: "summary_required" });
+      if (summary.length > HANDOFF_MAX_SUMMARY_CHARS)
+        return res.status(400).json({ status: "error", error: "summary_too_long", max_chars: HANDOFF_MAX_SUMMARY_CHARS, actual_chars: summary.length, instruction: "Compress the summary and call prepare_handoff again." });
+      if (next_task != null && String(next_task).length > HANDOFF_MAX_NEXT_TASK_CHARS)
+        return res.status(400).json({ status: "error", error: "next_task_too_long", max_chars: HANDOFF_MAX_NEXT_TASK_CHARS, actual_chars: String(next_task).length });
+      const redSummary = redactSecrets(summary);
+      const redNext = next_task != null ? redactSecrets(String(next_task)) : null;
+      const bd = watcher.getBucketData();
+      const known = new Map(bd.paths.map((p) => [p.path, { tokens: p.tokens, lastTurn: p.lastTurn }]));
+      const ctpVersion = watcher._ctp && watcher._ctp.version || 1;
+      const snapshotPaths = bd.paths.map((p, i) => ({
+        id: "b" + i,
+        raw_path: p.path,
+        canonical_path: null,
+        // filled only if this candidate is kept-matched
+        whole_ctp: p.tokens,
+        // scope-labeled ESTIMATE (K_files_whole_ctp), NOT a K_A bound
+        whole_bytes: null,
+        // BYTES; filled from an fs stat only for kept-matched candidates
+        lastTurn: p.lastTurn ?? null
+      }));
+      let bucketSnapshot;
+      const invalid_paths = [], keptEntries = [], unknown_paths = [];
+      const seenPaths = /* @__PURE__ */ new Set();
+      for (const raw of paths_to_keep) {
+        if (!raw || typeof raw !== "object" || typeof raw.path !== "string") {
+          invalid_paths.push(raw);
+          continue;
+        }
+        const { path: path4, invalid } = normalizeKeepPath(raw.path, watcher.cwd);
+        if (invalid) {
+          invalid_paths.push(raw);
+          continue;
+        }
+        if (seenPaths.has(path4)) continue;
+        seenPaths.add(path4);
+        const symbols = Array.isArray(raw.symbols) ? raw.symbols.filter((s2) => typeof s2 === "string") : void 0;
+        keptEntries.push({ path: path4, symbols: symbols && symbols.length ? symbols : void 0 });
+      }
+      const keptCanon = (rel) => canonicalizePath(rel, watcher.cwd || process.cwd());
+      for (const entry of keptEntries) {
+        const abs = keptCanon(entry.path);
+        const exact = snapshotPaths.filter((sp) => sp.canonical_path === abs || sp.raw_path === abs || sp.raw_path === entry.path);
+        const suffix = snapshotPaths.filter((sp) => sp.canonical_path && sp.canonical_path.endsWith("/" + entry.path) || sp.raw_path.endsWith("/" + entry.path));
+        const matches = exact.length ? exact : suffix;
+        let hashTarget = null;
+        if (matches.length === 1) {
+          entry.bucket_id = matches[0].id;
+          entry.match_status = "exact";
+          if (matches[0].canonical_path == null) matches[0].canonical_path = keptCanon(matches[0].raw_path);
+          if (matches[0].whole_bytes == null) {
+            try {
+              const st = statSync5(matches[0].canonical_path);
+              if (st.isFile()) matches[0].whole_bytes = st.size;
+            } catch {
+            }
+          }
+          hashTarget = matches[0].canonical_path;
+        } else if (matches.length > 1) {
+          entry.bucket_id = null;
+          entry.match_status = "ambiguous";
+          entry.candidate_bucket_ids = matches.map((m) => m.id);
+          hashTarget = null;
+        } else {
+          entry.bucket_id = null;
+          entry.match_status = "unmatched";
+          hashTarget = null;
+        }
+        entry.hp = hashTarget ? hashFileContent(hashTarget) : null;
+        entry.total_line_count = hashTarget ? countFileLinesBounded(hashTarget) : null;
+      }
+      let kept_tokens = 0;
+      const resolved_paths = [];
+      for (const entry of keptEntries) {
+        const matches = [];
+        for (const [kp, info] of known) {
+          if (kp === entry.path || kp.endsWith("/" + entry.path)) matches.push({ kp, ...info });
+        }
+        if (matches.length > 1) {
+          matches.sort((a, b) => b.lastTurn - a.lastTurn);
+          kept_tokens += matches[0].tokens;
+          resolved_paths.push({ from: entry.path, to: matches[0].kp });
+        } else if (matches.length === 1) {
+          kept_tokens += matches[0].tokens;
+        } else {
+          unknown_paths.push(entry.path);
+        }
+      }
+      for (const entry of keptEntries) {
+        const resolvedPath = entry.path;
+        const bKey = watcher._bRebuild.paths.has(resolvedPath) ? resolvedPath : [...watcher._bRebuild.paths.keys()].find((k) => k.endsWith("/" + resolvedPath));
+        if (!bKey) continue;
+        const hasFullSnapshot = watcher._bRebuild._hasFullSnapshot.get(bKey);
+        if (hasFullSnapshot) continue;
+        const bEntry = watcher._bRebuild.paths.get(bKey);
+        if (bEntry && bEntry.lines.size > 0) {
+          entry.lines = collapseLineRanges(bEntry.lines);
+        }
+      }
+      for (const entry of keptEntries) {
+        if (Array.isArray(entry.lines) && entry.lines.length) {
+          entry.selected_line_count = entry.lines.reduce((n, [a, b]) => n + (b - a + 1), 0);
+        } else {
+          entry.selected_line_count = entry.total_line_count ?? null;
+        }
+      }
+      bucketSnapshot = JSON.stringify({
+        v: 1,
+        ctp_version: ctpVersion,
+        root: watcher.cwd || null,
+        total_candidates: snapshotPaths.length,
+        paths: snapshotPaths
+      });
+      const allPathTokens = bd.paths.reduce((a, p) => a + (p.tokens || 0), 0);
+      const discarded_tokens = Math.max(0, allPathTokens - kept_tokens);
+      const s = watcher.getStatus();
+      const ctp = watcher._ctp || void 0;
+      const summary_tokens = Math.round(charsToTokens(redSummary, ctp || { ascii: 3, cjk: 1 }));
+      const bDefault = s.rateLamp?.B_default ?? s.B;
+      const previousStats = {
+        b_full: s.B,
+        b_default: bDefault,
+        g: s.g,
+        mf: s.mf,
+        br_exit: s.br,
+        pp_exit: computePp(s.x, s.dhat),
+        turns: watcher._turnSeq,
+        total_l: s.L,
+        dead: watcher._bRebuild.dead,
+        session_floor: watcher._warmupCeiling || watcher._bRebuild.dead,
+        residual: Math.max(0, s.L - s.B)
+      };
+      const dead = watcher._bRebuild.dead;
+      const sessionFloor = watcher._warmupCeiling || dead;
+      const bKept = kept_tokens > 0 ? kept_tokens + sessionFloor : null;
+      const preparedStats = bKept && s.cRatio > 0 ? (() => {
+        const gKept = s.g;
+        const dhatKept = nucleus(s.cRatio, gKept, bKept);
+        const mfKept = computeMovableFrac(s.cRatio, bKept, gKept);
+        const xKept = s.L / bKept;
+        const brKept = dhatKept > 0 && Number.isFinite(mfKept) ? computeBr(xKept, dhatKept, mfKept) : null;
+        const ppKept = computePp(xKept, dhatKept);
+        return { b_kept: bKept, dead, session_floor: sessionFloor, g: gKept, mf: mfKept, br: brKept, pp: ppKept, dhat: dhatKept, x: xKept };
+      })() : null;
+      const searchTerms = [cjkBigrams(redSummary), redNext ? cjkBigrams(redNext) : ""].filter(Boolean).join(" ");
+      const keptSkills = Array.isArray(skills_to_keep) ? [...new Set(skills_to_keep.filter((s2) => typeof s2 === "string" && s2.length > 0))] : [];
+      const pathsPayload = JSON.stringify(keptSkills.length ? { paths: keptEntries, skills: keptSkills } : keptEntries);
+      let load_token = null;
+      let mustInsert = !(typeof existingToken === "string" && existingToken.length > 0);
+      if (!mustInsert) {
+        const updated = resolveStore().updateHandoff(existingToken, {
+          pathsToKeep: pathsPayload,
+          summary: redSummary,
+          nextTask: redNext,
+          summaryTokens: summary_tokens,
+          keptTokens: kept_tokens,
+          discardedTokens: discarded_tokens,
+          preparedAtTurn: watcher._turnSeq,
+          previousStats: JSON.stringify(previousStats),
+          preparedStats: preparedStats ? JSON.stringify(preparedStats) : null,
+          searchTerms,
+          bucketSnapshot
+        });
+        if (updated) {
+          load_token = existingToken;
+        } else {
+          const exists = resolveStore().hasHandoff(existingToken);
+          if (!exists) return res.status(404).json({ status: "error", error: "token_not_found", instruction: "The provided load_token does not exist. Omit it to create a new handoff." });
+          mustInsert = true;
+        }
+      }
+      if (mustInsert) {
+        for (let attempt = 0; attempt < HANDOFF_TOKEN_MAX_RETRIES; attempt++) {
+          const candidate = generateLoadToken(redSummary, redNext, (n) => randomInt(n));
+          try {
+            resolveStore().insertHandoff({
+              sessionId: currentSessionId,
+              segment: watcher.getSegmentIndex(),
+              loadToken: candidate,
+              createdAt: Date.now(),
+              pathsToKeep: pathsPayload,
+              summary: redSummary,
+              nextTask: redNext,
+              summaryTokens: summary_tokens,
+              keptTokens: kept_tokens,
+              discardedTokens: discarded_tokens,
+              preparedAtTurn: watcher._turnSeq,
+              previousStats: JSON.stringify(previousStats),
+              preparedStats: preparedStats ? JSON.stringify(preparedStats) : null,
+              searchTerms,
+              projectId: watcher._projectId || null,
+              bucketSnapshot
+            });
+            load_token = candidate;
+            break;
+          } catch (e) {
+            if (e.errcode !== 2067) throw e;
+          }
+        }
+        if (!load_token) return res.status(500).json({ status: "error", error: "token_collision" });
+      }
+      const carry_over_pct = bDefault > 0 ? kept_tokens / bDefault * 100 : 0;
+      const out = {
+        status: "ready",
+        load_token,
+        kept_paths: keptEntries.length,
+        kept_tokens,
+        discarded_tokens,
+        summary_tokens,
+        carry_over_pct: Math.round(carry_over_pct * 10) / 10,
+        unknown_paths,
+        invalid_paths,
+        instruction: `Handoff prepared. Token: ${load_token}. Please /clear when ready.`
+      };
+      if (resolved_paths.length) out.resolved_paths = resolved_paths;
+      res.json(out);
+    } catch (e) {
+      next(e);
+    }
+  });
+  const stampLoadHashesIfPrimary = (h) => {
+    if (!h) return;
+    const isBoundPrimary = h.deliveredSessionId != null && h.deliveredSessionId === currentSessionId;
+    if (!h.claimedNow && !isBoundPrimary) return;
+    try {
+      const rawStored = resolveStore()._db.prepare("SELECT paths_to_keep FROM handoff WHERE handoff_id = ?").get(h.handoffId);
+      if (!rawStored) return;
+      let obj;
+      try {
+        obj = JSON.parse(rawStored.paths_to_keep);
+      } catch {
+        obj = null;
+      }
+      const entries = Array.isArray(obj) ? obj : obj && Array.isArray(obj.paths) ? obj.paths : null;
+      if (!entries) return;
+      const hlMissing = entries.some((e) => e && typeof e.path === "string" && !("hl" in e));
+      if (!h.claimedNow && !hlMissing) return;
+      for (const e of entries) {
+        if (!e || typeof e.path !== "string") continue;
+        const abs = resolve2(watcher.cwd || process.cwd(), e.path);
+        e.hl = hashFileContent(abs);
+      }
+      resolveStore().stampContentHashLoad(h.handoffId, JSON.stringify(obj));
+    } catch (e) {
+      if (process.env.SW_DEBUG) console.error("[content_hash_load]", e.message);
+    }
+  };
+  app.get("/api/handoff/load", (req, res, next) => {
+    try {
+      const { load_token, query, query_mode } = req.query;
+      if (load_token) {
+        const h2 = resolveStore().loadHandoffByToken(String(load_token), { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
+        if (!h2) return res.json({ found: false });
+        stampLoadHashesIfPrimary(h2);
+        return res.json(formatHandoffFull(h2));
+      }
+      if (query) {
+        if (!resolveStore().ftsAvailable) return res.json({ status: "error", error: "search_unavailable" });
+        let results;
+        try {
+          results = resolveStore().searchHandoff(buildFtsMatch(String(query), query_mode === "advanced" ? "advanced" : "plain"), { projectId: watcher._projectId });
+        } catch {
+          return res.json({ status: "error", error: "invalid_query" });
+        }
+        if (!results.length) return res.json({ found: false });
+        return res.json({
+          found: true,
+          mode: "search",
+          results: results.map((r) => ({ load_token: r.loadToken, created_at: r.createdAt, next_task: r.nextTask, summary_preview: r.summaryPreview })),
+          instruction: "Multiple matches. Call load_handoff with the desired load_token for the full package."
+        });
+      }
+      if (!watcher._projectId) return res.json({ found: false });
+      const ttlMs = HANDOFF_HOOK_TTL_DAYS * 24 * 3600 * 1e3;
+      const { rows, ambiguous } = resolveStore().loadHandoffByProject(watcher._projectId, currentSessionId, { ttlMs });
+      if (rows.length === 0) return res.json({ found: false });
+      if (ambiguous) {
+        return res.json({
+          found: false,
+          ambiguous: true,
+          candidates: rows.map((r) => ({ load_token: r.loadToken, created_at: r.createdAt, next_task_preview: r.nextTask ? r.nextTask.slice(0, HANDOFF_HOOK_TASK_PREVIEW_CHARS) : null }))
+        });
+      }
+      const h = resolveStore().loadHandoffByToken(rows[0].loadToken, { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
+      if (!h) return res.json({ found: false });
+      stampLoadHashesIfPrimary(h);
+      return res.json(formatHandoffFull(h));
+    } catch (e) {
+      next(e);
+    }
+  });
   const cliRatioAtStartup = watcher.ratioOverride;
   const buildPricingResponse = () => {
     const model = watcher._segmentModel || "";
@@ -26365,12 +28631,13 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
   });
-  app.use(import_express.default.static(join4(__dirname, "public"), {
+  app.get("/", (req, res) => res.sendFile(join4(publicDir, "dashboard.html")));
+  app.get("/dashboard", (req, res) => res.sendFile(join4(publicDir, "dashboard.html")));
+  app.use(import_express.default.static(publicDir, {
     setHeaders: (res) => {
       res.setHeader("Cache-Control", "no-cache");
     }
   }));
-  app.get("/", (req, res) => res.sendFile(join4(__dirname, "public", "index.html")));
   app.use((err, req, res, next) => {
     if (process.env.SW_DEBUG) console.error("[route error]", err);
     if (res.headersSent) return next(err);
@@ -26379,10 +28646,30 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   });
   let pollTimer = null;
   let lastAdvanceMono = -Infinity;
+  let lastSnapshotMono = -Infinity;
   const _nowMono2 = () => _globalTestClockMono != null ? _globalTestClockMono : performance.now();
   function startPolling() {
     if (pollIntervalMs <= 0) return;
     pollTimer = setInterval(() => {
+      if (!watcher.path && projectsRoot && currentSessionId) {
+        const found = resolveBySessionId(projectsRoot, currentSessionId);
+        if (found) {
+          watcher.switchTranscript(found);
+          try {
+            const port = server.address()?.port;
+            if (port) writeFileSync(join4(effectiveStateDir, `${safeSessionId(currentSessionId)}.json`), JSON.stringify({
+              port,
+              pid: process.pid,
+              clientPid: process.ppid,
+              transcriptPath: found,
+              sessionId: currentSessionId,
+              startedAt: startMs
+            }));
+          } catch {
+          }
+          if (process.env.SW_DEBUG) console.error("[poll] late transcript resolution:", found);
+        }
+      }
       const now = _nowMono2();
       if (sseClients.size === 0 && now - lastAdvanceMono < IDLE_HEARTBEAT_MS) {
         return;
@@ -26390,9 +28677,9 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       try {
         const { changed } = watcher.poll();
         lastAdvanceMono = _nowMono2();
-        const { ledger } = advanceRateLampToCurrent(watcher, sessionId, { forcePoll: false });
+        const { ledger } = advanceRateLampToCurrent(watcher, currentSessionId, { forcePoll: false });
         if (process.env.SW_DEBUG && ledger) console.error("[rate-lamp shadow]", JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
-        if (sseClients.size > 0) {
+        if (sseClients.size > 0 && !_replayController) {
           const tick = JSON.stringify({ type: "tick", uptime: watcher._uptimeSec() });
           for (const c of sseClients) {
             try {
@@ -26414,11 +28701,15 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
           }
         }
         if (changed) {
-          try {
-            const snap = watcher.getTerminalSnapshot();
-            getStore().saveBatch(sessionId, [["profile_snapshot", snap]], { model: snap.model });
-          } catch (e) {
-            if (process.env.SW_DEBUG) console.error("[profile_snapshot]", e.message);
+          const now2 = _nowMono2();
+          if (now2 - lastSnapshotMono >= SNAPSHOT_THROTTLE_MS) {
+            lastSnapshotMono = now2;
+            try {
+              const snap = watcher.getTerminalSnapshot();
+              resolveStore().saveBatch(currentSessionId, [["profile_snapshot", snap]], { model: snap.model });
+            } catch (e) {
+              if (process.env.SW_DEBUG) console.error("[profile_snapshot]", e.message);
+            }
           }
         }
         if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
@@ -26440,10 +28731,83 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     }
   }, 15e3);
   pingTimer.unref?.();
+  let currentSessionId = sessionId;
+  const effectiveStateDir = stateDir || PORT_DIR;
+  function doRotation(newSessionId, transcriptPath) {
+    if (newSessionId === currentSessionId) return { ok: true, noop: true };
+    let newPath = transcriptPath || null;
+    if (!newPath && projectsRoot) {
+      newPath = resolveBySessionId(projectsRoot, newSessionId);
+    }
+    if (!newPath) return { ok: false, error: "transcript_not_found" };
+    try {
+      archiveCurrentSegment(watcher);
+    } catch (e) {
+      if (process.env.SW_DEBUG) console.error("[doRotation archive]", e.message);
+    }
+    watcher.switchTranscript(newPath);
+    lastSnapshotMono = -Infinity;
+    const oldSessionId = currentSessionId;
+    currentSessionId = newSessionId;
+    watcher._sessionId = newSessionId;
+    const port = server.address()?.port;
+    const newStateFile = join4(effectiveStateDir, `${safeSessionId(newSessionId)}.json`);
+    const oldStateFile = join4(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`);
+    let warning = void 0;
+    try {
+      mkdirSync2(effectiveStateDir, { recursive: true });
+      writeFileSync(newStateFile, JSON.stringify({
+        port,
+        pid: process.pid,
+        clientPid: process.ppid,
+        transcriptPath: newPath,
+        sessionId: newSessionId,
+        startedAt: startMs
+      }));
+      if (oldStateFile !== newStateFile) {
+        try {
+          unlinkSync3(oldStateFile);
+        } catch {
+        }
+      }
+    } catch (e) {
+      warning = "state_file_write_failed";
+      if (process.env.SW_DEBUG) console.error("[doRotation state-file]", e.message);
+    }
+    const url = port ? `http://127.0.0.1:${port}` : null;
+    const result = { ok: true, old_session_id: oldSessionId, new_session_id: newSessionId, url };
+    if (warning) result.warning = warning;
+    return result;
+  }
+  app.post("/api/rotate", import_express.default.json(), (req, res) => {
+    const { session_id, transcript_path } = req.body || {};
+    if (!session_id) return res.status(400).json({ ok: false, error: "missing_session_id" });
+    const result = doRotation(session_id, transcript_path);
+    res.json(result);
+  });
+  let sweepTimer = null;
+  if (!disableTelemetrySweep) {
+    sweepTimer = setTimeout(() => {
+      Promise.resolve().then(() => resolveStore().backfillPendingTelemetry({
+        resolveTranscript: (sid) => resolveBySessionId(projectsRoot, sid),
+        replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, { store: resolveStore() }),
+        excludeSessionIds: currentSessionId,
+        // don't sweep the still-live session (Set-or-string accepted)
+        limit: 200,
+        budgetMs: 1500
+      })).then((s) => {
+        if (process.env.SW_DEBUG) console.error("[telemetry-sweep]", JSON.stringify(s));
+      }).catch((e) => {
+        if (process.env.SW_DEBUG) console.error("[telemetry-sweep]", e.message);
+      });
+    }, 250);
+    sweepTimer.unref();
+  }
   return { app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio, stopTimers: () => {
     clearInterval(pollTimer);
     clearInterval(pingTimer);
-  } };
+    if (sweepTimer) clearTimeout(sweepTimer);
+  }, doRotation, currentSessionId: () => currentSessionId };
 }
 function _inspectSseClientsForTest(serverHandle) {
   return serverHandle.sseClients.size;
@@ -26489,16 +28853,17 @@ function parseArgs(argv) {
     warnings
   };
 }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (typeof __CLI_BUNDLE__ === "undefined" && process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const argv = process.argv.slice(2);
   const { transcript, project, session, lbase, ratioOverride, wantPort, open, warnings } = parseArgs(argv);
   for (const w of warnings) console.error(`session-watcher: ${w}`);
   const projectsRoot = join4(homedir3(), ".claude", "projects");
   const byId = resolveBySessionId(projectsRoot, session);
-  const jsonlPath = transcript ? resolve(transcript) : byId || resolveJsonl(resolve(project || projectsRoot));
+  const jsonlPath = transcript ? resolve2(transcript) : byId || resolveJsonl(resolve2(project || projectsRoot));
   const sessionId = jsonlPath.endsWith(".jsonl") ? basename(jsonlPath).replace(/\.jsonl$/, "") : session || "default";
   const hookSessionId = session || null;
-  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride, cwd: project || null, isIgnored: project ? loadIsIgnored(project) : null });
+  const projectId = resolveProjectKey({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd: project }) || process.env.CLAUDE_PROJECT_ID || null;
+  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride, cwd: project || null, isIgnored: project ? loadIsIgnored(project) : null, sessionId, projectId });
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown;
   const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1e3, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });
@@ -26571,6 +28936,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 export {
   IDLE_SHUTDOWN_MS,
   PORT_DIR,
+  SNAPSHOT_THROTTLE_MS,
   _inspectSseClientsForTest,
   _setServerTestClock,
   createServer,
@@ -26578,6 +28944,7 @@ export {
   parseArgs,
   resolveBySessionId,
   resolveJsonl,
+  safeSessionId,
   shouldIdleShutdown,
   stateFileFor,
   writeStateFileExclusive

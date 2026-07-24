@@ -1,26 +1,810 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Session Watcher</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="themes/base.css" />
-<link id="sw-theme-css" rel="stylesheet" href="themes/h.css" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-</head>
-<body>
-  <div class="sw-wrap">
-    <div id="sw-chrome"></div>
-    <div id="sw-hero"></div>
-    <div class="sw-lower">
-      <div id="sw-history"></div>
-      <div id="sw-buckets"></div>
-    </div>
-    <div id="sw-terms"></div>
-  </div>
-  <script type="module" src="./app.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session Watcher — Measure Claude Code context costs in real time</title>
+    <meta name="description" content="Replay and monitor Claude Code sessions, attribute context cost to buckets, and handoff chosen paths to a fresh session." />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Session Watcher" />
+    <meta property="og:description" content="Replay and monitor Claude Code sessions, attribute context cost to buckets, and handoff chosen paths to a fresh session." />
+    <meta property="og:url" content="https://nomadop.github.io/session-watcher/" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Session Watcher" />
+    <meta name="twitter:description" content="Measure Claude Code context costs in real time." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0e1114;
+        --card: #151b20;
+        --edge: #232d35;
+        --mint: #4fe0b0;
+        --mint-dim: #2a5f4e;
+        --sky: #6cc6f0;
+        --amber: #ffc24d;
+        --txt: #eef3f6;
+        --txt-dim: #93a1ab;
+        --mute: #5a6a75;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--txt);
+        font-family: "Inter", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── Nav ── */
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 28px 56px;
+        max-width: 1280px;
+        margin: 0 auto;
+      }
+      .logo-mark {
+        width: 28px;
+        height: 28px;
+        border-radius: 7px;
+        background: linear-gradient(135deg, var(--mint), #2f9c7c);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #052018;
+        font-family: "Sora";
+        font-weight: 700;
+        font-size: 11px;
+      }
+      .logo-name {
+        font-family: "Sora";
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .nav-link {
+        font-family: "JetBrains Mono";
+        font-size: 11px;
+        color: var(--txt-dim);
+        text-decoration: none;
+        padding: 5px 12px;
+        border: 1px solid var(--edge);
+        border-radius: 6px;
+      }
+
+      /* ── Hero — 50/55 split, chart visually heavier ── */
+      .hero {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 56px 56px 80px;
+        display: grid;
+        grid-template-columns: 1fr 1.2fr;
+        gap: 56px;
+        align-items: center;
+      }
+      .hero-text .kicker {
+        font-family: "JetBrains Mono";
+        font-size: 10.5px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--mint);
+        margin: 0 0 24px;
+        opacity: 0.9;
+      }
+      .hero-text h1 {
+        font-family: "Sora";
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        line-height: 1.3;
+        margin: 0 0 20px;
+      }
+      .hero-text h1 .hl {
+        color: var(--mint);
+      }
+      .hero-text .subtitle {
+        font-size: 15.5px;
+        color: var(--txt-dim);
+        line-height: 1.75;
+        margin: 0 0 36px;
+      }
+      .hero-text .action-band {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .btn-primary {
+        font-family: "Sora";
+        font-weight: 600;
+        font-size: 13px;
+        background: var(--mint);
+        color: #052018;
+        border: none;
+        border-radius: 8px;
+        padding: 12px 24px;
+        text-decoration: none;
+        display: inline-block;
+      }
+      .btn-secondary {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--txt-dim);
+        border: 1px solid var(--edge);
+        border-radius: 8px;
+        padding: 11px 20px;
+        text-decoration: none;
+        background: none;
+      }
+      .install-cmd {
+        font-family: "JetBrains Mono";
+        font-size: 11.5px;
+        color: var(--txt-dim);
+        line-height: 2;
+        padding: 0;
+      }
+      .install-cmd .dollar {
+        color: var(--mute);
+      }
+
+      /* Chart panel — dark inset, visually heavy */
+      .hero-chart {
+        background: rgba(8, 11, 14, 0.7);
+        border: 1px solid var(--edge);
+        border-radius: 16px;
+        padding: 40px 32px 24px;
+        min-height: 0;
+      }
+      .hero-chart .chart-wrap {
+        position: relative;
+        height: 260px;
+      }
+      .hero-chart canvas {
+        display: block;
+      }
+
+      /* ── Theory — chart footnote ── */
+      .chart-footnote {
+        margin-top: 14px;
+        padding-right: 16px;
+        font-family: "JetBrains Mono";
+        font-size: 10.5px;
+        color: var(--mute);
+        line-height: 1.6;
+        text-align: right;
+      }
+      .chart-footnote a {
+        color: var(--sky);
+        text-decoration: none;
+      }
+
+      /* ── Cards — same 3-col but wider ── */
+      .cards-section {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 56px 80px;
+      }
+      .section-label {
+        font-family: "JetBrains Mono";
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--txt-dim);
+        margin-bottom: 24px;
+      }
+      .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--edge);
+        border-radius: 12px;
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+      }
+      .card .badge {
+        display: inline-block;
+        width: fit-content;
+        font-family: "JetBrains Mono";
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 4px 10px;
+        border-radius: 4px;
+        margin-bottom: 14px;
+        background: rgba(79, 224, 176, 0.08);
+        color: var(--mint);
+      }
+      .card h3 {
+        font-family: "Sora";
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 10px;
+        line-height: 1.35;
+      }
+      .card p {
+        font-size: 13px;
+        color: var(--txt-dim);
+        line-height: 1.6;
+        margin: 0;
+        flex: 1;
+      }
+      .card .vs {
+        font-family: "JetBrains Mono";
+        font-size: 10px;
+        line-height: 1.5;
+        color: var(--mute);
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--edge);
+        font-style: italic;
+        height: 42px;
+        overflow: hidden;
+      }
+      .card .vs em {
+        font-style: normal;
+        color: var(--txt-dim);
+      }
+
+      /* ── Handoff flow ── */
+      .handoff-section {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 56px 72px;
+      }
+      .handoff-terminal {
+        max-width: 600px;
+      }
+      .handoff-terminal .terminal-body {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        padding: 20px 22px;
+        font-family: "JetBrains Mono";
+        font-size: 12px;
+        line-height: 1.9;
+        color: var(--txt-dim);
+      }
+      .ht-prompt {
+        color: var(--txt);
+      }
+      .ht-prompt .chevron {
+        color: var(--mint);
+      }
+      .ht-agent {
+        color: var(--txt-dim);
+      }
+      .ht-agent .bullet {
+        color: var(--mint);
+      }
+      .ht-token {
+        color: var(--mint);
+        font-weight: 500;
+      }
+      .ht-dim {
+        color: var(--mute);
+      }
+      .ht-gap {
+        height: 12px;
+      }
+      .handoff-caption {
+        margin-top: 14px;
+        font-family: "JetBrains Mono";
+        font-size: 10px;
+        color: var(--mute);
+        line-height: 1.8;
+        max-width: 600px;
+      }
+
+      /* ── Try note ── */
+      .try-note {
+        font-family: "JetBrains Mono";
+        font-size: 10px;
+        color: var(--mute);
+        margin: 12px 0 0;
+        letter-spacing: 0.01em;
+      }
+
+      /* ── Get started — terminal window ── */
+      .setup-section {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 56px 72px;
+      }
+      .terminal {
+        max-width: 600px;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--edge);
+      }
+      .terminal-bar {
+        background: #1a2028;
+        padding: 10px 14px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .terminal-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--edge);
+      }
+      .terminal-body {
+        background: #090c0f;
+        padding: 20px 22px;
+        font-family: "JetBrains Mono";
+        font-size: 12.5px;
+        line-height: 2.2;
+        color: var(--txt-dim);
+      }
+      .terminal-body .dollar {
+        color: var(--mute);
+      }
+      .terminal-body .comment {
+        color: var(--mute);
+        font-size: 11px;
+      }
+
+      /* ── Statusline — terminal window style ── */
+      .statusline-section {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 0 56px 64px;
+      }
+      .statusline-section .section-label {
+        margin-bottom: 12px;
+      }
+      .statusline-terminal {
+        max-width: 600px;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--edge);
+      }
+      .statusline-terminal .terminal-bar {
+        background: #1a2028;
+        padding: 10px 14px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .statusline-terminal .terminal-body {
+        background: #090c0f;
+        padding: 16px 22px;
+        font-family: "JetBrains Mono";
+        font-size: 12.5px;
+        display: flex;
+        align-items: center;
+        gap: 11px;
+      }
+      .sl-lamp {
+        color: var(--mint);
+      }
+      .sl-dim {
+        color: var(--mute);
+      }
+      .sl-val {
+        color: var(--txt-dim);
+      }
+      .sl-amber {
+        color: var(--amber);
+      }
+      .sl-mint {
+        color: var(--mint);
+      }
+      .sl-bar {
+        display: inline-block;
+        width: 80px;
+        height: 6px;
+        background: var(--edge);
+        border-radius: 3px;
+        overflow: hidden;
+        vertical-align: middle;
+      }
+      .sl-bar-fill {
+        display: block;
+        height: 100%;
+        width: 58%;
+        background: linear-gradient(
+          90deg,
+          var(--mint) 0%,
+          var(--mint) 70%,
+          var(--amber) 100%
+        );
+        border-radius: 3px;
+      }
+      .statusline-caption {
+        margin-top: 10px;
+        font-family: "JetBrains Mono";
+        font-size: 10px;
+        color: var(--mute);
+        line-height: 1.8;
+      }
+      .statusline-caption a {
+        color: var(--sky);
+        text-decoration: none;
+      }
+
+      /* ── Footer ── */
+      .page-footer {
+        padding: 28px 56px 48px;
+        max-width: 1280px;
+        margin: 0 auto;
+        border-top: 1px solid var(--edge);
+      }
+      .page-footer .note {
+        font-family: "JetBrains Mono";
+        font-size: 11px;
+        color: var(--mute);
+      }
+      .page-footer .note a {
+        color: var(--txt-dim);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="logo-mark">SW</div>
+      <span class="logo-name">Session Watcher</span>
+      <div class="spacer"></div>
+      <a href="https://github.com/nomadop/session-watcher" class="nav-link"
+        >GitHub</a
+      >
+      <a
+        href="https://www.npmjs.com/package/@nomadop/session-watcher"
+        class="nav-link"
+        >npm</a
+      >
+    </nav>
+
+    <section class="hero">
+      <div class="hero-text">
+        <p class="kicker">Context is inventory — know when to restock</p>
+        <h1>
+          <span class="hl">LLM context economics,</span><br />in your terminal.
+        </h1>
+        <p class="subtitle">
+          Most tools tell you how many tokens you spent. Session Watcher tells
+          you whether the current context is
+          <strong>still worth carrying</strong>.
+        </p>
+        <div class="action-band">
+          <a href="demo.html" class="btn-primary">Live Demo</a>
+          <a
+            href="https://github.com/nomadop/session-watcher"
+            class="btn-secondary"
+            >View on GitHub</a
+          >
+          <span class="install-cmd"
+            ><span class="dollar">$</span> npx -y @nomadop/session-watcher
+            demo<br /><span class="dollar">$</span> npx -y
+            @nomadop/session-watcher replay
+            <span class="flow-arg">/path-to-transcript</span></span
+          >
+        </div>
+        <p class="try-note">
+          Try without installing — runs a self-contained demo or replays a real
+          transcript
+        </p>
+      </div>
+      <div class="hero-chart">
+        <div class="chart-wrap"><canvas id="ucurve"></canvas></div>
+        <p class="chart-footnote">
+          Based on the
+          <a href="https://en.wikipedia.org/wiki/Economic_order_quantity"
+            >EOQ</a
+          >
+          model —
+          <a href="https://doi.org/10.5281/zenodo.21236704"
+            >"Context Is Inventory"</a
+          >, Cheng 2026
+        </p>
+      </div>
+    </section>
+
+    <section class="cards-section">
+      <div class="section-label">Observe &rarr; Select &rarr; Act</div>
+      <div class="cards-grid">
+        <div class="card">
+          <span class="badge">Observe</span>
+          <h3>Live depth & bill premium</h3>
+          <p>
+            A real-time position gauge on the cost U-curve. Optimal at the sweet
+            spot; bill premium signals WATCH at 10%, RESTART at 25%. The model measures;
+            you decide.
+          </p>
+          <span class="vs"
+            ><em>vs.</em> post-hoc: "your session yesterday cost $4.20"</span
+          >
+        </div>
+        <div class="card">
+          <span class="badge">Select</span>
+          <h3>Context buckets</h3>
+          <p>
+            Per-path token attribution shows exactly which files, skills, and
+            tools are eating context. Check what to keep, uncheck what to
+            discard. The rebuild cost is the number you negotiate against.
+          </p>
+          <span class="vs"
+            ><em>vs.</em> opaque: "200k tokens used" (but from where?)</span
+          >
+        </div>
+        <div class="card">
+          <span class="badge">Act</span>
+          <h3>Handoff & reload</h3>
+          <p>
+            One click captures your selected paths + working state as a handoff
+            package. Next session loads it in one command — only what you chose
+            is rebuilt — no blind re-read of the whole working set.
+          </p>
+          <span class="vs"
+            ><em>vs.</em> manual: re-read everything, re-explain the task, lose
+            10 min</span
+          >
+        </div>
+      </div>
+    </section>
+
+    <section class="setup-section">
+      <div class="section-label">How to install</div>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span><span class="terminal-dot"></span
+          ><span class="terminal-dot"></span>
+        </div>
+        <div class="terminal-body">
+          <span class="comment"># Add the marketplace</span><br /><span
+            class="dollar"
+            >$</span
+          >
+          claude plugin marketplace add nomadop/session-watcher<br /><br /><span
+            class="comment"
+            ># Install the plugin</span
+          ><br /><span class="dollar">$</span> claude plugin install
+          session-watcher@session-watcher
+        </div>
+      </div>
+    </section>
+
+    <section class="statusline-section">
+      <div class="section-label">What you see in your terminal</div>
+      <div class="statusline-terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span><span class="terminal-dot"></span
+          ><span class="terminal-dot"></span>
+        </div>
+        <div class="terminal-body">
+          <span class="sl-lamp">&#x1F7E2;</span>
+          <span class="sl-bar"><span class="sl-bar-fill"></span></span>
+          <span class="sl-val">55%</span>
+          <span class="sl-dim">0/5</span>
+          <span class="sl-dim">&middot;</span>
+          <span class="sl-dim">b+</span><span class="sl-mint">05%</span>
+          <span class="sl-dim">u</span><span class="sl-mint">1.0</span>
+          <span class="sl-dim">&middot;</span>
+          <span class="sl-val">Δ500</span>
+          <span class="sl-val">L100k/b50k</span>
+          <span class="sl-dim">&middot;</span>
+          <span class="sl-val">opus</span>
+        </div>
+      </div>
+      <p class="statusline-caption">
+        Claude Code statusline — updates every turn, zero context pollution<br />Requires
+        one-time manual setup:
+        <a
+          href="https://github.com/nomadop/session-watcher#statusline-manual-one-time-step"
+          >see instructions</a
+        >
+      </p>
+    </section>
+
+    <section class="handoff-section">
+      <div class="section-label">When it's time to restart</div>
+      <div class="handoff-terminal terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span><span class="terminal-dot"></span
+          ><span class="terminal-dot"></span>
+        </div>
+        <div class="terminal-body">
+          <span class="ht-prompt"
+            ><span class="chevron">❯</span> /sw-handoff next: wire up the auth
+            refresh</span
+          >
+          <span class="ht-agent"
+            ><span class="bullet">●</span> Reading context buckets…</span
+          >
+          <span class="ht-agent"
+            ><span class="bullet">●</span> Handoff prepared. Token:
+            <span class="ht-token">refactor-auth-maple</span></span
+          >
+          <span class="ht-agent"
+            ><span class="bullet">●</span> Next session: execute the plan
+            task-by-task. /clear when ready.</span
+          >
+          <div class="ht-gap"></div>
+          <span class="ht-prompt"><span class="chevron">❯</span> /clear</span>
+          <div class="ht-gap"></div>
+          <span class="ht-prompt"><span class="chevron">❯</span> /sw-load</span>
+          <span class="ht-agent"
+            ><span class="bullet">●</span> Loading handoff with token
+            <span class="ht-token">refactor-auth-maple</span></span
+          >
+          <span class="ht-agent"
+            ><span class="bullet">●</span> Handoff loaded. Resuming: refactor
+            auth module…</span
+          >
+        </div>
+      </div>
+      <p class="handoff-caption">
+        Prepare → clear stale context → reload in a fresh session. Only what you
+        chose is rebuilt.
+      </p>
+    </section>
+
+    <footer class="page-footer">
+      <p class="note">
+        Node 22+ &middot; MIT License &middot; &copy; 2026 nomadop
+      </p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script>
+      (function () {
+        const R = 12.5,
+          dhat = 0.73;
+        const xSweet = 1 + dhat;
+        const A = (dhat * dhat) / (2 * R);
+        function eoqCost(x) {
+          const d = x - 1;
+          return d <= 0 ? Infinity : A / d + d / (2 * R);
+        }
+        const domainMin = 1,
+          domainMax = 6.6;
+        const yMax = eoqCost(domainMax) * 1.15;
+        const cMin = eoqCost(xSweet);
+        const points = [];
+        const N = 250,
+          logMin = Math.log(0.005),
+          logMax = Math.log(domainMax - 1);
+        for (let i = 0; i < N; i++) {
+          const t = i / (N - 1);
+          const d = Math.exp(logMin + t * (logMax - logMin));
+          const y = eoqCost(1 + d);
+          if (y <= yMax) points.push({ x: 1 + d, y });
+        }
+        const xPos = 1 + 2.5 * dhat,
+          yPos = eoqCost(xPos);
+        new Chart(document.getElementById("ucurve"), {
+          type: "scatter",
+          data: {
+            datasets: [
+              {
+                data: points,
+                showLine: true,
+                borderColor: "#4fe0b0",
+                backgroundColor: "rgba(79,224,176,0.03)",
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.15,
+                fill: true,
+                parsing: false,
+                order: 1,
+              },
+              {
+                data: [{ x: xSweet, y: cMin }],
+                pointRadius: 6,
+                pointBackgroundColor: "#4fe0b0",
+                pointBorderColor: "#4fe0b0",
+                pointBorderWidth: 0,
+                order: 0,
+              },
+              {
+                data: [{ x: xPos, y: yPos }],
+                pointRadius: 5,
+                pointBackgroundColor: "#ffc24d",
+                pointBorderColor: "#ffc24d",
+                pointBorderWidth: 0,
+                order: 0,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: { enabled: false },
+            },
+            scales: {
+              x: {
+                type: "linear",
+                min: domainMin,
+                max: domainMax,
+                grid: { color: "rgba(37,47,55,0.4)", lineWidth: 0.5 },
+                border: { color: "#252f37" },
+                ticks: {
+                  color: "#5a6a75",
+                  font: { family: "JetBrains Mono", size: 10 },
+                  stepSize: 1,
+                  callback: (v) => (v >= 1 ? v.toFixed(0) : ""),
+                },
+              },
+              y: {
+                type: "linear",
+                min: 0,
+                max: yMax,
+                grid: { display: false },
+                border: { color: "#252f37" },
+                ticks: { display: false },
+              },
+            },
+            layout: { padding: { top: 8, right: 16, bottom: 4, left: 44 } },
+          },
+          plugins: [
+            {
+              id: "labels",
+              afterDraw(chart) {
+                const { ctx, chartArea, scales } = chart;
+                ctx.save();
+                ctx.font = '400 9px "JetBrains Mono"';
+                ctx.fillStyle = "#5a6a75";
+                ctx.translate(
+                  chartArea.left - 30,
+                  chartArea.top + (chartArea.bottom - chartArea.top) / 2,
+                );
+                ctx.rotate(-Math.PI / 2);
+                ctx.textAlign = "center";
+                ctx.fillText("bill premium", 0, 0);
+                ctx.restore();
+                const sx = scales.x.getPixelForValue(xSweet),
+                  sy = scales.y.getPixelForValue(cMin);
+                ctx.save();
+                ctx.font = '500 9px "JetBrains Mono"';
+                ctx.fillStyle = "#4fe0b0";
+                ctx.textAlign = "center";
+                ctx.fillText("sweet spot", sx, sy + 16);
+                ctx.restore();
+                const px = scales.x.getPixelForValue(xPos),
+                  py = scales.y.getPixelForValue(yPos);
+                ctx.save();
+                ctx.font = '500 9px "JetBrains Mono"';
+                ctx.fillStyle = "#ffc24d";
+                ctx.textAlign = "center";
+                ctx.fillText("you are here", px, py - 12);
+                ctx.restore();
+              },
+            },
+          ],
+        });
+      })();
+    </script>
+  </body>
 </html>

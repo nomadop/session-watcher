@@ -7,6 +7,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { get as httpGet } from 'node:http';
+import { probeStatusline } from './lib/probe.js';
 
 const STATE_DIR = process.env.SW_STATE_DIR || join(homedir(), '.session-watcher');
 
@@ -36,6 +37,13 @@ async function main() {
     const alt = findStateByHookSessionId(sid);
     if (alt) port = String(alt.port || '');
   }
+
+  // Lifecycle probe (SW_PROBE=1 to activate)
+  probeStatusline({
+    session_id: sid, transcript_path: input.transcript_path,
+    cwd: input.cwd, model, port, stateFileKey: state?.sessionId,
+    stateTranscript: state?.transcriptPath,
+  });
 
   // Fetch status line from the dashboard server
   let line = '';

@@ -542,6 +542,34 @@ export function buildCompactInstruction(tree) {
   return '/compact ' + clauses.join('; ');
 }
 
+// Builds a /sw-handoff instruction from the tree's selection state.
+// Only checked items are listed as keep — unchecked items are implicitly discarded.
+export function buildHandoffInstruction(tree) {
+  const keep = [];
+
+  // Paths
+  function walkPath(node) {
+    if (node.kind === 'file') { if (node.selected) keep.push(redactCmd(node.name)); return; }
+    if (node.kind !== 'dir') return;
+    const state = deriveDirState(node);
+    if (state === 'checked') { keep.push(redactCmd(node.name)); return; }
+    if (state === 'unchecked') return;
+    // half-selected: descend
+    for (const c of node.children) walkPath(c);
+  }
+  for (const n of tree) if (n.group === 'paths') walkPath(n);
+
+  // Skills
+  for (const leaf of flattenLeaves(tree)) {
+    if (leaf.kind === 'skill' && leaf.selectable && leaf.selected) {
+      keep.push(leaf.name);
+    }
+  }
+
+  if (!keep.length) return '';
+  return '/sw-handoff keep: ' + keep.join(', ');
+}
+
 // ─── Private DOM helpers ──────────────────────────────────────────────────────
 
 function tokenLabel(tokens) {
@@ -653,7 +681,7 @@ export function mount(root, ctx) {
   h3.textContent = 'Context buckets';
   const subtitle = document.createElement('div');
   subtitle.className = 'subtitle';
-  subtitle.textContent = 'rebuild cost · uncheck to draft compact';
+  subtitle.textContent = 'rebuild cost · uncheck to plan handoff';
   headerInfo.appendChild(h3);
   headerInfo.appendChild(subtitle);
 
@@ -698,13 +726,14 @@ export function mount(root, ctx) {
   resetBtn.textContent = 'Reset';
   resetBtn.type = 'button';
 
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'bucket-copy-btn';
-  copyBtn.textContent = 'Copy instructions';
-  copyBtn.type = 'button';
+  const handoffBtn = document.createElement('button');
+  handoffBtn.className = 'bucket-copy-btn';
+  handoffBtn.textContent = 'Prepare handoff';
+  handoffBtn.type = 'button';
+  handoffBtn.title = 'Run /sw-handoff in your session to preserve checked context';
 
   footer.appendChild(resetBtn);
-  footer.appendChild(copyBtn);
+  footer.appendChild(handoffBtn);
 
   card.appendChild(sweepTrack);
   card.appendChild(header);
@@ -1207,7 +1236,7 @@ export function mount(root, ctx) {
     // First successful bucket data — write-once
     if (!state.lastGoodBucketData) {
       state.lastGoodBucketData = bd;
-      subtitle.textContent = 'rebuild cost · uncheck to draft compact';
+      subtitle.textContent = 'rebuild cost · uncheck to plan handoff';
       // Restore stats area
       headerStats.innerHTML = '';
       headerStats.appendChild(statSelectedEl);
@@ -1282,33 +1311,26 @@ export function mount(root, ctx) {
     dispatchPreview();
   }
 
+
   // ── showCopyOverlay: fallback when clipboard API fails ────────────────────
   function showCopyOverlay(text) {
-    // Remove any existing overlay first
     const existing = card.querySelector('.bucket-copy-overlay');
     if (existing) existing.remove();
-
     const overlay = document.createElement('div');
     overlay.className = 'bucket-copy-overlay';
-
     const ta = document.createElement('textarea');
     ta.readOnly = true;
     ta.value = text;
-    ta.setAttribute('aria-label', 'Compact instruction text — select all and copy');
-
+    ta.setAttribute('aria-label', 'Handoff instruction — select all and copy');
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
     dismissBtn.textContent = 'Dismiss';
     dismissBtn.className = 'bucket-copy-overlay-dismiss';
-
     overlay.appendChild(ta);
     overlay.appendChild(dismissBtn);
     card.appendChild(overlay);
-
-    // Auto-select the text for convenience
     ta.focus();
     ta.select();
-
     dismissBtn.addEventListener('click', () => overlay.remove(), { once: true });
   }
 
@@ -1387,21 +1409,22 @@ export function mount(root, ctx) {
     dispatchPreview(true); // force dirty:false
   });
 
-  // ── Copy + overlay fallback ────────────────────────────────────────────────
-  copyBtn.addEventListener('click', async () => {
-    const text = buildCompactInstruction(state.tree);
-    if (!text) return;  // nothing to compact
+  // ── Handoff copy ────────────────────────────────────────────────────────────
+  handoffBtn.addEventListener('click', async () => {
+    const text = buildHandoffInstruction(state.tree);
+    if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      copyBtn.classList.add('copied');
-      copyBtn.textContent = '✓ Copied';
+      handoffBtn.classList.add('copied');
+      handoffBtn.textContent = '✓ Copied';
       if (copyTimeout) clearTimeout(copyTimeout);
       copyTimeout = setTimeout(() => {
-        copyBtn.classList.remove('copied');
-        copyBtn.textContent = 'Copy instructions';
+        handoffBtn.classList.remove('copied');
+        handoffBtn.textContent = 'Prepare handoff';
         copyTimeout = null;
       }, COPY_FEEDBACK_MS);
     } catch {
+      // Fallback: show overlay with selectable text
       showCopyOverlay(text);
     }
   });

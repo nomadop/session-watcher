@@ -110,7 +110,7 @@ test('§2.5 partial: DeepSeek large-file first-read — input_tokens absorbs ove
 // tokens≈2124. overshoot=2124-128=1996. uncached(1947) < overshoot(1996).
 // unexplained = 1996 - 1947 = 49. Small correction IS applied (true CTP error).
 
-test('§2.5 partial: true CTP overshoot — small unexplained portion is correctly corrected', () => {
+test('§2.4c deferred: true CTP overshoot is banked mid-segment, finalized at boundary', () => {
   // Stable session (cR high and growing), Read adds moderate file.
   // deltaL is small, uncached is close to but less than overshoot → tiny correction valid.
   const fileContent = fakeReadContent(100, 45); // ~100 lines × ~19 tok/line ≈ 1900 tokens at ctp 2.45
@@ -141,11 +141,12 @@ test('§2.5 partial: true CTP overshoot — small unexplained portion is correct
   w.poll();
 
   const pt = w._bRebuild.pathTotal('/proj/small.ts');
-  // With correction applied, pathTotal should be reduced significantly
-  // (but not to near-zero — partial correction only takes the unexplained portion).
-  // Without correction pt ≈ 1900. With correction ≈ 1900 - 1650 = 250 (approx).
-  assert.ok(pt < 1000, `pathTotal should be corrected down (got ${pt}, expected <1000). True CTP overshoot should be corrected.`);
-  assert.ok(pt > 0, `pathTotal should remain positive (got ${pt}). Correction should not over-correct.`);
+  // §2.4c deferred settlement: at credit time the overshoot is BANKED to the ledger, not deleted, so
+  // the bucket keeps its full belief within the live segment. The genuine-CTP portion is only corrected
+  // at the segment boundary (see test/fold.phase-lag-carry.test.js). Here L never catches up, so the
+  // overshoot is banked but the bucket is uncorrected mid-segment.
+  assert.ok(pt > 1000, `pathTotal is banked-not-deleted mid-segment (got ${pt}, expected >1000).`);
+  assert.ok(w._bLagLedger.total > 0, `the genuine-CTP overshoot must be deferred pending settlement (got ${w._bLagLedger.total}).`);
 });
 
 // ─── Case 4: No overshoot — deltaL >= deltaB, no correction needed ───────────

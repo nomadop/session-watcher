@@ -1,10 +1,38 @@
 {
-  "name": "session-watcher",
-  "version": "0.4.0",
-  "description": "Claude Code session restart optimizer — context rent monitor",
+  "name": "@nomadop/session-watcher",
+  "version": "0.5.4",
+  "description": "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   "type": "module",
+  "license": "MIT",
+  "author": "Longju Cheng",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nomadop/session-watcher.git"
+  },
+  "homepage": "https://nomadop.github.io/session-watcher/",
+  "bugs": {
+    "url": "https://github.com/nomadop/session-watcher/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "context-window",
+    "prompt-caching",
+    "transcript-replay",
+    "handoff",
+    "mcp",
+    "developer-tools"
+  ],
   "bin": {
-    "session-watcher": "index.js"
+    "session-watcher": "./dist/bin/session-watcher.js"
+  },
+  "files": [
+    "dist/bin/",
+    "dist/public/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "node scripts/build.js",

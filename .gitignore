@@ -32,6 +32,8 @@ playwright-report/
 *.bbl
 *.log
 
+scripts/sweep-alpha-ema.mjs
+scripts/sweep-alpha-real.mjs
 # Development scripts and archived data — not part of the release
 _archive/
 arxiv-submit/

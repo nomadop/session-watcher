@@ -95,7 +95,7 @@ var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, PENDING_MAX_TURN_
       // Anthropic tokenizer (n=5881)
       deepseek: { ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    }, DEFAULT_CTP = { ascii: 3, cjk: 1 }, TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40 }, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.03, G_FLOOR = 100, MISS_CR_DROP = 0.95, SEGMENT_DROP_EPSILON = 100, NOTIFY_DWELL = 3, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, HANDOFF_TOKEN_MAX_RETRIES = 5;
+    }, DEFAULT_CTP = { ascii: 3, cjk: 1 }, TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40 }, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.12, G_FLOOR = 100, MISS_CR_DROP = 0.95, SEGMENT_DROP_EPSILON = 100, NOTIFY_DWELL = 3, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, HANDOFF_TOKEN_MAX_RETRIES = 5;
   }
 });
 
@@ -782,7 +782,7 @@ function openStore(dbPath) {
   let db = new DatabaseSync(dbPath, { timeout: 3e3 });
   try {
     let walResult = db.prepare("PRAGMA journal_mode=WAL").get(), actualMode = String(walResult.journal_mode ?? "").toLowerCase();
-    actualMode !== "wal" && console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`), db.exec("PRAGMA synchronous=NORMAL"), db.exec("PRAGMA auto_vacuum=INCREMENTAL");
+    actualMode !== "wal" && dbPath !== ":memory:" && console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`), db.exec("PRAGMA synchronous=NORMAL"), db.exec("PRAGMA auto_vacuum=INCREMENTAL");
     let ftsOk = migrate(db), store = new Store(db);
     return store.ftsAvailable = ftsOk, store;
   } catch (err) {
@@ -2529,14 +2529,24 @@ __export(replay_exports, {
 });
 import { readFileSync } from "node:fs";
 function indexTranscript(filePath) {
-  let buf = readFileSync(filePath), steps = [], pos = 0, lastTs = null;
+  let buf = readFileSync(filePath), steps = [], pos = 0, lastTs = null, idToIndex = /* @__PURE__ */ new Map();
   for (; pos < buf.length; ) {
-    let nlIdx = buf.indexOf(10, pos), lineEnd = nlIdx === -1 ? buf.length : nlIdx + 1, head = buf.slice(pos, Math.min(pos + 512, lineEnd)).toString("utf8"), tsMatch = head.match(/"timestamp"\s*:\s*"([^"]+)"/);
+    let nlIdx = buf.indexOf(10, pos), lineEnd = nlIdx === -1 ? buf.length : nlIdx + 1, head = buf.slice(pos, Math.min(pos + 8192, lineEnd)).toString("utf8"), tsMatch = head.match(/"timestamp"\s*:\s*"([^"]+)"/);
     if (tsMatch) {
       let p = Date.parse(tsMatch[1]);
       Number.isNaN(p) || (lastTs = p);
     }
-    head.includes('"usage"') && steps.push({ byteEnd: lineEnd, ts: lastTs }), pos = lineEnd;
+    if (head.includes('"usage"')) {
+      let idMatch = head.match(/"id"\s*:\s*"(msg_[^"]+)"/), msgId = idMatch ? idMatch[1] : null;
+      if (msgId && idToIndex.has(msgId)) {
+        let prevIdx = idToIndex.get(msgId);
+        steps[prevIdx] = { byteEnd: lineEnd, ts: lastTs };
+      } else {
+        let idx = steps.length;
+        steps.push({ byteEnd: lineEnd, ts: lastTs }), msgId && idToIndex.set(msgId, idx);
+      }
+    }
+    pos = lineEnd;
   }
   return steps;
 }
@@ -2546,7 +2556,7 @@ var ReplayController, init_replay = __esm({
     init_bill_regret();
     ReplayController = class {
       constructor(watcher, index, { speed = 4, onAdvance = null } = {}) {
-        this._watcher = watcher, this._index = index, this._speed = Math.max(0.1, speed), this._cursor = 0, this._timer = null, this._onAdvance = onAdvance, this._paused = !1, this._done = !1, this._billProgress = 0, this._prevBurnRate = 0, this._gateDraft = {
+        this._watcher = watcher, this._index = index, this._speed = Math.max(0.1, speed), this._cursor = 0, this._timer = null, this._onAdvance = onAdvance, this._paused = !1, this._done = !1, this._billProgress = 0, this._prevBurnRate = null, this._gateDraft = {
           hasDeepWaterGateFired: !1,
           dwBillsSinceLastAlert: 0,
           backstopLapCount: 0,
@@ -2592,17 +2602,22 @@ var ReplayController, init_replay = __esm({
         }
         let step = this._index[this._cursor];
         this._watcher._replayByteLimit = step.byteEnd, this._cursor++, this._watcher.poll();
-        let status = this._watcher.getStatus(), currBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : 0, trap = 0.5 * (this._prevBurnRate + currBurnRate), billCycleIncrement = 0;
-        for (this._billProgress += trap; this._billProgress >= 1; )
-          this._billProgress -= 1, billCycleIncrement++;
-        this._prevBurnRate = currBurnRate;
+        let status = this._watcher.getStatus(), currBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : 0, billCycleIncrement = 0;
+        if (this._prevBurnRate == null)
+          this._prevBurnRate = currBurnRate;
+        else {
+          let trap = 0.5 * (this._prevBurnRate + currBurnRate);
+          for (this._billProgress += trap; this._billProgress >= 1; )
+            this._billProgress -= 1, billCycleIncrement++;
+          this._prevBurnRate = currBurnRate;
+        }
         let rl = status.rateLamp, deepWater = rl?.reliable ? isInDeepWater(rl.x_display, rl.xSweet, rl.br) : !1, { fired, kind } = advanceGateAndBackstop(this._gateDraft, {
           inDeepWater: deepWater,
           billCycleIncrement,
           mf: rl?.mf ?? 0
         });
         if (fired ? (this._lastNotify = { kind }, this._notifyTTL = 6) : this._lastNotify && (this._notifyTTL--, this._notifyTTL <= 0 && (this._lastNotify = null)), this._onAdvance && this._onAdvance(), this._cursor < this._index.length) {
-          let next = this._index[this._cursor], rawGap = next.ts && step.ts ? Math.max(0, next.ts - step.ts) : 0, clampedGap = Math.min(1e4, rawGap), delay = Math.max(500, clampedGap / this._speed);
+          let next = this._index[this._cursor], rawGap = next.ts && step.ts ? Math.max(0, next.ts - step.ts) : 0, clampedGap = Math.min(1e4, rawGap), minDelay = this._speed >= 20 ? 50 : 500, delay = Math.max(minDelay, clampedGap / this._speed);
           this._timer = setTimeout(() => {
             this._timer = null, this._scheduleNext();
           }, delay).unref();
@@ -22517,17 +22532,34 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.5.0",
-      description: "Claude Code session restart optimizer \u2014 context rent monitor",
+      version: "0.5.4",
+      description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
+      license: "MIT",
+      author: "Longju Cheng",
+      repository: {
+        type: "git",
+        url: "git+https://github.com/nomadop/session-watcher.git"
+      },
+      homepage: "https://nomadop.github.io/session-watcher/",
+      bugs: {
+        url: "https://github.com/nomadop/session-watcher/issues"
+      },
+      keywords: [
+        "claude-code",
+        "context-window",
+        "prompt-caching",
+        "transcript-replay",
+        "handoff",
+        "mcp",
+        "developer-tools"
+      ],
       bin: {
         "session-watcher": "./dist/bin/session-watcher.js"
       },
       files: [
         "dist/bin/",
-        "dist/fixtures/",
         "dist/public/",
-        "!dist/public/snapshots.json",
         "README.md",
         "LICENSE"
       ],
@@ -22697,10 +22729,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   }), app.get("/api/buckets", (req, res, next) => {
     try {
       let bd = activeWatcher.getBucketData(), s = activeWatcher.getStatus(), paths = bd.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
-      _replayController && (paths = paths.map((p, i) => {
-        let ext = (p.path.match(/\.([^./]+)$/) || ["", "js"])[1];
-        return { ...p, path: `src/module-${String(i + 1).padStart(2, "0")}.${ext}` };
-      }), bd.skills = bd.skills.map((sk, i) => ({ ...sk, name: `skill-${i + 1}` }))), res.json({
+      res.json({
         ...bd,
         paths,
         session_id: currentSessionId,
@@ -22744,7 +22773,6 @@ data: ${JSON.stringify({ type: "scan" })}
                 sseClients.delete(c);
               }
           }
-          _replayController && _replayController.progress.done && (_replayController = null, activeWatcher = watcher);
         }
       }), _replayController.start(), res.json({ ok: !0, total: index.length, speed });
     } catch (e) {
@@ -23215,7 +23243,7 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
   let index = indexTranscript(transcriptPath);
   if (index.length === 0)
-    throw new Error(`No usage events found in ${transcriptPath}. Session Watcher 0.5.0 supports Claude Code JSONL transcripts only.`);
+    throw new Error(`No usage events found in ${transcriptPath}. Session Watcher 0.5.4 supports Claude Code JSONL transcripts only.`);
   initStore(":memory:");
   let cleanedUp = !1, watcher = new SessionWatcher(transcriptPath, null, { cwd: process.cwd() }), publicDir = join5(__dirname2, "..", "public"), { server, stopTimers, sseClients } = createServer({
     watcher,
@@ -23273,38 +23301,59 @@ var cli_exports = {};
 __export(cli_exports, {
   runCli: () => runCli
 });
-import { existsSync as existsSync3, statSync as statSync6, mkdtempSync, rmSync } from "node:fs";
-import { createGunzip } from "node:zlib";
-import { createReadStream, createWriteStream } from "node:fs";
-import { pipeline } from "node:stream/promises";
-import { tmpdir } from "node:os";
+import { existsSync as existsSync3, statSync as statSync6 } from "node:fs";
+import "node:zlib";
+import "node:fs";
+import "node:stream/promises";
+import "node:os";
 import { join as join6, dirname as dirname5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { exec } from "node:child_process";
 import { release } from "node:os";
+import { createServer as createHttpServer2 } from "node:http";
+import { readFileSync as readFileSync5 } from "node:fs";
 async function runCli(args) {
-  let transcriptPath = args.transcriptPath, tmpDir = null;
-  if (args.command === "demo") {
-    let gzPath = [
-      join6(__dirname3, "..", "fixtures", "demo.jsonl.gz"),
-      // bundled (dist/bin -> dist/fixtures)
-      join6(__dirname3, "..", "dist", "fixtures", "demo.jsonl.gz")
-      // source dev fallback
-    ].find((p) => existsSync3(p));
-    gzPath || (console.error("Error: Demo fixture corrupt. Try reinstalling: npm install -g @nomadop/session-watcher"), process.exit(1)), tmpDir = mkdtempSync(join6(tmpdir(), "sw-demo-"));
-    let tmpFile = join6(tmpDir, "demo.jsonl");
-    await pipeline(
-      createReadStream(gzPath),
-      createGunzip(),
-      createWriteStream(tmpFile)
-    ), transcriptPath = tmpFile;
-  }
-  tmpDir && process.on("exit", () => {
-    try {
-      rmSync(tmpDir, { recursive: !0, force: !0 });
-    } catch {
+  return args.command === "demo" ? runStaticDemo(args) : runReplay(args);
+}
+async function runStaticDemo(args) {
+  let publicDir = [
+    join6(__dirname3, "..", "public"),
+    // bundled (dist/bin/../public = dist/public)
+    join6(__dirname3, "..", "dist", "public")
+    // source dev fallback
+  ].find((p) => existsSync3(join6(p, "demo.html")));
+  publicDir || (console.error("Error: Demo assets not found. Try reinstalling: npm install -g @nomadop/session-watcher"), process.exit(1));
+  let MIME = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png"
+  }, server = createHttpServer2((req, res) => {
+    let url2 = new URL(req.url, "http://localhost"), filePath = join6(publicDir, url2.pathname === "/" ? "demo.html" : url2.pathname);
+    if (!filePath.startsWith(publicDir)) {
+      res.writeHead(403), res.end();
+      return;
     }
-  }), existsSync3(transcriptPath) || (console.error(`Error: File not found: ${transcriptPath}`), process.exit(1));
+    try {
+      let data = readFileSync5(filePath), ext = filePath.slice(filePath.lastIndexOf("."));
+      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache" }), res.end(data);
+    } catch {
+      res.writeHead(404), res.end("Not found");
+    }
+  });
+  await new Promise((resolve4, reject) => {
+    server.listen(args.port, () => resolve4()), server.on("error", reject);
+  });
+  let url = `http://127.0.0.1:${server.address().port}`, cleanup = () => {
+    server.close(), process.exit(0);
+  };
+  process.on("SIGINT", cleanup), process.on("SIGTERM", cleanup), console.log(`Session Watcher ${args.version} \u2014 Demo`), console.log(`Dashboard \u2192 ${url}`), console.log("Ctrl-C to stop"), args.noOpen || openBrowser(url);
+}
+async function runReplay(args) {
+  let transcriptPath = args.transcriptPath;
+  existsSync3(transcriptPath) || (console.error(`Error: File not found: ${transcriptPath}`), process.exit(1));
   try {
     statSync6(transcriptPath);
   } catch (e) {
@@ -23322,13 +23371,8 @@ async function runCli(args) {
     e.code === "EADDRINUSE" ? console.error(`Error: Port ${args.port} is in use. Use --port 0 for automatic port selection.`) : console.error(`Error: ${e.message}`), process.exit(1);
   }
   let cleanupPromise = null, isTTY = process.stdout.isTTY && process.env.TERM !== "dumb" && !process.env.CI, statusInterval = null, cleanup = () => cleanupPromise || (cleanupPromise = (async () => {
-    if (statusInterval && clearInterval(statusInterval), isTTY && process.stdout.write(`\x1B[?25h
-`), await instance.stop(), tmpDir)
-      try {
-        rmSync(tmpDir, { recursive: !0, force: !0 });
-      } catch {
-      }
-    process.exit(0);
+    statusInterval && clearInterval(statusInterval), isTTY && process.stdout.write(`\x1B[?25h
+`), await instance.stop(), process.exit(0);
   })(), cleanupPromise);
   process.on("SIGINT", cleanup), process.on("SIGTERM", cleanup), console.log(`Session Watcher ${args.version} \u2014 Replay Mode`), console.log(`Transcript: ${transcriptPath} (${instance.totalSteps} steps)`), console.log(`Dashboard \u2192 ${instance.url}`), console.log(`Speed: ${args.speed}\xD7 | Ctrl-C to stop`), console.log(""), args.noOpen || openBrowser(instance.url), isTTY ? (process.stdout.write("\x1B[?25l"), statusInterval = startTTYStatusline(instance, args.command)) : statusInterval = startNonTTYStatusline(instance);
 }
@@ -23346,9 +23390,9 @@ function startTTYStatusline(instance, command) {
         if (!progress.active) {
           lastLines > 0 && process.stdout.write(`\x1B[${lastLines}A\x1B[J`);
           let doneOutput = `${line}
-\u25B8 Done. Dashboard remains available until Ctrl-C.`;
-          process.stdout.write(doneOutput), lastLines = doneOutput.split(`
-`).length, clearInterval(interval), command === "demo" && process.stdout.write(`
+\u25B8 Done. Dashboard remains available until Ctrl-C.
+`;
+          process.stdout.write(doneOutput), lastLines = (doneOutput.match(/\n/g) || []).length, clearInterval(interval), command === "demo" && process.stdout.write(`
 
   Try your own transcript:
   npx @nomadop/session-watcher replay ~/.claude/projects/.../session.jsonl
@@ -23357,9 +23401,9 @@ function startTTYStatusline(instance, command) {
         }
         lastLines > 0 && process.stdout.write(`\x1B[${lastLines}A\x1B[J`);
         let progressLine = progress.done ? "\u25B8 Done. Dashboard remains available until Ctrl-C." : `\u25B8 ${progress.current}/${progress.total} \xB7 ${progress.speed}\xD7 replay`, output = `${line}
-${progressLine}`;
-        process.stdout.write(output), lastLines = output.split(`
-`).length, progress.done && (clearInterval(interval), command === "demo" && process.stdout.write(`
+${progressLine}
+`;
+        process.stdout.write(output), lastLines = (output.match(/\n/g) || []).length, progress.done && (clearInterval(interval), command === "demo" && process.stdout.write(`
 
   Try your own transcript:
   npx @nomadop/session-watcher replay ~/.claude/projects/.../session.jsonl
@@ -23405,6 +23449,7 @@ var __dirname3, init_cli = __esm({
 
 // bin/session-watcher.js
 import { pathToFileURL as pathToFileURL2 } from "node:url";
+import { realpathSync as realpathSync2 } from "node:fs";
 
 // lib/parse-args.js
 import { resolve } from "node:path";
@@ -23436,7 +23481,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.5.0", isMain = import.meta.url === pathToFileURL2(process.argv[1]).href;
+var VERSION = "0.5.4", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args = parseCliArgs(process.argv.slice(2));
   args.command === "help" && (console.log(`Usage: session-watcher <command> [options]

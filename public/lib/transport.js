@@ -89,6 +89,9 @@ export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/
         try {
           const msg = JSON.parse(e.data);
           if (msg.type === 'tick') {
+            // Switch connection state label when replay is active
+            if (msg.replay) setState('replay');
+            else if (state === 'replay') setState('sse-live');
             notifyTick(msg.uptime);
           } else if (msg.type === 'scan') {
             // Fix #5: skip if a fetch is already in flight — the in-flight fetch will get latest data

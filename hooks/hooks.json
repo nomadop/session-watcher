@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start.js"],
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-start-entry.js"],
             "timeout": 10
           }
         ]

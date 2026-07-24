@@ -6,14 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { basename, dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
-import { launchOptionsFor, readStdin, isMainModule } from '../hooks/session-start.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { launchOptionsFor, readStdin, isMainModule, buildServerContext, discoverHandoffs, formatHandoffContext, discoverServerByClientPid, buildRotationFallbackContext } from '../hooks/session-start.js';
+import { openStore, closeStore } from '../lib/store.js';
+import { HANDOFF_HOOK_SOURCES } from '../lib/constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(__dirname, '..', 'hooks', 'session-start.js');
@@ -96,55 +96,173 @@ test('CLI entry: malformed stdin never blocks — exits 0, emits nothing to stdo
   assert.equal(out, '', 'hook must not write to its own stdout (SessionStart stdout leaks into model context)');
 });
 
-test('CLI entry: valid payload → exits 0, emits nothing to stdout, actually launches a server (self-cleaning)', async () => {
-  // Valid JSON so JSON.parse succeeds and startWatcher IS reached (exercises the launch path, not just
-  // the parse-throw branch). Fire-and-forget spawn returns immediately; the detached child's PORT= must
-  // never surface on the hook's own stdout. We forward a transcript_path to the real deepseek fixture so
-  // the server can bind and become healthy, then poll for its state file, kill the pid, and unlink —
-  // leaving no orphan (mirrors the e2e cleanup discipline; unit tests must not leak processes).
-  const sessionId = `hooktest-${process.pid}-${Math.floor(process.hrtime()[1])}`;
-  const fixture = join(__dirname, '..', 'fixtures', 'host', '.claude', 'projects',
-    'C--Users-nomad-freshtrack', 'aa8e3739-3264-48d6-a2a0-75346d583c03.jsonl');
-  const transcriptBasename = basename(fixture).replace(/\.jsonl$/, '');
-  const stateFile = join(homedir(), '.session-watcher', `${transcriptBasename}.json`);
+test('CLI entry: valid payload, no matching server → exits 0, emits nothing (no server to discover)', async () => {
+  // In-process hook discovers by clientPid. No server running for this test's ppid → nothing injected.
   const payload = JSON.stringify({
-    session_id: sessionId,
-    source: 'resume', // not 'startup' → open:false (belt-and-suspenders with SW_NO_OPEN)
-    transcript_path: existsSync(fixture) ? fixture : undefined,
+    session_id: `hooktest-${process.pid}-${Math.floor(process.hrtime()[1])}`,
+    source: 'resume',
+    transcript_path: '/nonexistent/path.jsonl',
   });
-  // Clean up any stale state file from a previous test run.
-  try { unlinkSync(stateFile); } catch {}
-  try {
-    const { code, out } = await runHook(payload);
-    assert.equal(code, 0);
-    assert.equal(out, '', 'child PORT= must not leak to the hook stdout');
+  const { code, out } = await runHook(payload);
+  assert.equal(code, 0);
+  assert.equal(out, '', 'no server to discover → no additionalContext emitted');
+});
 
-    // Poll for the state file the detached server writes (it writes AFTER the hook has exited).
-    // 100×50ms = 5s budget: node cold-start + listen is normally hundreds of ms, but a loaded CI box
-    // can be slower — a wide budget avoids both a false failure AND a slow-boot orphan the finally would
-    // otherwise miss (the server writes its pid only once it's up).
-    let state = null;
-    for (let i = 0; i < 100 && !state; i++) {
-      if (existsSync(stateFile)) { try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch {} }
-      if (!state) await sleep(50);
-    }
-    assert.ok(state && state.pid && state.port, 'fire-and-forget launch should have spawned a real server');
-    assert.equal(state.sessionId, transcriptBasename);
-    assert.equal(state.hookSessionId, sessionId);
-  } finally {
-    // Best-effort cleanup — never leave an orphan server or state file behind. Re-poll briefly in case
-    // the server booted slower than the assert budget: its pid may land only after the try block, so we
-    // give the state file a short grace window here before giving up, then kill by recorded pid + unlink.
-    let killed = false;
-    for (let i = 0; i < 40 && !killed; i++) {
-      try {
-        if (existsSync(stateFile)) {
-          const s = JSON.parse(readFileSync(stateFile, 'utf8'));
-          if (s.pid) { try { process.kill(s.pid, 'SIGTERM'); } catch {} killed = true; }
-        }
-      } catch {}
-      if (!killed) await sleep(50);
-    }
-    try { unlinkSync(stateFile); } catch {}
+// ── discoverHandoffs unit tests ──────────────────────────────────────────────
+
+test('discoverHandoffs: returns pending handoff from DB', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-test-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const dbPath = join(dir, 'store.sqlite');
+  const store = openStore(dbPath);
+  store.insertHandoff({ sessionId: 'prev-session', segment: 0, loadToken: 'test-fox',
+    createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'test work',
+    nextTask: 'do the thing', summaryTokens: 100, keptTokens: 5000, projectId: '/workspace' });
+  closeStore(store);
+
+  const rows = discoverHandoffs(dbPath, '/workspace', 'new-session', { ttlDays: 7, queryLimit: 4 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].load_token, 'test-fox');
+  assert.equal(rows[0].next_task, 'do the thing');
+});
+
+test('discoverHandoffs: excludes own session_id', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-test-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const dbPath = join(dir, 'store.sqlite');
+  const store = openStore(dbPath);
+  store.insertHandoff({ sessionId: 'my-session', segment: 0, loadToken: 'self-owl',
+    createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'self',
+    nextTask: null, summaryTokens: 50, projectId: '/workspace' });
+  closeStore(store);
+
+  const rows = discoverHandoffs(dbPath, '/workspace', 'my-session', { ttlDays: 7, queryLimit: 4 });
+  assert.equal(rows.length, 0);
+});
+
+test('discoverHandoffs: returns empty when DB does not exist', () => {
+  const rows = discoverHandoffs('/nonexistent/path/store.sqlite', '/workspace', 'sess', { ttlDays: 7, queryLimit: 4 });
+  assert.deepEqual(rows, []);
+});
+
+test('discoverHandoffs: returns empty when projectId is null', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-test-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const dbPath = join(dir, 'store.sqlite');
+  const store = openStore(dbPath);
+  store.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'null-key',
+    createdAt: Date.now(), pathsToKeep: '[]', summary: 'x',
+    nextTask: null, summaryTokens: 50, projectId: '/workspace' });
+  closeStore(store);
+
+  const rows = discoverHandoffs(dbPath, null, 'new', { ttlDays: 7, queryLimit: 4 });
+  assert.deepEqual(rows, []);
+});
+
+test('discoverHandoffs: respects TTL (expired handoff not returned)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-test-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const dbPath = join(dir, 'store.sqlite');
+  const store = openStore(dbPath);
+  store.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'expired-elm',
+    createdAt: Date.now() - 8 * 86400000, pathsToKeep: '[]', summary: 'old',
+    nextTask: null, summaryTokens: 50, projectId: '/workspace' });
+  closeStore(store);
+
+  const rows = discoverHandoffs(dbPath, '/workspace', 'new', { ttlDays: 7, queryLimit: 4 });
+  assert.equal(rows.length, 0);
+});
+
+test('discoverHandoffs: respects LIMIT', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hook-test-'));
+  t.after(() => rmSync(dir, { recursive: true }));
+  const dbPath = join(dir, 'store.sqlite');
+  const store = openStore(dbPath);
+  for (let i = 0; i < 6; i++) {
+    store.insertHandoff({ sessionId: `old-${i}`, segment: 0, loadToken: `lim-${i}`,
+      createdAt: Date.now() - i * 60000, pathsToKeep: '[]', summary: `work ${i}`,
+      nextTask: `task ${i}`, summaryTokens: 50, projectId: '/workspace' });
   }
+  closeStore(store);
+
+  const rows = discoverHandoffs(dbPath, '/workspace', 'new', { ttlDays: 7, queryLimit: 4 });
+  assert.equal(rows.length, 4);
+});
+
+// ── formatHandoffContext unit tests ──────────────────────────────────────────────
+
+test('formatHandoffContext: single handoff format', () => {
+  const rows = [{ load_token: 'review-clear-egret', next_task: 'Fix the review findings.',
+    created_at: Date.now() - 15 * 60000, summary_tokens: 1000, kept_tokens: 65000 }];
+  const ctx = formatHandoffContext(rows, 3, 200);
+  assert.ok(ctx.includes('[Session Watcher] Handoff available'));
+  assert.ok(ctx.includes('review-clear-egret'));
+  assert.ok(ctx.includes('~66k tokens'));
+  assert.ok(ctx.includes('15 min ago'));
+  assert.ok(ctx.includes('Fix the review findings.'));
+});
+
+test('formatHandoffContext: multiple handoffs listed', () => {
+  const now = Date.now();
+  const rows = [
+    { load_token: 'a-fox', next_task: 'Task A long description here', created_at: now - 5 * 60000, summary_tokens: 500, kept_tokens: 1000 },
+    { load_token: 'b-owl', next_task: 'Task B', created_at: now - 3600000, summary_tokens: 200, kept_tokens: 800 },
+    { load_token: 'c-elm', next_task: 'Task C', created_at: now - 36000000, summary_tokens: 100, kept_tokens: 400 },
+  ];
+  const ctx = formatHandoffContext(rows, 3, 200);
+  assert.ok(ctx.includes('[Session Watcher] 3 pending handoffs'));
+  assert.ok(ctx.includes('1. a-fox'));
+  assert.ok(ctx.includes('2. b-owl'));
+  assert.ok(ctx.includes('3. c-elm'));
+});
+
+test('formatHandoffContext: 4 rows triggers "more available" message', () => {
+  const now = Date.now();
+  const rows = Array.from({ length: 4 }, (_, i) => ({
+    load_token: `tok-${i}`, next_task: `task ${i}`, created_at: now - i * 60000,
+    summary_tokens: 50, kept_tokens: 100 }));
+  const ctx = formatHandoffContext(rows, 3, 200);
+  assert.ok(ctx.includes('3+ pending handoffs'));
+  assert.ok(ctx.includes('older handoffs available'));
+  // Only 3 displayed even though 4 rows passed
+  assert.ok(!ctx.includes('tok-3'));
+});
+
+test('formatHandoffContext: truncates next_task at preview limit', () => {
+  const longTask = 'x'.repeat(300);
+  const rows = [{ load_token: 'trunc-fox', next_task: longTask,
+    created_at: Date.now() - 60000, summary_tokens: 50, kept_tokens: 100 }];
+  const ctx = formatHandoffContext(rows, 3, 200);
+  assert.ok(!ctx.includes('x'.repeat(201)), 'should be truncated');
+  assert.ok(ctx.includes('x'.repeat(197) + '...'), 'should end with ellipsis');
+});
+
+test('formatHandoffContext: returns null for empty rows', () => {
+  assert.equal(formatHandoffContext([], 3, 200), null);
+});
+
+test('formatHandoffContext: handles null summary_tokens or kept_tokens', () => {
+  const rows = [{ load_token: 'null-tok', next_task: 'do it',
+    created_at: Date.now() - 60000, summary_tokens: null, kept_tokens: 5000 }];
+  const ctx = formatHandoffContext(rows, 3, 200);
+  assert.ok(ctx.includes('~5k tokens'));
+});
+
+// ── source-gate test ──────────────────────────────────────────────────────────
+
+test('hook source gate: only startup and clear trigger discovery', () => {
+  assert.deepEqual(HANDOFF_HOOK_SOURCES, ['startup', 'clear']);
+});
+
+// ── buildServerContext unit tests ──────────────────────────────────────────────
+
+test('buildServerContext: returns URL line', () => {
+  const ctx = buildServerContext('http://127.0.0.1:4321');
+  assert.equal(ctx, '[Session Watcher] Server: http://127.0.0.1:4321');
+});
+
+test('buildServerContext: null when no URL', () => {
+  assert.equal(buildServerContext(null), null);
+  assert.equal(buildServerContext(undefined), null);
+  assert.equal(buildServerContext(''), null);
 });

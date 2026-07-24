@@ -108,7 +108,7 @@ describe('CLI E2E (built dist)', () => {
     );
 
     assert.match(result.stdout, /Session Watcher/);
-    assert.match(result.stdout, /Replay Mode/);
+    assert.match(result.stdout, /Demo/);
     assert.equal(result.dashboardStatus, 200, 'Dashboard should return HTTP 200');
   });
 

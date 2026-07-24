@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { cpSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
+import { cpSync, rmSync, mkdirSync, chmodSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,7 +42,7 @@ async function main() {
     banner: { js: REQUIRE_SHIM },
   });
 
-  // 3. Bundle hooks/session-start.js
+  // 3. Bundle hooks/session-start.js (core logic — loaded dynamically by the entry shim)
   await build({
     ...shared,
     entryPoints: [join(ROOT, 'hooks', 'session-start.js')],
@@ -50,14 +50,47 @@ async function main() {
     banner: { js: REQUIRE_SHIM },
   });
 
-  // 4. Copy static assets
-  cpSync(join(ROOT, 'public'), join(DIST, 'public'), { recursive: true });
-  cpSync(join(ROOT, 'statusline.js'), join(DIST, 'statusline.js'));
+  // 3b. Copy the entry shim (must NOT be bundled — it relies on zero node:sqlite
+  //     static imports so the ESM linker doesn't fail on older Node versions)
+  cpSync(
+    join(ROOT, 'hooks', 'session-start-entry.js'),
+    join(DIST, 'hooks', 'session-start-entry.js'),
+  );
 
-  // 5. Ensure executables have +x
+  // 4. Bundle statusline.js (thin client — previously just copied, now bundled for lib/probe.js)
+  await build({
+    ...shared,
+    entryPoints: [join(ROOT, 'statusline.js')],
+    outfile: join(DIST, 'statusline.js'),
+    banner: { js: REQUIRE_SHIM },
+  });
+
+  // 5. Copy static assets
+  cpSync(join(ROOT, 'public'), join(DIST, 'public'), { recursive: true });
+
+  // 7. Bundle bin/session-watcher.js (CLI — single file, includes cli.js + replay-server.js)
+  // esbuild inlines the dynamic import('lib/cli.js') → one self-contained bundle.
+  // __PKG_VERSION__ injected at build time — no runtime package.json read.
+  // __CLI_BUNDLE__ = true → server.js's isMain guard is dead-code-eliminated (D2 fix).
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  await build({
+    ...shared,
+    entryPoints: [join(ROOT, 'bin', 'session-watcher.js')],
+    outfile: join(DIST, 'bin', 'session-watcher.js'),
+    banner: { js: '#!/usr/bin/env node\n' + REQUIRE_SHIM },
+    minifySyntax: true,
+    define: {
+      '__PKG_VERSION__': JSON.stringify(pkg.version),
+      '__CLI_BUNDLE__': 'true',
+    },
+  });
+
+  // 6. Ensure executables have +x
   chmodSync(join(DIST, 'index.js'), 0o755);
+  chmodSync(join(DIST, 'hooks', 'session-start-entry.js'), 0o755);
   chmodSync(join(DIST, 'hooks', 'session-start.js'), 0o755);
   chmodSync(join(DIST, 'statusline.js'), 0o755);
+  chmodSync(join(DIST, 'bin', 'session-watcher.js'), 0o755);
 
   console.log('Build complete → dist/');
 }

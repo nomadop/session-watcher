@@ -71,3 +71,13 @@ test('index.js source contains no metric identifiers (zero-pollution source guar
   const m = src.match(re);
   assert.equal(m, null, m ? `metric identifier "${m[1]}" appears in index.js: ${JSON.stringify(src.slice(Math.max(0, m.index - 25), m.index + 25))}` : '');
 });
+
+// Task 11: handoff launcher helpers return {error:'no_server'} when no live server exists
+import { getBucketSummary, prepareHandoff, loadHandoff } from '../lib/launcher.js';
+
+test('handoff launcher helpers return {error:no_server} when no live server', async () => {
+  const env = { CLAUDE_CODE_SESSION_ID: `qf3-test-${randomUUID()}` };
+  assert.equal((await getBucketSummary(env)).error, 'no_server');
+  assert.equal((await loadHandoff(env, {})).error, 'no_server');
+  assert.equal((await prepareHandoff(env, { paths_to_keep: [], summary: 'x' })).error, 'no_server');
+});

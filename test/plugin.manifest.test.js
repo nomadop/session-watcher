@@ -46,7 +46,7 @@ test('plugin: hooks/hooks.json uses exec form for SessionStart', () => {
   assert.equal(ss.type, 'command');
   assert.equal(ss.command, 'node');
   assert.ok(Array.isArray(ss.args), 'SessionStart hook uses exec form (args array)');
-  assert.ok(ss.args[0].includes('dist/hooks/session-start.js'));
+  assert.ok(ss.args[0].includes('dist/hooks/session-start-entry.js'));
   // Stop hook retired (2026-07-18) — gate + backstop now run in reader path
   assert.equal(m.hooks.Stop, undefined, 'Stop hook must not be registered');
 });
@@ -60,6 +60,7 @@ test('plugin: version consistency across plugin.json and package.json', () => {
 test('plugin: dist/ contains bundled entry points', () => {
   assert.ok(existsSync(join(ROOT, 'dist', 'index.js')), 'dist/index.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'server.js')), 'dist/server.js exists');
+  assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start-entry.js')), 'dist/hooks/session-start-entry.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start.js')), 'dist/hooks/session-start.js exists');
   // warn.js retired (2026-07-18) — Stop hook removed
   assert.ok(existsSync(join(ROOT, 'dist', 'public', 'index.html')), 'dist/public/index.html exists');

@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.5.4 (2026-07-23) — Initial public Show HN release
+
+### Highlights
+
+- Replay an anonymized built-in Claude Code session
+- Replay a local Claude Code JSONL transcript
+- Live context-cost dashboard and statusline
+- User-controlled context buckets
+- Handoff package and reload workflow
+- Local per-step and path-event telemetry groundwork
+
+### Fixes
+
+- Fix `isMain` detection via `realpathSync` for `npx` symlink resolution
+- Fix WAL warnings on `:memory:` databases
+- Dedup identical message IDs in replay indexing (Claude retries)
+- Switch `demo` command to static snapshots (no fixture needed)
+- Expand read buffer for long-line tolerance (512→8192)
+
+### Current boundaries
+
+- Claude Code transcripts only
+- Restart and bucket decisions remain human-controlled
+- No D/C or automated carry-set optimizer
+- No transcript or telemetry upload
+
+---
+
+## 0.5.0 (2026-07-23)
+
+### Plugin
+
+- npm package `@nomadop/session-watcher` with `npx session-watcher` CLI
+- MCP plugin with `SessionStart` hook auto-launch
+- Demo command with built-in anonymized transcript
+- Replay command for local JSONL transcripts
+- GitHub Pages landing page with hosted static demo
+
+### Core
+
+- ALPHA_EMA tuned to 0.12 (effective window ~8 turns) via corpus sweep
+- Handoff telemetry: carry-staleness tracking, loader versioning
+- Context bucket tree: per-path B_rebuild attribution
+- BR_default / BR_selected comparison for bucket decisions
+
+---
+
 ## 0.4.0 (2026-07-19)
 
 ### V3 Measurement Rewrite

@@ -77,3 +77,77 @@ test('segment reset clears B_rebuild paths and bumps _segmentEpoch', () => {
   assert.equal(w._bRebuild.paths.size, 0, 'B_rebuild cleared on reset');
   assert.equal(w._segment, 1, 'segment counter advanced');
 });
+
+test('getTerminalSnapshot includes segment index', () => {
+  const path = tmpJsonl([
+    asst('m1', 50000, 2000, 10, 'u1'),
+    asst('m2', 60000, 2000, 10, 'u2', 'u1'),
+    asst('m3', 5000, 2000, 10, 'u3', null),   // topology segment → _segment becomes 1
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  const snap = w.getTerminalSnapshot();
+  assert.equal(snap.segment, w._segment, 'terminal snapshot carries current segment');
+});
+
+test('constructor threads sessionId/projectId; getSegmentIndex returns current segment', () => {
+  const path = tmpJsonl([ asst('m1', 50000, 2000, 10, 'u1') ]);
+  const w = new SessionWatcher(path, null, { sessionId: 'sid-x', projectId: 'proj-y' });
+  assert.equal(w._sessionId, 'sid-x');
+  assert.equal(w._projectId, 'proj-y');
+  w.poll();
+  assert.equal(w.getSegmentIndex(), w._segment);
+});
+
+test('segment peak/accumulator fields default correctly before any poll (R1-G)', () => {
+  const path = tmpJsonl([ asst('m1', 50000, 2000, 10, 'u1') ]);
+  const w = new SessionWatcher(path);
+  // Assert defaults BEFORE poll — accumulation tests belong in Task 6 (after the hook is wired).
+  assert.equal(w._segmentLPeak, 0);
+  assert.equal(w._segmentGMin, Infinity);
+  assert.equal(w._segmentInputTokens, 0);
+  assert.equal(w._segmentBrPeak, 0);
+  assert.equal(w._segmentPpPeak, 0);
+  assert.equal(w._segmentOutputSum, 0);
+  assert.equal(w._segmentUsageCount, 0);
+});
+
+test('segmentReset resets peak accumulators (called via topology boundary)', () => {
+  const path = tmpJsonl([
+    asst('m1', 50000, 2000, 10, 'u1'),
+    asst('m2', 60000, 2000, 10, 'u2', 'u1'),
+    asst('m3', 5000, 2000, 10, 'u3', null),   // topology segment → segmentReset fires
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  // After segmentReset, the NEW segment's first call (m3) is folded and accumulates.
+  // Verify the new segment reflects ONLY m3 — old segment's larger peaks are gone (R1-G).
+  assert.equal(w._segmentLPeak, 5000, 'L peak reflects only new segment call (m3 cacheRead=5000)');
+  assert.equal(w._segmentBrPeak, 0, 'br peak 0 — B=0 on new segment first call');
+  assert.equal(w._segmentPpPeak, 0, 'pp peak 0 — B=0 on new segment first call');
+  assert.equal(w._segmentTurnAtBrAmber, null);
+  assert.equal(w._segmentOutputSum, 10, 'only m3 output accumulated');
+  assert.equal(w._segmentUsageCount, 1, 'only m3 counted');
+  assert.equal(w._segmentInputTokens, 100, 'only m3 input_tokens accumulated');
+  assert.equal(w._segmentFirstTs, null, 'no timestamp in test fixture');
+  assert.equal(w._segmentLastTs, null, 'no timestamp in test fixture');
+});
+
+test('projectId falls back to CLAUDE_PROJECT_ID env var', () => {
+  const orig = process.env.CLAUDE_PROJECT_ID;
+  try {
+    process.env.CLAUDE_PROJECT_ID = 'env-proj-z';
+    const path = tmpJsonl([ asst('m1', 50000, 2000, 10, 'u1') ]);
+    const w = new SessionWatcher(path);
+    assert.equal(w._projectId, 'env-proj-z');
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PROJECT_ID;
+    else process.env.CLAUDE_PROJECT_ID = orig;
+  }
+});
+
+test('_lastArchivedSegment initialized', () => {
+  const path = tmpJsonl([ asst('m1', 50000, 2000, 10, 'u1') ]);
+  const w = new SessionWatcher(path);
+  assert.equal(w._lastArchivedSegment, -1);
+});

@@ -1,6 +1,7 @@
 // bin/session-watcher.js
 // NO SHEBANG — added by esbuild banner at build time.
 import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
 import { parseCliArgs } from '../lib/parse-args.js';
 
 // Re-export for any consumer that imports from bin/
@@ -10,9 +11,8 @@ export { parseCliArgs };
 // Falls back to 'dev' when running unbundled source directly.
 const VERSION = typeof __PKG_VERSION__ !== 'undefined' ? __PKG_VERSION__ : 'dev';
 
-// Main entry — uses import.meta.url for reliable isMain detection
-// (works via symlinks, npx, global install, and direct `node` invocation).
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
+// Main entry — resolve symlinks so npx/.bin symlinks still match import.meta.url.
+const isMain = import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
 
 if (isMain) {
   const args = parseCliArgs(process.argv.slice(2));

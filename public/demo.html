@@ -15,6 +15,15 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
+  <div style="position:fixed;top:0;left:0;right:0;z-index:10000;
+              background:var(--sw-bg-panel,#151b20);border-bottom:1px solid var(--sw-border,#232d35);
+              padding:6px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;
+              color:var(--sw-text-secondary,#8b8f96);display:flex;align-items:center;gap:24px;
+              flex-wrap:wrap;justify-content:center">
+    <span>Anonymized static replay · 20× · no data upload</span>
+    <a href="./" style="color:var(--mint,#4fe0b0);text-decoration:none">← Project</a>
+    <a href="https://github.com/nomadop/session-watcher" style="color:var(--mint,#4fe0b0);text-decoration:none">GitHub</a>
+  </div>
   <div class="sw-wrap">
     <div id="sw-chrome"></div>
     <div id="sw-hero"></div>

@@ -42,7 +42,7 @@ test('v3: churn tier constants exported with exact values', () => {
 });
 
 test('v3: measurement/notify constants', () => {
-  assert.equal(ALPHA_EMA, 0.03);
+  assert.equal(ALPHA_EMA, 0.12);
   assert.equal(G_FLOOR, 100);
   assert.equal(MISS_B_FRACTION, 0.8);
   assert.equal(MISS_TOTAL_KEEP, 0.7);

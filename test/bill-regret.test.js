@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BR_AMBER, BR_RED, computeMovableFrac, computeBr, xRightFromBr, xLeftFromBr,
+  computePp,
 } from '../lib/bill-regret.js';
 
 describe('bill-regret constants', () => {
@@ -128,5 +129,26 @@ describe('xRightFromBr / xLeftFromBr', () => {
     assert.ok(Number.isNaN(xRightFromBr(0.10, 0, 0.28)));
     assert.ok(Number.isNaN(xRightFromBr(0.10, dhat, 0)));
     assert.ok(Number.isNaN(xLeftFromBr(-0.01, dhat, 0.28)));
+  });
+});
+
+describe('computePp', () => {
+  test('computePp: returns pp_frac (u-1)^2/(2u) matching computeBr/mf decomposition', () => {
+    // u = (x-1)/dhat. Pick x, dhat so u=2 → pp = (1)^2/(2*2) = 0.25
+    const x = 3, dhat = 1; // u = 2
+    assert.equal(computePp(x, dhat), 0.25);
+  });
+
+  test('computePp: symmetric arm — u=0.5 gives (−0.5)^2/(2*0.5)=0.25', () => {
+    const x = 1.5, dhat = 1; // u = 0.5
+    assert.ok(Math.abs(computePp(x, dhat) - 0.25) < 1e-12);
+  });
+
+  test('computePp: null on non-finite or non-positive u', () => {
+    assert.equal(computePp(1, 1), null);      // u=0
+    assert.equal(computePp(0.5, 1), null);    // u=-0.5 ≤ 0
+    assert.equal(computePp(NaN, 1), null);
+    assert.equal(computePp(2, 0), null);      // dhat ≤ 0
+    assert.equal(computePp(2, -1), null);
   });
 });

@@ -5,6 +5,7 @@
 const CONNECTION_STATES = {
   connecting:    { color: '#eab308', label: 'connecting' },    // yellow
   'sse-live':    { color: '#22c55e', label: 'SSE live' },      // green
+  replay:        { color: '#f59e0b', label: 'replay' },        // amber
   polling:       { color: '#3b82f6', label: 'polling' },       // blue
   disconnected:  { color: '#ef4444', label: 'disconnected' },  // red
 };
@@ -69,6 +70,10 @@ export function mount(root, ctx) {
       connWrap.style.color = 'var(--mint)';
       connWrap.style.background = 'rgba(79,224,176,0.1)';
       connWrap.style.borderColor = 'var(--mint-dim)';
+    } else if (state === 'replay') {
+      connWrap.style.color = '#f59e0b';
+      connWrap.style.background = 'rgba(245,158,11,0.1)';
+      connWrap.style.borderColor = 'rgba(245,158,11,0.4)';
     } else if (state === 'disconnected') {
       connWrap.style.color = 'var(--coral)';
       connWrap.style.background = 'rgba(255,117,102,0.1)';

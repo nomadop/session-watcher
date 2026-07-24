@@ -4,7 +4,7 @@
 
 **LLM context economics, in your terminal.**
 
-Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory to tell you whether the current context is still *worth carrying*, and when to restart. Works with any session-based coding agent.
+Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory to measure whether the current context is still *worth carrying*, tracking restart pressure so you can decide when to hand off.
 
 <img src="assets/dashboard.gif" alt="Session Watcher dashboard" width="820">
 
@@ -34,7 +34,7 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
 
 Session Watcher reads your Claude Code transcript in real time and answers one question: **is this session still worth carrying?**
 
-Most context tools optimize *how* you consume tokens — Headroom compresses, `/compact` shrinks, RTK filters. Session Watcher answers *when* to restart. They compose: run any pruning strategy you like, SW tells you when it's time to `/clear`.
+Most context tools optimize *how* you consume tokens — Headroom compresses, `/compact` shrinks, RTK filters. Session Watcher tracks *when* the cost curve is drifting, giving you the data to decide. They compose: run any pruning strategy you like, SW measures the cost curve so you can decide when to hand off.
 
 SW reads from the transcript, never writes to it. The dashboard and statusline are pure observers; MCP tools return data for you to act on. Metrics stay on your screen, not in the model's context window.
 
@@ -60,16 +60,18 @@ Your coding agent (Claude Code)
 
 **Core model:** `B = cache_read_input_tokens` (your context inventory). `g = ΔL − ΔB` (growth gap). `x = L / B` (position on the EOQ cost curve). `br = mf × pp` (bill premium — the percentage you're overpaying relative to optimal).
 
-Three thresholds: green valley (br < 10%), amber attention (10–15%), red restart (≥ 25%). See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
+Lamp thresholds: green (br < 10%), amber (10–24%), red (≥ 25%). See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
 
 ## Quick Start
 
+Requires Node.js ≥ 22.16.
+
 ```bash
 # Try without installing — self-contained demo
-npx @nomadop/session-watcher demo
+npx -y @nomadop/session-watcher demo
 
 # Replay your own transcript
-npx @nomadop/session-watcher replay ~/.claude/projects/<project>/<session>.jsonl
+npx -y @nomadop/session-watcher replay ~/.claude/projects/<project>/<session>.jsonl
 ```
 
 Opens a browser dashboard. The demo uses a pre-built anonymized session; replay uses your real transcript. Both are read-only — nothing is modified or uploaded.
@@ -206,6 +208,14 @@ npx playwright test   # E2E (requires running server)
   note   = {Preprint}
 }
 ```
+
+## Privacy
+
+- No remote telemetry.
+- Transcripts are read locally and never uploaded.
+- Local aggregate usage and handoff records are stored under `~/.session-watcher`.
+- No transcript prose or file contents are stored in telemetry.
+- Removing `~/.session-watcher` deletes all local state.
 
 ## License
 
