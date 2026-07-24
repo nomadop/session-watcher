@@ -23871,7 +23871,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
       sweep(maxAgeMs, {
         now = Date.now(),
         isLiveSession,
-        resolveTranscriptPath: resolveTranscriptPath2,
+        resolveTranscriptPath,
         replaySession,
         limit = GC_BATCH_LIMIT
       } = {}) {
@@ -23887,7 +23887,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
         for (const { session_id } of expired) {
           if (count >= limit) break;
           if (isLiveSession && isLiveSession(session_id)) continue;
-          const transcriptPath = resolveTranscriptPath2 ? resolveTranscriptPath2(session_id) : null;
+          const transcriptPath = resolveTranscriptPath ? resolveTranscriptPath(session_id) : null;
           const canReplay = transcriptPath && replaySession && this._canReplay(transcriptPath);
           let archiveOk = false;
           try {
@@ -48677,14 +48677,6 @@ function getLiveLedger(sessionId) {
 function getDebugCounters() {
   return { ..._counters };
 }
-function flushAll() {
-  for (const [sid, l] of _ledgers) {
-    try {
-      saveRateLampState(sid, l);
-    } catch {
-    }
-  }
-}
 var _PROBE_OFF, RENT_METER_DEFAULT, _ledgers, _ledgerLastAccess, LEDGER_TTL_MS, _lastSaved, _lastPersistedRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _testNowMono, _coalescedTimer;
 var init_rate_lamp_manager = __esm({
   "lib/rate-lamp-manager.js"() {
@@ -48750,36 +48742,8 @@ var init_project_key = __esm({
 import { readdirSync as readdirSync3, unlinkSync as unlinkSync2, rmdirSync, existsSync as existsSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 import { homedir as homedir4 } from "node:os";
-function cleanupLegacyJson(baseDir) {
-  for (const name of LEGACY_DIRS) {
-    const dir = join4(baseDir, name);
-    if (!existsSync2(dir)) continue;
-    let entries;
-    try {
-      entries = readdirSync3(dir);
-    } catch {
-      continue;
-    }
-    for (const f of entries) {
-      if (!f.endsWith(".json")) continue;
-      try {
-        unlinkSync2(join4(dir, f));
-      } catch {
-      }
-    }
-    try {
-      rmdirSync(dir);
-    } catch {
-    }
-  }
-}
-function defaultBaseDir() {
-  return join4(homedir4(), ".session-watcher");
-}
-var LEGACY_DIRS;
 var init_legacy_cleanup = __esm({
   "lib/legacy-cleanup.js"() {
-    LEGACY_DIRS = ["rate-lamp", "rate-lamp-state", "gate", "gate-state", "pricing"];
   }
 });
 
@@ -48829,81 +48793,6 @@ var init_pricing_store = __esm({
 // lib/state-reaper.js
 import { readdirSync as readdirSync4, statSync as statSync2, unlinkSync as unlinkSync3, readFileSync as readFileSync3 } from "node:fs";
 import { join as join5 } from "node:path";
-function isPidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code !== "ESRCH";
-  }
-}
-function isLivePortFile(sessionId, portDir) {
-  if (!portDir) return false;
-  if (!sessionId || /[/\\\0]/.test(sessionId) || sessionId === ".." || sessionId === ".") return false;
-  try {
-    const p = join5(portDir, `${sessionId}.json`);
-    const record2 = JSON.parse(readFileSync3(p, "utf8"));
-    return record2.pid && isPidAlive(record2.pid);
-  } catch {
-    return false;
-  }
-}
-function resolveTranscriptPath(sessionId, portDir) {
-  if (!portDir || !sessionId) return null;
-  try {
-    const p = join5(portDir, `${sessionId}.json`);
-    const record2 = JSON.parse(readFileSync3(p, "utf8"));
-    return record2.transcriptPath || null;
-  } catch {
-    return null;
-  }
-}
-function sweepStaleState({
-  maxAgeMs = MAX_AGE_MS,
-  now = Date.now(),
-  portDir = null,
-  limit = GC_BATCH_LIMIT
-} = {}) {
-  const store = getStore();
-  return store.sweep(maxAgeMs, {
-    now,
-    isLiveSession: portDir ? (sid) => isLivePortFile(sid, portDir) : void 0,
-    resolveTranscriptPath: portDir ? (sid) => resolveTranscriptPath(sid, portDir) : void 0,
-    // TODO: replaySession callback — requires SessionWatcher import (spec §14).
-    // Replay-first GC exercised via unit test injection; production gains it when
-    // transcript-path resolution lands.
-    replaySession: void 0,
-    limit
-  });
-}
-function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS } = {}) {
-  let removed = 0;
-  let entries;
-  try {
-    entries = readdirSync4(portDir);
-  } catch {
-    return 0;
-  }
-  for (const f of entries) {
-    if (!f.endsWith(".json")) continue;
-    const p = join5(portDir, f);
-    try {
-      const st = statSync2(p);
-      if (now - st.mtimeMs > maxAgeMs) {
-        try {
-          const record2 = JSON.parse(readFileSync3(p, "utf8"));
-          if (record2.pid && isPidAlive(record2.pid)) continue;
-        } catch {
-        }
-        unlinkSync3(p);
-        removed++;
-      }
-    } catch {
-    }
-  }
-  return removed;
-}
 var MAX_AGE_MS;
 var init_state_reaper = __esm({
   "lib/state-reaper.js"() {
@@ -50074,7 +49963,7 @@ function indexTranscript(filePath) {
       if (!Number.isNaN(p)) lastTs = p;
     }
     if (head.includes('"usage"')) {
-      const idMatch = head.match(/"id"\s*:\s*"(msg_[^"]+)"/);
+      const idMatch = head.match(/"id"\s*:\s*"([^"]+)"/);
       const msgId = idMatch ? idMatch[1] : null;
       if (msgId && idToIndex.has(msgId)) {
         const prevIdx = idToIndex.get(msgId);
@@ -50180,6 +50069,7 @@ var init_replay = __esm({
             this._billProgress -= 1;
             billCycleIncrement++;
           }
+          this._billProgress = Math.floor(this._billProgress * 1e6) / 1e6;
           this._prevBurnRate = currBurnRate;
         }
         const rl = status.rateLamp;
@@ -51186,7 +51076,7 @@ var init_server3 = __esm({
     _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
     IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1e3;
     SNAPSHOT_THROTTLE_MS = 3e4;
-    if (typeof __CLI_BUNDLE__ === "undefined" && process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+    if (false) {
       const argv = process.argv.slice(2);
       const { transcript, project, session, lbase, ratioOverride, wantPort, open, warnings } = parseArgs(argv);
       for (const w of warnings) console.error(`session-watcher: ${w}`);
@@ -51227,7 +51117,7 @@ var init_server3 = __esm({
         sweepStalePortFiles(PORT_DIR2);
         startPolling();
         if (open && !process.env.SW_NO_OPEN) {
-          import("node:child_process").then(({ spawn: spawn2 }) => {
+          null.then(({ spawn: spawn2 }) => {
             const cmd = process.env.BROWSER || (process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open");
             const opener = spawn2(cmd, [`http://127.0.0.1:${port}`], { detached: true, stdio: "ignore" });
             opener.on("error", () => {

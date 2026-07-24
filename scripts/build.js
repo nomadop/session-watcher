@@ -27,11 +27,16 @@ const shared = {
 
 async function main() {
   // 1. Bundle index.js (MCP entry — invoked via "node <path>", shebang optional)
+  // __CLI_BUNDLE__ = true → server.js's CLI entry guard is dead-code-eliminated,
+  // preventing the standalone-server path from firing inside the MCP plugin process.
   await build({
     ...shared,
     entryPoints: [join(ROOT, 'index.js')],
     outfile: join(DIST, 'index.js'),
     banner: { js: REQUIRE_SHIM },
+    define: {
+      '__CLI_BUNDLE__': 'true',
+    },
   });
 
   // 2. Bundle server.js (HTTP dashboard)
@@ -84,6 +89,7 @@ async function main() {
       '__CLI_BUNDLE__': 'true',
     },
   });
+
 
   // 6. Ensure executables have +x
   chmodSync(join(DIST, 'index.js'), 0o755);

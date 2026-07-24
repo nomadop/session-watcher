@@ -2537,7 +2537,7 @@ function indexTranscript(filePath) {
       Number.isNaN(p) || (lastTs = p);
     }
     if (head.includes('"usage"')) {
-      let idMatch = head.match(/"id"\s*:\s*"(msg_[^"]+)"/), msgId = idMatch ? idMatch[1] : null;
+      let idMatch = head.match(/"id"\s*:\s*"([^"]+)"/), msgId = idMatch ? idMatch[1] : null;
       if (msgId && idToIndex.has(msgId)) {
         let prevIdx = idToIndex.get(msgId);
         steps[prevIdx] = { byteEnd: lineEnd, ts: lastTs };
@@ -2609,7 +2609,7 @@ var ReplayController, init_replay = __esm({
           let trap = 0.5 * (this._prevBurnRate + currBurnRate);
           for (this._billProgress += trap; this._billProgress >= 1; )
             this._billProgress -= 1, billCycleIncrement++;
-          this._prevBurnRate = currBurnRate;
+          this._billProgress = Math.floor(this._billProgress * 1e6) / 1e6, this._prevBurnRate = currBurnRate;
         }
         let rl = status.rateLamp, deepWater = rl?.reliable ? isInDeepWater(rl.x_display, rl.xSweet, rl.br) : !1, { fired, kind } = advanceGateAndBackstop(this._gateDraft, {
           inDeepWater: deepWater,
@@ -23302,10 +23302,6 @@ __export(cli_exports, {
   runCli: () => runCli
 });
 import { existsSync as existsSync3, statSync as statSync6 } from "node:fs";
-import "node:zlib";
-import "node:fs";
-import "node:stream/promises";
-import "node:os";
 import { join as join6, dirname as dirname5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { exec } from "node:child_process";
@@ -23344,7 +23340,7 @@ async function runStaticDemo(args) {
     }
   });
   await new Promise((resolve4, reject) => {
-    server.listen(args.port, () => resolve4()), server.on("error", reject);
+    server.listen(args.port, "127.0.0.1", () => resolve4()), server.on("error", reject);
   });
   let url = `http://127.0.0.1:${server.address().port}`, cleanup = () => {
     server.close(), process.exit(0);

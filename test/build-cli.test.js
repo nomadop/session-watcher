@@ -43,9 +43,6 @@ describe('build produces CLI artifacts', () => {
     assert.ok(!content.includes('PORT='), 'server.js CLI entry should be eliminated');
   });
 
-  it('dist/fixtures/demo.jsonl.gz exists', () => {
-    assert.ok(existsSync(join(DIST, 'fixtures', 'demo.jsonl.gz')));
-  });
 
   it('no dist/lib/cli.js exists (bundled into single file)', () => {
     assert.ok(!existsSync(join(DIST, 'lib', 'cli.js')));

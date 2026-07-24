@@ -24648,7 +24648,7 @@ function indexTranscript(filePath) {
       if (!Number.isNaN(p)) lastTs = p;
     }
     if (head.includes('"usage"')) {
-      const idMatch = head.match(/"id"\s*:\s*"(msg_[^"]+)"/);
+      const idMatch = head.match(/"id"\s*:\s*"([^"]+)"/);
       const msgId = idMatch ? idMatch[1] : null;
       if (msgId && idToIndex.has(msgId)) {
         const prevIdx = idToIndex.get(msgId);
@@ -24754,6 +24754,7 @@ var init_replay = __esm({
             this._billProgress -= 1;
             billCycleIncrement++;
           }
+          this._billProgress = Math.floor(this._billProgress * 1e6) / 1e6;
           this._prevBurnRate = currBurnRate;
         }
         const rl = status.rateLamp;

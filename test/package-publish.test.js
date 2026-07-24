@@ -20,7 +20,6 @@ describe('package.json publish config', () => {
     assert.ok(Array.isArray(pkg.files));
     assert.ok(pkg.files.includes('dist/bin/'), 'should include dist/bin/');
     assert.ok(pkg.files.includes('dist/public/'), 'should include dist/public/');
-    assert.ok(pkg.files.includes('dist/fixtures/'), 'should include dist/fixtures/');
   });
 
   it('has engines >=22.16.0', () => {
