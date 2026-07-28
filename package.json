@@ -1,6 +1,6 @@
 {
   "name": "@nomadop/session-watcher",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   "type": "module",
   "license": "MIT",
@@ -36,6 +36,8 @@
   },
   "scripts": {
     "build": "node scripts/build.js",
+    "docs:build": "node scripts/build-pages.mjs",
+    "docs:preview": "node scripts/build-pages.mjs && npx -y serve .pages",
     "test": "node --test \"test/**/*.test.js\"",
     "test:watch": "node --test --watch \"test/**/*.test.js\"",
     "start": "node server.js",
@@ -48,10 +50,18 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "express": "^4.19.2",
     "ignore": "^7.0.6",
+    "web-tree-sitter": "^0.26.11",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.45.0",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "github-slugger": "^2.0.0",
+    "katex": "^0.17.0",
+    "marked": "^18.0.7",
+    "marked-katex-extension": "^5.1.10",
+    "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-python": "^0.25.0",
+    "tree-sitter-typescript": "^0.23.2"
   }
 }

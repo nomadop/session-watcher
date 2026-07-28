@@ -43,6 +43,7 @@ function foldPaths(paths) {
       efficiency: p.efficiency ?? null,
       touchSeqs: p.touchSeqs ?? null,
       defaultDiscardReason: p.defaultDiscardReason ?? null,
+      userOverride: p.userOverride || null,
       churnTier: tier,
       lastTurn: p.lastTurn ?? null,
       lastCallSeq: p.lastCallSeq ?? null,
@@ -298,6 +299,7 @@ export function buildTree(bucketData) {
       tokens: s.tokens ?? 0,
       lastTurn: s.lastTurn ?? null,
       lastCallSeq: s.lastCallSeq ?? null,
+      userOverride: s.userOverride || null,
       locked: false,
       selectable: true,
       defaultSelected: true,
@@ -447,8 +449,8 @@ export function donutSegments({ fixed, selected, discarded }) {
 // ─── Selection state helpers ──────────────────────────────────────────────────
 
 /**
- * Apply a Map<id, bool> of user overrides to the tree's selectable leaves.
- * Each selectable leaf: selected = overrides.has(leaf.id) ? overrides.get(leaf.id) : leaf.defaultSelected.
+ * Apply a Map<path, bool> of user overrides to the tree's selectable leaves.
+ * Each selectable leaf: selected = overrides.has(leaf.label) ? overrides.get(leaf.label) : leaf.defaultSelected.
  * Mutates in place; returns void.
  * @param {BucketNode[]} tree
  * @param {Map<string, boolean>} overrides
@@ -456,14 +458,15 @@ export function donutSegments({ fixed, selected, discarded }) {
 export function applyOverrides(tree, overrides) {
   for (const leaf of flattenLeaves(tree)) {
     if (!leaf.selectable) continue;
-    leaf.selected = overrides.has(leaf.id) ? overrides.get(leaf.id) : leaf.defaultSelected;
+    leaf.selected = overrides.has(leaf.label) ? overrides.get(leaf.label) : leaf.defaultSelected;
   }
 }
 
 /**
- * Return true if ANY selectable leaf has selected !== defaultSelected.
- * @param {BucketNode[]} tree
- * @returns {boolean}
+ * True if ANY selectable leaf has selected !== defaultSelected.
+ * NOTE: With backend overrides active, returns true for committed overrides too.
+ * For local-ghost-only dirty check, use selectionOverrides.size > 0 instead.
+ * @deprecated Prefer selectionOverrides.size > 0 for "has unsaved local changes"
  */
 export function computeDirty(tree) {
   return flattenLeaves(tree).some(n => n.selectable && n.selected !== n.defaultSelected);
@@ -471,19 +474,47 @@ export function computeDirty(tree) {
 
 /**
  * Compute the estimated context size after overrides are applied.
- * delta = Σ ((selected?1:0) - (defaultSelected?1:0)) × tokens for each selectable leaf.
- * Result is floored at MIN_B_PREVIEW.
+ * Only counts LOCAL ghost delta relative to committed state — B_default already includes
+ * committed overrides. Result is floored at MIN_B_PREVIEW.
  * @param {BucketNode[]} tree
  * @param {number} B_default
+ * @param {Map<string, boolean>} selectionOverrides
  * @returns {number}
  */
-export function computeBPreview(tree, B_default) {
+export function computeBPreview(tree, B_default, selectionOverrides) {
+  if (!selectionOverrides || selectionOverrides.size === 0) return B_default;
   let delta = 0;
   for (const leaf of flattenLeaves(tree)) {
     if (!leaf.selectable) continue;
-    delta += ((leaf.selected ? 1 : 0) - (leaf.defaultSelected ? 1 : 0)) * leaf.tokens;
+    if (!selectionOverrides.has(leaf.label)) continue; // only local ghost entries produce delta
+    // "committed" = effective state before this local toggle
+    const committed = leaf.userOverride === 'include' ? true
+                    : leaf.userOverride === 'exclude' ? false
+                    : leaf.defaultSelected;
+    delta += ((leaf.selected ? 1 : 0) - (committed ? 1 : 0)) * leaf.tokens;
   }
   return Math.max(MIN_B_PREVIEW, B_default + delta);
+}
+
+/**
+ * Build the override payload for POST /api/user-overrides.
+ * Includes all non-default states: local toggles + backend overrides the frontend has rendered.
+ * F2 fix: preserves backend overrides for leaves without local toggles (prevents one-shot inference loss).
+ * F3 fix: skips output-group leaves (bash/mcp/agent) which aren't valid override targets.
+ * F12 fix: single source of truth for Apply + Handoff auto-apply.
+ */
+export function buildOverridePayload(tree) {
+  const overrides = {};
+  for (const leaf of flattenLeaves(tree)) {
+    if (!leaf.selectable) continue;
+    if (leaf.group === 'output') continue; // F3: bash/mcp/agent labels aren't valid paths
+    if (leaf.selected && !leaf.defaultSelected) {
+      overrides[leaf.label] = 'include';
+    } else if (!leaf.selected && leaf.defaultSelected) {
+      overrides[leaf.label] = 'exclude';
+    }
+  }
+  return overrides;
 }
 
 // Pure helper — exported so tests can import without touching the DOM.
@@ -619,14 +650,26 @@ export function mount(root, ctx) {
   // ── Closure state ──────────────────────────────────────────────────────────
   const state = {
     tree: [],
-    selectionOverrides: new Map(),   // leaf id → bool (user toggles since last Reset)
+    selectionOverrides: new Map(),   // leaf path (label) → bool (user toggles since last Apply/Reset)
     collapsedOverrides: new Map(),   // dir id → bool (user fold toggles)
     sectionCollapsed: { system: false, paths: false, output: true }, // section-level fold
     prevSegment: null,
     lastGoodBucketData: null,        // last non-null bd — fallback for transient failures
-    B_default: 0,                    // from status.rateLamp.B_rebuild ?? bd.totalB
+    B_default: 0,                    // from status.rateLamp.B_default ?? bd.bDefault ?? bd.totalB
     _bodyTips: [],                   // tooltip elements appended to document.body (for cleanup)
   };
+
+  /** Toggle helper — auto-removes entry if target matches committed state (eliminates phantom dirty). */
+  function setLocalSelection(selectionOverrides, leaf, target) {
+    const committed = leaf.userOverride === 'include' ? true
+                    : leaf.userOverride === 'exclude' ? false
+                    : leaf.defaultSelected;
+    if (target === committed) {
+      selectionOverrides.delete(leaf.label);
+    } else {
+      selectionOverrides.set(leaf.label, target);
+    }
+  }
 
   // ── Card structure (outer shell, rebuilt once) ─────────────────────────────
   const card = document.createElement('div');
@@ -726,6 +769,12 @@ export function mount(root, ctx) {
   resetBtn.textContent = 'Reset';
   resetBtn.type = 'button';
 
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'bucket-apply-btn';
+  applyBtn.textContent = 'Apply';
+  applyBtn.type = 'button';
+  applyBtn.disabled = true;
+
   const handoffBtn = document.createElement('button');
   handoffBtn.className = 'bucket-copy-btn';
   handoffBtn.textContent = 'Prepare handoff';
@@ -733,6 +782,7 @@ export function mount(root, ctx) {
   handoffBtn.title = 'Run /sw-handoff in your session to preserve checked context';
 
   footer.appendChild(resetBtn);
+  footer.appendChild(applyBtn);
   footer.appendChild(handoffBtn);
 
   card.appendChild(sweepTrack);
@@ -755,8 +805,8 @@ export function mount(root, ctx) {
       document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail: { B_preview: state.B_default, dirty: false } }));
       return;
     }
-    const dirty = computeDirty(state.tree);
-    const B_preview = computeBPreview(state.tree, state.B_default);
+    const dirty = state.selectionOverrides.size > 0;
+    const B_preview = computeBPreview(state.tree, state.B_default, state.selectionOverrides);
     document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail: { B_preview, dirty } }));
   }
 
@@ -805,6 +855,9 @@ export function mount(root, ctx) {
     }
     row.appendChild(cb);
 
+    // Override indicator — wavy underline on name (set via data attr, styled in CSS)
+    // Applied below after nameEl is created
+
     // Expand arrow (dirs only) — SVG chevron-right, rotated via CSS
     if (node.kind === 'dir') {
       const expand = document.createElement('span');
@@ -829,6 +882,7 @@ export function mount(root, ctx) {
       else if (tier === 'coral') nameEl.classList.add('churn-high');
     }
     nameEl.textContent = node.displayName;
+    if (node.userOverride) nameEl.dataset.override = node.userOverride;
     nameWrap.appendChild(nameEl);
 
     if (node.count > 1 && (node.kind === 'bash' || node.kind === 'mcp' || node.kind === 'agent')) {
@@ -929,6 +983,14 @@ export function mount(root, ctx) {
       }
       document.body.appendChild(tip);
       state._bodyTips.push(tip);
+    }
+
+    // Exclude semantics tooltip (§11)
+    if (node.selectable && !node.locked) {
+      const cbTitle = node.selected
+        ? ''
+        : 'Exclude = this file is not required for restart rebuild. Does not reduce your position.';
+      if (cbTitle) cb.title = cbTitle;
     }
 
     // Dim row if not selected, or if it's the uncontrollable 'others' residual
@@ -1040,9 +1102,25 @@ export function mount(root, ctx) {
     statSelectedSpan.textContent = `selected ${tokenLabel(sums.selected)}`;
     statDiscardedSpan.textContent = `discarded ${sums.discarded >= 0 ? tokenLabel(sums.discarded) : '0'}`;
 
-    // ── Footer dirty state ──
-    const dirty = computeDirty(state.tree);
-    resetBtn.classList.toggle('active', dirty);
+    // Footer dirty state + Reset context-awareness (G1 fix: ghost = local uncommitted toggles)
+    const hasLocalGhost = state.selectionOverrides.size > 0;
+    const hasBackendOverrides = flattenLeaves(state.tree).some(n => n.userOverride != null);
+    // Only enable Apply if at least one non-output leaf is toggled (output overrides are not persisted)
+    const hasApplicableGhost = hasLocalGhost && flattenLeaves(state.tree)
+      .some(n => n.selectable && n.group !== 'output' && state.selectionOverrides.has(n.label));
+    applyBtn.disabled = !hasApplicableGhost;
+    if (hasLocalGhost) {
+      resetBtn.textContent = 'Reset preview';
+      resetBtn.classList.add('active');
+      resetBtn.style.display = '';
+    } else if (hasBackendOverrides) {
+      resetBtn.textContent = 'Reset overrides';
+      resetBtn.classList.add('active');
+      resetBtn.style.display = '';
+    } else {
+      resetBtn.classList.remove('active');
+      resetBtn.style.display = 'none';
+    }
   }
 
   function renderSkeleton() {
@@ -1235,6 +1313,11 @@ export function mount(root, ctx) {
 
     // First successful bucket data — write-once
     if (!state.lastGoodBucketData) {
+      // Gate: keep skeleton until actual token data arrives.
+      if ((bd.totalB ?? 0) <= 0 && (bd.dead ?? 0) <= 0) {
+        subtitle.textContent = 'connected · awaiting data';
+        return;
+      }
       state.lastGoodBucketData = bd;
       subtitle.textContent = 'rebuild cost · uncheck to plan handoff';
       // Restore stats area
@@ -1254,14 +1337,22 @@ export function mount(root, ctx) {
       dispatchPreview(true); // clear ghost
     }
 
-    // 3. B_default
-    state.B_default = snapshot?.status?.rateLamp?.B_rebuild ?? bd.totalB ?? 0;
+    // 3. B_default (SSOT: prefer rateLamp → bd.bDefault → bd.totalB fallback)
+    state.B_default = snapshot?.status?.rateLamp?.B_default ?? bd.bDefault ?? bd.totalB ?? 0;
 
     // 4. Build tree
     state.tree = buildTree(bd);
 
     // 5. Apply overrides
     applyOverrides(state.tree, state.selectionOverrides);
+
+    // 5b. Apply backend userOverride to leaves NOT already locally toggled
+    for (const leaf of flattenLeaves(state.tree)) {
+      if (!leaf.selectable) continue;
+      if (state.selectionOverrides.has(leaf.label)) continue; // local toggle takes precedence
+      if (leaf.userOverride === 'include') leaf.selected = true;
+      else if (leaf.userOverride === 'exclude') leaf.selected = false;
+    }
 
     // 6. Collapse reapply
     for (const dirNode of flattenDirs(state.tree)) {
@@ -1270,10 +1361,10 @@ export function mount(root, ctx) {
       }
     }
 
-    // 7. Override GC
-    const liveLeafIds = new Set(flattenLeaves(state.tree).filter(n => n.selectable).map(n => n.id));
+    // 7. Override GC — use leaf.label (path), matching selectionOverrides key format
+    const liveLeafLabels = new Set(flattenLeaves(state.tree).filter(n => n.selectable).map(n => n.label));
     for (const k of state.selectionOverrides.keys()) {
-      if (!liveLeafIds.has(k)) state.selectionOverrides.delete(k);
+      if (!liveLeafLabels.has(k)) state.selectionOverrides.delete(k);
     }
     const liveDirIds = new Set(flattenDirs(state.tree).map(n => n.id));
     for (const k of state.collapsedOverrides.keys()) {
@@ -1301,8 +1392,8 @@ export function mount(root, ctx) {
     // 9b. Update sync state chip/sweep
     updateSyncState();
 
-    // 10. Dirty refresh
-    if (computeDirty(state.tree)) dispatchPreview();
+    // 10. H4: only dispatch preview when user has local ghost — backend overrides are NOT dirty
+    if (state.selectionOverrides.size > 0) dispatchPreview();
   }
 
   // ── refreshDerived: update visuals after a selection change ──────────────
@@ -1354,13 +1445,13 @@ export function mount(root, ctx) {
       for (const leaf of flattenLeaves(node.children)) {
         if (leaf.selectable) {
           leaf.selected = target;
-          state.selectionOverrides.set(leaf.id, target);
+          setLocalSelection(state.selectionOverrides, leaf, target);
         }
       }
     } else {
       // Leaf toggle
       node.selected = !node.selected;
-      state.selectionOverrides.set(id, node.selected);
+      setLocalSelection(state.selectionOverrides, node, node.selected);
     }
     refreshDerived();
   });
@@ -1401,16 +1492,114 @@ export function mount(root, ctx) {
     }
   });
 
+  // ── Apply ─────────────────────────────────────────────────────────────────
+  let _applyNoticeTimeout = null;
+  applyBtn.addEventListener('click', async () => {
+    if (applyBtn.disabled) return;
+    // Check if output-group toggles will be dropped
+    const skippedOutput = flattenLeaves(state.tree)
+      .some(n => n.selectable && n.group === 'output' && state.selectionOverrides.has(n.label));
+    const overrides = buildOverridePayload(state.tree);
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Applying…';
+    try {
+      const res = await fetch('/api/user-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overrides }),
+      });
+      if (res.ok) {
+        // Success — clear local ghost state (SSE scan will trigger refresh)
+        state.selectionOverrides.clear();
+        dispatchPreview(true);
+        // Show transient notice if output-group toggles were dropped
+        if (skippedOutput) {
+          showApplyNotice('tool overrides not saved');
+        }
+      }
+    } catch (e) {
+      console.error('[override apply]', e);
+    }
+    applyBtn.textContent = 'Apply';
+    // H1 fix: always restore disabled state based on current ghost — prevents stuck button on error/409
+    applyBtn.disabled = (state.selectionOverrides.size === 0);
+  });
+
+  function showApplyNotice(msg) {
+    if (_applyNoticeTimeout) clearTimeout(_applyNoticeTimeout);
+    let notice = footer.querySelector('.bucket-apply-notice');
+    if (!notice) {
+      notice = document.createElement('span');
+      notice.className = 'bucket-apply-notice';
+      footer.insertBefore(notice, footer.firstChild);
+    }
+    notice.textContent = msg;
+    notice.style.display = '';
+    _applyNoticeTimeout = setTimeout(() => {
+      notice.style.display = 'none';
+      _applyNoticeTimeout = null;
+    }, 4000);
+  }
+
   // ── Reset ──────────────────────────────────────────────────────────────────
-  resetBtn.addEventListener('click', () => {
-    state.selectionOverrides.clear();
-    applyOverrides(state.tree, state.selectionOverrides);
-    render();
-    dispatchPreview(true); // force dirty:false
+  resetBtn.addEventListener('click', async () => {
+    if (state.selectionOverrides.size > 0) {
+      // Has local ghost: reset preview only (pure frontend)
+      state.selectionOverrides.clear();
+      applyOverrides(state.tree, state.selectionOverrides);
+      // Reapply backend overrides
+      for (const leaf of flattenLeaves(state.tree)) {
+        if (!leaf.selectable) continue;
+        if (leaf.userOverride === 'include') leaf.selected = true;
+        else if (leaf.userOverride === 'exclude') leaf.selected = false;
+      }
+      render();
+      dispatchPreview(true);
+    } else {
+      // No ghost but has active overrides: reset backend
+      resetBtn.disabled = true;
+      resetBtn.textContent = 'Resetting…';
+      try {
+        await fetch('/api/user-overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ overrides: {} }),
+        });
+        state.selectionOverrides.clear();
+        // F8: clear stale leaf.userOverride before SSE refresh to prevent setLocalSelection mis-commit
+        for (const leaf of flattenLeaves(state.tree)) { leaf.userOverride = null; }
+        render();
+        dispatchPreview(true);
+      } catch (e) {
+        console.error('[override reset]', e);
+      }
+      resetBtn.textContent = 'Reset';
+      resetBtn.disabled = false;
+    }
   });
 
   // ── Handoff copy ────────────────────────────────────────────────────────────
   handoffBtn.addEventListener('click', async () => {
+    // Auto-Apply if there are local uncommitted toggles
+    if (state.selectionOverrides.size > 0) {
+      const overrides = buildOverridePayload(state.tree);
+      try {
+        const res = await fetch('/api/user-overrides', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ overrides }),
+        });
+        if (res.ok) state.selectionOverrides.clear(); // I2 fix: only clear on success
+      } catch (e) {
+        console.error('[handoff auto-apply]', e);
+      }
+    }
+    // Warn user if auto-Apply failed (override not saved to backend)
+    if (state.selectionOverrides.size > 0) {
+      handoffBtn.textContent = '⚠ Override not saved';
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    // Then proceed with existing handoff logic
     const text = buildHandoffInstruction(state.tree);
     if (!text) return;
     try {
@@ -1424,7 +1613,6 @@ export function mount(root, ctx) {
         copyTimeout = null;
       }, COPY_FEEDBACK_MS);
     } catch {
-      // Fallback: show overlay with selectable text
       showCopyOverlay(text);
     }
   });
@@ -1472,12 +1660,12 @@ export function mount(root, ctx) {
       for (const leaf of flattenLeaves(node.children)) {
         if (leaf.selectable) {
           leaf.selected = target;
-          state.selectionOverrides.set(leaf.id, target);
+          setLocalSelection(state.selectionOverrides, leaf, target);
         }
       }
     } else {
       node.selected = !node.selected;
-      state.selectionOverrides.set(id, node.selected);
+      setLocalSelection(state.selectionOverrides, node, node.selected);
     }
     refreshDerived();
   });

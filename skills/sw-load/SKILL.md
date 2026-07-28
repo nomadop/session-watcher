@@ -25,7 +25,13 @@ Restore a previous session's handoff package into context so work can resume.
 
    Fallback (MCP unavailable or returns error): resolve the server URL from session-start additionalContext (`Session Watcher server: http://...`) or latest state file in `~/.session-watcher/`, then use `curl -s '<url>/api/handoff/load?load_token=<token>'`.
 
-3. **Read kept paths** — see [`PATHS.md`](PATHS.md) for resolution and read-strategy rules.
+2. **Read kept paths** — you MUST see [`PATHS.md`](PATHS.md) for resolution and read-strategy rules.
+
+3. **Orient via bookmarks** — if `bookmark_index` / `recent_user_intents` present in the load response:
+   - Scan bookmark_index for the work trajectory (what was being built/fixed)
+   - Scan recent_user_intents for the user's actual asks
+   - If a bookmark looks critical but the summary doesn't cover it: call `get_bookmark_detail` with that turn_index for ±3 turn context
+   - Don't drill every bookmark — only when the summary leaves a gap
 
 4. **Load skills** — if `skills_to_keep` present, invoke each via the Skill tool.
 
@@ -36,6 +42,10 @@ Restore a previous session's handoff package into context so work can resume.
    - Blockers/risks
 
 6. **Invoke suggested skills** from `next_task` if applicable — ask user confirmation first.
+
+7. **Report to user:** "Handoff loaded. Token: `<token>`."
+   Report `next_task` and `path_loaded`. If there is any critical `bookmark`, note to user.
+   You MUST ensure the user has acknowledged the loaded context and confirmed the next steps before proceeding.
 
 ### Completion criterion
 

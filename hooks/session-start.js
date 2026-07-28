@@ -229,16 +229,13 @@ if (isMainModule(import.meta.url, process.argv[1])) {
         cwd: payload.cwd,
       });
 
-      // Source gate: only startup|clear trigger handoff discovery
-      if (!HANDOFF_HOOK_SOURCES.includes(payload.source)) {
-        process.exit(0);
-        return;
-      }
-
       const contexts = [];
 
       // Fault domain 1: Direct DB read (zero-dependency, <5ms)
-      try {
+      // Source gate: only startup|clear trigger handoff discovery (resume skips)
+      if (!HANDOFF_HOOK_SOURCES.includes(payload.source)) {
+        /* resume — skip handoff discovery, fall through to rotation */
+      } else try {
         const dbPath = defaultDbPath();
         const projectId = resolveProjectKey({
           claudeProjectDir: process.env.CLAUDE_PROJECT_DIR,

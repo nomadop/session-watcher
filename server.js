@@ -4,7 +4,7 @@ if (_major < 22 || (_major === 22 && _minor < 16)) { console.error('Session Watc
 import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, resolve, basename } from 'node:path';
+import { dirname, join, resolve, basename, extname, isAbsolute } from 'node:path';
 import { readdirSync, statSync, readFileSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync, writeFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomInt } from 'node:crypto';
@@ -29,6 +29,8 @@ import { nucleus } from './lib/landmarks.js';
 import { charsToTokens, canonicalizePath } from './lib/measure.js';
 import { generateLoadToken, redactSecrets, normalizeKeepPath, cjkBigrams, buildFtsMatch, hashFileContent, HASH_MAX_BYTES } from './lib/handoff.js';
 import { PLUGIN_VERSION } from './lib/version.js';
+import { buildBookmarkIndex, buildBookmarkDetail } from './lib/bookmark.js';
+import { isGrammarLoaded, isSupported, canExtract, REGEX_EXTS, buildSymbolRanges, resolveSymbolLines, loadGrammar } from './lib/symbol-outline.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -74,7 +76,7 @@ function collapseLineRanges(linesMap) {
 // Agent sees only what it needs to reload the file; all per-entry telemetry keys
 // (hp/hl/bucket_id/match_status/candidate_bucket_ids/total_line_count/selected_line_count) stay
 // server-side. The stored DB row retains full telemetry — projection is RESPONSE-only.
-const AGENT_ENTRY_KEYS = ['path', 'symbols', 'lines'];
+const AGENT_ENTRY_KEYS = ['path', 'symbols', 'lines', 'symbolRanges', 'resolvedSymbols'];
 function projectEntry(e) {
   if (!e || typeof e !== 'object') return e;
   const out = {};
@@ -82,19 +84,98 @@ function projectEntry(e) {
   return out;
 }
 
+function resolveSymbolsForLoad(relPath, symbolRanges, projectDir) {
+  if (!relPath) return [];
+  const ext = extname(relPath);
+  if (!canExtract(ext)) {
+    // Cannot parse — return stale markers for all
+    return Object.entries(symbolRanges).map(([name, ranges]) => {
+      const flat = ranges.map(([a, b]) => `${a}-${b}`).join(', ');
+      return `${name} — parser not ready; originally at lines ${flat}`;
+    });
+  }
+
+  // Try to read the file
+  let code;
+  try {
+    const absPath = isAbsolute(relPath) ? relPath : (projectDir ? join(projectDir, relPath) : relPath);
+    code = readFileSync(absPath, 'utf8');
+  } catch {
+    return Object.entries(symbolRanges).map(([name, ranges]) => {
+      const flat = ranges.map(([a, b]) => `${a}-${b}`).join(', ');
+      return `${name} — file removed; originally at lines ${flat}`;
+    });
+  }
+
+  const { resolved, stale } = resolveSymbolLines(code, ext, symbolRanges);
+  // Edge case: 0 resolved out of N → prepend file-level stale warning
+  if (resolved.length === 0 && stale.length > 0) {
+    const allNames = stale.map(s => s.name).join(', ');
+    return [`⚠️ all symbols stale (${allNames}) — file may have been refactored`].concat(
+      stale.map(({ name, storedRanges }) => {
+        const flat = storedRanges.map(([a, b]) => `${a}-${b}`).join(', ');
+        return `${name} — symbol not found; originally at lines ${flat}`;
+      })
+    );
+  }
+
+  const output = [];
+  for (const { name, startLine, endLine } of resolved) {
+    output.push(`${name} (lines ${startLine}-${endLine})`);
+  }
+  for (const { name, storedRanges } of stale) {
+    const flat = storedRanges.map(([a, b]) => `${a}-${b}`).join(', ');
+    output.push(`${name} — symbol not found in current file; originally at lines ${flat}`);
+  }
+  return output;
+}
+
 // R1-H: safe-parse — a single corrupt row must not 500 the endpoint.
-function formatHandoffFull(h) {
+async function formatHandoffFull(h) {
   let parsed;
   try { parsed = JSON.parse(h.pathsToKeep || '{}'); }
   catch { return { found: false, status: 'error', error: 'corrupt_handoff' }; }
   // Backward compat: old records stored a bare array; new records store {paths, skills}.
   const rawPaths = Array.isArray(parsed) ? parsed : (parsed.paths || []);
-  const paths = (Array.isArray(rawPaths) ? rawPaths : []).map(projectEntry);
+
+  // On-demand grammar init for cold start (no prior fold warmup)
+  const extsNeeded = new Set(rawPaths.filter(e => e.symbolRanges).map(e => extname(e.path).toLowerCase()));
+  for (const ext of extsNeeded) {
+    if (isSupported(ext) && !REGEX_EXTS.has(ext) && !isGrammarLoaded(ext)) {
+      await loadGrammar(ext).catch(() => {}); // chains initParser internally; swallow failure
+    }
+  }
+
+  const paths = (Array.isArray(rawPaths) ? rawPaths : []).map(entry => {
+    const projected = projectEntry(entry);
+    // Resolve symbolRanges at load time
+    if (entry.symbolRanges && typeof entry.symbolRanges === 'object') {
+      projected.resolvedSymbols = resolveSymbolsForLoad(entry.path, entry.symbolRanges, h.projectId);
+      delete projected.symbolRanges; // agent sees resolved output, not raw ranges
+    }
+    return projected;
+  });
   const skills = Array.isArray(parsed) ? undefined : (parsed.skills?.length ? parsed.skills : undefined);
   const out = { found: true, handoff_id: h.handoffId, load_token: h.loadToken, created_at: h.createdAt,
     summary: h.summary, next_task: h.nextTask, paths_to_keep: paths };
   if (h.projectId) out.project_dir = h.projectId;
   if (skills) out.skills_to_keep = skills;
+
+  // Bookmark index: derive from transcript at load time (graceful degradation)
+  if (h.transcriptPath) {
+    try {
+      const { bookmarkIndex, recentUserIntents } = buildBookmarkIndex(h.transcriptPath);
+      out.bookmark_index = bookmarkIndex;
+      out.recent_user_intents = recentUserIntents;
+    } catch {
+      out.bookmark_index = [];
+      out.recent_user_intents = [];
+    }
+  } else {
+    out.bookmark_index = [];
+    out.recent_user_intents = [];
+  }
+
   return out;
 }
 
@@ -298,7 +379,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   app.get('/api/buckets', (req, res, next) => {
     try {
-      const bd = activeWatcher.getBucketData();
+      const includeSymbols = req.query.symbols === '1';
+      const bd = activeWatcher.getBucketData({ includeSymbols });
       const s = activeWatcher.getStatus();
       let paths = bd.paths.map(p => ({ ...p, last_active_turn: p.lastTurn }));
       res.json({
@@ -333,6 +415,49 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // throws → the terminal error middleware returns 500 (daemon stays up).
   // Limit raised to 64kb: handoff prepare accepts summaries up to 10000 chars + paths + JSON framing.
   app.use(express.json({ limit: '64kb' }));
+
+  // ── User overrides (§6: bDefault override) ────────────────────────────────
+  app.post('/api/user-overrides', (req, res) => {
+    // Gate: reject during replay mode (activeWatcher !== watcher)
+    if (_replayController) {
+      return res.status(409).json({ error: 'replay_active', message: 'Cannot modify overrides during replay' });
+    }
+    const { overrides } = req.body || {};
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+      return res.status(400).json({ error: 'invalid_body', message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    }
+
+    const warnings = [];
+    const validPaths = new Set(watcher._bRebuild.pathTokenPairs().map(p => p.path));
+    const newMap = new Map();
+
+    for (const [path, value] of Object.entries(overrides)) {
+      if (!path || !validPaths.has(path)) {
+        warnings.push(`ignored: path "${path}" not in current bRebuild`);
+        continue;
+      }
+      if (value !== 'include' && value !== 'exclude') {
+        warnings.push(`ignored: invalid value "${value}" for path "${path}"`);
+        continue;
+      }
+      newMap.set(path, value);
+    }
+
+    // Replace semantics
+    watcher._userOverrides.clear();
+    for (const [k, v] of newMap) watcher._userOverrides.set(k, v);
+
+    // Broadcast SSE scan so dashboard refreshes
+    if (sseClients.size > 0) {
+      const msg = `data: ${JSON.stringify({ type: 'scan' })}\n\n`;
+      for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
+    }
+
+    const status = watcher.getStatus();
+    const response = { ...status };
+    if (warnings.length > 0) response.warnings = warnings;
+    res.json(response);
+  });
 
   // ── Replay (post-v3: transcript replay for demo recording) ──────────────
   // Architecture: a fresh watcher with byte-limit valve runs the full production pipeline.
@@ -546,10 +671,26 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           : [...watcher._bRebuild.paths.keys()].find(k => k.endsWith('/' + resolvedPath));
         if (!bKey) continue;
         const hasFullSnapshot = watcher._bRebuild._hasFullSnapshot.get(bKey);
-        if (hasFullSnapshot) continue; // full file read — no lines needed, load agent should Read entire file
         const bEntry = watcher._bRebuild.paths.get(bKey);
-        if (bEntry && bEntry.lines.size > 0) {
+        // Full snapshot: skip line injection (load agent reads whole file or uses resolvedSymbols),
+        // but still compute symbolRanges below if symbols were specified
+        if (!hasFullSnapshot && bEntry && bEntry.lines.size > 0) {
           entry.lines = collapseLineRanges(bEntry.lines);
+        }
+        // Build symbolRanges from kept symbol names + bucket lines (uses already-resolved bKey)
+        if (entry.symbols && entry.symbols.length && bEntry) {
+          const ext = extname(bKey);
+          if (canExtract(ext)) {
+            try {
+              const code = readFileSync(bKey, 'utf8');
+              const bucketLineNumbers = [...bEntry.lines.keys()];
+              const sr = buildSymbolRanges(code, ext, entry.symbols, bucketLineNumbers);
+              if (sr && Object.keys(sr).length) {
+                entry.symbolRanges = sr;
+                delete entry.symbols; // replaced by the richer format
+              }
+            } catch { /* file unreadable — keep symbols as-is */ }
+          }
         }
       }
       // Step 3b: selected_line_count from the injected line ranges (or whole-file total).
@@ -559,6 +700,17 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           // spans does NOT double-count overlaps (the merge happens upstream); each [a,b] is inclusive
           // → b-a+1 lines.
           entry.selected_line_count = entry.lines.reduce((n, [a, b]) => n + (b - a + 1), 0);
+        } else if (entry.symbolRanges && typeof entry.symbolRanges === 'object') {
+          // Full-snapshot + picked symbols: derive count from symbolRanges (merge overlaps first)
+          const allRanges = Object.values(entry.symbolRanges).flat().sort((a, b) => a[0] - b[0]);
+          let count = 0;
+          let prevEnd = -1;
+          for (const [a, b] of allRanges) {
+            const start = Math.max(a, prevEnd + 1);
+            if (start <= b) count += b - start + 1;
+            prevEnd = Math.max(prevEnd, b);
+          }
+          entry.selected_line_count = count;
         } else {
           entry.selected_line_count = entry.total_line_count ?? null;  // whole-file carry
         }
@@ -610,7 +762,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           pathsToKeep: pathsPayload, summary: redSummary, nextTask: redNext,
           summaryTokens: summary_tokens, keptTokens: kept_tokens, discardedTokens: discarded_tokens,
           preparedAtTurn: watcher._turnSeq, previousStats: JSON.stringify(previousStats),
-          preparedStats: preparedStats ? JSON.stringify(preparedStats) : null, searchTerms, bucketSnapshot });
+          preparedStats: preparedStats ? JSON.stringify(preparedStats) : null, searchTerms, bucketSnapshot,
+          transcriptPath: watcher.path || null });
         if (updated) {
           load_token = existingToken;
         } else {
@@ -633,7 +786,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
               summaryTokens: summary_tokens, keptTokens: kept_tokens, discardedTokens: discarded_tokens,
               preparedAtTurn: watcher._turnSeq, previousStats: JSON.stringify(previousStats),
               preparedStats: preparedStats ? JSON.stringify(preparedStats) : null, searchTerms,
-              projectId: watcher._projectId || null, bucketSnapshot });
+              projectId: watcher._projectId || null, bucketSnapshot, transcriptPath: watcher.path || null });
             load_token = candidate; break;
           } catch (e) { if (e.errcode !== 2067) throw e; }
         }
@@ -682,7 +835,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     } catch (e) { if (process.env.SW_DEBUG) console.error('[content_hash_load]', e.message); }
   };
 
-  app.get('/api/handoff/load', (req, res, next) => {
+  app.get('/api/handoff/load', async (req, res, next) => {
     try {
       const { load_token, query, query_mode } = req.query;
 
@@ -691,7 +844,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         const h = resolveStore().loadHandoffByToken(String(load_token), { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
         if (!h) return res.json({ found: false });
         stampLoadHashesIfPrimary(h);
-        return res.json(formatHandoffFull(h));   // formatHandoffFull re-reads/derives the response; projects entries
+        return res.json(await formatHandoffFull(h));   // formatHandoffFull re-reads/derives the response; projects entries
       }
 
       // Path 3: query/search → never stamps
@@ -719,10 +872,29 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       const h = resolveStore().loadHandoffByToken(rows[0].loadToken, { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
       if (!h) return res.json({ found: false });
       stampLoadHashesIfPrimary(h);
-      return res.json(formatHandoffFull(h));
+      return res.json(await formatHandoffFull(h));
     } catch (e) { next(e); }
   });
 
+  app.get('/api/bookmark/detail', (req, res, next) => {
+    try {
+      const { load_token, turn_index, full_text } = req.query;
+      if (!load_token || turn_index == null || turn_index === '') {
+        return res.status(400).json({ error: 'load_token and turn_index required' });
+      }
+      const idx = Number(turn_index);
+      if (!Number.isSafeInteger(idx) || idx < 0) {
+        return res.status(400).json({ error: 'invalid_turn_index' });
+      }
+      const h = resolveStore().loadHandoffByToken(String(load_token));
+      if (!h) return res.json({ found: false });
+      if (!h.transcriptPath) return res.json({ found: false, error: 'no_transcript' });
+
+      const result = buildBookmarkDetail(h.transcriptPath, idx, full_text === 'true');
+      if (!result) return res.json({ found: false, error: 'turn_not_found' });
+      return res.json({ found: true, ...result });
+    } catch (e) { next(e); }
+  });
 
   // §4 Pricing API — priority: saved > CLI > model_default
   const cliRatioAtStartup = watcher.ratioOverride; // capture CLI value at construction time
@@ -961,12 +1133,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     watcher.switchTranscript(newPath);
     lastSnapshotMono = -Infinity; // V3-D3: new session gets an immediate snapshot on first changed-tick
 
-    // Update ALL identity state
-    const oldSessionId = currentSessionId;
-    currentSessionId = newSessionId;
-    watcher._sessionId = newSessionId;
-
     // State file: write-new-then-delete-old (zero-downtime)
+    // F10: identity state updated AFTER successful write to prevent orphaned state files on ENOSPC
+    const oldSessionId = currentSessionId;
     const port = server.address()?.port;
     const newStateFile = join(effectiveStateDir, `${safeSessionId(newSessionId)}.json`);
     const oldStateFile = join(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`);
@@ -977,10 +1146,16 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         port, pid: process.pid, clientPid: process.ppid,
         transcriptPath: newPath, sessionId: newSessionId, startedAt: startMs,
       }));
+      // Write succeeded — now safe to update identity state
+      currentSessionId = newSessionId;
+      watcher._sessionId = newSessionId;
       if (oldStateFile !== newStateFile) {
         try { unlinkSync(oldStateFile); } catch {}
       }
     } catch (e) {
+      // Write failed — still update identity (session switched regardless) but warn
+      currentSessionId = newSessionId;
+      watcher._sessionId = newSessionId;
       warning = 'state_file_write_failed';
       if (process.env.SW_DEBUG) console.error('[doRotation state-file]', e.message);
     }

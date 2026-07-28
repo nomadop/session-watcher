@@ -37,6 +37,12 @@ test('canonicalizePath: relative and ./ variants collapse to one absolute key', 
   assert.equal(a, c);
 });
 
+test('canonicalizePath: strips backslashes from Windows-style paths', () => {
+  const result = canonicalizePath('src\\lib\\fold.js', '/workspace');
+  assert.ok(!result.includes('\\'), 'no backslashes in output');
+  assert.equal(result, '/workspace/src/lib/fold.js');
+});
+
 test('extractToolResultText: string passthrough', () => {
   assert.equal(extractToolResultText({ content: 'hello' }), 'hello');
 });
@@ -115,7 +121,13 @@ test('parseBashFileRead: cat heredoc with redirect → cat-write', () => {
 
 test('parseBashFileRead: cat heredoc write with shell expansion in path → null', () => {
   assert.equal(parseBashFileRead("cat <<EOF > $HOME/file.txt\ndata\nEOF"), null);
-  assert.equal(parseBashFileRead("cat <<EOF > ~/file.txt\ndata\nEOF"), null);
+});
+
+test('parseBashFileRead: cat heredoc write with ~/path is resolved', () => {
+  const r = parseBashFileRead("cat <<EOF > ~/file.txt\ndata\nEOF");
+  assert.equal(r.type, 'cat-write');
+  assert.equal(r.path, '~/file.txt');
+  assert.equal(r.heredocBody, 'data');
 });
 
 test('parseBashFileRead: cat heredoc write with unterminated marker → null', () => {
@@ -168,11 +180,120 @@ test('parseBashFileRead: backtick command substitution → null', () => {
   assert.equal(parseBashFileRead('head -5 `pwd`/a.txt'), null);
 });
 
-test('parseBashFileRead: tilde path → null (cannot resolve without HOME)', () => {
-  // 16 occurrences. canonicalizePath treats ~ as relative → "/workspace/~/.claude/..."
-  assert.equal(parseBashFileRead('cat ~/.claude/settings.json'), null);
-  assert.equal(parseBashFileRead('cat ~/.session-watcher/probe/nt-probe.jsonl'), null);
-  assert.equal(parseBashFileRead('head -n 5 ~/some/file.txt'), null);
+test('parseBashFileRead: ~/path is now resolved (tilde expansion)', () => {
+  const r1 = parseBashFileRead('cat ~/.claude/settings.json');
+  assert.equal(r1.type, 'cat');
+  assert.equal(r1.path, '~/.claude/settings.json');
+
+  const r2 = parseBashFileRead('cat ~/.session-watcher/probe/nt-probe.jsonl');
+  assert.equal(r2.type, 'cat');
+  assert.equal(r2.path, '~/.session-watcher/probe/nt-probe.jsonl');
+
+  const r3 = parseBashFileRead('head -n 5 ~/some/file.txt');
+  assert.equal(r3.type, 'head');
+  assert.equal(r3.path, '~/some/file.txt');
+});
+
+test('parseBashFileRead: ~user and ~+ paths still rejected', () => {
+  assert.equal(parseBashFileRead('cat ~root/.bashrc'), null);
+  assert.equal(parseBashFileRead('cat ~+/file.txt'), null);
+  assert.equal(parseBashFileRead('cat ~-/file.txt'), null);
+});
+
+test('parseBashFileRead: ~/path with nested expansion still rejected', () => {
+  assert.equal(parseBashFileRead('cat ~/.session-watcher/$(ls)'), null);
+  assert.equal(parseBashFileRead('cat ~/.session-watcher/*.json'), null);
+});
+
+test('parseBashFileRead: grep -n ~/path is resolved (tilde in grep)', () => {
+  const r = parseBashFileRead('grep -n "pattern" ~/logs/app.log');
+  assert.equal(r.type, 'grep-n');
+  assert.equal(r.path, '~/logs/app.log');
+});
+
+test('parseBashFileRead: grep -n ~/path with nested expansion still rejected', () => {
+  assert.equal(parseBashFileRead('grep -n "x" ~/.session-watcher/$(ls)'), null);
+  assert.equal(parseBashFileRead('grep -n "x" ~/.session-watcher/*.log'), null);
+});
+
+// ─── Pipe handling tests ─────────────────────────────────────────────────
+
+test('parseBashFileRead: cat file | head → type head (lineUpdate)', () => {
+  const r = parseBashFileRead('cat /tmp/data.json | head -50');
+  assert.equal(r.type, 'head');
+  assert.equal(r.path, '/tmp/data.json');
+});
+
+test('parseBashFileRead: cat file | head | head → type head (double truncation)', () => {
+  const r = parseBashFileRead('cat file.txt | head -100 | head -20');
+  assert.equal(r.type, 'head');
+  assert.equal(r.path, 'file.txt');
+});
+
+test('parseBashFileRead: cat file | grep -n pattern | head → type grep-n', () => {
+  const r = parseBashFileRead('cat server.js | grep -n "import" | head -30');
+  assert.equal(r.type, 'grep-n');
+  assert.equal(r.path, 'server.js');
+});
+
+test('parseBashFileRead: cat file | python3 → null (computation pipe)', () => {
+  assert.equal(parseBashFileRead('cat data.json | python3 -c "import json"'), null);
+  assert.equal(parseBashFileRead('cat file.txt | node -e "process.stdin"'), null);
+  assert.equal(parseBashFileRead('cat file.txt | sed "s/a/b/"'), null);
+  assert.equal(parseBashFileRead('cat file.txt | wc -l'), null);
+  assert.equal(parseBashFileRead('cat file.txt | tail -10'), null);
+});
+
+test('parseBashFileRead: cat file | head | grep → null (head then non-head breaks)', () => {
+  assert.equal(parseBashFileRead('cat file.txt | head -200 | grep "diff"'), null);
+});
+
+test('parseBashFileRead: cat file || echo → null (OR operator)', () => {
+  assert.equal(parseBashFileRead('cat file.txt 2>/dev/null || echo "NOT FOUND"'), null);
+  assert.equal(parseBashFileRead('cat /tmp/x.json || echo "missing"'), null);
+});
+
+test('parseBashFileRead: head file | python3 → null (computation after head)', () => {
+  assert.equal(parseBashFileRead('head -5 data.csv | node -e "..."'), null);
+  assert.equal(parseBashFileRead('head -20 file.jsonl | python3 -c "import json"'), null);
+});
+
+test('parseBashFileRead: head file | head → type head (further truncation)', () => {
+  const r = parseBashFileRead('head -100 big.log | head -20');
+  assert.equal(r.type, 'head');
+  assert.equal(r.path, 'big.log');
+});
+
+test('parseBashFileRead: grep -n file | head → type grep-n (truncation preserves format)', () => {
+  const r = parseBashFileRead('grep -n "pattern" src/app.ts | head -20');
+  assert.equal(r.type, 'grep-n');
+  assert.equal(r.path, 'src/app.ts');
+});
+
+test('parseBashFileRead: grep -n file | sort → null (non-head breaks N:content)', () => {
+  assert.equal(parseBashFileRead('grep -n "x" file.txt | sort'), null);
+  assert.equal(parseBashFileRead('grep -n "x" file.txt | while read line; do echo $line; done'), null);
+});
+
+test('parseBashFileRead: grep -n || echo → null (OR operator)', () => {
+  assert.equal(parseBashFileRead('grep -n "pattern" file.txt 2>/dev/null || echo "not found"'), null);
+});
+
+test('parseBashFileRead: head file || echo → null (OR operator)', () => {
+  assert.equal(parseBashFileRead('head -60 scripts/dev.js 2>/dev/null || echo "not found"'), null);
+});
+
+test('parseBashFileRead: cat file (no pipe) still works as cat', () => {
+  const r = parseBashFileRead('cat /tmp/file.txt');
+  assert.equal(r.type, 'cat');
+  assert.equal(r.path, '/tmp/file.txt');
+});
+
+test('parseBashFileRead: pipe with quoted | in grep pattern is not confused', () => {
+  // grep -n "foo\|bar" file | head → the \| in pattern is NOT a pipe
+  const r = parseBashFileRead('grep -n "foo\\|bar" src/app.ts | head -20');
+  assert.equal(r.type, 'grep-n');
+  assert.equal(r.path, 'src/app.ts');
 });
 
 test('parseBashFileRead: grep with --include flag as last arg → skips flag, finds real path', () => {
@@ -198,19 +319,26 @@ test('parseBashFileRead: grep with glob in path → null', () => {
   assert.equal(parseBashFileRead('grep -n "bar" src/setupTests.*'), null);
 });
 
-test('parseBashFileRead: grep piped to grep -v → only considers first stage', () => {
-  // 44 occurrences. Pipe not stripped, last token of "| grep -v pattern" becomes path.
-  const r1 = parseBashFileRead('grep -n "deleteSession" /workspace/lib/store.js | grep -v "Stmt\\|prepare"');
-  assert.notEqual(r1, null);
-  assert.equal(r1.path, '/workspace/lib/store.js');
+test('parseBashFileRead: grep -n piped to grep -v → null (pipe breaks N:content format)', () => {
+  // grep -v after grep -n strips line numbers → can't do lineUpdate → residual
+  assert.equal(parseBashFileRead('grep -n "deleteSession" /workspace/lib/store.js | grep -v "Stmt\\|prepare"'), null);
+  assert.equal(parseBashFileRead('grep -rn "foo" public/ --include="*.js" | grep -v ".test."'), null);
+  assert.equal(parseBashFileRead('grep -rn "bar" lib/watcher.js | grep -v "//\\|fallback"'), null);
+});
 
-  const r2 = parseBashFileRead('grep -rn "foo" public/ --include="*.js" | grep -v ".test."');
-  assert.notEqual(r2, null);
-  assert.equal(r2.path, 'public/');
+test('parseBashFileRead: backslash parity before pipe — odd=escaped, even=real', () => {
+  // Outside quotes: 1 backslash + pipe (\|) = escaped pipe → no split
+  const r1 = parseBashFileRead('cat src/app.ts \\| wc');
+  assert.equal(r1.type, 'cat');
+  assert.equal(r1.path, 'src/app.ts');
 
-  const r3 = parseBashFileRead('grep -rn "bar" lib/watcher.js | grep -v "//\\|fallback"');
-  assert.notEqual(r3, null);
-  assert.equal(r3.path, 'lib/watcher.js');
+  // Outside quotes: 2 backslashes + pipe (\\|) = literal BS + real pipe → splits (null)
+  assert.equal(parseBashFileRead('cat src/app.ts \\\\| wc'), null);
+
+  // Outside quotes: 3 backslashes + pipe (\\\|) = \\ + \| = literal BS + escaped pipe → no split
+  const r3 = parseBashFileRead('cat src/app.ts \\\\\\| wc');
+  assert.equal(r3.type, 'cat');
+  assert.equal(r3.path, 'src/app.ts');
 });
 
 test('parseBashFileRead: grep on "." (recursive, no specific file) → null', () => {
@@ -253,7 +381,7 @@ const cwd = '/proj';
 
 test('matchAdapter: Read/Write/Edit/Grep/Bash/Skill resolve; unknown → null', () => {
   for (const n of ['Read', 'Write', 'Edit', 'Grep', 'Bash', 'Skill']) assert.ok(matchAdapter(n), n);
-  assert.equal(matchAdapter('mcp__serena__find_symbol'), null);
+  assert.ok(matchAdapter('mcp__serena__find_symbol'), 'mcp__serena__find_symbol');
 });
 
 test('Read adapter: full read → fullSet parsed by actual line-number prefix', () => {

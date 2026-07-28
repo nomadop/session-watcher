@@ -357,6 +357,17 @@ body {
   height: 100% !important;
 }
 
+.sw-hero-placeholder {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  transition: opacity 0.2s;
+  background: linear-gradient(90deg, var(--card, #161b26) 25%, var(--edge, #232a38) 50%, var(--card, #161b26) 75%);
+  background-size: 200% 100%;
+  animation: sw-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes sw-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.sw-hero-placeholder.hidden { opacity: 0; pointer-events: none; }
 
 .sw-hero-uval {
   color: var(--amber);
@@ -1049,6 +1060,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-bottom: 2px;
 }
 
 #sw-buckets .bucket-name.is-dir-name {
@@ -1127,6 +1139,20 @@ body {
 #sw-buckets .bucket-row.is-excluded .bucket-name { font-style: italic; color: var(--mute); }
 
 
+/* Override indicator — wavy underline on filename */
+#sw-buckets .bucket-name[data-override] {
+  text-decoration: underline wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  overflow: visible;
+}
+#sw-buckets .bucket-name[data-override="include"] {
+  text-decoration-color: rgba(79, 224, 176, 0.4);
+}
+#sw-buckets .bucket-name[data-override="exclude"] {
+  text-decoration-color: rgba(255, 117, 102, 0.4);
+}
+
 /* ── Section separator ─── */
 #sw-buckets .bucket-sep {
   border: none;
@@ -1149,6 +1175,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  position: relative;
 }
 
 #sw-buckets .bucket-copy-btn {
@@ -1165,7 +1192,8 @@ body {
 }
 
 #sw-buckets .bucket-copy-btn:hover {
-  opacity: 0.85;
+  background: #3cc89a;
+  border-color: #3cc89a;
 }
 
 #sw-buckets .bucket-copy-btn.copied {
@@ -1189,6 +1217,38 @@ body {
 #sw-buckets .bucket-reset-btn.active {
   color: var(--txt-dim);
   border-color: var(--txt-dim);
+}
+
+#sw-buckets .bucket-apply-btn {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  background: var(--mint);
+  border: 1px solid var(--mint);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: #052018;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#sw-buckets .bucket-apply-btn:hover:not(:disabled) {
+  background: #3cc89a;
+  border-color: #3cc89a;
+}
+
+#sw-buckets .bucket-apply-btn:disabled {
+  display: none;
+}
+
+#sw-buckets .bucket-apply-notice {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--amber);
+  white-space: nowrap;
 }
 
 /* ── Copy overlay ─── */

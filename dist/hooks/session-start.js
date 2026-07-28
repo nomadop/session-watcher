@@ -258,12 +258,9 @@ if (isMainModule(import.meta.url, process.argv[1])) {
         transcript_path: payload.transcript_path,
         cwd: payload.cwd
       });
-      if (!HANDOFF_HOOK_SOURCES.includes(payload.source)) {
-        process.exit(0);
-        return;
-      }
       const contexts = [];
-      try {
+      if (!HANDOFF_HOOK_SOURCES.includes(payload.source)) {
+      } else try {
         const dbPath = defaultDbPath();
         const projectId = resolveProjectKey({
           claudeProjectDir: process.env.CLAUDE_PROJECT_DIR,

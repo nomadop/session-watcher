@@ -149,9 +149,10 @@ describe('bashFeature', () => {
     assert.equal(r.name, 'docker compose');
   });
 
-  test('cat /home/alice/foo | grep bar → name: cat (first stage only)', () => {
+  test('cat /home/alice/foo | grep bar → name: grep (pipe actor, not source reader)', () => {
     const r = bashFeature('cat /home/alice/foo | grep bar');
-    assert.equal(r.name, 'cat');
+    assert.equal(r.name, 'grep');
+    assert.equal(r.detail, '/home/alice/foo');
   });
 
   test('AWS_SECRET=abc123 npm run deploy → name: npm run (env stripped, secret never in name)', () => {

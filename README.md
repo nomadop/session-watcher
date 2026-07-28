@@ -16,6 +16,8 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
   <a href="#install"><img src="https://img.shields.io/badge/platform-node.js%20%E2%89%A522.16-green.svg" alt="Platform: Node.js ≥22.16"></a>
 </p>
 
+**[Documentation](https://nomadop.github.io/session-watcher/docs/)** · [npm](https://www.npmjs.com/package/@nomadop/session-watcher) · [Paper](https://doi.org/10.5281/zenodo.21236704)
+
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#install">Install</a> ·

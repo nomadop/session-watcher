@@ -35,10 +35,11 @@ test('residual: single unmatched Bash tool absorbs all deltaResidual for its tur
 });
 
 test('residual: MCP tool recorded with mcp kind and tool name', () => {
+  // Use mcp__serena__onboarding which is intentionally not adapted (enters residual)
   const path = tmpJsonl([
     { type: 'assistant', uuid: 'a1', message: { id: 'm1', model: 'claude-opus-4-8',
       usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
-      content: [{ type: 'tool_use', id: 'tu1', name: 'mcp__serena__find_symbol', input: { q: 'X' } }] } },
+      content: [{ type: 'tool_use', id: 'tu1', name: 'mcp__serena__onboarding', input: { q: 'X' } }] } },
     { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
       { type: 'tool_result', tool_use_id: 'tu1', content: 'y'.repeat(300) } ] } },
     { type: 'assistant', uuid: 'a2', parentUuid: 'u1', message: { id: 'm2', model: 'claude-opus-4-8',
@@ -47,7 +48,7 @@ test('residual: MCP tool recorded with mcp kind and tool name', () => {
   const w = new SessionWatcher(path);
   w.poll();
   // key is the prettified mcpDisplay() name (Task 0b), not the raw mcp__ tool id
-  const rec = w._residualByTool.get('serena find_symbol');
+  const rec = w._residualByTool.get('serena onboarding');
   assert.ok(rec && rec.kind === 'mcp', 'MCP tool recorded under mcpDisplay key');
 });
 

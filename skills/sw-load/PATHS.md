@@ -1,6 +1,6 @@
 # Path Resolution & Read Strategy
 
-Each entry in `paths_to_keep` is `{path, lines?, symbols?}`.
+Each entry in `paths_to_keep` is `{path, lines?, symbols?, resolvedSymbols?}`.
 
 ## Resolution
 
@@ -12,6 +12,7 @@ Each entry in `paths_to_keep` is `{path, lines?, symbols?}`.
 
 | Entry has | Action |
 |-----------|--------|
+| `resolvedSymbols` | Each entry is a string like `"funcName (lines 15-22)"`. Extract the line range and `Read(file, offset=start, limit=end-start+1)`. Stale entries (marked "symbol not found; originally at lines X-Y"): widen search or Read the stored fallback lines. |
 | `lines` | `Read(file, offset=start, limit=end-start+1)` per range. If content looks stale (file edited since handoff), widen or fall back to `symbols`. |
 | `symbols` only | Grep for the symbol name in the file, then Read surrounding context. |
 | Neither | Previous session read the whole file — `Read` it fully. |

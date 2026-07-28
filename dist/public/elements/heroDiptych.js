@@ -170,6 +170,7 @@ export function mount(root, _ctx) {
       <span class="eoq-u"><span class="sw-hero-group-pill" style="display:none;"></span>u = <b class="sw-hero-uval">—</b> · <span class="sw-hero-mf">movable —%</span></span>
     </div>
     <div class="sw-hero-chart-wrap">
+      <div class="sw-hero-placeholder hidden"></div>
       <canvas class="sw-hero-canvas"></canvas>
     </div>
   `;
@@ -177,7 +178,7 @@ export function mount(root, _ctx) {
 
   const verdictRow = document.createElement('div');
   verdictRow.className = 'sw-hero-verdict-row';
-  verdictRow.innerHTML = `<span class="pill sw-verdict-pill">—</span><p class="sw-verdict-text">—</p>`;
+  verdictRow.innerHTML = `<span class="pill sw-verdict-pill">idle</span><p class="sw-verdict-text">Position tracking begins after the first API call.</p>`;
   root.appendChild(verdictRow);
 
   const canvas = container.querySelector('.sw-hero-canvas');
@@ -188,6 +189,23 @@ export function mount(root, _ctx) {
   const verdictText = verdictRow.querySelector('.sw-verdict-text');
 
   let chart = null;
+
+  // Mount-time empty chart — same structure as real U-curve, just no datasets drawn
+  chart = new Chart(canvas, {
+    type: 'line',
+    data: { datasets: [] },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { type: 'linear', min: 0.8, max: 5, title: { display: false } },
+        y: { type: 'linear', min: -0.06, max: 1, title: { display: false }, ticks: { callback: () => '    ', font: { size: 11, family: '"JetBrains Mono", monospace' } }, grid: { display: false } },
+      },
+    },
+  });
+  if (window.__SW_dashboard) window.__SW_dashboard.charts.hero = chart;
 
   // Ghost preview state — set by sw-bucket-preview event; survives poll-driven re-renders.
   let previewState = null;
@@ -592,12 +610,19 @@ export function mount(root, _ctx) {
   }
 
   function buildChart(rl, capabilities, status) {
+    const placeholderEl = container.querySelector('.sw-hero-placeholder');
     const landmarksAvailable = capabilities?.eoqLandmarks?.available === true;
     if (!landmarksAvailable) {
       if (chart) { chart.destroy(); chart = null; }
       uvalEl.textContent = '—';
+      placeholderEl.classList.add('hidden');
+      // Show empty chart with axes as placeholder
+      // Reset verdict to idle
+      verdictPill.textContent = 'idle';
+      verdictText.textContent = 'Position tracking begins after the first API call.';
       return;
     }
+    placeholderEl.classList.add('hidden');
 
     const { R, x, xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP } = {
       R: rl.C_RATIO,
@@ -618,6 +643,12 @@ export function mount(root, _ctx) {
 
     const { domain, curveData, yMax, costAtX, u } = computeChartData(rl);
     updateTopbar(u, status?.rateLamp?.mf);
+
+    // Destroy mount-time empty chart so full chart (with plugins) is created
+    if (chart && chart.data.datasets.length === 0) {
+      chart.destroy();
+      chart = null;
+    }
 
     if (!chart) {
       // Resolve theme colors once

@@ -111,12 +111,15 @@ export function mount(root, _ctx) {
     const available = capabilities?.eoqLandmarks?.available === true;
 
     if (!available || !rl) {
-      gradientEl.style.background = 'none';
+      gradientEl.style.background = 'linear-gradient(90deg, #0a0d10 0%, #141a1e 40%, #0e1215 100%)';
+      gradientEl.style.backgroundSize = '';
+      gradientEl.style.animation = '';
       amberMarkerEl.style.display = 'none';
       mintMarkerEl.style.display = 'none';
       frameEl.style.display = 'none';
       ticksEl.innerHTML = '';
-      barWrap.style.display = 'none';
+      barWrap.style.display = '';
+      syncToChartArea();
       return;
     }
 
@@ -163,6 +166,8 @@ export function mount(root, _ctx) {
     const positions = computeLandmarkPositions({ domain: overviewDomain, xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP, x });
 
     // Gradient: shallow→sweet→deep(at br25%)→wall
+    gradientEl.style.backgroundSize = '';
+    gradientEl.style.animation = '';
     gradientEl.style.background = buildZonesGradient(
       positions.brAmberLPct, positions.sweetPct, positions.brRedRPct, positions.wallPct
     );

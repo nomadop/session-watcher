@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { realpathSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { realpathSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { probeMcp } from './lib/probe.js';
@@ -63,17 +63,31 @@ if (__selfReal === __argvReal) {
       sseClients.clear();
       try { archiveCurrentSegment(watcher); } catch {}
       try { closeStoreGlobal(); } catch {}
-      // Dynamic path — survives rotation
+      // Dynamic path — survives rotation. Only delete if pid matches (avoid nuking a replacement process's state).
       const sid = currentSessionId();
-      try { unlinkSync(join(effectiveStateDir, `${safeSessionId(sid)}.json`)); } catch {}
+      const stateFile = join(effectiveStateDir, `${safeSessionId(sid)}.json`);
+      try {
+        const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+        if (st.pid === process.pid) unlinkSync(stateFile);
+      } catch {}
     };
     process.on('SIGTERM', () => { cleanup(); process.exit(0); });
     process.on('SIGINT', () => { cleanup(); process.exit(0); });
     process.on('exit', cleanup);
 
+    // stdin EOF grace period: keep the server alive for 2h after CC disconnects stdio,
+    // so /resume within that window finds the state file + port still working.
+    const STDIN_GRACE_MS = Number(process.env.SW_GRACE_MS) || 2 * 60 * 60 * 1000; // default 2 hours
+    let stdinEnded = false;
+    process.stdin.on('end', () => {
+      if (stdinEnded) return;
+      stdinEnded = true;
+      console.error(`[session-watcher] stdin EOF — grace period started (${STDIN_GRACE_MS / 60000}min)`);
+      setTimeout(() => { cleanup(); process.exit(0); }, STDIN_GRACE_MS).unref();
+    });
+
     server.listen(0, '127.0.0.1', () => {
       const port = server.address().port;
-      server.unref();
       mkdirSync(effectiveStateDir, { recursive: true });
       try { initStore(); } catch (e) { console.error('[session-watcher] fatal: store init failed —', e.message); process.exit(1); }
       applyEffectiveRatio();
@@ -146,7 +160,7 @@ if (__selfReal === __argvReal) {
       annotations: { readOnlyHint: true },
     }, async ({ sessionId: _sid } = {}) => {
       probeCall('get_bucket_summary', { sessionId: _sid });
-      return reply(await inprocFetch('/api/buckets'));
+      return reply(await inprocFetch('/api/buckets?symbols=1'));
     });
     mcpServer.registerTool('prepare_handoff', {
       description: 'Persist a keep/discard decision + structured summary before /clear; returns a human-readable token to restore context in the next segment.',
@@ -184,6 +198,24 @@ if (__selfReal === __argvReal) {
       probeCall('load_handoff', { sessionId: _sid });
       const qs = new URLSearchParams(Object.entries(input).filter(([, v]) => v != null)).toString();
       return reply(await inprocFetch(`/api/handoff/load${qs ? '?' + qs : ''}`));
+    });
+
+    mcpServer.registerTool('get_bookmark_detail', {
+      description: 'Drill into a specific turn from the bookmark index. Returns ±3 turn window with compressed content.',
+      inputSchema: {
+        load_token: z.string().describe('Token identifying which handoff (from load_handoff response)'),
+        turn_index: z.number().int().describe('Turn index from bookmark_index (T12 → 12) or recent_user_intents (U45 → 45)'),
+        full_text: z.boolean().optional().describe('If true, do not truncate assistant text on the target turn (up to 10000 char ceiling)'),
+      },
+      annotations: { readOnlyHint: true },
+    }, async ({ ...input } = {}) => {
+      probeCall('get_bookmark_detail', {});
+      const qs = new URLSearchParams({
+        load_token: input.load_token,
+        turn_index: String(input.turn_index),
+        ...(input.full_text ? { full_text: 'true' } : {}),
+      }).toString();
+      return reply(await inprocFetch(`/api/bookmark/detail?${qs}`));
     });
 
     mcpServer.registerTool('rotate_session', {

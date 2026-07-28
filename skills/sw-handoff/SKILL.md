@@ -13,20 +13,15 @@ Prepare a handoff package so the next session can resume with minimal re-reading
 
    If `metrics.br < 0.05` AND few turns: note "Context is still light — handoff may not be necessary yet, but proceeding as requested."
 
-2. **Select paths** — decide keep vs discard per entry:
-
-   **If the user provides `keep: path1, path2, ...`** (e.g. from the dashboard panel): use that list directly as the kept paths. Anything not listed is implicitly discarded. You may add CLAUDE.md or other essential config files if missing from the list.
-
-   **Otherwise** (no explicit keep list): decide per entry:
-   - KEEP: related to next_task; high `last_active_turn`; core config/schema; tests under active debugging.
-   - KEEP (override): excluded-by-default files critical for next_task (exclusion ≠ discard).
-   - DISCARD: stale/unrelated; generated files (node_modules, dist); one-shot output.
-
-   Each entry is `{path, symbols?}`
+2. **Select paths to keep** — for each path in the bucket summary:
+   - Decide keep or discard based on relevance to `next_task`
+   - If the path has `userOverride`, apply the user's decision (keep/discard)
+   - If the path has `activeSymbols`, select which symbols to keep (these are verified — no guessing needed)
+   - Pass kept symbol names in `paths_to_keep[].symbols`
 
 3. **Select skills** — `skills_to_keep`: only skills actively guiding the workflow or required by next_task. Skip one-shot completed skills. Never include `sw-load` — it drives the load flow itself and is always invoked automatically. If the user's `keep:` list includes skill names, use those directly.
 
-4. **Write the summary** following [`SUMMARY.md`](SUMMARY.md) exactly. Redact secrets as `[REDACTED]`
+4. **Write the summary** you MUST following [`SUMMARY.md`](SUMMARY.md) exactly. Redact secrets as `[REDACTED]`
 
 5. **Prepare** via MCP `prepare_handoff` tool with:
    - `paths_to_keep`: array from step 2

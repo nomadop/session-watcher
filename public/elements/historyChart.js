@@ -638,6 +638,11 @@ export function mount(root, ctx) {
     const points = fitColdStart(raw);
     currentPoints = points;
     if (points.length === 0) {
+      if (!chart) {
+        const config = buildChartConfig([], ratchetX, ratchetY, null, colors);
+        chart = new Chart(canvas, config);
+        if (window.__SW_dashboard) window.__SW_dashboard.charts.history = chart;
+      }
       updateControls();
       updateFootnote(points);
       return;
@@ -780,7 +785,11 @@ export function mount(root, ctx) {
     segmentKeys = newKeys;
 
     if (segmentKeys.length === 0) {
-      if (chart) { chart.destroy(); chart = null; }
+      if (!chart) {
+        const config = buildChartConfig([], ratchetX, ratchetY, null, colors);
+        chart = new Chart(canvas, config);
+        if (window.__SW_dashboard) window.__SW_dashboard.charts.history = chart;
+      }
       updateControls();
       updateFootnote([]);
       return;

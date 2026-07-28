@@ -1,10 +1,25 @@
 name: Deploy to GitHub Pages
 
 on:
+  pull_request:
+    paths:
+      - 'public/**'
+      - 'site/docs/**'
+      - 'scripts/build-pages.mjs'
+      - 'scripts/docs-manifest.mjs'
+      - 'test/build-pages.test.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/pages.yml'
   push:
     branches: [main]
     paths:
       - 'public/**'
+      - 'site/docs/**'
+      - 'scripts/build-pages.mjs'
+      - 'scripts/docs-manifest.mjs'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -18,16 +33,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test test/build-pages.test.js
+      - run: node scripts/build-pages.mjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: .pages
+
   deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
       - id: deployment
         uses: actions/deploy-pages@v4

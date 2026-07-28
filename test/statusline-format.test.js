@@ -352,3 +352,30 @@ test("renderLB: non-finite values render as em-dash, right-padded", () => {
   assert.ok(out.includes("—"), "em-dash for NaN");
   assert.equal(out, "L—/b80k    ");
 });
+
+test("formatLine uses s.bDefault for L/b display (§3.1 position basis)", () => {
+  _resetRenderState();
+  const s = {
+    model: "claude-opus-4-8",
+    L: 168000,
+    B: 80000,
+    bDefault: 50000,
+    rateLamp: {
+      reliable: true,
+      billProgress: 0.42,
+      hBreak: 8,
+      br: 0.05,
+      x_display: 2.1,
+      dhat: 0.4167,
+      xSweet: 1.4167,
+      xBrAmberL: 1.05,
+      mf: 0.3,
+      gEma: 3000,
+      hasDeepWaterGateFired: false,
+      lastStopEvent: null,
+    },
+  };
+  const out = formatLine(s);
+  assert.ok(out.includes("b50k"), "statusline shows bDefault (50k), not B (80k)");
+  assert.ok(!out.includes("b80k"), "B_full (80k) must not appear when bDefault is set");
+});

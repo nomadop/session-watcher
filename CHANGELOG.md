@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0 (2026-07-28) — Post-v3 feature release
+
+### Measurement
+
+- **Holt double-exponential smoothing** for g — 14.5% lower tracking error, 1.2 frames faster regime response (428-session corpus validated). Replaces raw EMA; no threshold recalibration needed.
+- **B-L phase lag carry** — deferred settlement handles read-time B overshoot without distorting position metrics.
+
+### Adapters & Coverage
+
+- **Serena adapter** — 8 tool adapters (find_symbol, get_symbols_overview, find_referencing_symbols, read_memory + replace_content, replace_symbol_body, insert_before/after_symbol). Closes 31% measurement blind spot for symbol-aware editing.
+- **Symbol outline** — tree-sitter extraction (JS/TS/Python) + markdown heading fast-path. Integrated into bucket data and handoff symbolRanges for precise carry-set selection.
+
+### Handoff & Context
+
+- **Bookmark index** — MMR-selected representative assistant turns + user intent extraction from transcript. Gives the next session "what were we discussing" context beyond file fragments.
+- **bDefault override** — Apply/Reset in the bucket panel lets you adjust the position basis in real time. Sibling inference propagates decisions to new paths. Full metric chain (x/dhat/br/statusline) follows immediately.
+
+### Documentation
+
+- **Wiki site** — build-pages pipeline generates GitHub Pages docs: Concepts, Cookbook, How It Works, Guarantees. Machine-readable `llms-preamble.md` for LLM onboarding.
+
+### Fixes
+
+- Statusline `b` now shows bDefault (position basis) instead of B_full
+- Empty session dashboard shows skeleton/placeholder states instead of "—" grid
+- Windows path tree collapse fixed — canonicalizePath outputs posix separators
+
+---
+
 ## 0.5.4 (2026-07-23) — Initial public Show HN release
 
 ### Highlights
