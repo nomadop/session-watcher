@@ -16,7 +16,11 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
   <a href="#install"><img src="https://img.shields.io/badge/platform-node.js%20%E2%89%A522.16-green.svg" alt="Platform: Node.js ≥22.16"></a>
 </p>
 
-**[Documentation](https://nomadop.github.io/session-watcher/docs/)** · [npm](https://www.npmjs.com/package/@nomadop/session-watcher) · [Paper](https://doi.org/10.5281/zenodo.21236704)
+<p align="center">
+  <a href="https://nomadop.github.io/session-watcher/docs/"><strong>Documentation</strong></a> ·
+  <a href="https://www.npmjs.com/package/@nomadop/session-watcher">npm</a> ·
+  <a href="https://doi.org/10.5281/zenodo.21236704">Paper</a>
+</p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
@@ -26,7 +30,6 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
   <a href="#handoff">Handoff</a> ·
   <a href="#mcp-tools">MCP Tools</a> ·
   <a href="#agent-support">Agents</a> ·
-  <a href="#paper">Paper</a> ·
   <a href="#citation">Cite</a>
 </p>
 
