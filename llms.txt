@@ -1,0 +1,26 @@
+# Session Watcher
+
+> A local monitor that estimates when carrying an existing Claude Code
+> context becomes more expensive than rebuilding it.
+
+Session Watcher provides a dashboard, statusline, restart-cost metrics,
+and handoff tooling for long-running coding sessions.
+
+Demo: `npx -y @nomadop/session-watcher demo`
+
+## Documentation
+
+- [Concepts](https://nomadop.github.io/session-watcher/docs/concepts.md): User-visible metrics: position, rate, cost, operations, and structure quantities.
+- [Cookbook](https://nomadop.github.io/session-watcher/docs/cookbook.md): Operational guidance for interpreting lamps, restarting, and handoffs.
+- [How It Works](https://nomadop.github.io/session-watcher/docs/how-it-works.md): Logical pipeline, lifecycle, and why the design produces correct results.
+- [Guarantees](https://nomadop.github.io/session-watcher/docs/guarantees.md): Stable externally-observable behavior: folding, segmentation, baseline, and gate rules.
+
+## Project
+
+- [Repository](https://github.com/nomadop/session-watcher): Source code, issues, releases.
+- [npm Package](https://www.npmjs.com/package/@nomadop/session-watcher): Published package.
+- [Paper](https://doi.org/10.5281/zenodo.21236704): Cost-model derivation and empirical motivation.
+
+## Optional
+
+- [Complete Documentation](https://nomadop.github.io/session-watcher/llms-full.txt): All public documentation concatenated into one context file.

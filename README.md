@@ -19,7 +19,8 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
 <p align="center">
   <a href="https://nomadop.github.io/session-watcher/docs/"><strong>Documentation</strong></a> ·
   <a href="https://www.npmjs.com/package/@nomadop/session-watcher">npm</a> ·
-  <a href="https://doi.org/10.5281/zenodo.21236704">Paper</a>
+  <a href="https://doi.org/10.5281/zenodo.21236704">Paper</a> ·
+  <a href="llms.txt">llms.txt</a>
 </p>
 
 <p align="center">

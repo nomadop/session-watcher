@@ -1,0 +1,600 @@
+# Session Watcher
+
+> A local monitor that estimates when carrying an existing Claude Code
+> context becomes more expensive than rebuilding it.
+
+Session Watcher provides a dashboard, statusline, restart-cost metrics,
+and handoff tooling for long-running coding sessions.
+
+Demo: `npx -y @nomadop/session-watcher demo`
+
+---
+
+## Concepts
+
+Core quantities and interpretation for the Session Watcher measurement system.
+
+This page defines the user-visible metrics and cost-model quantities. Each entry lists the canonical name, its API field, units, a plain-language definition, and validity conditions. For stable behavioral guarantees, see the Guarantees page.
+
+---
+
+### Position Axis
+
+Quantities that locate the session on the token-position number line.
+
+#### L (Effective Context Length)
+
+**API field.** `L`
+
+**Units.** tokens
+
+**Definition.** The authoritative size of the context the model is currently reading. Normally equals the cache-read token count from the latest API response. When a cache miss is detected (cache eviction mid-session), L is reconstructed as cache-read plus cache-creation so the metrics see a continuous value rather than a cliff.
+
+**Validity.** Always non-negative. Zero before the first model interaction in a segment, or on a true cold-start where no cached context exists yet.
+
+#### B (Baseline)
+
+The baseline measures how many tokens the model would need to re-ingest if the session restarted now.
+
+##### B_full
+
+**API field.** (internal — drives all decision math)
+
+**Units.** tokens
+
+**Definition.** The complete rebuild cost: the system overhead floor plus the sum of all tracked file contributions. B_full is the system's unfiltered belief about what a restart would cost.
+
+**Validity.** Non-negative. Becomes positive on the first model interaction (because the system overhead floor is set immediately from the first API response). Zero only before that first interaction.
+
+##### B_default
+
+**API field.** `bDefault` (also exposed as `B` in the top-level status, display-capped)
+
+**Units.** tokens
+
+**Definition.** The subset of B_full that the user would actually carry into a new session: the system overhead floor plus only those files that pass the inclusion filter (not gitignored, not outside the project, plus any user overrides). This is the value used as the position denominator throughout the cost model.
+
+When all tracked files are excluded, B_default still equals the system overhead floor. When B_default is zero (before the first interaction), the system falls back to B_full internally to avoid division by zero.
+
+The public API field `B` is a display-capped version of B_full that ensures the physical invariant B ≤ totalStock holds during transient cache-creation lag. The cap self-releases once the provider's cache catches up.
+
+**Validity.** `0 ≤ B_default ≤ B_full`. Positive after the first model interaction.
+
+#### System Overhead (Floor)
+
+**API field.** (internal component of B)
+
+**Units.** tokens
+
+**Definition.** The irreducible context that is always present regardless of what files are loaded: system prompt, tool definitions, and conversation scaffolding. Measured once at the start of each segment from the first API response (the maximum of cache-read, cache-creation, and input token counts). Even after a restart, the session cannot go below this floor.
+
+**Validity.** Set once per segment. Zero before the first model interaction.
+
+#### x (Position Ratio)
+
+**API field.** `x`
+
+**Units.** dimensionless ratio
+
+**Definition.** How far the session has travelled past its baseline: `x = L / B_default`. At x=1 you are at baseline (no growth above the carry). At x=2 the context has doubled beyond baseline. The entire cost model is parameterized in terms of x.
+
+**Validity.** Meaningful when baseline is valid (B_full > 0 and cRatio > 0). Falls back to 1 otherwise.
+
+---
+
+### Rate Axis
+
+Quantities measuring how fast context is growing.
+
+#### g (Growth Rate)
+
+**API field.** `g`
+
+**Units.** tokens/call (smoothed)
+
+**Definition.** The effective growth rate of unexplained context accumulation per API call. Computed as a Holt double-exponential moving average (tracking both level and trend) of the per-call residual — the L growth that cannot be attributed to known file operations. Floored at a minimum value to prevent cold-start artifacts.
+
+**Intuition.** "How fast is new context arriving each turn?" A high g means content is accumulating rapidly; the cost model responds by widening the optimal zone (recommending longer cycles before restart).
+
+**Validity.** Always positive (floored). Reflects the smoothed trend once several interactions have occurred.
+
+#### residual
+
+**API field.** (internal — feeds g)
+
+**Units.** tokens
+
+**Definition.** The per-interaction L growth that cannot be attributed to known file operations and could not be retired from the deferred settlement ledger. This is the "unexplained growth" that feeds the growth-rate smoother: reasoning tokens, tool output framing, conversation structure, and any content the system cannot trace to a specific file.
+
+**Validity.** Non-negative. The deferred ledger absorbs timing mismatches between B and L so that cache-creation lag does not produce false residual spikes.
+
+---
+
+### Cost Axis
+
+Quantities from the EOQ (Economic Order Quantity) cost model that drive the restart recommendation.
+
+#### dhat (Nucleus)
+
+**API field.** `dhat`
+
+**Units.** dimensionless
+
+**Definition.** The characteristic scale of the cost model, derived from an inventory-theory analogy. It determines how wide the low-cost valley is around the sweet spot. Computed from the restart cost ratio, growth rate, and baseline size. A larger dhat means restarts can be delayed longer before cost rises significantly.
+
+**Validity.** Positive when baseline is valid. Null otherwise.
+
+#### xSweet (Sweet Spot)
+
+**API field.** `xSweet`
+
+**Units.** dimensionless (position ratio)
+
+**Definition.** The position at which the bill premium is minimized: `xSweet = 1 + dhat`. Below xSweet you are on the left arm (restarting too early). Above xSweet you are on the right arm (overstaying, accumulating excess cost).
+
+**Validity.** Defined whenever dhat is defined. Always greater than 1.
+
+#### bp (Bill Premium)
+
+**API field.** `br`
+
+**Units.** dimensionless (0 to unbounded)
+
+**Definition.** The instantaneous excess cost relative to optimal timing. Measures how much more expensive the current position is compared to the sweet spot.
+
+bp combines two factors: (1) a positional penalty that grows as the session moves away from the sweet spot in either direction, and (2) the movable fraction that scales this penalty by how much of the total cost is actually timing-sensitive. bp=0 at the sweet spot.
+
+**Lamp behavior.** On the right arm (past sweet), below BP_AMBER the lamp is green; above BP_AMBER the session enters deep water. On the left arm (before sweet), the lamp shows white or green but never triggers alerts — the mathematical penalty at cold start is operationally meaningless.
+
+**Validity.** Non-negative when defined. Null when baseline is invalid.
+
+#### mf (Movable Fraction)
+
+**API field.** `mf`
+
+**Units.** dimensionless fraction (0 to ~0.414)
+
+**Definition.** The proportion of total session cost that is timing-sensitive — could theoretically be avoided by optimal restart timing. The remainder is unavoidable overhead (system floor, irreducible growth cost) that no restart strategy can eliminate.
+
+If mf is small, even bad timing costs little. If mf is large, timing matters significantly. mf scales the bill premium so that sessions where restarts matter get earlier alerts.
+
+**Validity.** In range (0, ~0.414) when baseline is valid; null otherwise. The upper bound comes from the AM-GM inequality.
+
+#### cRatio (Cost Ratio)
+
+**API field.** `cRatio`
+
+**Units.** dimensionless ratio
+
+**Definition.** The ratio of cache-write price to cache-read price for the current model (C_write / C_read). Determined from a model lookup table or a user override. "How many reads does one write cost?" A higher cRatio means restarts are more expensive, pushing the sweet spot further out.
+
+**Validity.** Always positive.
+
+#### wallP (Rate Wall Position)
+
+**API field.** `rateLamp.wallP`
+
+**Units.** dimensionless (position ratio)
+
+**Definition.** The x-position at which rentRate reaches 1.0: `wallP = 1 + cRatio`. At this point the session is consuming cache-read budget as fast as one restart cycle can replenish it.
+
+Note: wallP is NOT guaranteed to exceed xSweet. For small B or large g, dhat can exceed cRatio, placing the sweet spot beyond the rate wall. Therefore wallP is the rate-saturation marker, not an unconditional "past optimal" signal.
+
+**Validity.** Computed whenever baseline is valid. Always greater than 1.
+
+---
+
+### Operations Axis
+
+Quantities that drive the notification gate and display indicators.
+
+#### rentRate
+
+**API field.** `burnRate`
+
+**Units.** dimensionless rate
+
+**Definition.** The instantaneous fraction of one restart cycle's cost being consumed per call. Computed as the excess of L above B_default, divided by the restart cost (cRatio × B_default). At rentRate=0 you are at or below baseline. At rentRate=1 you hit the rate wall. Increases linearly with L beyond baseline.
+
+**Validity.** Non-negative. Null when baseline is invalid.
+
+#### backstopInterval
+
+**API field.** (derived — rendered as `n/N` in the statusline)
+
+**Units.** bill cycles (dimensionless)
+
+**Definition.** How many full bill cycles must elapse in deep water before the backstop alert fires. One "bill" completes when the trapezoidal integral of rentRate (billProgress) crosses 1.0. The interval adapts to mf: higher mf (more at stake) shortens it; lower mf lengthens it. Because the unit is bill cycles (not wall time), the backstop fires sooner in expensive sessions and later in cheap ones.
+
+**Validity.** Finite and positive when mf > 0. Infinite when mf is zero (backstop never fires).
+
+#### BP_AMBER
+
+**API field.** (constant threshold)
+
+**Definition.** The bill-premium threshold at which the session enters the warning zone. The deep-water gate fires when three conditions hold simultaneously: (1) x ≥ xSweet (right arm), (2) bp ≥ BP_AMBER for at least NOTIFY_DWELL consecutive API calls, AND (3) at least one bill-cycle crossing occurred during those calls. The cycle-crossing requirement debounces false fires when hovering near the threshold with no real cost accumulation.
+
+#### BP_RED
+
+**API field.** (constant threshold)
+
+**Definition.** The higher bill-premium threshold for the red/critical zone. Used for lamp color only; the gate mechanism uses BP_AMBER as its trigger.
+
+#### Lamp States
+
+The statusline lamp is a visual indicator synthesized from bp, x, and xSweet:
+
+| State | Condition |
+|-------|-----------|
+| White | bp is not computable, OR left arm below the amber entry boundary |
+| Green | Right arm with bp < BP_AMBER; OR left arm past the amber entry boundary |
+| Amber | bp ≥ BP_AMBER and bp < BP_RED (right arm only) |
+| Red | bp ≥ BP_RED (right arm only) |
+
+The gate never fires on the left arm regardless of the numerical bp value — a session that has not yet reached the sweet spot is not "overstaying."
+
+---
+
+### Structure Axis
+
+Quantities describing the per-path token map and its maintenance.
+
+#### pathTotal
+
+**API field.** `tokens` (in bucket data)
+
+**Units.** tokens
+
+**Definition.** Each tracked file's contribution to B: the sum of its line-level token counts, plus tool-invocation overhead, plus any pending edit estimate, minus any calibration correction. Floored at zero. Summed across all paths (plus the system overhead floor) to produce B_full.
+
+**Validity.** Non-negative.
+
+#### discardReason
+
+**API field.** `defaultDiscardReason` (in bucket data)
+
+**Definition.** Why a path is excluded from B_default. Values: `'outside-project'`, `'gitignore'`, or null (included). Users can override via include/exclude.
+
+#### Bucket Types
+
+The system tracks different categories of content:
+
+| Type | Description |
+|------|-------------|
+| **File path** | Standard tracked file (Read, Write, Edit, grep hit) |
+| **Skill** | Skill/instruction content loaded into context (included in B_default by default) |
+| **Bash/MCP residual** | Tool output not attributed to a specific file (contributes to residual growth, not B) |
+
+File paths are canonicalized so that different representations of the same file (`./a.js`, `/cwd/a.js`) map to a single entry, preventing baseline inflation from path fragmentation.
+
+---
+
+## Cookbook
+
+This page collects operational scenarios and guidance for interpreting Session Watcher output. For formal definitions of all terms below, see the Concepts page. For behavioral guarantees, see the Guarantees page.
+
+### Scope and Limits
+
+- Session Watcher is a **cost-timing guardrail**, not a quality evaluator. A metric says you are overpaying — it cannot say the model is degraded or the output is worse.
+- All conclusions depend on the accuracy of the cache-pricing model (cRatio) for the current provider. If pricing changes, the sweet spot and bp shift accordingly.
+- B, g, and all derived quantities (dhat, xSweet, bp, mf) are measured estimates with defined invalid states. When baseline is invalid the system reports fallback values, not guesses.
+- The tool does not decide or execute restarts. It surfaces cost position; the human decides whether to continue, hand off, or restart.
+
+### Lamp / bp Interpretation
+
+**Scenario: bp stuck at red or amber for many turns.**
+The session has been running beyond the efficient operating zone for an extended period. bp is an instantaneous snapshot recomputed each observation from the current L, B, g, and cRatio — it can decrease if conditions change (e.g., B grows while L stays constant, or g drops). If bp stays elevated for many turns, the session is persistently in an inefficient region. Consider preparing a handoff and restarting. If the task is nearly complete, finishing may cost less than the overhead of a fresh context rebuild. Note that billProgress (the meter bar) is the truly accumulated quantity — it integrates rent rate over time within each billing cycle and never decreases within a cycle.
+
+**Scenario: White lamp displays throughout the session.**
+White indicates one of three states. (1) `no_transcript` — the watcher cannot locate or open the transcript file; verify the path configuration. (2) `insufficient_data` — the transcript exists but no usage rows have been ingested yet (the first API call has not been folded). Since the system overhead floor is set from the very first usage row, this state resolves on the first model interaction — no file reads are required. (3) Healthy low-pressure zone — measurement is reliable, but x is below both the sweet spot and the left-arm amber boundary. This is a normal, efficient state (the session has not yet grown enough for the penalty function to engage). To distinguish these causes, check the reason or reliability field in the status output rather than interpreting white solely as a data-quality problem.
+
+**Scenario: mf seems low (~20–30%).**
+The movable fraction represents how much of the context bill is timing-sensitive. In practice mf typically ranges from about 20% to the theoretical ceiling of ~41%. Values in the low 20s mean that most cost is fixed overhead — timing optimization has limited leverage. Handoff value is reduced but not zero; bp still fires when the positional penalty is large enough. A persistently low mf means the session is carry-heavy (large B relative to growth), which is normal for sessions that loaded many files early.
+
+**Scenario: Understanding the two progress bars.**
+The statusline shows two bars side by side. The **cycle bar** (10-char `▓░` + percent) shows how far through the current billing cycle you are. It fills by integrating rent rate; when full it wraps to zero and increments the cycle count. A fast-filling bar means high rent rate. It is purely diagnostic — it does not trigger anything.
+
+The **depth bar** (n/N in the statusline, graphical bar in the dashboard) is the decision reminder. It only activates once bp has stayed above amber long enough to fire the deep-water gate. After that, n counts billing cycles completed in deep water; N is the backstop interval (adapts to mf — shorter when restart value is high). When n reaches N, the backstop notification fires and n resets. The depth bar tells you "you have been overspending long enough — it is time to act."
+
+**Scenario: bp seems wrong for what you are doing.**
+bp is only as good as B_default. If B_default does not reflect the files you actually need for the current task, bp will be miscalibrated. Common cases: (1) the session loaded many large files early that are no longer relevant — B_default is inflated, bp appears lower than reality. (2) Critical working files are gitignored or outside the project — B_default understates the real carry, bp appears higher than warranted. Before trusting an amber/red signal (or an unexpectedly green one), sanity-check the bucket panel: does B_default match what you would actually carry into a new session? If not, adjust includes/excludes first.
+
+**Scenario: Provider switch causes a bp jump.**
+Switching models mid-session changes cRatio (the cache-write-to-cache-read price ratio). Since bp depends on cRatio through mf and dhat, a ratio change recalculates the cost geometry instantly. The jump is not an error — it reflects genuine repricing of the session under new economics. If the new model has a lower cache-write/cache-read ratio, the sweet spot moves inward and the session may enter amber sooner; if higher, the session gets more room before penalty engages.
+
+
+### When to Restart
+
+**Scenario: bp crosses amber (the first threshold).**
+Amber signals that the instantaneous timing-sensitive cost premium has reached a noticeable level. This is a suggestion, not a command. If a natural stopping point exists (task boundary, topic shift), this is a good time to prepare a handoff. If mid-task, weigh the cost of context rebuilding against the ongoing overspend.
+
+**Scenario: bp crosses red (the higher threshold).**
+Red means the overspend fraction is substantially higher. However, red does not mean "restart immediately." If the current task will complete in a few more turns, finishing is usually cheaper than the disruption cost of a handoff plus the tokens spent rebuilding context in a new session. Red is most actionable at natural task boundaries.
+
+**Scenario: Mid-task bp is red but work is nearly done.**
+Finish the task. The marginal cost of a few more turns at elevated bp is typically less than the fixed cost of preparing a handoff, starting a new session, loading context, and re-orienting. Use bp red as a signal to avoid starting additional unrelated tasks in this session.
+
+**Scenario: The session sits in a flat valley just past sweet.**
+When u (the normalized position) is only moderately above 1, the overspend grows slowly. The cost function is quadratic near the sweet spot, so a 2x deviation in u from sweet costs only about 25% additional bill on the timing-sensitive fraction. Flat valleys are efficient enough to continue working through.
+
+**Scenario: Applying a fixed token policy ("restart at 200k tokens").**
+Fixed-token restart policies ignore the session's actual economics. A session with high g (rapid growth) reaches amber at a higher L than one with low g — higher g increases dhat (the characteristic scale), which pushes the sweet spot and amber threshold further out, giving more room before the premium engages. A session with low mf (mostly dead weight) may never benefit from restart regardless of total size. Use bp directly — it already integrates L, B, g, and cRatio into a single actionable signal.
+
+
+### Measurement Bias and Conservative Assumptions
+
+**Scenario: B_default excludes gitignored files, but the session works with them.**
+B_default reflects only the files that pass the inclusion filter (not gitignored, not user-excluded). If your session heavily relies on files that are excluded from baseline, B_default understates the true required carry. The session will appear to have a higher premium than it actually deserves. Use the include override mechanism to add critical paths so the measurement accounts for them.
+
+**Scenario: Residual is large — is it all waste?**
+The residual bucket (L minus B) captures everything not attributed to tracked file paths: reasoning history, tool output, conversation structure, and ephemeral working memory. (System prompts and tool definitions are part of the system overhead floor, which is already included in B — they do not appear in the residual.) Much of this is productive context, not waste. A large residual is normal for tool-heavy sessions. The metric does not judge the value of residual content — only that it exists and contributes to cost.
+
+**Scenario: g is climbing but the session feels productive.**
+The growth rate g measures how fast new content arrives relative to the baseline. It does not distinguish productive growth (new files being explored, code being written) from thrashing (repeated failed attempts generating tool output). A high g means cost is accumulating quickly regardless of cause. If the growth is productive, the session is efficiently using expensive context; bp still applies as the cost signal.
+
+**Scenario: mf seems capped below 50%.**
+The movable fraction has a theoretical ceiling around 41.4% (the AM-GM bound). This is by construction: even in the worst case, timing optimization can affect at most this fraction of total bill. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
+
+**Scenario: Detected cache miss during the session.**
+When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as cacheRead plus cacheCreation — it does not drop to near zero. The miss detection logic in the fold stream classifies this pattern and applies stock reconstruction, so the metrics see a continuous L rather than a transient cliff. A topology change (non-first null-parent root UUID, indicating /compact or /continue) is the primary segmentation signal, not a cache miss. A secondary fallback fires on totalStock drops (guarded by eviction detection for UUID-bearing sessions). New files entering the B bucket do NOT trigger segment boundaries. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
+
+**Scenario: "Metric says amber but the session feels fine" / "Metric says green but output quality dropped."**
+Session Watcher measures cost geometry, not output quality. Amber/red means you are paying more than optimal timing would require — the model may still be performing well. Conversely, green means cost is efficient — but the model could be producing poor output due to task difficulty, prompt issues, or capability limits. Never use lamp state as a quality proxy.
+
+
+### Handoff Operations
+
+Shortest path: `/sw-handoff` → `/clear` → `/sw-load`.
+
+**Scenario: Verifying carry quality after loading a handoff.**
+After `load_handoff`, the agent receives the handoff package: a list of kept paths (projected to path, symbol names with current line numbers, and stale/missing markers), a summary, and the next_task description. The response does NOT include actual file content — the agent must read kept paths itself. To verify carry quality, read the kept paths and confirm they still exist and contain the expected content. Hash validation exists internally (the server stamps content hashes at load time for telemetry) but is not exposed in the agent-visible response. B_default recovery depends on which kept files are still readable when the agent accesses them in the new session.
+
+**Scenario: Handoff completed but new session B is lower than expected.**
+`load_handoff` retrieves the handoff package but does not validate file existence or fail on missing files. Files that have been deleted, renamed, or moved since prepare time will still appear in the returned paths list — the shortfall surfaces only when the agent (or the fold stream) attempts to read those files and finds them absent. This is expected: B reflects actual current file state, not the historical snapshot from prepare time. To diagnose, compare the paths in the loaded package against what exists on disk.
+
+**Scenario: Choosing which paths to keep during prepare.**
+The `prepare_handoff` tool accepts a `paths_to_keep` list. Focus on files that are central to the next task — files you will read or edit in the continuation. The server auto-populates token weights from B_rebuild data. Carrying too many paths inflates B without proportional value; carrying too few means the new session must rediscover context. Aim for the minimal set that lets the next session avoid re-reading core files.
+
+**Scenario: Understanding the load token.**
+The load token is a human-readable semantic identifier (two content words plus a random suffix, e.g., `refactor-baseline-elk`) generated from the handoff's next_task field. Use it to retrieve a specific handoff with `load_handoff`. Tokens are unique within a project's handoff store. If you lose the token, use the free-text `query` parameter to search by summary content.
+
+
+### Configuration and Operations
+
+**Scenario: Reading the statusline fields.**
+The statusline displays (left to right): lamp emoji (white/green/yellow/red), meter bar (10-char progress within the current bill cycle, wraps on each cycle completion), backstop progress (n/N — number of completed bill cycles since last alert vs the backstop interval in bill-cycle-counts), bp percentage, u value (normalized position), delta (growth rate g), L/B ratio, and model tag. When the rate lamp is not yet reliable, a neutral "measuring..." line appears instead.
+
+**Scenario: Excluding or including specific files.**
+User overrides control which files count toward B_default. Excluding a file removes it from the baseline denominator — the session appears to be carrying less, and bp may increase (same L, lower B). Including a gitignored or previously-excluded file adds it to the baseline — bp may decrease. Overrides propagate to sibling files in the same directory through inference when the directory shows unanimous inclusion or exclusion state.
+
+**Scenario: How long until metrics become reliable after session start.**
+The `baselineValid` gate requires `B_full > 0` and `cRatio > 0`. Since the system overhead floor is set from the very first usage row (as `max(cacheRead, cacheCreation, input)`), B_full becomes positive immediately on the first model interaction — no file reads are required. The transition from white (measuring) to a computed lamp can therefore happen on the very first usage row. Before that first usage, the system shows white with reason `insufficient_data`. Sessions with no transcript at all show white with reason `no_transcript`.
+
+**Scenario: Dashboard vs statusline — same data source?**
+Yes. Both the browser dashboard (served via the built-in HTTP server) and the CLI statusline (rendered by the hook into the terminal status area) read from the same `getStatus()` output on the watcher instance. The dashboard uses SSE for event notification (`tick` and `scan` messages), then fetches full snapshots via REST (`/api/status`, `/api/history`, `/api/buckets`) on each `scan` event; polling is the fallback trigger when SSE is unavailable. The statusline formats a compact single-line summary of the same fields. They always reflect the same underlying state, though the dashboard may show historical chart data that the statusline cannot.
+
+---
+
+## How It Works
+
+Session Watcher is a real-time instrumentation layer for Claude Code sessions. It observes the transcript as it grows, derives position and cost metrics per API call, and delivers them to a browser dashboard. This page describes the logical pipeline, the session lifecycle, and why each stage produces correct results.
+
+### Pipeline
+
+A single API call flows through these stages:
+
+```
+Claude Code session
+    │
+    ▼  writes usage rows into a local transcript
+┌──────────────────────────────────────────────┐
+│  Incremental read                             │
+│  Only new bytes since last poll are consumed  │
+└──────────────────────────────────────────────┘
+    │
+    ▼  parse, build branch topology, find active path
+┌──────────────────────────────────────────────┐
+│  Fold                                         │
+│  Deduplicate by message ID (idempotent),      │
+│  detect segment boundaries                    │
+└──────────────────────────────────────────────┘
+    │
+    ▼  one valid usage snapshot per API call
+┌──────────────────────────────────────────────┐
+│  Measurement                                  │
+│  ├─ Baseline (B): per-path token accounting   │
+│  ├─ Position (L): effective context length    │
+│  ├─ Growth (g): smoothed residual rate        │
+│  ├─ Settlement: absorb cache-timing noise     │
+│  └─ Cost model: dhat, bp, mf from EOQ theory │
+└──────────────────────────────────────────────┘
+    │
+    ▼  assembled status snapshot
+┌──────────────────────────────────────────────┐
+│  Rate lamp                                    │
+│  Integrate rentRate into billing ledger,      │
+│  evaluate gate and backstop triggers          │
+└──────────────────────────────────────────────┘
+    │
+    ▼  push to connected clients
+┌──────────────────────────────────────────────┐
+│  Dashboard                                    │
+│  Browser fetches status on each data event,   │
+│  renders gauges and history chart             │
+└──────────────────────────────────────────────┘
+```
+
+**Why this works:**
+
+- **Incremental read** ensures no data is missed or double-counted regardless of how fast the transcript grows.
+- **Idempotent folding** means streaming revisions of the same call never create duplicate entries — only the final snapshot survives.
+- **Segment scoping** resets metrics on each context boundary so stale history from a previous context never contaminates current measurements.
+- **Settlement** absorbs the timing gap between cache-creation and cache-read: B is credited ahead of L during the lag, and the deferred ledger prevents that gap from appearing as false growth. Any ledger balance un-retired at segment end is treated as estimation error and corrected out of the buckets.
+- **Growth smoothing (g)** uses Holt double-exponential tracking (level + trend) on the settled residual. This converges faster than a simple EMA when the growth regime shifts, and the floor prevents cold-start division-by-zero without suppressing alerts once the session advances past the floor-derived sweet spot.
+- **Cost chain** maps the session to an EOQ inventory cycle: the fixed restart cost is cRatio × baseline (analogous to the order cost per batch), the per-token cache-read price is the holding cost, growth rate g is the demand rate, and session length in calls is the order quantity. The nucleus (dhat) is the resulting optimal cycle scale; the sweet spot is where amortized restart cost equals accumulated holding cost. This mapping produces a single dimensionless premium (bp) that is comparable across models and session sizes.
+- **Rate lamp integration** converts instantaneous bp into a cumulative bill-cycle count, so alerts fire based on sustained cost accumulation rather than momentary spikes.
+
+### Session Lifecycle
+
+#### 1. Hook (session-start)
+
+Claude Code fires a hook on startup, resume, clear, or compact. The hook discovers the running server, hands it the transcript path, and injects any pending handoff tokens into the session context.
+
+#### 2. Server bootstrap
+
+The MCP entrypoint starts a watcher instance, an HTTP server on a loopback port, and writes a discovery file so that hooks and the statusline can locate it. The server lifecycle is tied to the Claude Code process.
+
+On resume (or any fresh process start with an existing transcript), the watcher replays the transcript from byte zero — reconstructing the full call history, measurement state, and segment boundaries from the file alone. This is how per-call time series data survives a process restart without requiring a separate persistent store for it.
+
+#### 3. Polling
+
+A timer drives the pipeline at regular intervals:
+
+1. **Late resolution** — if the transcript did not exist at startup, retry each tick.
+2. **Idle gate** — skip ticks when no clients are connected and nothing changed recently.
+3. **Poll** — run the full pipeline (read → fold → measure).
+4. **Rate-lamp advance** — integrate new samples into the billing ledger.
+5. **Broadcast** — notify connected browsers that fresh data is available.
+
+#### 4. Segmentation
+
+A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or by a totalStock drop when no topology is available.
+
+On boundary: finalize settlement, archive the segment for history, and reset all metrics to initial state. This ensures the cost model always reflects the current context, not a mixture of old and new.
+
+#### 5. Session rotation
+
+When Claude Code restarts within a grace window, the hook sends the new session-id. The server archives the current segment, switches to the new transcript, and updates its discovery file.
+
+#### 6. Shutdown
+
+On termination or idle timeout: stop timers, close connections, archive the final segment, and remove the discovery file. Segment archival persists profile summaries to SQLite — enough to reconstruct cross-segment trends but not the full per-call time series, which lives only in the current process memory.
+
+### Handoff
+
+When a session ends, the agent can package its working context for the next session. The handoff mechanism bridges the gap between `/clear` (which destroys in-memory context) and the new session (which starts empty).
+
+1. The agent selects which file paths and symbols are essential for the next task — guided by the per-path token weights from B. It writes a structured summary (current state and intent, not history) and submits the package. The server persists this alongside a bookmark index: automatically selected conversation turning points that capture the session's work trajectory.
+
+2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
+
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The bookmark index and recent user intents provide orientation: the agent can scan the trajectory of what was built and, when the summary leaves a gap, drill into specific turns for surrounding context.
+
+**Why this works**
+
+- **B recovers from disk state, not snapshots.** The handoff carries path references, not cached token counts. If a file was deleted or changed since prepare, B reflects reality — stale entries do not inflate the baseline.
+- **Hook injection eliminates manual token passing.** The user does not need to remember or copy a token. The hook discovers and injects it; the agent picks it up on the first interaction.
+- **Bookmark index preserves trajectory without bulk.** Instead of carrying full conversation history, the system selects turning points — decisions, corrections, direction changes — and makes them drillable on demand. This keeps the handoff package small while preserving the ability to recover critical context.
+
+---
+
+## Guarantees
+
+Stable externally-observable behavior of the measurement system. Implementation may change; these guarantees hold across versions.
+
+---
+
+### Input Contract
+
+The measurement system requires a stream of structured events. The current implementation consumes Claude Code JSONL transcripts; the input schema below describes the logical contract that any future adapter would fulfill.
+
+**Usage snapshot:** Each API interaction produces a snapshot containing:
+
+- A token breakdown with at minimum: input, output, cache-read, and cache-write counts (additional categories such as reasoning may be present depending on the provider)
+- An optional primary key (for dedup); when absent, a fallback key may be used; when both are absent the snapshot is treated as unique
+- An optional sidechain flag (marks sub-agent or parallel work that should not count toward main-context measurement)
+- A timestamp and model identifier
+
+**Context-reset signal:** A structural indicator that the context window has been cleared or compacted. This may come from transcript topology or from a totalStock drop. The measurement system uses it to trigger segment boundaries.
+
+**Tool-event stream:** File operations (reads, writes, edits) with their content, used to compute per-path token contributions to B. Each event carries a path and enough content to estimate token cost at ingestion time.
+
+---
+
+### Measurement Invariants
+
+Given correct input, the measurement layer guarantees:
+
+**Folding:** When multiple snapshots share the same primary key, only the revision with the highest total token count is retained. Earlier or partial revisions are silently replaced. A fold revision never triggers a segment boundary.
+
+**Segment isolation:** On context-reset, all accumulated state resets: B rebuilds from zero, g returns to floor, the deferred ledger clears, and the rate lamp starts a fresh billing cycle. Cross-segment history is preserved for visualization but does not contaminate current measurements.
+
+**Token-at-Ingestion:** Per-path token estimates are computed once at write time using a model-specific conversion ratio. Values are never retroactively recomputed — changes in calibration or file content only affect future observations.
+
+**Settlement:** When B grows faster than L (cache-creation credited before cache-read materializes), the surplus is absorbed by a deferred ledger rather than appearing as false residual growth. When L catches up, the ledger retires. Any balance un-retired at segment end is treated as estimation error and corrected out of the path totals.
+
+**Sidechain exclusion:** Snapshots marked as sidechain do not contribute to L, g, segmentation triggers, or turn counting. Path attribution still processes sidechain file events (B may increase) because rebuild cost must track all file access regardless of origin.
+
+---
+
+### Output Semantics
+
+The system publishes a status snapshot after each measurement cycle. Consumers can rely on:
+
+**Position constraint:** The public field `B` never exceeds `totalStock`. This cap is a transient display guard during cache-creation lag; it self-releases once the provider's cache catches up. Internal decision math uses B_default (the filtered subset), falling back to B_full when B_default is zero.
+
+**Baseline validity gate:** The system requires `B_full > 0 AND cRatio > 0` to produce meaningful cost metrics. When either condition fails:
+
+- `x` = 1 (fallback, not null)
+- `dhat`, `xSweet`, `mf`, `bp`, `rentRate` = null
+- `g` returns at least the floor value (independent of baseline)
+- Lamp state reports `no_transcript` or `insufficient_data`
+
+Since the system overhead floor is set from the very first usage snapshot, B_full becomes positive on the first interaction — no file operations are required.
+
+**Left-arm whitening:** When `x < xSweet`, bp for gating purposes is null. No gate consumer (deep-water detection, rate-lamp boundary, notification trigger) fires on the left arm. A session that has not reached the sweet spot is not "overstaying."
+
+**Deep-water predicate:** The system reports deep-water state if and only if `x >= xSweet AND bp >= BP_AMBER`. Notifications require this state to be sustained, not merely instantaneous — the gate debounces transient spikes. The conjunction ensures that only right-arm positions with material premium trigger alerts.
+
+**Rate-lamp integration:** The billing ledger integrates rentRate over time via trapezoidal accumulation. Alerts fire on sustained cost (bill-cycle crossings), not on instantaneous bp spikes. The backstop interval adapts to mf — higher stakes shorten it; lower stakes lengthen it.
+
+---
+
+### Persistence Boundary
+
+**Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, bp, mf, turns, duration) — enough to reconstruct cross-segment trends.
+
+**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system replays the transcript from byte zero to rebuild this state. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
+
+**Rate-lamp ledger:** The billing ledger is persisted independently via periodic checkpoints. An unclean exit may lose recent state. On restart, the system loads the last valid checkpoint; if none is usable, it starts a fresh ledger.
+
+---
+
+### Hook Behavior
+
+The session-start hook fires on `startup`, `resume`, `clear`, and `compact`. Its observable effects:
+
+**Handoff discovery:** On `startup` and `clear`, the hook queries persistent storage for undelivered handoffs belonging to the current project. When found, it injects a reminder into the session context containing the load token, age, and task preview. On `resume`, handoff discovery is skipped — the session already has context.
+
+**Server rotation:** When the hook detects a session-id mismatch (new session connecting to a running server), it issues a rotation request. The server archives the current segment and switches to the new transcript. If rotation fails, a fallback context is injected instructing the agent to call `rotate_session` manually.
+
+**Bounded best-effort:** The hook always exits zero and its execution is capped by the host's command timeout. Any failure (database unavailable, server unreachable, parse error) is silently absorbed — the session starts with or without measurement context.
+
+---
+
+### MCP Tools
+
+Stable commands exposed to the agent:
+
+| Tool | Purpose |
+|------|---------|
+| `start_watcher` | Ensure measurement is active; returns server endpoint |
+| `stop_watcher` | Request measurement shutdown (may be a no-op when lifecycle is process-bound) |
+| `watcher_status` | Query whether the measurement server is reachable |
+| `get_bucket_summary` | Per-path token breakdown (B composition) |
+| `prepare_handoff` | Package paths + summary for the next session |
+| `load_handoff` | Retrieve a handoff package by token or search |
+| `get_bookmark_detail` | Drill into a specific turn from the bookmark index |
+| `rotate_session` | Switch the server to a new session/transcript |
+
+---
+
+### Degradation
+
+**Transcript missing:** The system reports white lamp with reason `no_transcript`. Cost-model outputs fall back to their defined invalid-state defaults. Measurement resumes automatically when the transcript becomes available.
+
+**Transcript corrupt or unparseable:** Partially readable content is processed up to the last valid entry. Corrupt trailing bytes are skipped. Metrics reflect only the successfully parsed portion.
+
+**Database unavailable:** Persistence failures during operation (handoff discovery, segment archival, bookmark writes) degrade independently — each fails open without stopping measurement.
+
+**Server unreachable during rotation:** The hook injects fallback context instructing the agent to call `rotate_session` manually.
