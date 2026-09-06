@@ -37,13 +37,13 @@ test('history points carry foldedSeq field', () => {
 });
 
 test('multi-segment: segment 2 foldedSeq continues from segment 1', () => {
-  // Build a uuid-less session (no tree) so the totalStock fallback triggers segment boundary.
+  // Build a uuid-less session (no tree) so the totalStock floor is what opens the second segment.
   // Active-path filtering only applies to uuid-bearing sessions; uuid-less sessions fold all rows.
   const path = tmpJsonl([
     asst('m1', 100000, 2000, 10),
     asst('m2', 200000, 2000, 10),
     asst('m3', 300000, 2000, 10),
-    // /clear: totalStock collapses → new segment (uuid-less fallback)
+    // /clear: totalStock collapses past the floor → new segment
     asst('m4', 0, 5000, 10),
     asst('m5', 10000, 2000, 10),
     asst('m6', 20000, 2000, 10),

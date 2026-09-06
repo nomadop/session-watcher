@@ -81,7 +81,7 @@ A timer drives the pipeline at regular intervals:
 
 ### 4. Segmentation
 
-A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or by a totalStock drop when no topology is available.
+A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or, as a fallback, by a totalStock drop large relative to the stock itself — a reset replaces the whole conversation prefix, so a small dip is not one. The fallback judges that one quantity and nothing else: cache-read alone lags behind the context it stands for, and whether the prefix survived is a single question.
 
 On boundary: finalize settlement, archive the segment for history, and reset all metrics to initial state. This ensures the cost model always reflects the current context, not a mixture of old and new.
 
@@ -97,14 +97,14 @@ On termination or idle timeout: stop timers, close connections, archive the fina
 
 When a session ends, the agent can package its working context for the next session. The handoff mechanism bridges the gap between `/clear` (which destroys in-memory context) and the new session (which starts empty).
 
-1. The agent selects which file paths and symbols are essential for the next task — guided by the per-path token weights from B. It writes a structured summary (current state and intent, not history) and submits the package. The server persists this alongside a bookmark index: automatically selected conversation turning points that capture the session's work trajectory.
+1. The agent selects which file paths and symbols are essential for the next task — guided by the per-path token weights from B. It writes a structured summary (current state and intent, not history) and submits the package. The server persists this package on its own; nothing about the conversation is selected automatically.
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The bookmark index and recent user intents provide orientation: the agent can scan the trajectory of what was built and, when the summary leaves a gap, drill into specific turns for surrounding context.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 
 - **B recovers from disk state, not snapshots.** The handoff carries path references, not cached token counts. If a file was deleted or changed since prepare, B reflects reality — stale entries do not inflate the baseline.
 - **Hook injection eliminates manual token passing.** The user does not need to remember or copy a token. The hook discovers and injects it; the agent picks it up on the first interaction.
-- **Bookmark index preserves trajectory without bulk.** Instead of carrying full conversation history, the system selects turning points — decisions, corrections, direction changes — and makes them drillable on demand. This keeps the handoff package small while preserving the ability to recover critical context.
+- **Turn notes preserve trajectory without bulk.** Rather than predicting which turns will matter later, the system records every history turn at the moment the handoff is prepared — each with the note written for it, and a turn with no assistant work of its own recorded without one — then delivers the newest of them as a page under a fixed token budget. What does not fit stays reachable through the read tools instead of being guessed at up front, so the handoff package stays small without discarding the trail that led to it.

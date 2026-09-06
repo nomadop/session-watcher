@@ -111,3 +111,71 @@ test('residual: segmentReset clears residualByTool', () => {
   w.poll();
   assert.equal(w._residualByTool.size, 0, 'residual cleared on segment boundary');
 });
+
+// --- Task 3: tool outcome classification integration tests ---
+
+test('residual: failed Read (is_error) does NOT create a Path bucket', () => {
+  const path = tmpJsonl([
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
+      content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/repo/missing.js' } }] } },
+    { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'tu1', content: 'Error: file not found', is_error: true } ] } },
+    { type: 'assistant', uuid: 'a2', parentUuid: 'u1', message: { id: 'm2', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 15000, output_tokens: 5 }, content: [] } },
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  assert.equal(w._bRebuild.paths.has('/repo/missing.js'), false, 'failed Read does not create path bucket');
+});
+
+test('residual: empty Grep does not create Path events', () => {
+  const path = tmpJsonl([
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
+      content: [{ type: 'tool_use', id: 'tu1', name: 'Grep', input: { pattern: 'nonexistent' } }] } },
+    { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'tu1', content: 'No matches found' } ] } },
+    { type: 'assistant', uuid: 'a2', parentUuid: 'u1', message: { id: 'm2', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 15000, output_tokens: 5 }, content: [] } },
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  assert.equal(w._bRebuild.paths.size, 0, 'empty Grep creates no path entries');
+  assert.equal((w._segmentPathEvents || []).length, 0, 'empty Grep creates no path events');
+});
+
+test('residual: valid Read still creates the same path tokens', () => {
+  const content = Array.from({length: 20}, (_, i) => `${i+1}\tline ${i+1} content`).join('\n') + '\n';
+  const path = tmpJsonl([
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
+      content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/repo/good.js' } }] } },
+    { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'tu1', content } ] } },
+    { type: 'assistant', uuid: 'a2', parentUuid: 'u1', message: { id: 'm2', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 15000, output_tokens: 5 }, content: [] } },
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  assert.ok(w._bRebuild.paths.has('/repo/good.js'), 'valid Read creates path entry');
+  assert.ok(w._bRebuild.pathTotal('/repo/good.js') > 0, 'path has positive tokens');
+});
+
+test('residual: errored tool_result leaves B unchanged → no Path bucket', () => {
+  // An errored tool_result for a matched adapter should not create a path in B_rebuild.
+  // The classifier returns Residual for is_error:true regardless of adapter match.
+  const path = tmpJsonl([
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
+      content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'cat /repo/file.js' } }] } },
+    { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'tu1', content: 'cat: /repo/file.js: Permission denied', is_error: true } ] } },
+    { type: 'assistant', uuid: 'a2', parentUuid: 'u1', message: { id: 'm2', model: 'claude-opus-4-8',
+      usage: { cache_read_input_tokens: 15000, output_tokens: 5 }, content: [] } },
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  // Errored Bash cat → classifyResolvedToolOutcome returns Residual → B unchanged
+  assert.equal(w._bRebuild.paths.has('/repo/file.js'), false, 'errored cat leaves B unchanged');
+});

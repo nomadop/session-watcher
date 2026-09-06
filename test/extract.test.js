@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractUsage, providerOf, cRatioFor, contextWindowFor, ctpForModel } from '../lib/extract.js';
+import { extractUsage, providerOf, cRatioFor, contextWindowFor, ctpForModel, isUserTurnBoundary } from '../lib/extract.js';
 
 const claudeLine = {
   type: 'assistant', uuid: 'u1', isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
@@ -87,4 +87,21 @@ test('ctpForModel: prefix-matches calibrated models, falls back to default', () 
   assert.deepEqual(ctpForModel('gpt-5'), { ascii: 3.0, cjk: 1.0 }); // uncalibrated → DEFAULT_CTP
   assert.deepEqual(ctpForModel(''), { ascii: 3.0, cjk: 1.0 });
   assert.deepEqual(ctpForModel(undefined), { ascii: 3.0, cjk: 1.0 });
+});
+
+test('isUserTurnBoundary excludes a native compact summary', () => {
+  const entry = {
+    type: 'user',
+    isCompactSummary: true,
+    isVisibleInTranscriptOnly: true,
+    message: { role: 'user', content: 'This session is being continued from a previous conversation…' },
+  };
+  assert.equal(isUserTurnBoundary(entry), false);
+});
+
+test('isUserTurnBoundary still accepts a real user string after the compact case', () => {
+  assert.equal(isUserTurnBoundary({
+    type: 'user',
+    message: { role: 'user', content: '开始写 plan' },
+  }), true);
 });

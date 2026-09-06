@@ -96,8 +96,8 @@ test('getBucketData: defaultSelected annotation + bDefault excludes gitignored p
         { type: 'tool_use', id: 't3', name: 'Skill', input: { skill: 'brainstorming' } },
       ] } },
     { type: 'user', uuid: 'u1', parentUuid: 'a1', message: { content: [
-      { type: 'tool_result', tool_use_id: 't1', content: 'const app = 1;\n'.repeat(50) },
-      { type: 'tool_result', tool_use_id: 't2', content: 'module.exports = {};\n'.repeat(200) },
+      { type: 'tool_result', tool_use_id: 't1', content: Array.from({length: 50}, (_, i) => `${i+1}\tconst app = 1;`).join('\n') + '\n' },
+      { type: 'tool_result', tool_use_id: 't2', content: Array.from({length: 200}, (_, i) => `${i+1}\tmodule.exports = {};`).join('\n') + '\n' },
       { type: 'tool_result', tool_use_id: 't3', content: 'Launching skill: brainstorming' },
     ] } },
     { type: 'user', uuid: 'u2', parentUuid: 'u1', isMeta: true, sourceToolUseID: 't3',

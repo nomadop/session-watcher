@@ -1,17 +1,25 @@
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-let proc, base;
+let proc, base, tmp;
 test.beforeAll(async () => {
+  tmp = mkdtempSync(join(tmpdir(), 'sw-e2e-dash-'));
+  // server.js reaches its entrypoint guard here and builds a real store and state file.
+  // Without a HOME and SW_STATE_DIR of their own they would land in the developer's live
+  // ~/.session-watcher, and the SIGTERM below would run cleanup() and unlink the state file of
+  // whichever session owns that id.
   proc = spawn('node', ['server.js', '--project', 'fixtures/host/.claude/projects/C--Users-nomad-freshtrack', '--lbase', '42000', '--port', '0'],
-    { env: { ...process.env, SW_NO_OPEN: '1' } });
+    { env: { PATH: process.env.PATH, HOME: join(tmp, 'home'), SW_STATE_DIR: join(tmp, 'state'), SW_NO_OPEN: '1' } });
   const port = await new Promise((resolve, reject) => {
     let buf = ''; const t = setTimeout(() => reject(new Error('timeout')), 10000);
     proc.stdout.on('data', d => { buf += d; const m = buf.match(/PORT=(\d+)/); if (m) { clearTimeout(t); resolve(m[1]); } });
   });
   base = `http://localhost:${port}`;
 });
-test.afterAll(() => { proc?.kill('SIGTERM'); });
+test.afterAll(() => { proc?.kill('SIGTERM'); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 // Task 2 (frontend redesign): the old single-file dashboard (#decisionChart, #paybackChart,
 // #statusbar, #lline, #stats, #stop-banner, window.__SW_decisionChart) is retired wholesale —

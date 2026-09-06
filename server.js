@@ -5,19 +5,19 @@ import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, extname, isAbsolute } from 'node:path';
-import { readdirSync, statSync, readFileSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync, writeFileSync, realpathSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync, writeFileSync, appendFileSync, rmSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomInt } from 'node:crypto';
 import { SessionWatcher } from './lib/watcher.js';
 import { advanceRateLampToCurrent, mergeLedgerIntoStatus, enrichStatusLandmarks, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
 import { stateKeyForStatus } from './lib/rate-lamp-store.js';
-import { IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_TOKEN_MAX_RETRIES, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_TASK_PREVIEW_CHARS } from './lib/constants.js';
+import { IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_TOKEN_MAX_RETRIES, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, DEFAULT_CTP } from './lib/constants.js';
 import { resolveProjectKey } from './lib/project-key.js';
 import { initStore, closeStoreGlobal, getStore } from './lib/store.js';
 import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
 import { cRatioFor } from './lib/extract.js';
 import { loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput } from './lib/pricing-store.js';
-import { sweepStaleState, sweepStalePortFiles } from './lib/state-reaper.js';
+import { sweepStaleState, sweepStalePortFiles, sweepStaleTurnNotes } from './lib/state-reaper.js';
 import {
   formatLine,
 } from './lib/statusline-format.js';
@@ -29,8 +29,20 @@ import { nucleus } from './lib/landmarks.js';
 import { charsToTokens, canonicalizePath } from './lib/measure.js';
 import { generateLoadToken, redactSecrets, normalizeKeepPath, cjkBigrams, buildFtsMatch, hashFileContent, HASH_MAX_BYTES } from './lib/handoff.js';
 import { PLUGIN_VERSION } from './lib/version.js';
-import { buildBookmarkIndex, buildBookmarkDetail } from './lib/bookmark.js';
+import { readCanonicalTranscript, enumerateLines } from './lib/dialogue-fold.js';
+import { groupTurns, buildSkeleton, snapshotDigest, storedUText, buildSearchTerms, parseNoteSections, renderNoteSections, slotKeysOf, TURN_NOTE_PROTOCOL } from './lib/turn.js';
+import { createBookmarkService } from './lib/bookmark-service.js';
+import { resolveDetailTarget, buildBookmarkDetail, DETAIL_NOTICE } from './lib/bookmark-detail.js';
+import { parseBookmarkId, BOOKMARK_PREVIEW_CHARS } from './lib/bookmark-core.js';
 import { isGrammarLoaded, isSupported, canExtract, REGEX_EXTS, buildSymbolRanges, resolveSymbolLines, loadGrammar } from './lib/symbol-outline.js';
+import { fromHandoff, forLoadedHandoff } from './lib/lineage.js';
+import {
+  NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE,
+  withPageRecovery, withSearchRecovery, withLocateRecovery,
+} from './lib/turn-tool-recovery.js';
+import { buildTurnPage } from './lib/turn-page.js';
+import { buildTurnBrowse } from './lib/turn-browse.js';
+import { searchTranscripts, locateRanges, parseScope } from './lib/turn-query.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -131,7 +143,7 @@ function resolveSymbolsForLoad(relPath, symbolRanges, projectDir) {
 }
 
 // R1-H: safe-parse — a single corrupt row must not 500 the endpoint.
-async function formatHandoffFull(h) {
+async function formatHandoffCore(h) {
   let parsed;
   try { parsed = JSON.parse(h.pathsToKeep || '{}'); }
   catch { return { found: false, status: 'error', error: 'corrupt_handoff' }; }
@@ -157,24 +169,9 @@ async function formatHandoffFull(h) {
   });
   const skills = Array.isArray(parsed) ? undefined : (parsed.skills?.length ? parsed.skills : undefined);
   const out = { found: true, handoff_id: h.handoffId, load_token: h.loadToken, created_at: h.createdAt,
-    summary: h.summary, next_task: h.nextTask, paths_to_keep: paths };
+    summary: h.summary, paths_to_keep: paths };
   if (h.projectId) out.project_dir = h.projectId;
   if (skills) out.skills_to_keep = skills;
-
-  // Bookmark index: derive from transcript at load time (graceful degradation)
-  if (h.transcriptPath) {
-    try {
-      const { bookmarkIndex, recentUserIntents } = buildBookmarkIndex(h.transcriptPath);
-      out.bookmark_index = bookmarkIndex;
-      out.recent_user_intents = recentUserIntents;
-    } catch {
-      out.bookmark_index = [];
-      out.recent_user_intents = [];
-    }
-  } else {
-    out.bookmark_index = [];
-    out.recent_user_intents = [];
-  }
 
   return out;
 }
@@ -281,25 +278,82 @@ export function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
   return sseClientsSize === 0 && (now - lastRequestMono) > IDLE_SHUTDOWN_MS;
 }
 
+// The `q` rule of both turn query routes: a present, non-blank literal of at most
+// BOOKMARK_PREVIEW_CHARS UTF-16 characters. That cap is what makes a search hit's excerpt able to
+// contain q whole, and locate answers to the same rule rather than a second one. Every rejection is
+// 400 { error: 'invalid_query' } — a missing q is never read as match-all.
+const isValidTurnQuery = (q) =>
+  typeof q === 'string' && q.trim() !== '' && q.length <= BOOKMARK_PREVIEW_CHARS;
+
 // Factory: build an http.Server around an existing watcher (used by tests and CLI).
-// Returns { app, server, sseClients, startPolling, stopTimers }. `server` is a real
-// node:http.Server so callers do server.listen(0)/server.address()/server.close().
-export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSessionId = null, onIdleShutdown = null, projectsRoot = null, stateDir = null, publicDir = join(__dirname, 'public'), store = null, disableTelemetrySweep = false }) {
+// Returns { app, server, sseClients, startPolling, stopTimers, turnService, turnReadService }. `server`
+// is a real node:http.Server so callers do server.listen(0)/server.address()/server.close().
+// `turnService` and `turnReadService` are exposed for in-process MCP reuse — index.js cannot reach a
+// closure, and the turn tools deliberately have no HTTP route to fetch.
+export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSessionId = null, onIdleShutdown = null, projectsRoot = null, stateDir = null, publicDir = join(__dirname, 'public'), store = null, disableTelemetrySweep = false, bookmarkService: injectedBookmarkService = null, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage }) {
   const app = express();
   const startMs = Date.now();
   const sseClients = new Set();
   const server = createHttpServer(app);
   // Store resolution (test-injection seam): production passes no `store` and every call site falls
   // through to the module-level `getStore()` singleton — identical to the pre-injection behavior.
-  // Resolution is LAZY (per call site, not once here): production invokes createServer() BEFORE
-  // initStore() (see index.js / the CLI entry), so resolving eagerly here would throw "Store not
-  // initialized". Every getStore() call site is inside a route handler or the poll-timer tick, which
-  // only run after listen()→initStore(), so `resolveStore()` always sees an initialized store. Tests
-  // that need two independent connections on the same DB file (bootSecondConsumer) inject their own
-  // openStore() handle so the two app instances do NOT share the global singleton. NOTE: the FOLD
-  // archival path (lib/fold.js handleSegmentBoundary → getStore()) is NOT threaded by this seam — an
-  // injected store covers only the server's own reads/writes (prepare/load, profile_snapshot save).
+  // Resolution is LAZY (per call site, not once here) for the seam's sake, not for boot order: every
+  // caller that reaches this factory outside a test — index.js, the CLI entry below, and
+  // lib/replay-server.js — calls initStore() first, so an eager `store || getStore()` would find the
+  // singleton ready in production. It would not in a test that needs no store at all:
+  // test/server.test.js and test/server.poll-loop.test.js boot the app with neither an injected store
+  // nor initStore(), and an eager resolve would throw "Store not initialized" at construction instead
+  // of only on the routes that actually read the store. Tests that need two
+  // independent connections on the same DB file (bootSecondConsumer) inject their own openStore()
+  // handle so the two app instances do NOT share the global singleton. NOTE: the FOLD archival path
+  // (lib/fold.js handleSegmentBoundary → getStore()), which the eager watcher.poll() below already
+  // reaches, is NOT threaded by this seam — an injected store covers only the server's own
+  // reads/writes (prepare/load, profile_snapshot save).
   const resolveStore = () => store || getStore();
+
+  // ── Bookmark service ─────────────────────────────────────────────────────────
+  // Injected service wins (test seam for failure-isolation tests); otherwise construct fresh.
+  // Deps are closures over watcher/currentSessionId/resolveStore so they always reflect live state.
+  const bookmarkService = injectedBookmarkService || createBookmarkService({
+    get store() { return resolveStore(); },
+    currentProjectId: () => watcher._projectId || null,
+    currentSessionId: () => currentSessionId,
+    currentTranscriptPath: () => watcher.path || null,
+    currentCtp: () => watcher._ctp || { ascii: 3.5, cjk: 1.5 },
+    warn: (message) => { if (process.env.SW_DEBUG) console.error('[bookmark-warn]', message); },
+  });
+
+  // ── turnPageWire ─────────────────────────────────────────────────────────────
+  // Maps buildTurnPage's internal { turnPage, nextBefore } to the wire shape. The cursor travels bare:
+  // load injection, GET /api/turn/page and the turn_page MCP tool all call this, so all three are
+  // byte-identical for one head and one persisted state. `before` is the route's own public input, so
+  // input and output are symmetric and no second address representation is introduced.
+  function turnPageWire({ turnPage, nextBefore }) {
+    return {
+      turn_page: turnPage,
+      ...(nextBefore ? { next_before: nextBefore } : {}),
+    };
+  }
+
+  // ── formatLoadedHandoff ──────────────────────────────────────────────────────
+  // Wraps formatHandoffCore for token-resolved + single auto-resolved successful loads. Injects the turn
+  // page; degrades gracefully if page construction fails. It mints no URLs: the three read tools resolve
+  // this session's lineage themselves, so handing out a capability URL would only offer a second door.
+  const detailUrlFor = (req) =>
+    `http://127.0.0.1:${req.socket.localPort}/api/bookmark/detail`;
+
+  const formatLoadedHandoff = async (h) => {
+    const core = await formatHandoffCore(h);
+    if (!core.found) return core;
+    try {
+      const lineage = fromHandoff({ store: resolveStore(), handoffId: h.handoffId });
+      return { ...core, ...turnPageWire(injectedTurnPageBuilder({ store: resolveStore(), lineage })) };
+    } catch (err) {
+      if (process.env.SW_DEBUG) console.error('[turn_page_load]', err?.message || err);
+      return { ...core, turn_page_error: 'turn_page_unavailable' };
+    }
+  };
+
   // activeWatcher: routes read from this. Normally === watcher; during replay of a
   // different transcript, may point to a temporary fully-processed watcher.
   let activeWatcher = watcher;
@@ -310,7 +364,17 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   // Initial scan so the very first /api/status and /api/history are populated
   // (tests and the CLI both rely on this; without it /api/history returns []).
-  try { watcher.poll(); } catch { /* empty/missing transcript → status stays in calibrating */ }
+  // This poll folds the transcript from byte 0, so every segment boundary it crosses reconstructs an
+  // epoch that already ended — a replay, not an observation. `_replayMode` is what carries that to
+  // handleSegmentBoundary (archiveSource 'replay' / capture_source 'cc-replay'); foldCall's own
+  // boundaries pass replayMode:false and cannot distinguish the two. The flag is restored in `finally`
+  // to whatever the caller had set, because the poll ticks startPolling() drives after this ARE live.
+  // Pinned by test/server.startup-fold-provenance.test.js.
+  const wasReplayMode = watcher._replayMode;
+  watcher._replayMode = true;
+  try { watcher.poll(); }
+  catch { /* empty/missing transcript → status stays in calibrating */ }
+  finally { watcher._replayMode = wasReplayMode; }
 
   // #7: /api/health doubles as an IDENTITY proof for the MCP launcher. It returns pid + startedAt so
   // stopWatcher can confirm the process listening on this port is genuinely OUR server before it ever
@@ -793,9 +857,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         if (!load_token) return res.status(500).json({ status: 'error', error: 'token_collision' });
       }
 
-      const carry_over_pct = bDefault > 0 ? (kept_tokens / bDefault) * 100 : 0;
       const out = { status: 'ready', load_token, kept_paths: keptEntries.length, kept_tokens,
-        discarded_tokens, summary_tokens, carry_over_pct: Math.round(carry_over_pct * 10) / 10,
+        discarded_tokens, summary_tokens,
         unknown_paths, invalid_paths,
         instruction: `Handoff prepared. Token: ${load_token}. Please /clear when ready.` };
       if (resolved_paths.length) out.resolved_paths = resolved_paths;
@@ -843,8 +906,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       if (load_token) {
         const h = resolveStore().loadHandoffByToken(String(load_token), { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
         if (!h) return res.json({ found: false });
+        if (h.ok === false && h.error === 'handoff_delivery_unavailable') return res.status(503).json({ error: 'handoff_delivery_unavailable', retryable: true });
         stampLoadHashesIfPrimary(h);
-        return res.json(await formatHandoffFull(h));   // formatHandoffFull re-reads/derives the response; projects entries
+        return res.json(await formatLoadedHandoff(h));
       }
 
       // Path 3: query/search → never stamps
@@ -865,34 +929,233 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       const { rows, ambiguous } = resolveStore().loadHandoffByProject(watcher._projectId, currentSessionId, { ttlMs });
       if (rows.length === 0) return res.json({ found: false });
       if (ambiguous) {
+        // auto-match 的歧义清单：本项目有多个未投递 handoff 都匹配，谁都不该被盖章，所以这里提前返回、
+        // 由调用方指名一个 load_token 取走。同一路由的 free-text 分支答的是 results 且字段不同，而这个
+        // 文件里 candidates 还指 path 快照的候选集（total_candidates）—— 同名，互不相干的协议。
         return res.json({ found: false, ambiguous: true,
           candidates: rows.map(r => ({ load_token: r.loadToken, created_at: r.createdAt, next_task_preview: r.nextTask ? r.nextTask.slice(0, HANDOFF_HOOK_TASK_PREVIEW_CHARS) : null })) });
       }
       // Single unambiguous result — stamp and return full
       const h = resolveStore().loadHandoffByToken(rows[0].loadToken, { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
       if (!h) return res.json({ found: false });
+      if (h.ok === false && h.error === 'handoff_delivery_unavailable') return res.status(503).json({ error: 'handoff_delivery_unavailable', retryable: true });
       stampLoadHashesIfPrimary(h);
-      return res.json(await formatHandoffFull(h));
+      return res.json(await formatLoadedHandoff(h));
     } catch (e) { next(e); }
   });
 
+  // ── Turn page REST route ──────────────────────────────────────────────────────
+
+  // GET /api/turn/page — one page of history turns for an explicit lineage head.
+  // `lineage_head` is the handoff_id that anchors the lineage; `before` is an optional S{k}:{T} cursor.
+  // The route does not read watcher._projectId: lineage scope comes from the handoff row's own project,
+  // so an explicit head resolves the same way no matter which project asks for it.
+  app.get('/api/turn/page', (req, res, next) => {
+    try {
+      const headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
+      // Lineage resolution is INSIDE this try, matching the load path where fromHandoff sits inside the
+      // turn-page try and degrades to turn_page_error. A store failure while walking the parent chain and
+      // one while building the page are the same turn-page projection failure, not an internal 500.
+      // An unresolvable head is still 404 — that return is not a throw, so this catch never sees it.
+      try {
+        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
+        const result = injectedTurnPageBuilder({
+          store: resolveStore(),
+          lineage,
+          before: req.query.before || null,
+        });
+        return res.json(turnPageWire(result));
+      } catch (err) {
+        if (err && err.code === 'not_found') return res.status(404).json({ error: 'not_found' });
+        // 每条 turn 路由自己兜住 503 后，终端 error boundary 再也看不到这些抛出 —— 所以三条 catch
+        // 各自接上它那条 SW_DEBUG 门控日志。只报成因：不带 q、页文本或转录路径，错误响应不夹带正文，
+        // 日志也不是它的后门。
+        if (process.env.SW_DEBUG) console.error('[turn_page]', err?.message || err);
+        return res.status(503).json({ error: 'turn_page_unavailable', retryable: true });
+      }
+    } catch (e) { next(e); }
+  });
+
+  // GET /api/turn/search — exact literal search over the canonical transcripts of one lineage.
+  // `q` is a literal, never a pattern; `scope` is an optional S{k}:{T} turn span. The response is always
+  // sized by BOOKMARK_TOKEN_BUDGET, so a `budget` parameter is ignored rather than rejected. The detail
+  // base URL is generated once here and handed to the search operation, which measures it as part of
+  // every candidate and returns the finished response.
+  app.get('/api/turn/search', (req, res, next) => {
+    try {
+      const headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
+      // Lineage resolution is INSIDE this try, as on the page route: a store failure while walking the
+      // parent chain leaves this route unable to answer — a 503 the caller may retry, not an internal
+      // 500. Every 404 here is a `return`, never a throw, so widening the try cannot swallow one.
+      try {
+        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
+
+        if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
+        const scope = req.query.scope == null ? null : String(req.query.scope);
+        if (scope !== null && parseScope(scope) === null) return res.status(400).json({ error: 'invalid_scope' });
+
+        return res.json(searchTranscripts({
+          store: resolveStore(), lineage, q: req.query.q, scope,
+        }));
+      } catch (err) {
+        if (err && err.code === 'scope_not_found') return res.status(404).json({ error: 'scope_not_found' });
+        if (process.env.SW_DEBUG) console.error('[turn_search]', err?.message || err);
+        return res.status(503).json({ error: 'search_unavailable' });
+      }
+    } catch (e) { next(e); }
+  });
+
+  // GET /api/turn/locate — the persisted turn index of one lineage, resolved back onto the live
+  // active path. No `scope`: locate is what produces one. The response is a fixed pair of shapes whose
+  // size locate caps against the bookmark budget itself, so a `budget` parameter is ignored rather than
+  // rejected.
+  app.get('/api/turn/locate', (req, res, next) => {
+    try {
+      const headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
+      // Lineage resolution is INSIDE this try, as on the page route: a store failure while walking the
+      // parent chain leaves locate unable to answer — the same 503 an unusable turn FTS already
+      // returns. Every 404 here is a `return`, never a throw, so widening the try cannot swallow one.
+      try {
+        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
+        if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
+
+        return res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q }));
+      } catch (err) {
+        if (process.env.SW_DEBUG) console.error('[turn_locate]', err?.message || err);
+        return res.status(503).json({ error: 'locate_unavailable' });
+      }
+    } catch (e) { next(e); }
+  });
+
+  // ── Turn browse REST route ────────────────────────────────────────────────────
+
+  // GET /api/turn/browse — the whole-lineage browse snapshot behind the dashboard's History drawer.
+  // It takes NO parameters: the head is the newest handoff delivered into THIS session, resolved by
+  // the same forLoadedHandoff walk the three MCP read tools use, so an `S{k}` a drawer prints and one
+  // an agent reports name the same session. A browser has no handoff id to send, and accepting one
+  // would keep the head in two places at once.
+  //
+  // Below that label the two faces diverge and are meant to. The page opens session transcripts up to
+  // its budget ceiling, addresses records by their active-path ordinal where the source is readable,
+  // drops abandoned anchors and fits itself to the ceiling isWithinBookmarkBudget enforces. This
+  // response opens nothing, carries no address and returns every stored row, because a person scrolls
+  // and searches a list where an agent reads a window.
+  app.get('/api/turn/browse', (req, res) => {
+    // A session that has loaded nothing yields an empty lineage, and an empty snapshot is a SUCCESS
+    // value, matching the success semantics of an empty turn page. There is no address a
+    // caller could have got wrong here, so this route has no 404 at all.
+    const store = resolveStore();
+    const lineage = forLoadedHandoff({ store, sessionId: currentSessionId });
+    const { sections } = buildTurnBrowse({ store, lineage });
+    return res.json({ sections });
+  });
+
+  // ── Bookmark REST routes ───────────────────────────────────────────────────
+
+  // GET /api/bookmark/messages — list all messages in applicable lineage with bookmark status
+  app.get('/api/bookmark/messages', (req, res, next) => {
+    try {
+      const detailUrl = detailUrlFor(req);
+      const result = bookmarkService.listMessages({ detailUrl });
+      res.json(result);
+    } catch (e) { next(e); }
+  });
+
+  // PUT /api/bookmark — add or remove a bookmark via desired-state
+  app.put('/api/bookmark', (req, res, next) => {
+    try {
+      const body = req.body || {};
+      // Validate: only identity + boolean (add, anchor_uuid, source_session_id)
+      const ALLOWED = new Set(['add', 'anchor_uuid', 'source_session_id']);
+      const keys = Object.keys(body);
+      if (keys.some(k => !ALLOWED.has(k)) || typeof body.add !== 'boolean'
+          || typeof body.anchor_uuid !== 'string' || typeof body.source_session_id !== 'string') {
+        return res.status(400).json({ error: 'invalid_bookmark_request' });
+      }
+      const detailUrl = detailUrlFor(req);
+      const result = bookmarkService.setDesiredState(body, { detailUrl });
+      if (result.status === 'not_found') {
+        return res.status(404).json({ error: 'bookmark_target_not_found',
+          budget_used_tokens: result.budget_used_tokens, budget_limit_tokens: result.budget_limit_tokens });
+      }
+      if (result.status === 'budget_exceeded') {
+        return res.status(409).json({ error: 'bookmark_budget_exceeded',
+          budget_used_tokens: result.budget_used_tokens, budget_limit_tokens: result.budget_limit_tokens });
+      }
+      res.json(result);
+    } catch (e) { next(e); }
+  });
+
+  // GET /api/bookmark/detail — drill-down detail for a bookmark anchor
   app.get('/api/bookmark/detail', (req, res, next) => {
     try {
-      const { load_token, turn_index, full_text } = req.query;
-      if (!load_token || turn_index == null || turn_index === '') {
-        return res.status(400).json({ error: 'load_token and turn_index required' });
-      }
-      const idx = Number(turn_index);
-      if (!Number.isSafeInteger(idx) || idx < 0) {
-        return res.status(400).json({ error: 'invalid_turn_index' });
-      }
-      const h = resolveStore().loadHandoffByToken(String(load_token));
-      if (!h) return res.json({ found: false });
-      if (!h.transcriptPath) return res.json({ found: false, error: 'no_transcript' });
+      const { bookmark_id, source_session_id, anchor_uuid, with_context } = req.query;
 
-      const result = buildBookmarkDetail(h.transcriptPath, idx, full_text === 'true');
-      if (!result) return res.json({ found: false, error: 'turn_not_found' });
-      return res.json({ found: true, ...result });
+      // Validate with_context — must be literal 'true' or 'false'
+      if (with_context !== 'true' && with_context !== 'false') {
+        return res.status(400).json({ error: 'invalid_with_context' });
+      }
+
+      // Validate locator: exactly one of bookmark_id or identity pair
+      const hasId = bookmark_id != null && bookmark_id !== '';
+      const hasSid = source_session_id != null && source_session_id !== '';
+      const hasAnchor = anchor_uuid != null && anchor_uuid !== '';
+      const hasIdentity = hasSid || hasAnchor;
+
+      if (hasId && hasIdentity) {
+        return res.status(400).json({ error: 'invalid_bookmark_locator' });
+      }
+      if (!hasId && !hasIdentity) {
+        return res.status(400).json({ error: 'invalid_bookmark_locator' });
+      }
+      // Identity mode: both fields required
+      if (!hasId && !(hasSid && hasAnchor)) {
+        return res.status(400).json({ error: 'invalid_bookmark_locator' });
+      }
+
+      // Validate ID format for ID-mode
+      if (hasId) {
+        // normalizeLocatorId: strip B/b prefix, then parseBookmarkId
+        const rawId = String(bookmark_id).trim();
+        const stripped = /^[Bb](\d+)$/.test(rawId) ? rawId.slice(1) : rawId;
+        const parsed = parseBookmarkId(stripped);
+        if (parsed == null) {
+          return res.status(400).json({ error: 'invalid_bookmark_id' });
+        }
+      }
+
+      // Build locator
+      const locator = hasId
+        ? { bookmark_id: String(bookmark_id) }
+        : { source_session_id: String(source_session_id), anchor_uuid: String(anchor_uuid) };
+
+      const target = resolveDetailTarget({
+        store: resolveStore(),
+        projectId: watcher._projectId || null,
+        currentSessionId,
+        currentTranscriptPath: watcher.path || null,
+        locator,
+      });
+
+      if (!target.found) {
+        return res.json({ found: false });
+      }
+
+      const withCtx = with_context === 'true';
+      const detail = buildBookmarkDetail({
+        transcriptPath: target.transcriptPath,
+        sourceSessionId: target.sourceSessionId,
+        anchorUuid: target.anchorUuid,
+        withContext: withCtx,
+      });
+
+      return res.json(detail);
     } catch (e) { next(e); }
   });
 
@@ -1193,6 +1456,22 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       // Express boundary covers a bare setTimeout). Threading it through Promise.resolve().then() turns
       // any such throw into a rejection the .catch() below swallows — the daemon-never-crashes invariant.
       Promise.resolve()
+        // The turn-note age fallback rides this timer rather than one of its own: it is pure fs with no
+        // store dependency, so it needs neither the defer nor the chain, but a second startup timer would
+        // buy nothing. It reads `effectiveStateDir` — the same reference getTurnSkeleton writes the pair
+        // under, so an injected state dir sweeps itself instead of the real install.
+        //
+        // Chained FIRST for short-circuiting, not for latency: a rejection anywhere in this chain skips
+        // every later link, so chaining the sweep last would let a backfill failure cancel it. The cost is
+        // the mirror image — a throw out of the sweep skips the backfill for this process start, and the
+        // shared .catch below prints it under `[telemetry-sweep]`, naming the wrong sweep. That is
+        // currently unreachable: nothing ahead of sweepStaleTurnNotes' per-directory try can throw on a
+        // string, and `effectiveStateDir` is always one. Logged on every run rather than only on a non-zero
+        // count, so "ran, swept nothing" stays distinguishable from "never ran".
+        .then(() => {
+          const swept = sweepStaleTurnNotes(effectiveStateDir);
+          if (process.env.SW_DEBUG) console.error('[turn-notes-sweep]', swept);
+        })
         .then(() => resolveStore().backfillPendingTelemetry({
           resolveTranscript: (sid) => resolveBySessionId(projectsRoot, sid),
           replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, { store: resolveStore() }),
@@ -1205,9 +1484,264 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     sweepTimer.unref();   // never keep the process alive for the sweep
   }
 
+  // ── Turn service ─────────────────────────────────────────────────────────────
+  // The production capture boundary behind get_turn_skeleton / submit_turn_notes. Kept off the HTTP
+  // surface and off `prepare_handoff`: the prepare handler gains no note-state query, pre-rejection or
+  // shared transaction from this, so calling it directly still honors its existing contract. Ordering
+  // the two calls is the sw-handoff skill's job, not the server's.
+
+  // BOTH entry points read through this one function, so getTurnSkeleton and submitTurnNotes always see
+  // the identical capture: same reader mode, same enumeration, same boundary rule.
+  function captureTurns() {
+    const transcript = readCanonicalTranscript(watcher.path, { afterLatestCompact: true });
+    return {
+      // A failed read degrades to zero folds, which is indistinguishable downstream from a genuinely
+      // empty epoch — so the read status travels with the capture and both entry points decide on it.
+      status: transcript.status,
+      // The last turn is the one that is asking for the skeleton; it is excluded whole, so a tool pair
+      // appended to it while the producer writes notes cannot move the fingerprint.
+      turns: groupTurns(enumerateLines(transcript)).slice(0, -1),
+      // resolveToolUse resolves a relative tool path against this; a null cwd would index `lib/store.js`
+      // as `/lib/store.js`, so it falls back the same way every other path consumer here does.
+      cwd: watcher.cwd || process.cwd(),
+    };
+  }
+
+  // The two files' one address, derived here and nowhere else: no caller supplies a path and no
+  // consumer rebuilds a name by convention. The key is the Context Epoch — the capturing session plus
+  // the epoch's first anchor — rather than the Snapshot Fingerprint, so a re-fetch after the epoch
+  // grew still finds the notes already written; a fingerprint would rename the file on every new turn.
+  // Neither name ends in `.json`: lib/probe.js, lib/launcher.js and lib/state-reaper.js each read every
+  // `.json` in the state dir as a port or state record and JSON.parse it. A subdirectory keeps them
+  // out of that scan entirely and lets one rmSync retire the pair.
+  function turnNotePaths(turns) {
+    const dir = join(effectiveStateDir, 'turn-notes',
+      `${safeSessionId(currentSessionId)}-${safeSessionId(turns[0]?.anchorUuid ?? 'empty')}`);
+    return { dir, skeletonPath: join(dir, 'skeleton.txt'), notesPath: join(dir, 'notes.md') };
+  }
+
+  const readNotesFile = (notesPath) => {
+    try { return readFileSync(notesPath, 'utf8'); } catch { return null; }
+  };
+
+  // This session's rows by anchor. The store is the DURABLE copy of a committed epoch's notes: the notes
+  // file is retired the moment those rows land, while the next handoff in the same session keeps the epoch
+  // key and therefore lands on that same, now absent, path. Both read points consult this. `has` carries
+  // the coverage judgement — every captured turn gets a row — and `get` carries the note itself, a
+  // note-less turn's legitimate null included.
+  const storedNotes = () => new Map(
+    resolveStore().listTurnNotes(currentSessionId).map(row => [row.anchorUuid, row.note]));
+
+  function getTurnSkeleton() {
+    const { status, turns, cwd } = captureTurns();
+    // Throwing rather than reporting: the success shape carries no way to say "the source could not be
+    // read", and a zero-turn skeleton reads as a legitimate empty epoch whose submission would commit
+    // nothing. test/server.turn.test.js `绝不出现「成功 + 零行」` pins it with the rejection below.
+    if (status !== 'ok') throw new Error('transcript is not readable; no turn skeleton can be captured');
+    const { dir, skeletonPath, notesPath } = turnNotePaths(turns);
+    mkdirSync(dir, { recursive: true });
+    // Read BEFORE writing anything. Every write in here refreshes an mtime, and sweepStaleTurnNotes ages a
+    // directory by the newest mtime inside it — so a fetch that threw after rewriting skeleton.txt would
+    // make an already-expired directory unreapable, and a caller retrying against a broken notes path would
+    // pin an unredacted projection on disk for as long as it kept retrying. Reading first leaves every
+    // mtime where it was. mkdirSync above is safe in this position: on an existing directory it is a no-op
+    // and moves nothing.
+    // ENOENT is the only read failure that means "no notes yet". Any other one leaves a file whose
+    // bodies are the producer's while telling us nothing about them, and the branch below would replace
+    // it — so this reports instead, the same way an unreadable transcript does.
+    let existing = null;
+    try { existing = readFileSync(notesPath, 'utf8'); }
+    catch (error) {
+      if (error?.code !== 'ENOENT') throw new Error(`turn notes file cannot be read: ${notesPath}`);
+    }
+    // Read with the other read and ahead of every write, for the mtime reason above: a throw out of it
+    // must leave the directory reapable. Unguarded on purpose — a store that cannot be read cannot accept
+    // the submission this skeleton exists for, so degrading to an empty document would cost the producer
+    // the notes it already wrote and buy nothing.
+    const stored = storedNotes();
+    // The skeleton is entirely this function's own output, so it is rewritten whole.
+    writeFileSync(skeletonPath, buildSkeleton(turns, currentSessionId, cwd));
+    // The notes file is not. It is APPEND-ONLY from here: a heading is added for a slot that has none,
+    // and nothing already in the file is rewritten or reordered. That is what makes a re-fetch cost the
+    // producer nothing it already wrote — and it holds for a body under a mangled heading and for a
+    // section whose turn a rewound boundary removed, neither of which this server authored.
+    const { sections } = parseNoteSections(existing, slotKeysOf(turns));
+    const missing = slotKeysOf(turns).filter(key => !sections.has(key));
+    // A slot the file has no section for is prefilled with its turn's stored note, so a fetch after a
+    // commit hands the producer back what is already durable rather than an empty heading. Only `missing`
+    // keys are rendered, so this stays inside the append-only rule: a slot the file already carries keeps
+    // its own body, in its own place.
+    // Filtering on the note and not on the row loses no slot, unlike the coverage gate below: a slot's
+    // stored note is never empty. The submission that stored it rejected an empty body as
+    // `missing note for this NOTE slot`, and hasAssistantActivity settles once a later turn opens — which
+    // had already happened for every turn that submission covered — so a turn cannot become a slot after
+    // the fact. A null note therefore belongs to a turn with no slot, which asks for no heading here.
+    const prefill = new Map(turns
+      .filter(turn => stored.get(turn.anchorUuid))
+      .map(turn => [String(turn.t), stored.get(turn.anchorUuid)]));
+    if (existing == null) writeFileSync(notesPath, renderNoteSections(missing, prefill));
+    else if (missing.length > 0) {
+      appendFileSync(notesPath,
+        `${existing.endsWith('\n') ? '' : '\n'}\n${renderNoteSections(missing, prefill)}`);
+    }
+    return {
+      snapshot_id: snapshotDigest(turns, cwd),
+      skeleton_path: skeletonPath,
+      notes_path: notesPath,
+      protocol: TURN_NOTE_PROTOCOL,
+    };
+  }
+
+  function submitTurnNotes({ snapshot_id }) {
+    const { status, turns, cwd } = captureTurns();
+    // Ahead of the fingerprint on purpose: an unreadable source has an empty capture whose digest a
+    // caller can reproduce, so checking identity first would let the empty submission through. An
+    // invalid source identity is an invalid_snapshot; test/server.turn.test.js
+    // `绝不出现「成功 + 零行」` pins this rejection together with the throw above.
+    if (status !== 'ok') return { committed: false, error: 'invalid_snapshot' };
+    if (snapshotDigest(turns, cwd) !== snapshot_id) return { committed: false, error: 'stale_snapshot' };
+
+    // Source fields first: a row is keyed on (session, anchor) and ordered on source_timestamp, so a
+    // missing timestamp or a repeated anchor makes the whole batch unstorable — reject it as a snapshot
+    // fault rather than letting the UNIQUE constraint decide halfway through the write.
+    const anchors = new Set();
+    for (const turn of turns) {
+      if (!turn.anchorUuid || turn.anchorTimestamp == null) return { committed: false, error: 'invalid_snapshot' };
+      if (anchors.has(turn.anchorUuid)) return { committed: false, error: 'invalid_snapshot' };
+      anchors.add(turn.anchorUuid);
+    }
+
+    const slots = slotKeysOf(turns);
+    const { dir, notesPath } = turnNotePaths(turns);
+    // Validation is COVERAGE, not correspondence: every slot this capture asks for must carry a note, and
+    // the file may hold anything else. Rejecting an extra section produced the one `invalid_notes` no
+    // amount of note-writing could clear — a rewind drops a turn from the active path while the epoch key,
+    // and with it the notes file, stays the same, so the section for the dropped turn stays behind; the
+    // file is append-only from here, so nothing could remove it, and the epoch key's stability meant every
+    // later handoff in that epoch hit the same rejection. Passing `slots` into the parser is what keeps the
+    // write path honest as well: a non-slot heading is never a section, so no row can be keyed on one. Its
+    // bytes are not discarded either — they ride along inside the preceding slot's body.
+    //
+    // A file that is absent, unreadable or structurally wrong needs no failure class of its own: it
+    // yields no section for a slot, and that is already `missing note`. So the four codes stay closed
+    // and every issue keeps a numeric `t` the producer can act on.
+    const { sections, issues } = parseNoteSections(readNotesFile(notesPath), slots);
+    // Guarded, unlike the skeleton's read of the same thing: this function's failure set is closed, so a
+    // read failure takes the retryable class the write failure already takes rather than minting a code
+    // or throwing out of a function whose contract has no throw in it.
+    let stored;
+    try { stored = storedNotes(); }
+    catch (error) {
+      // Diagnostics only — the wire already says retryable, the same way the write failure below does.
+      if (process.env.SW_DEBUG) console.error('[turn-note-read]', error?.message || error);
+      return { committed: false, error: 'storage_unavailable', retryable: true };
+    }
+    // A slot is covered by a section in the file OR by a row the store already holds for its turn — that
+    // is what makes a re-submitted epoch commit once its directory has been retired. The judgement is the
+    // ROW's existence and never its note's content: a note-less turn's note is a legitimate null, so
+    // reading content here would report such a slot missing forever, the one shape of invalid_notes no
+    // amount of note-writing can clear. A turn with no row at all is missing exactly as before.
+    const covered = new Set(turns.filter(turn => stored.has(turn.anchorUuid)).map(turn => String(turn.t)));
+    for (const key of slots) {
+      const note = sections.get(key);
+      if (!note) {
+        if (!covered.has(key)) issues.push({ t: Number(key), message: 'missing note for this NOTE slot' });
+        continue;
+      }
+      // Over the cap the submission is rejected whole; a note is never truncated. Only a note arriving
+      // from the file is measured — a stored one passed this same gate when it was first stored.
+      if (Math.round(charsToTokens(note, DEFAULT_CTP)) > NOTE_TOKEN_LIMIT) {
+        issues.push({ t: Number(key), message: `note exceeds ${NOTE_TOKEN_LIMIT} tokens` });
+      }
+    }
+    if (issues.length > 0) return { committed: false, error: 'invalid_notes', issues };
+
+    // Every captured turn gets a row, as `CONTEXT.md` Turn Record requires — a note-less turn's NULL is
+    // supplied here rather than inferred from the absence of a key, so the queue keeps its shape.
+    const rows = turns.map(turn => {
+      const { uText, uOriginalChars } = storedUText(turn.cleanedU);
+      // The file's section where it has one, else whatever is already stored: the file is the incoming
+      // edit and the store is the base, so a slot the store alone covers keeps its note instead of being
+      // blanked by a re-submission — idempotent rather than lossy.
+      const note = sections.get(String(turn.t)) || stored.get(turn.anchorUuid) || null;
+      return {
+        sourceSessionId: currentSessionId, anchorUuid: turn.anchorUuid, uText, uOriginalChars, note,
+        searchTerms: buildSearchTerms({ uText, note, turn, cwd }), sourceTimestamp: turn.anchorTimestamp,
+      };
+    });
+    try {
+      resolveStore().upsertTurnNotes(rows);
+    } catch (error) {
+      // Diagnostics only — the wire already says retryable. Staying silent would hide genuine DB damage.
+      if (process.env.SW_DEBUG) console.error('[turn-note-write]', error?.message || error);
+      return { committed: false, error: 'storage_unavailable', retryable: true };
+    }
+    // Only after the rows are in. A skeleton is an unredacted Turn History Projection, so a committed
+    // epoch's window closes here rather than waiting for sweepStaleTurnNotes — that sweep is the fallback
+    // for the routes which never reach this line, not the retirement path. And because
+    // storage_unavailable is retryable, deleting any earlier would destroy the notes the retry has to
+    // read back.
+    try { rmSync(dir, { recursive: true, force: true }); }
+    catch (error) { if (process.env.SW_DEBUG) console.error('[turn-note-cleanup]', error?.message || error); }
+    return { committed: true };
+  }
+
+  const turnService = { getTurnSkeleton, submitTurnNotes };
+
+  // ── Turn read service ────────────────────────────────────────────────────────
+  // The three read tools take no lineage identifier. forLoadedHandoff resolves the newest handoff
+  // delivered into THIS session and runs the same walk as the explicit-head HTTP routes. The page
+  // result is byte-identical; search and locate add only their tool-side recovery. Because the head
+  // is never a parameter, "you must have loaded a handoff" is a precondition the schema cannot express
+  // wrongly — there is no guessable integer to fabricate.
+  //
+  // An address the caller supplied that does not resolve is rethrown with its recovery as the message:
+  // the HTTP route answers 404 there, and 404 has no meaning over MCP, while turn_page_unavailable's
+  // "call again" would be wrong advice for a value that reproduces the same failure.
+  const turnReadService = {
+    turnPage({ before = null } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        return withPageRecovery(turnPageWire(injectedTurnPageBuilder({
+          store: resolveStore(), lineage, before: before || null,
+        })));
+      } catch (err) {
+        if (err && err.code === 'not_found') throw new Error(STALE_CURSOR_MESSAGE);
+        if (process.env.SW_DEBUG) console.error('[turn_page_tool]', err?.message || err);
+        return withPageRecovery({ error: 'turn_page_unavailable', retryable: true });
+      }
+    },
+
+    turnSearch({ q, scope = null } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        return withSearchRecovery(searchTranscripts({
+          store: resolveStore(), lineage, q, scope: scope || null,
+        }));
+      } catch (err) {
+        if (err && err.code === 'scope_not_found') throw new Error(SCOPE_ABSENT_MESSAGE);
+        if (process.env.SW_DEBUG) console.error('[turn_search_tool]', err?.message || err);
+        return withSearchRecovery({ error: 'search_unavailable' });
+      }
+    },
+
+    turnLocate({ q } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        return withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q }));
+      } catch (err) {
+        if (process.env.SW_DEBUG) console.error('[turn_locate_tool]', err?.message || err);
+        return withLocateRecovery({ error: 'locate_unavailable' });
+      }
+    },
+  };
+
   // #7: expose startMs as `startedAt` so the CLI writes the SAME timestamp to the state file that
   // /api/health reports — one source of truth for the identity handshake (health===stateFile).
-  return { app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio, stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); if (sweepTimer) clearTimeout(sweepTimer); }, doRotation, currentSessionId: () => currentSessionId };
+  return { app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio, stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); if (sweepTimer) clearTimeout(sweepTimer); }, doRotation, currentSessionId: () => currentSessionId, turnService, turnReadService };
 }
 
 // v2.2-C5b test-injection seams (A20): allow tests to inspect SSE client count and override the
@@ -1302,13 +1836,13 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
 
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown; // forward-declared for onIdleShutdown reference
+  try { initStore(); } catch (e) { console.error('[session-watcher] fatal: store init failed —', e.message); process.exit(1); }
   const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });
   server.listen(wantPort, '127.0.0.1', () => {   // loopback only — never expose local session data
     const port = server.address().port;
     mkdirSync(PORT_DIR, { recursive: true });
-    try { initStore(); } catch (e) { console.error('[session-watcher] fatal: store init failed —', e.message); process.exit(1); }
     cleanupLegacyJson(defaultBaseDir());
-    applyEffectiveRatio(); // re-apply now that store is ready
+    applyEffectiveRatio();
     // #7: write createServer's startedAt (NOT a fresh Date.now()) so the state file's identity tokens
     // (pid, startedAt) are the exact values /api/health reports — the handshake stopWatcher relies on.
     // D5 (spec §5.2, invariant #20): write ATOMICALLY with wx (O_CREAT|O_EXCL). startWatcher owns the

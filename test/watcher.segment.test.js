@@ -1,4 +1,5 @@
-// test/watcher.segment.test.js — v3 segmentation (totalStock any-drop, spec §6.6)
+// Segmentation as `SessionWatcher#poll` drives it: the topology signal first, then the stock-drop
+// fallback against its relative floor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
@@ -13,6 +14,14 @@ function tmpJsonl(lines) {
   return p;
 }
 const asst = (id, cr, cc, out, uuid, parent, input = 100) => ({ type: 'assistant', uuid, parentUuid: parent,
+  message: { id, model: 'claude-opus-4-8', usage: {
+    input_tokens: input, output_tokens: out,
+    cache_creation_input_tokens: cc, cache_read_input_tokens: cr } } });
+
+// Carries NO `uuid` field, so `indexTopologyEntry` ignores the row entirely: `uuidChildren` stays
+// empty (no active-path filter) and no topology signal can ever fire, which leaves `foldCall`'s
+// stock-drop fallback as the only detector these rows reach.
+const anon = (id, cr, cc, out, input = 100) => ({ type: 'assistant',
   message: { id, model: 'claude-opus-4-8', usage: {
     input_tokens: input, output_tokens: out,
     cache_creation_input_tokens: cc, cache_read_input_tokens: cr } } });
@@ -150,4 +159,31 @@ test('_lastArchivedSegment initialized', () => {
   const path = tmpJsonl([ asst('m1', 50000, 2000, 10, 'u1') ]);
   const w = new SessionWatcher(path);
   assert.equal(w._lastArchivedSegment, -1);
+});
+
+// A uuid-less transcript reaches the stock-drop fallback with no topology signal ahead of it, and the
+// fallback judges the stock against max(SEGMENT_DROP_EPSILON, prevTotalStock × SEGMENT_DROP_FRACTION)
+// Both fixtures below share prevTotalStock = 202100, which puts the floor at 50525.
+
+test('uuid-less session: a drop past the relative floor opens a segment', () => {
+  const path = tmpJsonl([
+    anon('m1', 100000, 2000, 10),                  // stock 102100
+    anon('m2', 200000, 2000, 10),                  // stock 202100 → floor 50525
+    anon('m3', 0, 3000, 10),                       // stock 3100 — a 199000 drop, far past the floor
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  assert.equal(w._segment, 1, 'a prefix-replacing drop opens a segment with no topology to confirm it');
+});
+
+test('uuid-less session: a drop short of the relative floor opens no segment', () => {
+  const path = tmpJsonl([
+    anon('m1', 100000, 2000, 10),                  // stock 102100
+    anon('m2', 200000, 2000, 10),                  // stock 202100 → floor 50525
+    anon('m3', 160000, 2000, 10),                  // stock 162100 — a 40000 drop, inside the floor
+  ]);
+  const w = new SessionWatcher(path);
+  w.poll();
+  assert.equal(w._segment, 0, 'a 20% shrink of an unchanged prefix is not a context reset');
+  assert.equal(new Set(w._calls.map(c => c.segment)).size, 1, 'all calls stay in one segment');
 });

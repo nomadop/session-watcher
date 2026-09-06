@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, appendFileSync, mkdtempSync, readFileSync, unlinkSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -60,17 +60,27 @@ test('GET /api/health returns pid and a stable startedAt (identity tokens)', asy
 // CLI (the code path that writes the state file), proving health.startedAt === stateFile.startedAt
 // and health.pid === stateFile.pid. Pre-fix this FAILS: health used a Date.now() computed inside
 // createServer while the state file wrote a separate Date.now() in the listen callback.
+// Both spawned-CLI tests below run server.js's real entry path, which initialises the store, sweeps
+// legacy JSON and reaps stale port files — every one of those resolved from homedir(). Given the
+// developer's own HOME they run a real GC and unlink real state files, so each child gets its own.
+function isolatedCliEnv(extra = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'sw-cli-home-'));
+  const stateDir = join(home, 'state');
+  return { stateDir, env: { ...process.env, HOME: home, SW_STATE_DIR: stateDir, ...extra } };
+}
+
 test('spawned server.js: state file startedAt/pid EQUAL /api/health startedAt/pid', async () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const serverPath = join(__dirname, '..', 'server.js');
   const sessionId = `sw-health-e2e-${randomUUID()}`;
-  const stateFile = join(homedir(), '.session-watcher', `${sessionId}.json`);
   // Point --project at an empty temp dir so the watcher has no transcript (fine for /api/health).
   const projectDir = mkdtempSync(join(tmpdir(), 'sw-proj-'));
+  const { stateDir, env } = isolatedCliEnv({ SW_NO_OPEN: '1' });
+  const stateFile = join(stateDir, `${sessionId}.json`);
 
   const child = spawn(process.execPath,
     [serverPath, '--port', '0', '--project', projectDir, '--session', sessionId],
-    { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, SW_NO_OPEN: '1' } });
+    { stdio: ['ignore', 'pipe', 'ignore'], env });
 
   try {
     const port = await new Promise((resolve, reject) => {
@@ -108,10 +118,10 @@ test('spawned server.js with --open and a missing opener stays alive (headless c
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const serverPath = join(__dirname, '..', 'server.js');
   const sessionId = `sw-openguard-e2e-${randomUUID()}`;
-  const stateFile = join(homedir(), '.session-watcher', `${sessionId}.json`);
   const projectDir = mkdtempSync(join(tmpdir(), 'sw-proj-'));
 
-  const env = { ...process.env, BROWSER: '/nonexistent/sw-opener-that-does-not-exist' };
+  const { stateDir, env } = isolatedCliEnv({ BROWSER: '/nonexistent/sw-opener-that-does-not-exist' });
+  const stateFile = join(stateDir, `${sessionId}.json`);
   delete env.SW_NO_OPEN; // MUST let the opener actually spawn — that is the code path under test.
 
   const child = spawn(process.execPath,

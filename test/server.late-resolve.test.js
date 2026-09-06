@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-// Isolate ledger/gate state writes to a temp CLAUDE_PLUGIN_DATA.
+// Every createServer below takes an explicit stateDir under TMP. Without one it falls back to
+// PORT_DIR under the real home, and this test's whole subject — flipping watcher.path off null — is
+// the condition that triggers the state-file write, so it wrote one real orphan per run.
 const TMP = mkdtempSync(join(tmpdir(), 'sw-lateresolve-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
 process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
 
 import { createServer, resolveBySessionId } from '../server.js';
@@ -37,7 +38,8 @@ test('late transcript resolution: watcher.path goes from null to resolved within
 
   // Start server with a null-path watcher (transcript not yet created)
   const watcher = nullPathWatcher();
-  const srv = createServer({ watcher, pollIntervalMs: 10, sessionId, projectsRoot });
+  const srv = createServer({ watcher, pollIntervalMs: 10, sessionId, projectsRoot,
+    stateDir: mkdtempSync(join(TMP, 'state-')) });
   await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
 
   try {
@@ -81,7 +83,8 @@ test('late resolution does not fire when watcher already has a path', async () =
   let switchCalled = false;
   watcher.switchTranscript = () => { switchCalled = true; };
 
-  const srv = createServer({ watcher, pollIntervalMs: 10, sessionId, projectsRoot });
+  const srv = createServer({ watcher, pollIntervalMs: 10, sessionId, projectsRoot,
+    stateDir: mkdtempSync(join(TMP, 'state-')) });
   await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
 
   try {

@@ -93,3 +93,23 @@ test('buildFtsMatch: plain mode escapes and ANDs; never throws', () => {
 test('buildFtsMatch: advanced mode passes raw', () => {
   assert.equal(buildFtsMatch('auth OR session', 'advanced'), 'auth OR session');
 });
+
+test('buildFtsMatch: single-script terms are byte-identical after segmentation', () => {
+  // All-Latin: no CJK characters, so the whole term forms a contiguous non-CJK segment — emitted quoted
+  assert.equal(buildFtsMatch('auth', 'plain'), '"auth"');
+  // All-CJK with bigrams: no non-CJK characters, whole term is a contiguous CJK segment — bigrams only
+  assert.equal(buildFtsMatch('重构登录', 'plain'), '"重构" "构登" "登录"');
+  // All-CJK but too short to pair: the fallback emits the character quoted, same as the old else arm
+  assert.equal(buildFtsMatch('你', 'plain'), '"你"');
+});
+
+test('buildFtsMatch: a mixed-script term emits tokens for both its Latin and CJK halves', () => {
+  // Before the fix the Latin half was silently discarded; the CJK bigrams were the only output.
+  const expr = buildFtsMatch('hello你好', 'plain');
+  assert.match(expr, /"hello"/);
+  assert.match(expr, /"你好"/);
+  // A mixed term whose CJK segment is too short to pair still emits the character quoted.
+  const expr2 = buildFtsMatch('hello你', 'plain');
+  assert.match(expr2, /"hello"/);
+  assert.match(expr2, /"你"/);
+});

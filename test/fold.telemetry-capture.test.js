@@ -96,7 +96,7 @@ test('a sidechain Read/Grep tool_result does NOT create a main-segment path_even
 });
 
 test('a snapshot-REVISED step updates its buffered token values and captures a late load_token', async () => {
-  // The revision branch (fold.js:136-155) returns before the new-call push, so without refreshing the
+  // `foldCall`'s revision branch returns before the new-call push, so without refreshing the
   // buffered step it keeps pre-revision tokens and loses a load_token that only appears in a revision.
   // Feed a step, then a same-message-id revision with higher output + a load_token.
   const w = makeWatcher();

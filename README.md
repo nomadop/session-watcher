@@ -164,6 +164,16 @@ When it's time to restart, handoff preserves the state you want to keep. Run `/s
 | `prepare_handoff` | Persist selected paths + summary as a handoff package; returns a semantic token |
 | `load_handoff` | Load a handoff by token, free-text search, or auto-match for the current project |
 
+**Turn history**
+
+Read the history turns carried by the handoff loaded into the current session. All three resolve that lineage themselves and take no lineage identifier — without a loaded handoff there is nothing to read.
+
+| Tool | Description |
+|------|-------------|
+| `turn_page` | Page deeper into the history, newest first; a returned cursor proves more history remains, while its absence does not prove none does |
+| `turn_search` | Find a literal that occurs verbatim in the transcripts — an identifier, a path, a quoted phrase |
+| `turn_locate` | Find which turn ranges mention a remembered term, when the original wording is unknown |
+
 Tools return data for you to decide on — only handoff injects context back into the model, and only the paths you explicitly selected.
 
 ## Agent support

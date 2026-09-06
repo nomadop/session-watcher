@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import CONSTANTS, {
   C_RATIO_TABLE, DEFAULT_C_RATIO,
-  CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, ASCII_EXTS, ALPHA_EMA, BETA_TREND, G_FLOOR,
-  MISS_B_FRACTION, MISS_TOTAL_KEEP, SEGMENT_DROP_EPSILON, NOTIFY_DWELL,
+  CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, ASCII_EXTS, ALPHA_EMA, G_DELTA_CAP, G_FLOOR,
+  MISS_B_FRACTION, MISS_TOTAL_KEEP, SEGMENT_DROP_EPSILON, SEGMENT_DROP_FRACTION, NOTIFY_DWELL,
   BR_HYST, CTP_OVERSHOOT_WARN,
   CHURN_ELEVATED_THRESHOLD, CHURN_STRUGGLING_THRESHOLD,
   CHURN_STRUGGLING_REREADS, WASTE_FLOOR,
@@ -42,12 +42,13 @@ test('v3: churn tier constants exported with exact values', () => {
 });
 
 test('v3: measurement/notify constants', () => {
-  assert.equal(ALPHA_EMA, 0.20);
-  assert.equal(BETA_TREND, 0.05);
+  assert.equal(ALPHA_EMA, 0.06);
+  assert.equal(G_DELTA_CAP, 250);
   assert.equal(G_FLOOR, 100);
   assert.equal(MISS_B_FRACTION, 0.8);
   assert.equal(MISS_TOTAL_KEEP, 0.7);
   assert.equal(SEGMENT_DROP_EPSILON, 100);
+  assert.equal(SEGMENT_DROP_FRACTION, 0.25);
   assert.equal(NOTIFY_DWELL, 3);
   assert.equal(BR_HYST, 0.02);
   assert.equal(CTP_OVERSHOOT_WARN, 0.05);

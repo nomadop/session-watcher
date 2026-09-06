@@ -2,9 +2,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { resolveProjectDir, probeHealth, stopWatcher, watcherStatus } from '../lib/launcher.js';
 
@@ -61,23 +58,32 @@ test('watcherStatus return shape: only {running,url}, no metric keys', async () 
   for (const k of FORBIDDEN_METRIC_KEYS) assert.ok(!(k in res), `forbidden metric key leaked from watcherStatus: ${k}`);
 });
 
-// Fix ⑥ / 9b — source-level guard. Locks the invariant so a future edit that references
-// any metric identifier ANYWHERE in the MCP launcher fails CI. Uses whole-word boundaries so
-// benign substrings ('URL' contains 'L', 'flush' contains no key) do not false-positive.
-test('index.js source contains no metric identifiers (zero-pollution source guard)', () => {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const src = readFileSync(join(__dirname, '..', 'index.js'), 'utf8');
-  const re = new RegExp(`\\b(${FORBIDDEN_METRIC_KEYS.join('|')})\\b`);
-  const m = src.match(re);
-  assert.equal(m, null, m ? `metric identifier "${m[1]}" appears in index.js: ${JSON.stringify(src.slice(Math.max(0, m.index - 25), m.index + 25))}` : '');
-});
-
 // Task 11: handoff launcher helpers return {error:'no_server'} when no live server exists
-import { getBucketSummary, prepareHandoff, loadHandoff } from '../lib/launcher.js';
+import { getBucketSummary, prepareHandoff, loadHandoff, rotateSession } from '../lib/launcher.js';
 
 test('handoff launcher helpers return {error:no_server} when no live server', async () => {
   const env = { CLAUDE_CODE_SESSION_ID: `qf3-test-${randomUUID()}` };
   assert.equal((await getBucketSummary(env)).error, 'no_server');
   assert.equal((await loadHandoff(env, {})).error, 'no_server');
   assert.equal((await prepareHandoff(env, { paths_to_keep: [], summary: 'x' })).error, 'no_server');
+});
+
+// Zero pollution over the launcher's own surface: the dashboard shows metrics, a caller of these helpers
+// gets URLs and state. This is the CLI and legacy entry point, not the MCP one — every MCP handler in
+// index.js builds its reply inline and reaches none of these. startWatcher is absent: reaching its reply
+// spawns a server.
+test('every no-server launcher reply is free of metric keys', async () => {
+  const replies = await Promise.all([
+    stopWatcher(noServerEnv()),
+    watcherStatus(noServerEnv()),
+    getBucketSummary(noServerEnv()),
+    loadHandoff(noServerEnv(), {}),
+    prepareHandoff(noServerEnv(), { paths_to_keep: [], summary: 'x' }),
+    rotateSession(noServerEnv(), {}),
+  ]);
+  for (const res of replies) {
+    for (const k of FORBIDDEN_METRIC_KEYS) {
+      assert.ok(!(k in res), `forbidden metric key ${k} leaked in ${JSON.stringify(res)}`);
+    }
+  }
 });

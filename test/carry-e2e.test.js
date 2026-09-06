@@ -11,7 +11,7 @@ import { bootTestServer } from './helpers/server-boot.js';
 // bootSecondConsumer's watcher must archive to the SAME DB the producer reads. The consumer harness
 // methods (foldLoadHandoffThenArchive / foldAutoMatchLoadThenArchive) call w.setStore(consumer.store)
 // — the consumer's OWN openStore connection on the shared db file — and set w._sessionId, so
-// handleSegmentBoundary resolves `w._store` (fold.js:129) and the archived profile_step_usage rows
+// handleSegmentBoundary resolves `w._store` and the archived profile_step_usage rows
 // land in the queried DB. Without setStore the boundary would resolve the GLOBAL getStore() singleton
 // (uninitialized here → swallowed no-op) and the join would return zero rows — a false negative.
 //

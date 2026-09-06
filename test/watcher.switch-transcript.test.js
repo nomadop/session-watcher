@@ -68,3 +68,35 @@ test('switchTranscript preserves _calls from prior segments (history continuity)
   assert.equal(w._calls[0].cacheRead, 1000);
   assert.equal(w._calls[1].cacheRead, 2000);
 });
+
+test('switchTranscript contains an immediate poll failure after resetting file state', () => {
+  const path1 = tmpJsonl([
+    { type: 'user', uuid: 'u-root', parentUuid: null, isSidechain: false,
+      message: { role: 'user', content: 'start' } },
+    { ...usageLine(1000, 10, { id: 'm1' }), uuid: 'a-old', parentUuid: 'u-root', isSidechain: false },
+  ]);
+  const path2 = tmpJsonl([usageLine(2000, 20, { id: 'm2' })]);
+  const w = new SessionWatcher(path1, null, { sessionId: 'test-s4' });
+  w.poll();
+  assert.equal(w._activeLeafUuid, 'a-old');
+  assert.ok(w._topology.uuidToParent.size > 0);
+  assert.ok(w._topology.uuidChildren.size > 0);
+  const callsBefore = w._calls.slice();
+  w._offset = 123;
+  w._partial = 'stale-tail';
+  w.poll = () => { throw new Error('synthetic poll failure'); };
+
+  assert.doesNotThrow(() => w.switchTranscript(path2));
+  assert.equal(w.path, path2);
+  assert.equal(w._offset, 0);
+  assert.equal(w._partial, '');
+  assert.equal(w._ino, null);
+  assert.equal(w._transcriptSeen, false);
+  assert.equal(w._activeLeafUuid, null);
+  assert.equal(w._topology.latestUuid, null);
+  assert.equal(w._topology.firstRootUuid, null);
+  assert.equal(w._compactDetected, false);
+  assert.equal(w._topology.uuidToParent.size, 0);
+  assert.equal(w._topology.uuidChildren.size, 0);
+  assert.deepEqual(w._calls, callsBefore, 'existing history survives the contained poll failure');
+});

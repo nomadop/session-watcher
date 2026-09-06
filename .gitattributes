@@ -1,3 +1,7 @@
 # Force LF on shell scripts so a Windows checkout can't break their shebang
 # (project ships statusline.sh, run inside the Linux container).
 *.sh              text eol=lf
+
+# Force LF on JS so Serena's replace_content (which normalizes to LF) cannot
+# silently diverge from what git checks out on a future Windows checkout.
+*.js              text eol=lf

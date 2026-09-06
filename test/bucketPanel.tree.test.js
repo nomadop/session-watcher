@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTree } from '../public/elements/bucketPanel.js';
+import { buildTree, paintIndentGuides } from '../public/elements/bucketPanel.js';
 
 const base = {
   dead: 8500, skills: [], paths: [], residual: { bash: [], mcp: [] },
@@ -133,4 +133,16 @@ test('buildTree: node ids follow the scheme and are unique', () => {
   assert.ok(all.find(n => n.id === 'bash:npm test'), 'bash id scheme');
   const ids = all.filter(n => n.selectable).map(n => n.id);
   assert.equal(new Set(ids).size, ids.length, 'ids unique');
+});
+
+test('paintIndentGuides: 引导线只写 backgroundImage，留出 background-color 给 :hover', () => {
+  // 结构桩只暴露 makeRow 写引导线时碰到的 style；写了 background 简写就会在这里留下痕迹。
+  const row = { style: {} };
+  paintIndentGuides(row, 2);
+  assert.equal(row.style.backgroundImage.match(/linear-gradient\(/g).length, 2, '每级祖先一条引导线');
+  assert.equal(row.style.backgroundPosition, '12px 0,30px 0');
+  assert.equal(row.style.backgroundSize, '1px 100%');
+  assert.equal(row.style.backgroundRepeat, 'no-repeat');
+  assert.equal(row.style.background, undefined);
+  assert.equal(row.style.backgroundColor, undefined);
 });

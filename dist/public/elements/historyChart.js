@@ -73,7 +73,7 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
   // X labels are 1-based turn numbers
   const labels = points.map((_, i) => i + 1);
   const lData = points.map(p => p.L);
-  // Amber dot at the current (last) point — matches mockup's endpoint marker
+  // Amber dot at the current (last) point
   const lPointRadius = points.map((_, i) => i === points.length - 1 ? 4 : 0);
   const lPointColor = points.map((_, i) => i === points.length - 1 ? colors.amber : 'transparent');
   // Single "next threshold" line — collapses entry/amber/red into one visible line
@@ -216,13 +216,19 @@ export function mount(root, ctx) {
   let previewB = null;           // non-null ⇔ bucket preview active
   let hoverTouchMap = null;      // Map<localSeq, 'r'|'w'> — active during path-bucket hover for L-line coloring
 
-  // DOM structure
+  // DOM structure. The empty `.sw-history-anchor` span in the header below is where
+  // historyDrawer.js mounts its trigger; without it that module's mount returns its
+  // no-op pair and the History drawer never appears.
   root.innerHTML = `
-    <h3 class="sw-history-header">Usage history
-      <span class="pager">
-        <button class="sw-history-prev" disabled>‹</button>
-        segment <b class="sw-history-page-num">—</b> / <span class="sw-history-page-total">—</span>
-        <button class="sw-history-next" disabled>›</button>
+    <h3 class="sw-history-header">
+      <span>Usage history</span>
+      <span class="sw-history-actions">
+        <span class="pager">
+          <button class="sw-history-prev" disabled>‹</button>
+          segment <b class="sw-history-page-num">—</b> / <span class="sw-history-page-total">—</span>
+          <button class="sw-history-next" disabled>›</button>
+        </span>
+        <span class="sw-history-anchor"></span>
       </span>
     </h3>
     <div class="sw-history-subtitle">Raw context tokens (L) across turns in this segment · axis auto-ranges</div>

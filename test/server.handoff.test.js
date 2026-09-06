@@ -59,7 +59,7 @@ test('POST /api/handoff/prepare → ready + load_token; GET load by token round-
     const byTok = await (await fetch(`http://127.0.0.1:${port}/api/handoff/load?load_token=${prep.load_token}`)).json();
     assert.equal(byTok.found, true);
     assert.equal(byTok.load_token, prep.load_token);
-    assert.equal(byTok.next_task, 'fix token refresh');
+    assert.strictEqual(byTok.next_task, undefined, 'next_task removed from load response');
     assert.equal(byTok.paths_to_keep[0].path, 'src/app.js');
     assert.deepEqual(byTok.paths_to_keep[0].symbols, ['handleAuth']);
     assert.strictEqual(byTok.previous_segment, undefined, 'previous_segment should not be exposed in load response');
@@ -178,7 +178,7 @@ test('GET /api/handoff/load (no params): single pending from other session → a
     const resp = await fetch(`http://127.0.0.1:${port}/api/handoff/load`);
     const data = await resp.json();
     assert.equal(data.found, true, 'single pending handoff from other session is auto-matched');
-    assert.equal(data.next_task, 'do the thing');
+    assert.strictEqual(data.next_task, undefined, 'next_task removed from load response');
     assert.equal(data.load_token, 'auto-aaa-bbb');
     // Verify it was stamped (delivered_at set)
     const recheck = await (await fetch(`http://127.0.0.1:${port}/api/handoff/load`)).json();

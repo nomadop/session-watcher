@@ -14,7 +14,7 @@
 // process has exactly one store); this injection is a test-only wiring path.
 //
 // FOLD-ARCHIVAL CAVEAT: lib/fold.js handleSegmentBoundary archives via `w._store || getStore()`
-// (fold.js:129 — Task 9 added w.setStore + the injected-store resolve). Since bootTestServer never calls
+// (Task 9 added w.setStore + the injected-store resolve). Since bootTestServer never calls
 // initStore, a fold-driven segment archival (only when a test sets watcher._sessionId AND folds a
 // boundary) that has NO w._store resolves getStore() → throws "Store not initialized" → swallowed by
 // handleSegmentBoundary's try/catch (logged only under SW_DEBUG). bootTestServer therefore leaves the
@@ -36,6 +36,12 @@ import { openStore, closeStore } from '../../lib/store.js';
 import { createServer } from '../../server.js';
 import { makeWatcher, feedReadFull, feedLoadHandoffStep, feedAutoMatchLoadStep, forceSegmentBoundary } from './fold-feed.js';
 
+// A bookmark service that always throws, for failure-isolation tests.
+const _throwingBookmarkService = {
+  listMessages() { throw new Error('bookmark service unavailable'); },
+  setDesiredState() { throw new Error('bookmark service unavailable'); },
+};
+
 // Start the primary app instance. opts:
 //   sessionId?            — the server's currentSessionId (default 'sid-primary'). Distinct from
 //                           watcher._sessionId (which stays unset — see FOLD-ARCHIVAL CAVEAT above).
@@ -51,17 +57,33 @@ export async function bootTestServer(opts = {}) {
     sessionId = 'sid-primary',
     projectId = 'proj-boot',
     disableTelemetrySweep = true,
+    // throwingBookmarkService: inject a service that always throws for failure-isolation tests.
+    throwingBookmarkService = false,
+    // bookmarkService: inject a custom bookmark service
+    bookmarkService: injectedBookmarkService = null,
+    // throwingTurnPage: inject a turnPageBuilder that always throws for failure-isolation tests.
+    throwingTurnPage = false,
   } = opts;
 
   const dir = mkdtempSync(join(tmpdir(), 'sw-boot-'));
   const dbPath = join(dir, 'store.sqlite');
   const cwd = mkdtempSync(join(tmpdir(), 'sw-boot-cwd-'));
+  // Injected, not inherited: createServer falls back to PORT_DIR (~/.session-watcher), and the turn
+  // capture writes its two note files under the state dir — a test must never reach the real install.
+  const stateDir = join(dir, 'state');
+  mkdirSync(stateDir, { recursive: true });
 
   const store = openStore(dbPath);
   // No sessionId on the watcher (fold-archival stays a no-op); cwd + projectId only.
   const watcher = makeWatcher({ projectId, cwd });
 
-  const { server, stopTimers } = createServer({ watcher, pollIntervalMs: 0, sessionId, store, disableTelemetrySweep });
+  const resolvedBookmarkService = throwingBookmarkService
+    ? _throwingBookmarkService
+    : injectedBookmarkService || undefined;
+  const resolvedTurnPageBuilder = throwingTurnPage
+    ? () => { throw new Error('turn page unavailable'); }
+    : undefined;
+  const { server, stopTimers, turnService, turnReadService } = createServer({ watcher, pollIntervalMs: 0, sessionId, store, stateDir, disableTelemetrySweep, bookmarkService: resolvedBookmarkService, ...(resolvedTurnPageBuilder ? { turnPageBuilder: resolvedTurnPageBuilder } : {}) });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
 
@@ -78,10 +100,24 @@ export async function bootTestServer(opts = {}) {
     sessionId,
     cwd,
     dbPath,
+    stateDir,
     port,
 
     // GET (or POST with { method, body }) a route; returns the parsed JSON body.
     get: (path, reqOpts) => _fetchJson(port, path, reqOpts),
+
+    // Generic request helper (replaces get for new tests): supports any method + body, returns parsed JSON.
+    request: (path, reqOpts = {}) => _fetchJson(port, path, reqOpts),
+
+    // Like request but returns the raw fetch Response (for checking HTTP status codes).
+    requestRaw: async (path, { method = 'GET', body, headers } = {}) => {
+      const init = { method, headers: { ...(headers || {}) } };
+      if (body !== undefined) {
+        init.headers['content-type'] = init.headers['content-type'] || 'application/json';
+        init.body = typeof body === 'string' ? body : JSON.stringify(body);
+      }
+      return fetch(`http://127.0.0.1:${port}${path}`, init);
+    },
 
     // POST /api/handoff/prepare; returns the load token (string) or throws with the error body.
     prepareHandoff: async (body) => {
@@ -113,12 +149,21 @@ export async function bootTestServer(opts = {}) {
 
     watcher,
 
+    // The in-process turn service, exactly as createServer built it — the same object index.js binds the
+    // two Turn MCP tools to. It reads watcher.path, so a test repoints that to swap transcripts.
+    turnService,
+
+    // The in-process turn READ service, exactly as createServer built it — the same object index.js
+    // binds the three read tools to. It resolves its own lineage from this session's newest delivered
+    // handoff, so a test must perform a real load before calling it.
+    turnReadService,
+
     // A SECOND app instance (its own watcher + currentSessionId) bound to the SAME db file (its own
     // openStore connection) and the same cwd. Returns { get, sessionId, teardown }.
     bootSecondConsumer: async ({ sessionId: secondSid = 'sid-second', projectId: secondPid = projectId } = {}) => {
       const secondStore = openStore(dbPath); // independent connection on the SAME file
       const secondWatcher = makeWatcher({ projectId: secondPid, cwd });
-      const { server: s2, stopTimers: stop2 } = createServer({ watcher: secondWatcher, pollIntervalMs: 0, sessionId: secondSid, store: secondStore, disableTelemetrySweep });
+      const { server: s2, stopTimers: stop2 } = createServer({ watcher: secondWatcher, pollIntervalMs: 0, sessionId: secondSid, store: secondStore, stateDir, disableTelemetrySweep });
       await new Promise(r => s2.listen(0, '127.0.0.1', r));
       const p2 = s2.address().port;
       const handle = {
@@ -133,7 +178,7 @@ export async function bootTestServer(opts = {}) {
         // Fold a load_handoff step for `token` into the consumer's watcher, then force a segment
         // boundary so the segment's telemetry (profile_step_usage w/ load_token + profile_path_event)
         // archives. CRUCIAL: bind the watcher to THIS consumer's injected store + arm _sessionId so
-        // handleSegmentBoundary resolves `w._store` (fold.js:129) and writes to the shared db file —
+        // handleSegmentBoundary resolves `w._store` and writes to the shared db file —
         // not the uninitialized global getStore() (which would no-op and yield a vacuous 0-row join).
         // The load must be captured on the SAME segment index the server stamped consumer_segment with
         // (getSegmentIndex at load time). feed*Step folds into the watcher's CURRENT segment; the

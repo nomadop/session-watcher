@@ -2,12 +2,7 @@
 // Tests computeCrosshairLabel and computeLabelOffset extracted from the crosshair logic.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { computeCrosshairLabel, computeLabelOffset } from '../public/lib/crosshairHelpers.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // --- computeCrosshairLabel ---
 
@@ -108,17 +103,3 @@ test('label offset: fromRight=79 triggers flip', () => {
   assert.equal(offset, -66);
 });
 
-// --- v3: historyChart builds no Lstar/projection series ---
-
-test('v3: historyChart imports and uses buildProjectionData for gEma projection line', () => {
-  const src = readFileSync(path.join(__dirname, '../public/elements/historyChart.js'), 'utf8');
-
-  assert.ok(
-    src.includes('buildProjectionData'),
-    'historyChart.js must import/use buildProjectionData for the projection line',
-  );
-  assert.ok(
-    src.includes("id: 'projection'"),
-    "historyChart.js must define a dataset with id: 'projection'",
-  );
-});

@@ -241,8 +241,9 @@ test('36/37: state key change resets; xExit is NOT in the key', () => {
   const k1 = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'A', contextCap: 1e6, schemaVersion: 1 });
   const k2 = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'B', contextCap: 1e6, schemaVersion: 1 });
   assert.notEqual(k1, k2, 'baselineFingerprint change → different key → reset');
-  // xExit is not a parameter of stateKeyOf at all — cannot influence the key.
-  assert.ok(!/xExit/i.test(stateKeyOf.toString()));
+  // xExit reaches the key through no parameter: stateKeyOf takes a named set that does not include it,
+  // so passing one alongside a fixed set cannot move the result.
+  assert.equal(k1, stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'A', contextCap: 1e6, schemaVersion: 1, xExit: 0.9 }));
 });
 
 test('GPT#11: freshLedger freezes kStableFrozen at creation (segment constant, reused on same-key restart)', () => {

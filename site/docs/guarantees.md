@@ -94,8 +94,12 @@ Stable commands exposed to the agent:
 | `get_bucket_summary` | Per-path token breakdown (B composition) |
 | `prepare_handoff` | Package paths + summary for the next session |
 | `load_handoff` | Retrieve a handoff package by token or search |
-| `get_bookmark_detail` | Drill into a specific turn from the bookmark index |
 | `rotate_session` | Switch the server to a new session/transcript |
+| `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
+| `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
+| `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |
+
+The three history tools resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
 
 ---
 

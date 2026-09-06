@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, cpSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -67,15 +69,44 @@ test('plugin: dist/ contains bundled entry points', () => {
   assert.ok(existsSync(join(ROOT, 'dist', 'statusline.js')), 'dist/statusline.js exists');
 });
 
-test('plugin: dist bundles have no external package imports', () => {
-  // Matches actual ESM import statements at line start — ignores occurrences
-  // inside block comments (JSDoc @example lines start with " * ", not bare import)
-  const externalImport = /^\s*import\s.+\sfrom\s+['"](?:express|@modelcontextprotocol|zod)['"]/m;
-  const externalRequire = /\brequire\s*\(\s*['"](?:express|@modelcontextprotocol|zod)['"]\s*\)/;
-
-  for (const entry of ['dist/index.js', 'dist/server.js', 'dist/hooks/session-start.js']) {
-    const src = readFileSync(join(ROOT, entry), 'utf8');
-    assert.ok(!externalImport.test(src), `${entry}: no external ESM import`);
-    assert.ok(!externalRequire.test(src), `${entry}: no external require()`);
+test('plugin: dist bundles are self-contained (no unbundled external imports)', () => {
+  // Copy the entire dist/ tree to a temp dir outside the workspace so that Node's
+  // ESM resolver cannot walk up to /workspace/node_modules.  An unbundled bare
+  // import of express / @modelcontextprotocol / zod would then produce
+  // ERR_MODULE_NOT_FOUND immediately on startup; a correctly-bundled one is silent.
+  // WASM files live alongside the bundles, so relative URL references still resolve.
+  // Bundles that start servers or wait on stdin are killed after 3 s — the
+  // module-resolution check happens synchronously at module load, before any I/O.
+  const tmp = mkdtempSync(join(tmpdir(), 'sw-bundle-'));
+  try {
+    cpSync(join(ROOT, 'dist'), join(tmp, 'dist'), { recursive: true });
+    // index.js and server.js reach their entrypoint guard here and build a real store and state
+    // file. Without a HOME and SW_STATE_DIR of their own they would land in the developer's live
+    // ~/.session-watcher, and the SIGTERM below would run cleanup() and unlink the state file of
+    // whichever session owns that id.
+    const env = {
+      PATH: process.env.PATH,
+      HOME: join(tmp, 'home'),
+      SW_STATE_DIR: join(tmp, 'state'),
+      CLAUDE_CODE_SESSION_ID: 'bundle-probe',
+      SW_NO_OPEN: '1',
+    };
+    for (const rel of ['index.js', 'server.js', 'hooks/session-start.js']) {
+      const bundlePath = join(tmp, 'dist', rel);
+      const result = spawnSync(process.execPath, [bundlePath], { timeout: 3000, encoding: 'utf8', env });
+      // A spawn that never reached module load proves nothing, so an absent stderr must not pass by
+      // default: the only tolerated failure is the timeout that killing a live server produces.
+      assert.ok(
+        !result.error || result.error.code === 'ETIMEDOUT',
+        `dist/${rel}: probe did not reach module load — ${result.error?.message}`,
+      );
+      const stderr = result.stderr || '';
+      assert.ok(
+        !/ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|Cannot find package|Cannot find module/.test(stderr),
+        `dist/${rel}: bundle must not fail with a module-resolution error\nstderr: ${stderr.slice(0, 500)}`,
+      );
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

@@ -46,7 +46,7 @@ test('v2 migration: profile gains segment PK, existing rows get segment=0 + arch
   assert.equal(row.turns, 7);
   assert.equal(row.archive_source, 'snapshot');
   const ver = store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  assert.equal(ver.value, '3');  // terminal version is v3 (v2 migration then chains into v3)
+  assert.equal(ver.value, '5');  // terminal version is v5 (v2 migration chains through v3, v4, v5)
   closeStore(store);
 });
 
@@ -80,7 +80,7 @@ test('migration is idempotent — reopen a v2 DB does not re-migrate or lose dat
   closeStore(store);
 });
 
-test('fresh DB ends at v2 with segment PK and handoff table', async () => {
+test('fresh DB ends at v5 with segment PK and handoff table', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const store = openStore(dbPath);
   // profile should have segment column
@@ -91,9 +91,9 @@ test('fresh DB ends at v2 with segment PK and handoff table', async () => {
   // handoff table exists
   const handoff = store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff'").get();
   assert.ok(handoff, 'handoff table must exist');
-  // terminal version is v3 (fresh DB migrates base → v2 → v3)
+  // terminal version is v5 (fresh DB migrates base → v2 → v3 → v4 → v5)
   const ver = store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  assert.equal(ver.value, '3');
+  assert.equal(ver.value, '5');
   closeStore(store);
 });
 

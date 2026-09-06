@@ -54,7 +54,7 @@ test('v3 migration: adds handoff columns, profile.telemetry_status, new tables +
   for (const i of ['idx_handoff_delivered_session', 'idx_handoff_load_session', 'idx_profile_telemetry', 'idx_step_usage_load_token']) {
     assert.ok(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?").get(i), `index ${i} exists`);
   }
-  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '3');
+  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '5');
   assert.equal(store._db.prepare("SELECT load_token FROM handoff WHERE session_id='s1'").get().load_token, 'tok-old-alpha', 'existing rows preserved');
   closeStore(store);
 });
@@ -64,7 +64,7 @@ test('v3 migration is idempotent — reopen does not error or lose data', async 
   const { openStore, closeStore } = await import('../lib/store.js');
   let store = openStore(dbPath); closeStore(store);
   store = openStore(dbPath);
-  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '3');
+  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '5');
   closeStore(store);
 });
 
@@ -112,10 +112,10 @@ test('ensureV3Shape self-heals a single missing handoff column (per-column PRAGM
   closeStore(store);
 });
 
-test('fresh DB ends at v3 with all telemetry shape present', async () => {
+test('fresh DB ends at v5 with all telemetry shape present', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const store = openStore(dbPath);
-  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '3');
+  assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '5');
   assert.ok(store._db.prepare("PRAGMA table_info(profile)").all().map(c => c.name).includes('telemetry_status'));
   assert.ok(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_load'").get());
   closeStore(store);

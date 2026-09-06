@@ -85,13 +85,9 @@ function foldPaths(paths) {
 
   // Build tree recursively. `prefix` is the full path prefix already consumed.
   // Each level groups by the next directory segment after prefix.
-  function build(entries, prefix, indent, maxDepth) {
-    if (indent >= maxDepth) {
-      return entries.map(p => {
-        const rel = prefix ? p.path.slice(prefix.length + 1) : p.path;
-        return makeFileLeaf(p, rel, indent);
-      });
-    }
+  // No max-depth cap — mirrors IDE behavior (single-child collapse + user
+  // fold/unfold manage visual complexity instead of hard truncation).
+  function build(entries, prefix, indent) {
 
     const groups = new Map(); // nextSeg → [entry...]
     const here = []; // files directly at this prefix (no more '/')
@@ -156,7 +152,7 @@ function foldPaths(paths) {
             break;
           }
         }
-        const children = build(curGroup, curPrefix, indent + 1, maxDepth);
+        const children = build(curGroup, curPrefix, indent + 1);
         result.push(makeDirNode(label, children, indent, curPrefix));
       }
     }
@@ -180,7 +176,7 @@ function foldPaths(paths) {
     if (end > 0) commonPrefix = first.slice(0, end);
   }
 
-  const result = build(files, commonPrefix, 0, 3);
+  const result = build(files, commonPrefix, 0);
   sortByTokensDesc(result);
   return result;
 }
@@ -646,6 +642,25 @@ function findNodeById(tree, id) {
 
 // ─── Element mount ────────────────────────────────────────────────────────────
 
+/**
+ * IDE-style indent guides: one vertical hairline per ancestor level. Written as background
+ * longhands rather than the `background` shorthand — the shorthand is an inline style, so it would
+ * outrank the stylesheet's `.bucket-row:hover` on every nested row; the stylesheet in turn paints
+ * hover through `background-color` alone, so the guides survive the hover.
+ */
+export function paintIndentGuides(row, indent) {
+  const images = [];
+  const positions = [];
+  for (let i = 0; i < indent; i++) {
+    images.push('linear-gradient(var(--edge,#2a2d35),var(--edge,#2a2d35))');
+    positions.push(`${i * 18 + 12}px 0`);
+  }
+  row.style.backgroundImage = images.join(',');
+  row.style.backgroundPosition = positions.join(',');
+  row.style.backgroundSize = '1px 100%';
+  row.style.backgroundRepeat = 'no-repeat';
+}
+
 export function mount(root, ctx) {
   // ── Closure state ──────────────────────────────────────────────────────────
   const state = {
@@ -822,7 +837,11 @@ export function mount(root, ctx) {
     const row = document.createElement('div');
     row.className = 'bucket-row';
     if (node.kind === 'dir') row.classList.add('is-dir');
-    if (node.indent) row.dataset.indent = String(node.indent);
+    if (node.indent) {
+      row.dataset.indent = String(node.indent);
+      row.style.setProperty('--indent', String(node.indent));
+      paintIndentGuides(row, node.indent);
+    }
     row.dataset.id = node.id;
     row.dataset.tokens = String(node.tokens);
     if (node.lastCallSeq != null) row.dataset.lastCallSeq = String(node.lastCallSeq);

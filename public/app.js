@@ -10,6 +10,7 @@ import { mount as mountPricingChip } from './elements/pricingChip.js';
 import { mount as mountChrome } from './elements/chrome.js';
 import { mount as mountThemeChip } from './elements/themeChip.js';
 import { mount as mountBucketPanel } from './elements/bucketPanel.js';
+import { mount as mountHistoryDrawer } from './elements/historyDrawer.js';
 import { mount as mountTerms } from './elements/terms.js';
 
 const store = createStore();
@@ -72,6 +73,7 @@ registerElement(mountHeroDiptych, 'sw-hero');
 registerElement(mountDepthAux, 'sw-hero');
 registerElement(mountBurnMeter, 'sw-hero');
 registerElement(mountHistoryChart, 'sw-history');
+registerElement(mountHistoryDrawer, 'sw-history');
 
 // e2e handle — preserved across refactor
 window.__SW_dashboard = { store, transport, charts: { history: null, hero: null } };

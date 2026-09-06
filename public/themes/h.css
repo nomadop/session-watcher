@@ -955,7 +955,7 @@ body {
 }
 
 #sw-buckets .bucket-row:hover {
-  background: rgba(79, 224, 176, 0.04);
+  background-color: rgba(79, 224, 176, 0.04);
 }
 
 #sw-buckets .bucket-row.is-dir {
@@ -963,7 +963,7 @@ body {
 }
 
 #sw-buckets .bucket-row.is-dir:hover {
-  background: rgba(79, 224, 176, 0.06);
+  background-color: rgba(79, 224, 176, 0.06);
 }
 
 /* Indent guides */

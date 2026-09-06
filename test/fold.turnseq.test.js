@@ -111,3 +111,23 @@ test('real human message that happens to mention task-notification is still a bo
   assert.equal(isUserTurnBoundary(humanMsg), true,
     'human text mentioning task-notification is still a real boundary');
 });
+
+const compactSummary = text => line({
+  type: 'user',
+  isCompactSummary: true,
+  isVisibleInTranscriptOnly: true,
+  message: { role: 'user', content: text },
+});
+
+test('RV-C7: compact summary does not bump turnSeq', () => {
+  const p = tmpJsonl(
+    user('go')
+    + asst('m1', 'u1', 60000, 10)
+    + compactSummary('This session is being continued…')
+    + asst('m2', 'u2', 61000, 10)
+  );
+  const w = new SessionWatcher(p, 42000);
+  w.poll();
+  const calls = w._currentSegmentCalls();
+  assert.equal(calls[0].turnSeq, calls[1].turnSeq);
+});

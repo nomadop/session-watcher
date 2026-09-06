@@ -151,8 +151,21 @@ test('compact: multiple compacts (3 subtrees) → all segments preserved', () =>
     line(user('continue', 'u6', 'a3')) +
     line(asst('msg_4', 'a4', 'u6', 45000));
 
+  const archivedProfiles = [];
+  const archivedTelemetry = [];
+  const store = {
+    archiveSegmentProfile(sessionId, segment, snapshot) {
+      archivedProfiles.push({ sessionId, segment, source: snapshot.archiveSource });
+      return { status: 'archived' };
+    },
+    getTelemetryStatus() { return null; },
+    archiveSegmentTelemetry(sessionId, segment, _payload, source) {
+      archivedTelemetry.push({ sessionId, segment, source });
+    },
+  };
   const p = tmpJsonl(content);
-  const w = new SessionWatcher(p, 40000);
+  const w = new SessionWatcher(p, 40000, { sessionId: 'compact-replay' });
+  w.setStore(store);
   w.poll();
 
   // 3 subtrees → segment 0, 1, 2
@@ -166,6 +179,164 @@ test('compact: multiple compacts (3 subtrees) → all segments preserved', () =>
   assert.equal(seg1[0].messageId, 'msg_2');
   assert.equal(seg2.length, 2, 'subtree 3: 2 calls in segment 2');
   assert.equal(seg2[0].messageId, 'msg_3');
+  assert.deepEqual(archivedProfiles, [
+    { sessionId: 'compact-replay', segment: 0, source: 'replay' },
+    { sessionId: 'compact-replay', segment: 1, source: 'replay' },
+  ]);
+  assert.deepEqual(archivedTelemetry, [
+    { sessionId: 'compact-replay', segment: 0, source: 'cc-replay' },
+    { sessionId: 'compact-replay', segment: 1, source: 'cc-replay' },
+  ]);
+});
+
+test('compact: each root follows the newest write in its subtree, not the deepest descendant', () => {
+  // Load-bearing beyond its own subject: unlike the parallel-fork tests, this one separates "newest
+  // write" from "deepest node" and from "last node reached by the subtree walk".
+  const content =
+    line(sys('sys1', null)) +
+    line(user('older deep branch', 'u-deep-1', 'sys1')) +
+    line(asst('msg_deep_1', 'a-deep-1', 'u-deep-1', 90000)) +
+    line(user('older branch continues', 'u-deep-2', 'a-deep-1')) +
+    line(asst('msg_deep_2', 'a-deep-2', 'u-deep-2', 95000)) +
+    line(user('newer shallow branch', 'u-recent', 'sys1')) +
+    line(asst('msg_recent', 'a-recent', 'u-recent', 92000)) +
+    line(sys('sys2', null)) +
+    line(user('post compact', 'u-new', 'sys2')) +
+    line(asst('msg_new', 'a-new', 'u-new', 40000));
+
+  const w = new SessionWatcher(tmpJsonl(content), 42000);
+  w.poll();
+
+  assert.deepEqual(w._calls.map(c => ({
+    messageId: c.messageId,
+    segment: c.segment,
+    foldedSeq: c.foldedSeq,
+    turnSeq: c.turnSeq,
+    L: c.L,
+    B: c.B_at_call,
+  })), [
+    { messageId: 'msg_recent', segment: 0, foldedSeq: 1, turnSeq: 1, L: 92000, B: 92000 },
+    { messageId: 'msg_new', segment: 1, foldedSeq: 2, turnSeq: 2, L: 40000, B: 40000 },
+  ]);
+});
+
+test('compact: a parallel-tool-call fork keeps the continuation, not the earlier result stub', () => {
+  // Two tool_use blocks of one assistant message are written as two entries (a1 -> a2), and each
+  // tool_result is parented to the entry carrying ITS OWN tool_use. So the fork at a1 has the
+  // continuation (a2) as its first child and call #1's result (tr1) as its last-written child.
+  // The two entries carry distinct message ids here so that the continuation is observable in
+  // _calls; in a real transcript they share one id and fold into a single call.
+  const content =
+    line(sys('sys1', null)) +
+    line(user('old', 'u-old', 'sys1')) +
+    line(asst('msg_old', 'a-old', 'u-old', 80000)) +
+    line(sys('sys2', null)) +
+    line(user('post compact', 'u-new', 'sys2')) +
+    line(asst('msg_1', 'a1', 'u-new', 40000)) +
+    line(asst('msg_2', 'a2', 'a1', 41000)) +
+    line(user('result of call 1', 'tr1', 'a1')) +
+    line(user('result of call 2', 'tr2', 'a2')) +
+    line(asst('msg_3', 'a3', 'tr2', 42000));
+
+  const w = new SessionWatcher(tmpJsonl(content), 42000);
+  w.poll();
+
+  assert.equal(w._segment, 1);
+  assert.deepEqual(w._calls.filter(c => c.segment === 0).map(c => c.messageId), ['msg_old']);
+  assert.deepEqual(w._calls.filter(c => c.segment === 1).map(c => c.messageId),
+    ['msg_1', 'msg_2', 'msg_3'], "the segment must not stop at call #1's result stub");
+});
+
+test('compact: replay clears the compact signal before the next linear append', () => {
+  const initial =
+    line(sys('sys1', null)) +
+    line(user('old', 'u-old', 'sys1')) +
+    line(asst('msg_old', 'a-old', 'u-old', 80000)) +
+    line(sys('sys2', null)) +
+    line(user('new', 'u-new', 'sys2')) +
+    line(asst('msg_new', 'a-new', 'u-new', 40000));
+
+  const p = tmpJsonl(initial);
+  const w = new SessionWatcher(p, 42000);
+  const replay = w.poll();
+  assert.deepEqual(replay, { newCalls: 2, changed: true });
+  assert.equal(w._segment, 1);
+
+  appendFileSync(p,
+    line(user('continue', 'u-next', 'a-new')) +
+    line(asst('msg_next', 'a-next', 'u-next', 41000))
+  );
+  const append = w.poll();
+
+  assert.deepEqual(append, { newCalls: 1, changed: true });
+  assert.equal(w._segment, 1, 'the prior compact is not consumed a second time');
+  assert.deepEqual(w._calls.filter(c => c.segment === 1).map(c => c.messageId), ['msg_new', 'msg_next']);
+});
+
+test('compact: a rewind after a compact keeps the pre-compact segments', () => {
+  // The first replay consumes the compact signal, so the second replay cannot read segmentation off
+  // that signal — the file still has two roots and both still deserve their own segment.
+  const initial =
+    line(sys('sys1', null)) +
+    line(user('old', 'u-old', 'sys1')) +
+    line(asst('msg_old', 'a-old', 'u-old', 80000)) +
+    line(sys('sys2', null)) +
+    line(user('new', 'u-new', 'sys2')) +
+    line(asst('msg_new', 'a-new', 'u-new', 40000));
+
+  const p = tmpJsonl(initial);
+  const w = new SessionWatcher(p, 42000);
+  w.poll();
+  assert.equal(w._segment, 1);
+
+  // Ordinary rewind: fork off u-new, abandoning a-new. No new null-parent root.
+  appendFileSync(p,
+    line(user('retry', 'u-retry', 'u-new')) +
+    line(asst('msg_retry', 'a-retry', 'u-retry', 41000))
+  );
+  w.poll();
+
+  assert.equal(w._segment, 1, 'the pre-compact segment must survive a later rewind');
+  assert.deepEqual(w._calls.filter(c => c.segment === 0).map(c => c.messageId), ['msg_old'],
+    'the pre-compact segment keeps its call');
+  assert.deepEqual(w._calls.filter(c => c.segment === 1).map(c => c.messageId), ['msg_retry']);
+});
+
+test('compact: a rewind into a pre-compact root never files later calls behind the abandoned root', () => {
+  // Degradation guard. Normally the newest write lives in the newest root, so the last segment
+  // folded is the live one. A rewind into a pre-compact root breaks that, and folding onward into
+  // the last segment would put the live epoch's new calls in the SAME segment as an abandoned
+  // root's — one segment measuring two epochs. Splitting the live epoch across segments is a paging
+  // artefact; mixing epochs inside one segment is a measurement error.
+  const initial =
+    line(sys('sys1', null)) +
+    line(user('old', 'u-old', 'sys1')) +
+    line(asst('msg_old', 'a-old', 'u-old', 80000)) +
+    line(sys('sys2', null)) +
+    line(user('new', 'u-new', 'sys2')) +
+    line(asst('msg_new', 'a-new', 'u-new', 40000));
+
+  const p = tmpJsonl(initial);
+  const w = new SessionWatcher(p, 42000);
+  w.poll();
+
+  appendFileSync(p,
+    line(user('rev', 'u-rev', 'u-old')) +
+    line(asst('msg_rev', 'a-rev', 'u-rev', 41000))
+  );
+  w.poll();
+
+  appendFileSync(p,
+    line(user('cont', 'u-cont', 'a-rev')) +
+    line(asst('msg_cont', 'a-cont', 'u-cont', 41500))
+  );
+  w.poll();
+
+  const segOf = id => w._calls.find(c => c.messageId === id)?.segment;
+  assert.notEqual(segOf('msg_cont'), segOf('msg_new'),
+    'a live-epoch call must not share a segment with the abandoned root');
+  assert.deepEqual(w._calls.map(c => c.messageId).sort(), ['msg_cont', 'msg_new', 'msg_rev'],
+    'and nothing is dropped to achieve that');
 });
 
 test('compact: single session (no system break) with /compact → no segment bump', () => {
@@ -253,4 +424,41 @@ test('compact: incremental poll preserves old-segment history (no call loss)', (
   assert.equal(seg1.length, 2, 'new-segment calls folded');
   assert.equal(seg0[0].messageId, 'msg_1');
   assert.equal(seg1[0].messageId, 'msg_4');
+});
+
+test('compact: UUID-bearing replay populates firstRootUuid before foldCall', () => {
+  // The replay rebuilds topology from the whole file before it folds any row, so the watcher reaches
+  // the active segment with the session origin already resolved in the topology it consults.
+  const content =
+    line(sys('sys1', null)) +
+    line(user('start', 'u1', 'sys1')) +
+    line(asst('msg_1', 'a1', 'u1', 200000)) +
+    line(sys('sys2', null)) +
+    line(user('post compact', 'u2', 'sys2')) +
+    line(asst('msg_2', 'a2', 'u2', 59000));
+
+  const p = tmpJsonl(content);
+  const w = new SessionWatcher(p, 55000);
+  w.poll();
+
+  assert.equal(w._segment, 1);
+  // firstRootUuid is populated (topology is rebuilt before folding)
+  assert.equal(w._topology.firstRootUuid, 'sys1');
+});
+
+test('compact: a UUID-less session segments on the same stock-drop floor', () => {
+  // A session with no uuid carries no topology, so the totalStock floor is the only detector that can
+  // run — the same one rule a uuid-bearing session reaches.
+  const content =
+    line({ type: 'assistant', isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
+      message: { id: 'msg_1', model: 'claude-opus-4-8', usage: { input_tokens: 3, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 200000 } } }) +
+    line({ type: 'assistant', isSidechain: false, timestamp: '2026-07-01T00:00:01Z',
+      message: { id: 'msg_2', model: 'claude-opus-4-8', usage: { input_tokens: 3, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 45000 } } });
+
+  const p = tmpJsonl(content);
+  const w = new SessionWatcher(p, 42000);
+  w.poll();
+
+  assert.equal(w._segment, 1, 'a UUID-less stock drop past the floor opens a segment');
+  assert.equal(w._topology.firstRootUuid, null, 'no topology available in UUID-less session');
 });

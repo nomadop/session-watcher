@@ -267,12 +267,19 @@ export function feedRevisionWithLoadToken(w, { foldedSeq, input = 0, output = 0,
 // Set w._sessionId=sessionId (so archival is armed), assume the store is already wired by the caller
 // (setupStore/bootTestServer), then feed one assistant step plus a Read per touch. touches[i] =
 // { path, full } → feedReadFull / feedReadRange.
+// Each touch gets an EXPLICIT cacheRead 1000 above its predecessor, starting above the anchor step's
+// 20500 stock, so the fixture's stock grows monotonically the way a real transcript's does. Leaving
+// them at feedReadFull's 10000 default would drop the stock 51% with the prefix gone, which is a
+// context reset — the segment would rotate mid-fixture and the touches would be archived
+// under the NEXT segment (test/segment-telemetry.test.js reads them from segment 0).
 export function feedSegmentWithTouches(w, sessionId, touches = []) {
   w._sessionId = sessionId;
   feedAssistantStep(w, { input: 500, output: 20, cacheRead: 20000, cacheCreation: 0, toolUses: 0 });
+  let cacheRead = 21000;
   for (const t of touches) {
-    if (t.full === false) feedReadRange(w, t.path, { offset: t.offset ?? 0, limit: t.limit ?? 5 });
-    else feedReadFull(w, t.path, t.content ?? 'export const y = 2;\n'.repeat(10));
+    if (t.full === false) feedReadRange(w, t.path, { offset: t.offset ?? 0, limit: t.limit ?? 5 }, { cacheRead });
+    else feedReadFull(w, t.path, t.content ?? 'export const y = 2;\n'.repeat(10), { cacheRead });
+    cacheRead += 1000;
   }
   return w;
 }

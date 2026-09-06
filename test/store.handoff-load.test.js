@@ -102,20 +102,43 @@ test('CAS-stamp and the handoff_load attempt row are atomic — happy path', asy
   assert.equal(rows, 1, 'binding and attempt row are both present (atomic)');
 });
 
-test('atomicity under failure: an attempt-row insert failure ROLLS BACK the binding too', async () => {
-  // The happy-path test above cannot prove atomicity — only a failure injection can. Force
-  // insertHandoffLoad to throw on the FIRST-claim path and assert the CAS binding did NOT persist
-  // (both writes are in one txn), yet content still fails open.
+test('delivery 记录失败时 fail-closed：无任何内容字段', async () => {
+  await seed();
+  const token = 'carry-lyric-gear';
+  const failingStore = store;
+  const origRun = failingStore._stmts.insertHandoffLoad.run;
+  failingStore._stmts.insertHandoffLoad = { run() { throw new Error('injected delivery failure'); } };
+  try {
+    const res = failingStore.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'handoff_delivery_unavailable');
+    assert.equal(res.retryable, true);
+    for (const k of ['summary', 'pathsToKeep', 'nextTask', 'handoffId', 'transcriptPath']) {
+      assert.equal(res[k], undefined, `${k} 不得出现在失败响应里`);
+    }
+    assert.equal(failingStore._db.prepare('SELECT COUNT(*) c FROM handoff_load').get().c, 0);
+  } finally {
+    failingStore._stmts.insertHandoffLoad = { run: origRun };
+  }
+});
+
+test('重试幂等：同 payload 第二次仍交付内容，且父边可解析', async () => {
   const id = await seed();
-  const origRun = store._stmts.insertHandoffLoad.run;
-  store._stmts.insertHandoffLoad = { run() { throw new Error('injected'); } };
-  const h = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
-  store._stmts.insertHandoffLoad = { run: origRun };
-  assert.ok(h, 'content still returned (fail-open)');
-  const row = store._db.prepare("SELECT delivered_at, delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
-  assert.equal(row.delivered_at, null, 'binding rolled back — no delivered_at without an attempt row');
-  assert.equal(row.delivered_session_id, null);
-  assert.equal(store._db.prepare("SELECT COUNT(*) c FROM handoff_load WHERE handoff_id=?").get(id).c, 0, 'no attempt row either — both writes rolled back together');
+  const token = 'carry-lyric-gear';
+  const projectId = 'proj-retry-idempotent';
+  store._db.prepare('UPDATE handoff SET project_id = ? WHERE handoff_id = ?').run(projectId, id);
+  // 成功形状不变（22 个 camelized handoff 列 + claimResult + claimedNow），没有 ok 字段 ——
+  // ok:false 只是新增的失败判别式，不要拿 ok===true 断言成功。
+  const first = store.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
+  const again = store.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
+  assert.equal(typeof first.summary, 'string');
+  assert.equal(typeof again.summary, 'string');
+  assert.equal(again.ok, undefined);
+  // handoff_load 的 PK 含 loaded_at（lib/store.js:141-150），且 loaded_at = Date.now()，
+  // 所以 INSERT OR IGNORE 只在同一毫秒内去重 —— 多行是合法的（§5「同一 session 可以有多条」）。
+  // 该断言的对象是父边可解析，不是行数。
+  assert.ok(store._db.prepare('SELECT COUNT(*) c FROM handoff_load').get().c >= 1);
+  assert.ok(store.findLatestDeliveryHandoff(projectId, 'sess-consumer'));
 });
 
 test('a v2 legacy delivery (delivered_at set, delivered_session_id NULL) binds as legacy_unattributed, not primary', async () => {
@@ -138,18 +161,21 @@ test('a v2 legacy delivery (delivered_at set, delivered_session_id NULL) binds a
   assert.equal(second.claimResult, 'duplicate');
 });
 
-test('the error path recomputes claim metadata from the re-read row and never falsely reports primary', async () => {
-  // Content is fail-open on a txn error, but claimResult/primarySessionId/claimedNow must be
-  // recomputed from the committed row — not left at their optimistic pre-txn defaults.
+test('delivery failure for a secondary consumer: fail-closed, primary binding unaffected', async () => {
+  // consumerA holds the primary binding. When consumerB's delivery write fails, the response
+  // carries no content — no falsely-reported claim metadata, no leaked handoff fields.
   const id = await seed();
-  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });   // consumerA is the real primary
+  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   // Force the CAS/insert txn to throw for consumerB by breaking the attempt-insert statement.
   const origRun = store._stmts.insertHandoffLoad.run;
   store._stmts.insertHandoffLoad = { run() { throw new Error('injected txn failure'); } };
   const h = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
   store._stmts.insertHandoffLoad = { run: origRun };
-  assert.ok(h, 'content still returned (fail-open)');
-  assert.notEqual(h.claimResult, 'primary', 'must NOT report primary — consumerA already holds the binding');
-  assert.equal(h.claimResult, 'duplicate', 'recomputed from the committed row: consumerB is a duplicate');
-  assert.equal(h.claimedNow, false);
+  // Fail-closed: no content returned, no claim metadata fields present.
+  assert.equal(h.ok, false, 'fail-closed: no content on delivery failure');
+  assert.equal(h.error, 'handoff_delivery_unavailable');
+  assert.equal(h.claimResult, undefined, 'no claim metadata in failure response');
+  // consumerA's primary binding is unaffected by the rollback.
+  const row = store._db.prepare("SELECT delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
+  assert.equal(row.delivered_session_id, 'consumerA', 'primary binding unchanged');
 });
