@@ -26459,7 +26459,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.6.0",
+      version: "0.7.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -28802,7 +28802,7 @@ import { fileURLToPath as fileURLToPath3 } from "node:url";
 async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
   let index = indexTranscript(transcriptPath);
   if (index.length === 0)
-    throw new Error(`No usage events found in ${transcriptPath}. Session Watcher 0.6.0 supports Claude Code JSONL transcripts only.`);
+    throw new Error(`No usage events found in ${transcriptPath}. Session Watcher 0.7.0 supports Claude Code JSONL transcripts only.`);
   initStore(":memory:");
   let cleanedUp = !1, watcher = new SessionWatcher(transcriptPath, null, { cwd: process.cwd() }), publicDir = join6(__dirname3, "..", "public"), { server, stopTimers, sseClients } = createServer({
     watcher,
@@ -29036,7 +29036,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.6.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.7.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

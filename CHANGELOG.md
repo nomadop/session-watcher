@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.0 (2026-09-06) — Turn history
+
+### Handoff
+
+- **A handoff carries its turns** — `load_handoff` now returns a page of the recent turns behind the summary, each excerpt addressed by the transcript row it came from, so a successor can read the full row instead of trusting a truncated quote.
+- **Turn records** — `get_turn_skeleton` renders the capture epoch one block per turn and `submit_turn_notes` takes the producing session's notes back through the slots it defines. Records persist with their own search index and retire with the handoff that keeps them alive.
+
+### Reading the history
+
+- **`turn_page`** — page a loaded handoff's lineage, newest first
+- **`turn_search`** — find a literal that occurs verbatim in the transcripts behind it
+- **`turn_locate`** — find candidate turn ranges when the remembered wording is uncertain
+
+  All three resolve their own lineage from the handoff delivered into the calling session, so none takes a lineage identifier; a session that has loaded nothing is told so rather than offered a guess.
+
+### Dashboard
+
+- **History drawer** — a read-only drawer on the history chart: one collapsible section per session in the lineage with the wayfinder headline it shows in place of its rows, the stored user text and note for each turn, and client-side substring search. One snapshot per open, no write path.
+
+### Fixes
+
+- **Segment boundaries no longer fire on a small stock dip** — with no new root UUID in the topology, a reset now requires `totalStock` to fall past a floor relative to the stock it judges (`SEGMENT_DROP_FRACTION`) rather than past a fixed absolute one. A reset replaces the whole conversation prefix, so a shallow dip is not one. The fallback reads that single quantity and nothing else.
+- **A failed segment archive no longer stops the fold** — store resolution moved inside the guarded block, so an archival failure degrades to "the segment still rotates, the sweep retries" instead of propagating out through `foldCall` and ending measurement for the session.
+
+### Removed
+
+- **`get_bookmark_detail`** — the MCP tool is retired. The REST routes behind it (`/api/bookmark/detail`, `/api/bookmark/messages`, `PUT /api/bookmark`) remain callable.
+
+---
+
 ## 0.6.0 (2026-07-28) — Post-v3 feature release
 
 ### Measurement

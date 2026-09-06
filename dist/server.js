@@ -33268,7 +33268,7 @@ function hashFileContent(absPath) {
 // package.json
 var package_default = {
   name: "@nomadop/session-watcher",
-  version: "0.6.0",
+  version: "0.7.0",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
