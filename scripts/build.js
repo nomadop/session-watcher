@@ -73,6 +73,17 @@ async function main() {
   // 5. Copy static assets
   cpSync(join(ROOT, 'public'), join(DIST, 'public'), { recursive: true });
 
+  // 5b. Copy tree-sitter WASM files (not bundleable by esbuild)
+  const WASM_SOURCES = [
+    ['web-tree-sitter/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],
+    ['tree-sitter-javascript/tree-sitter-javascript.wasm', 'tree-sitter-javascript.wasm'],
+    ['tree-sitter-typescript/tree-sitter-typescript.wasm', 'tree-sitter-typescript.wasm'],
+    ['tree-sitter-typescript/tree-sitter-tsx.wasm', 'tree-sitter-tsx.wasm'],
+    ['tree-sitter-python/tree-sitter-python.wasm', 'tree-sitter-python.wasm'],
+  ];
+  for (const [src, dest] of WASM_SOURCES)
+    cpSync(join(ROOT, 'node_modules', src), join(DIST, dest));
+
   // 7. Bundle bin/session-watcher.js (CLI — single file, includes cli.js + replay-server.js)
   // esbuild inlines the dynamic import('lib/cli.js') → one self-contained bundle.
   // __PKG_VERSION__ injected at build time — no runtime package.json read.
