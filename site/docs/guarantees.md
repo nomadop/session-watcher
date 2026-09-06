@@ -92,6 +92,8 @@ Stable commands exposed to the agent:
 | `stop_watcher` | Request measurement shutdown (may be a no-op when lifecycle is process-bound) |
 | `watcher_status` | Query whether the measurement server is reachable |
 | `get_bucket_summary` | Per-path token breakdown (B composition) |
+| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
+| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
 | `prepare_handoff` | Package paths + summary for the next session |
 | `load_handoff` | Retrieve a handoff package by token or search |
 | `rotate_session` | Switch the server to a new session/transcript |

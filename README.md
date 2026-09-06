@@ -161,6 +161,8 @@ When it's time to restart, handoff preserves the state you want to keep. Run `/s
 | Tool | Description |
 |------|-------------|
 | `get_bucket_summary` | Return current context bucket structure (files, skills, tools) with metrics |
+| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
+| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
 | `prepare_handoff` | Persist selected paths + summary as a handoff package; returns a semantic token |
 | `load_handoff` | Load a handoff by token, free-text search, or auto-match for the current project |
 
