@@ -336,7 +336,7 @@ The growth rate g measures how fast new content arrives relative to the baseline
 The movable fraction has a theoretical ceiling around 41.4% (the AM-GM bound). This is by construction: even in the worst case, timing optimization can affect at most this fraction of total bill. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
 
 **Scenario: Detected cache miss during the session.**
-When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as cacheRead plus cacheCreation — it does not drop to near zero. The miss detection logic in the fold stream classifies this pattern and applies stock reconstruction, so the metrics see a continuous L rather than a transient cliff. A topology change (non-first null-parent root UUID, indicating /compact or /continue) is the primary segmentation signal, not a cache miss. A secondary fallback fires on totalStock drops (guarded by eviction detection for UUID-bearing sessions). New files entering the B bucket do NOT trigger segment boundaries. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
+When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as cacheRead plus cacheCreation — it does not drop to near zero. The miss detection logic in the fold stream classifies this pattern and applies stock reconstruction, so the metrics see a continuous L rather than a transient cliff. A topology change (non-first null-parent root UUID, indicating /compact or /continue) is the primary segmentation signal, not a cache miss. A secondary fallback fires only on a totalStock drop past a floor relative to the stock it judges (a quarter of it), and that stock is the only field it reads. New files entering the B bucket do NOT trigger segment boundaries. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
 
 **Scenario: "Metric says amber but the session feels fine" / "Metric says green but output quality dropped."**
 Session Watcher measures cost geometry, not output quality. Amber/red means you are paying more than optimal timing would require — the model may still be performing well. Conversely, green means cost is efficient — but the model could be producing poor output due to task difficulty, prompt issues, or capability limits. Never use lamp state as a quality proxy.
@@ -347,7 +347,7 @@ Session Watcher measures cost geometry, not output quality. Amber/red means you 
 Shortest path: `/sw-handoff` → `/clear` → `/sw-load`.
 
 **Scenario: Verifying carry quality after loading a handoff.**
-After `load_handoff`, the agent receives the handoff package: a list of kept paths (projected to path, symbol names with current line numbers, and stale/missing markers), a summary, and the next_task description. The response does NOT include actual file content — the agent must read kept paths itself. To verify carry quality, read the kept paths and confirm they still exist and contain the expected content. Hash validation exists internally (the server stamps content hashes at load time for telemetry) but is not exposed in the agent-visible response. B_default recovery depends on which kept files are still readable when the agent accesses them in the new session.
+After `load_handoff`, the agent receives the handoff package: a list of kept paths (projected to path, symbol names with current line numbers, and stale/missing markers) and a summary. The response does NOT include actual file content — the agent must read kept paths itself. To verify carry quality, read the kept paths and confirm they still exist and contain the expected content. Hash validation exists internally (the server stamps content hashes at load time for telemetry) but is not exposed in the agent-visible response. B_default recovery depends on which kept files are still readable when the agent accesses them in the new session.
 
 **Scenario: Handoff completed but new session B is lower than expected.**
 `load_handoff` retrieves the handoff package but does not validate file existence or fail on missing files. Files that have been deleted, renamed, or moved since prepare time will still appear in the returned paths list — the shortfall surfaces only when the agent (or the fold stream) attempts to read those files and finds them absent. This is expected: B reflects actual current file state, not the historical snapshot from prepare time. To diagnose, compare the paths in the loaded package against what exists on disk.
@@ -458,7 +458,7 @@ A timer drives the pipeline at regular intervals:
 
 #### 4. Segmentation
 
-A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or by a totalStock drop when no topology is available.
+A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or, as a fallback, by a totalStock drop large relative to the stock itself — a reset replaces the whole conversation prefix, so a small dip is not one. The fallback judges that one quantity and nothing else: cache-read alone lags behind the context it stands for, and whether the prefix survived is a single question.
 
 On boundary: finalize settlement, archive the segment for history, and reset all metrics to initial state. This ensures the cost model always reflects the current context, not a mixture of old and new.
 
@@ -474,17 +474,17 @@ On termination or idle timeout: stop timers, close connections, archive the fina
 
 When a session ends, the agent can package its working context for the next session. The handoff mechanism bridges the gap between `/clear` (which destroys in-memory context) and the new session (which starts empty).
 
-1. The agent selects which file paths and symbols are essential for the next task — guided by the per-path token weights from B. It writes a structured summary (current state and intent, not history) and submits the package. The server persists this alongside a bookmark index: automatically selected conversation turning points that capture the session's work trajectory.
+1. The agent selects which file paths and symbols are essential for the next task — guided by the per-path token weights from B. It writes a structured summary (current state and intent, not history) and submits the package. The server persists this package on its own; nothing about the conversation is selected automatically.
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The bookmark index and recent user intents provide orientation: the agent can scan the trajectory of what was built and, when the summary leaves a gap, drill into specific turns for surrounding context.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 
 - **B recovers from disk state, not snapshots.** The handoff carries path references, not cached token counts. If a file was deleted or changed since prepare, B reflects reality — stale entries do not inflate the baseline.
 - **Hook injection eliminates manual token passing.** The user does not need to remember or copy a token. The hook discovers and injects it; the agent picks it up on the first interaction.
-- **Bookmark index preserves trajectory without bulk.** Instead of carrying full conversation history, the system selects turning points — decisions, corrections, direction changes — and makes them drillable on demand. This keeps the handoff package small while preserving the ability to recover critical context.
+- **Turn notes preserve trajectory without bulk.** Rather than predicting which turns will matter later, the system records every history turn at the moment the handoff is prepared — each with the note written for it, and a turn with no assistant work of its own recorded without one — then delivers the newest of them as a page under a fixed token budget. What does not fit stays reachable through the read tools instead of being guessed at up front, so the handoff package stays small without discarding the trail that led to it.
 
 ---
 
@@ -582,10 +582,16 @@ Stable commands exposed to the agent:
 | `stop_watcher` | Request measurement shutdown (may be a no-op when lifecycle is process-bound) |
 | `watcher_status` | Query whether the measurement server is reachable |
 | `get_bucket_summary` | Per-path token breakdown (B composition) |
+| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
+| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
 | `prepare_handoff` | Package paths + summary for the next session |
 | `load_handoff` | Retrieve a handoff package by token or search |
-| `get_bookmark_detail` | Drill into a specific turn from the bookmark index |
 | `rotate_session` | Switch the server to a new session/transcript |
+| `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
+| `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
+| `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |
+
+The three history tools resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
 
 ---
 
