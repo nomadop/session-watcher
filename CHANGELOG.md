@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.7.1 (2026-09-21) — Harness projection decoupling and causal position
+
+### Architecture
+
+- **The harness is now the only Claude-Code-aware layer** — transcript rows, content blocks, byte cursors and branch topology stop at a source driver that emits normalized observations. Measurement, dialogue history, turn records and handoff read those observations and carry no transcript format, row shape or native tool name, so a second agent needs a harness rather than a fork.
+- **The measurement engine is portable** — it owns calls, epochs, turns, resident content, resource overrides and segment closure, and reaches no filesystem, store, HTTP or native tool name.
+
+### Measurement
+
+- **An epoch opens only for a root that has a call behind it** — a root carrying no measured call no longer starts a segment, and a row's call is read per row, so the root that carries the first one is the root that opens.
+- **Residual candidates are credited with the stock growth of their own interval** — the residual total now follows the stock channel instead of drifting from it, so the bucket panel's unattributed remainder reflects the growth that actually arrived while those candidates were pending.
+
+### Attribution
+
+- **A Bash read is attributed to the file it names** — `cat`, `head`, numbered `grep` and the `sed -n` range shapes become path effects when the read is the whole command, with `cd`/`echo`/function preambles stripped first and a multi-segment `sed` spec keyed from its own segments. Reads that used to land in the residual bucket now appear against their files in B and the bucket panel.
+- **A compound Bash read chain becomes one effect per locatable block** — a `&&`/`;` chain of reads credits each file it names instead of the whole chain going to residual, refusing the chain when a mid-chain read fails or a directory change is unreadable.
+
+### Pricing
+
+- **The C ratio is keyed by the prompt-cache lifetime the host declares** — where a provider prices cache lifetimes apart, the write-to-read ratio follows the declared lifetime rather than one constant, so the sweet spot and bp reflect what the session is actually billed.
+
+### Handoff
+
+- **A load carries the lineage behind it** — `load_handoff` now returns one headline per session in the lineage alongside the turn page, so a successor sees the chain of sessions it inherits rather than only the most recent summary.
+- **A turn page boundary may name a lineage session** — a page can start at a session boundary instead of a turn, which is what a lineage with a session carrying no turn of its own requires.
+
+### Changed
+
+- **Segment boundaries come from transcript topology alone** — a drop in reported token totals no longer starts one, however steep. The absolute dust allowance that survives is the miss classifier's stock-preservation tolerance and nothing else.
+- **A sidechain row is dropped before interpretation** — it yields no evidence of any kind, so it no longer contributes path attribution either, and its identifiers never reach topology.
+- **Model-dependent reads follow the epoch's first measured call**, not the most recent one; a new epoch clears the binding for the next call to fix. A tool result that arrives late is priced by the policy in force when its call was issued.
+- **Path spend counts tool effects only** — text and thinking emitted between tools is no longer attributed to a path.
+- **An error the system cannot classify as an unreadable or malformed source is fatal to the owner** — it reports, releases what it holds without archiving the open segment, and exits nonzero, instead of dropping the offending entry and continuing with silently incomplete state. The transcript is untouched, so a fresh owner rebuilds from it.
+- **A turn boundary survives a context reset** — a user turn already announced still opens its turn on the far side.
+- **Rotation and shutdown settle the rate lamp** — a successful rotation reanchors the new session's ledger before any later call, and normal shutdown flushes pending billing progress before the store closes. Neither integrates restored samples.
+
+### Fixed
+
+- **A rewind stops observing the branch it left behind** — the live root is the one whose subtree holds the newest write, and acceptance stops there. Previously the abandoned branch stayed observed: its usage rows folded into phantom steps and the active leaf could resolve from a branch the conversation no longer reaches.
+- **A root readmitted by a later write reports a stale branch** — a root rejected on the advance that carried its row is no longer silently readmitted with no advance left to open its boundary, which had let the snapshot and incremental paths disagree about an epoch boundary and could carry `dead`/B across a real reset.
+
+### Removed
+
+- **History Bookmarks** — the routes (`PUT /api/bookmark`, `/api/bookmark/detail`, `/api/bookmark/messages`) now return 404, store CRUD is gone, and a fresh store no longer creates the table. This supersedes 0.7.0's note that the routes behind the retired MCP tool remained callable.
+- **`ctpOvershootRatio`** — absent from status, bucket data and archived profile snapshots.
+- **`foldErrors`** — absent from status, together with the per-entry recovery path that produced it.
+
+---
+
 ## 0.7.0 (2026-09-06) — Turn history
 
 ### Handoff

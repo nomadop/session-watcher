@@ -74,19 +74,16 @@ test('FTS UPDATE 触发器：重做 handoff 后旧词消失、新词命中', () 
 });
 
 test('CJK：search_terms 与 buildFtsMatch 双向使用同一 cjkBigrams', () => {
-  store.upsertTurnNotes([row({ note: '连续中文可命中', searchTerms: buildSearchTerms({ uText: '', note: '连续中文可命中', turn: { lines: [] }, cwd: '/project' }) })]);
+  store.upsertTurnNotes([row({ note: '连续中文可命中', searchTerms: buildSearchTerms({ uText: '', note: '连续中文可命中', turn: { lines: [] } }) })]);
   assert.equal(store.locateTurnNotes(['sess-A'], buildFtsMatch('连续中文', 'plain')).length, 1);
 });
 
-test('search_terms：相对工具路径以会话 cwd 为根；只收路径、不收工具名；重复路径只收一次', () => {
-  const read = () => ({ kind: 'tool', tool: { name: 'Read', input: { file_path: 'lib/store.js' } } });
-  const turn = { lines: [read(), read()] };          // the same file read twice in one turn
-  const terms = buildSearchTerms({ uText: '', note: null, turn, cwd: '/project' });
-  const parts = terms.split(' ');
-  assert.ok(parts.includes('/project/lib/store.js'));
-  assert.ok(!parts.includes('/lib/store.js'));
+test('search_terms：索引取 Adapter 解析好的 resourceKey；只收它、不收工具名；重复只收一次', () => {
+  const read = () => ({ kind: 'tool', tool: { name: 'Read', resourceKey: '/project/lib/store.js' } });
+  const turn = { lines: [read(), read()] };          // the same resource read twice in one turn
+  const parts = buildSearchTerms({ uText: '', note: null, turn }).split(' ');
   assert.ok(!parts.includes('Read'), '工具名不是检索词');
-  assert.deepEqual(parts, ['/project/lib/store.js'], '重复路径去重，且没有第二类词进来');
+  assert.deepEqual(parts, ['/project/lib/store.js'], '重复 key 去重，且没有第二类词进来');
 });
 
 test('locateTurnNotes 只返回给定 session 集合内的行', () => {

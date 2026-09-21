@@ -109,7 +109,9 @@ async function startDemo() {
   // Load snapshots
   const res = await fetch('./snapshots.json');
   if (!res.ok) {
-    document.body.innerHTML = '<p style="color:red;padding:2rem">Failed to load snapshots.json — run: node scripts/bake-demo-snapshots.mjs</p>';
+    // No command is named here on purpose: the generator that produced snapshots.json is frozen, so
+    // telling a reader to run it would send them at something that cannot run.
+    document.body.innerHTML = '<p style="color:red;padding:2rem">Failed to load snapshots.json — the demo needs that asset beside it.</p>';
     return;
   }
   const data = await res.json();

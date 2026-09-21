@@ -4,7 +4,7 @@ import { createStore } from '../public/lib/store.js';
 
 test('store.update carries bucketData as 4th field', () => {
   const store = createStore();
-  const bd = { paths: [], skills: [], residual: { bash: [], mcp: [] }, dead: 0, totalB: 0, totalL: 0, totalResidual: 0, ctpOvershootRatio: 0, currentTurnSeq: 0, segment: 0 };
+  const bd = { paths: [], skills: [], residual: { bash: [], mcp: [] }, dead: 0, totalB: 0, totalL: 0, totalResidual: 0, currentTurnSeq: 0, segment: 0 };
   store.update({ L: 1 }, [], { x: true }, bd);
   const snap = store.getSnapshot();
   assert.equal(snap.bucketData, bd, 'bucketData present in snapshot');

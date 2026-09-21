@@ -105,20 +105,23 @@ test('per-call advance: cycle tick in deep water advances dwBillsSinceLastAlert 
   // burnRate 2.0 → each call crosses 1 cycle. L_read high enough to be in deep water.
   // With B=250000, cRatio=10, gEma=940: dhat≈0.274, xSweet≈1.274
   // L=450000 → x=1.8 → deep water
-  const w = {
-    _turnSeq: 1, _foldedCallSeq: 3,
-    poll() { return { changed: false, newCalls: 0 }; },
-    getStatus() {
-      return { segment: 0, model: 'opus',
-        rateLamp: { reliable: true, C_RATIO: 10, L_cap: 1000000, L_read: 450000,
-          B_post: 250000, B_rebuild: 250000, B_default: 250000, kStable: 940, gEma: 940 } };
+  // One coherent frame is the manager's whole input. The samples ride ON the frame rather than coming from a
+  // second method, so a per-call gate advance is driven by exactly what the application reported.
+  const frameWith = (samples, foldedSeq, streamRevision = 1) => ({
+    readRateLampFrame(sinceFoldedSeq) {
+      return {
+        status: { reliable: true, C_RATIO: 10, L_cap: 1000000, L_read: 450000,
+          B_post: 250000, B_rebuild: 250000, B_default: 250000, gEma: 940 },
+        progress: { segment: 0, measuredCalls: samples.length, sinceFoldedSeq },
+        samples, turnSeq: 1, foldedCallSeq: foldedSeq, streamRevision,
+      };
     },
-    rateLampSamplesSince() {
-      return [rs(1, 2.0, 450000, 1), rs(2, 2.0, 460000, 1), rs(3, 2.0, 470000, 1)];
-    },
-    rateLampSeqSamplesSince() { return []; },
-  };
-  const { ledger } = advanceRateLampToCurrent(w, SID, { forcePoll: false });
+  });
+  // The session's FIRST frame is a stream discontinuity, so settle the revision on an empty frame before the
+  // samples under test arrive — otherwise they would be skipped rather than integrated.
+  advanceRateLampToCurrent(frameWith([], 0), SID, { forcePoll: false });
+  const { ledger } = advanceRateLampToCurrent(
+    frameWith([rs(1, 2.0, 450000, 1), rs(2, 2.0, 460000, 1), rs(3, 2.0, 470000, 1)], 3), SID, { forcePoll: false });
   // Each call at burnRate 2.0 crosses 1 cycle → 3 cycle ticks total in deep water
   assert.ok(ledger.dwBillsSinceLastAlert >= 3, `dwBills advanced per-call: got ${ledger.dwBillsSinceLastAlert}`);
 });

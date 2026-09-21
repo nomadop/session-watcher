@@ -14,7 +14,7 @@ test('delta computation: toggled leaves produce correct override payload', () =>
     ],
     residual: { bash: [], mcp: [], agent: [] },
     totalB: 2000, totalL: 3000, totalResidual: 0, totalResidualRaw: 0,
-    ctpOvershootRatio: 0, currentTurnSeq: 1, segment: 0,
+    currentTurnSeq: 1, segment: 0,
   };
 
   const tree = buildTree(bd);
@@ -49,7 +49,7 @@ test('delta computation: inferred override reflected in selected state is includ
     ],
     residual: { bash: [], mcp: [], agent: [] },
     totalB: 2000, totalL: 3000, totalResidual: 0, totalResidualRaw: 0,
-    ctpOvershootRatio: 0, currentTurnSeq: 1, segment: 0,
+    currentTurnSeq: 1, segment: 0,
   };
 
   const tree = buildTree(bd);

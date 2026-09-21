@@ -8,9 +8,9 @@ import {
   getLiveLedger,
   mutateLedger,
   schedulePersist,
-  cancelCoalescedPersist,
   persistLedger,
   isEnospcPaused,
+  getDebugCounters,
 } from '../lib/rate-lamp-manager.js';
 
 const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'f', contextCap: 1_000_000, schemaVersion: 2 });
@@ -225,31 +225,6 @@ test('C5a-1: probe succeeds but backlog drain re-hits ENOSPC → pause re-engage
   assert.equal(isEnospcPaused(sid), false, 'pause cleared after probe succeeds');
 });
 
-test('C5a-1: cancelCoalescedPersist removes sid from pending set', (t) => {
-  _resetRateLampManagerForTest();
-  const sid = 'test-c5a-cancel-' + Date.now();
-
-  const writes = [];
-  let timerCb = null;
-  _setRateLampManagerTestHooks({
-    writer: (path, obj) => { writes.push({ ...obj }); },
-    scheduler: (fn, ms) => { timerCb = fn; return { unref() {} }; },
-  });
-  t.after(() => _resetRateLampManagerForTest());
-
-  const ledger = { ...freshLedger(KEY, 940), ledgerRevision: 1 };
-  setLiveLedger(sid, ledger);
-  const afterSet = writes.length;
-
-  // Schedule then cancel before flush
-  schedulePersist(sid);
-  cancelCoalescedPersist(sid);
-
-  // Fire timer — sid was cancelled, so no write
-  if (timerCb) timerCb();
-  assert.equal(writes.length, afterSet, 'cancelled sid not flushed by coalesced timer');
-});
-
 // ════════════════════════════════════════════════════════════════════════════════
 // C5a-1: /api/debug/rate-lamp/:sid — loopback gate
 // ════════════════════════════════════════════════════════════════════════════════
@@ -259,13 +234,24 @@ test('C5a-1: /api/debug/rate-lamp/:sid accessible from loopback', async (t) => {
   const { createServer: createSWServer } = await import('../server.js');
   const sid = 'test-debug-' + Date.now();
 
+  // A structural fake of exactly what the debug route's owner touches, on the post-cutover surface: the
+  // manager reads ONE frame, and the route reads status and history.
   const watcher = {
-    path: '/dev/null', _offset: 0, _turnSeq: 1, _foldedCallSeq: 1,
-    poll() { return { changed: false }; },
-    getStatus() { return { rateLamp: { reliable: false } }; },
+    readRateLampFrame(sinceFoldedSeq) {
+      return {
+        status: { reliable: false, unavailableReason: 'insufficient_data' },
+        progress: { segment: 0, measuredCalls: 0, sinceFoldedSeq },
+        samples: [], turnSeq: 1, foldedCallSeq: 1, streamRevision: 1,
+      };
+    },
+    getStatus() { return { segment: 0, model: '', sourceLocator: null, rateLamp: { reliable: false } }; },
     getHistory() { return []; },
-    rateLampSamplesSince() { return []; },
-    rateLampSeqSamplesSince() { return []; },
+    getBucketData() { return { paths: [], skills: [], residual: { bash: [], mcp: [], agent: [] }, dead: 0,
+      totalB: 0, totalL: 0, bDefault: 0, totalResidualRaw: 0, totalResidual: 0, currentTurnSeq: 0, segment: 0 }; },
+    getTerminalSnapshot() { return { b_total: 0, paths: [], model: '', segment: 0 }; },
+    getCurrentModel() { return null; },
+    getEpochModel() { return null; },
+    setRatioOverride() { return { changed: false, diagnostics: [] }; },
   };
 
   const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid });
@@ -294,13 +280,24 @@ test('C5a-1: /api/debug/rate-lamp/:sid rejects non-loopback without SW_DEBUG', a
   const { createServer: createSWServer } = await import('../server.js');
   const sid = 'test-debug-nonloop-' + Date.now();
 
+  // A structural fake of exactly what the debug route's owner touches, on the post-cutover surface: the
+  // manager reads ONE frame, and the route reads status and history.
   const watcher = {
-    path: '/dev/null', _offset: 0, _turnSeq: 1, _foldedCallSeq: 1,
-    poll() { return { changed: false }; },
-    getStatus() { return { rateLamp: { reliable: false } }; },
+    readRateLampFrame(sinceFoldedSeq) {
+      return {
+        status: { reliable: false, unavailableReason: 'insufficient_data' },
+        progress: { segment: 0, measuredCalls: 0, sinceFoldedSeq },
+        samples: [], turnSeq: 1, foldedCallSeq: 1, streamRevision: 1,
+      };
+    },
+    getStatus() { return { segment: 0, model: '', sourceLocator: null, rateLamp: { reliable: false } }; },
     getHistory() { return []; },
-    rateLampSamplesSince() { return []; },
-    rateLampSeqSamplesSince() { return []; },
+    getBucketData() { return { paths: [], skills: [], residual: { bash: [], mcp: [], agent: [] }, dead: 0,
+      totalB: 0, totalL: 0, bDefault: 0, totalResidualRaw: 0, totalResidual: 0, currentTurnSeq: 0, segment: 0 }; },
+    getTerminalSnapshot() { return { b_total: 0, paths: [], model: '', segment: 0 }; },
+    getCurrentModel() { return null; },
+    getEpochModel() { return null; },
+    setRatioOverride() { return { changed: false, diagnostics: [] }; },
   };
 
   const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid });
@@ -328,4 +325,45 @@ test('C5a-1: /api/debug/rate-lamp/:sid rejects non-loopback without SW_DEBUG', a
   assert.equal(resp.status, 403, 'non-loopback request rejected without SW_DEBUG');
   const body = await resp.json();
   assert.equal(body.error, 'forbidden', 'error body indicates forbidden');
+});
+
+// ── What the coalescing counters guarantee ────────────────────────────────────
+// `_counters` is a PROCESS-GLOBAL object read through one session's debug route, so a count there is a
+// process-wide aggregate sitting at a per-session position. These cases assert deltas around their own
+// schedules, so what they pin is the coalescing mechanism rather than any absolute counter value.
+test('write-behind coalescing still works: a second schedule for one session joins the pending write', () => {
+  _resetRateLampManagerForTest();
+  const sid = 'coalesce-mechanism';
+  const before = getDebugCounters();
+
+  // First schedule for this session: a MISS that leaves it pending.
+  schedulePersist(sid);
+  const afterFirst = getDebugCounters();
+  assert.equal(afterFirst.coalesceMisses, before.coalesceMisses + 1, 'the first schedule is a miss');
+  assert.equal(afterFirst.coalesceHits, before.coalesceHits, 'and not a hit');
+
+  // Second and third schedules for the SAME session, before any flush: both JOIN the pending write. That
+  // joining is the coalescing — without it each call would queue its own write.
+  schedulePersist(sid);
+  schedulePersist(sid);
+  const afterMore = getDebugCounters();
+  assert.equal(afterMore.coalesceHits, afterFirst.coalesceHits + 2, 'both later schedules joined');
+  assert.equal(afterMore.coalesceMisses, afterFirst.coalesceMisses, 'and neither queued a second write');
+
+  // A DIFFERENT session is its own pending entry, so it is a miss rather than a join.
+  schedulePersist('coalesce-other');
+  assert.equal(getDebugCounters().coalesceMisses, afterMore.coalesceMisses + 1,
+    'coalescing is per session, not global');
+});
+
+test('the projected counter still guarantees a non-negative integer', () => {
+  _resetRateLampManagerForTest();
+  const fresh = getDebugCounters();
+  assert.ok(Number.isInteger(fresh.coalesceHits) && fresh.coalesceHits >= 0, 'a fresh process reports 0');
+  schedulePersist('guarantee-a');
+  schedulePersist('guarantee-a');
+  const after = getDebugCounters();
+  assert.ok(Number.isInteger(after.coalesceHits) && after.coalesceHits >= 0,
+    'and it stays a non-negative integer once it has counted — which is the whole of what the placeholder keeps');
+  assert.ok(after.coalesceHits > fresh.coalesceHits, 'and it does actually count, rather than being frozen');
 });

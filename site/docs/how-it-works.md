@@ -67,7 +67,7 @@ Claude Code fires a hook on startup, resume, clear, or compact. The hook discove
 
 The MCP entrypoint starts a watcher instance, an HTTP server on a loopback port, and writes a discovery file so that hooks and the statusline can locate it. The server lifecycle is tied to the Claude Code process.
 
-On resume (or any fresh process start with an existing transcript), the watcher replays the transcript from byte zero — reconstructing the full call history, measurement state, and segment boundaries from the file alone. This is how per-call time series data survives a process restart without requiring a separate persistent store for it.
+On resume (or any fresh process start with an existing transcript), the watcher reconstructs its state by re-reading the transcript from byte zero — rebuilding the full call history, measurement state, and segment boundaries from the file alone, through the same interpretation the live path uses. This is how per-call time series data survives a process restart without requiring a separate persistent store for it.
 
 ### 3. Polling
 
@@ -81,7 +81,7 @@ A timer drives the pipeline at regular intervals:
 
 ### 4. Segmentation
 
-A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or, as a fallback, by a totalStock drop large relative to the stock itself — a reset replaces the whole conversation prefix, so a small dip is not one. The fallback judges that one quantity and nothing else: cache-read alone lags behind the context it stands for, and whether the prefix survived is a single question.
+A segment is a contiguous stretch of context between resets. Boundaries come from transcript topology alone — a root UUID that is not the file's first, which is what `/compact` and `/continue` produce. No token total starts a boundary, however steeply it falls: a reset replaces the whole conversation prefix, and only topology states that a prefix was replaced. A compact whose new branch keeps its parent in the file is therefore not seen as a boundary.
 
 On boundary: finalize settlement, archive the segment for history, and reset all metrics to initial state. This ensures the cost model always reflects the current context, not a mixture of old and new.
 
@@ -101,7 +101,7 @@ When a session ends, the agent can package its working context for the next sess
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: one headline per session behind the handoff, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 

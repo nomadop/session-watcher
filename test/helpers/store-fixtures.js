@@ -1,9 +1,9 @@
 // Store fixtures for the carry-staleness telemetry tests (Task 0).
 //
-// Colocated with fold-feed/server-boot so the direct-store tests (Tasks 7/8/10) share ONE definition of a
-// minimal-but-valid segment snapshot and a pre-seeded store. `snap()` mirrors the field口径 that
-// lib/fold.js buildSegmentSnapshot produces (the canonical live producer) so a snapshot archived via this
-// helper is indistinguishable from a real one to store._segmentArgs / archiveSegmentProfile.
+// Colocated with server-boot so the direct-store tests share ONE definition of a minimal-but-valid segment
+// snapshot and a pre-seeded store. `snap()` mirrors the field口径 of the closed segment `SessionWatcher`
+// archives, so a snapshot archived through this helper is indistinguishable from a real one to
+// store._segmentArgs / archiveSegmentProfile.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

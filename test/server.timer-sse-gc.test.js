@@ -12,20 +12,14 @@ process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); 
 
 import { createServer, _inspectSseClientsForTest, _setServerTestClock } from '../server.js';
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
-import { SessionWatcher } from '../lib/watcher.js';
+import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
 
-// Minimal fixture watcher: enough turns for poll() to work without throwing.
-function fixtureWatcher() {
-  let s = ''; let cr = 42000; let id = 0;
-  for (let i = 0; i < 30; i++) { cr += 940;
-    s += JSON.stringify({ type: 'assistant', uuid: 'u' + id, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
-      message: { id: 'm' + id++, model: 'deepseek-v4-pro', usage: {
-        input_tokens: 560, output_tokens: 380, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
-  }
-  const p = join(mkdtempSync(join(tmpdir(), 'sw-fix-')), 's.jsonl');
-  writeFileSync(p, s);
-  return new SessionWatcher(p, 42000);
-}
+// Enough measured steps that a poll tick has real work, composed on the post-cutover stack. The composition
+// owns the temp store as well as the server, so each case below registers its `teardown` as the release that
+// covers a failing assertion, and keeps its own in-order stop-and-close for the path that reaches the end.
+const composeFixture = (sessionId) => composeForTranscript({
+  transcriptPath: writeMeasuredTranscript({ steps: 30 }), sessionId,
+});
 
 // === C5b-1: an SSE client that errors is removed from sseClients ===
 test('C5b-1: an SSE client that errors is removed from sseClients', async (t) => {
@@ -34,7 +28,9 @@ test('C5b-1: an SSE client that errors is removed from sseClients', async (t) =>
   t.after(() => { _setServerTestClock(null); _resetRateLampManagerForTest(); });
 
   const sessionId = `sse-gc-err-${randomUUID()}`;
-  const srv = createServer({ watcher: fixtureWatcher(), pollIntervalMs: 0, sessionId });
+  const composed = composeFixture(sessionId);
+  const srv = composed.handle;
+  t.after(() => composed.teardown());
   await new Promise(r => srv.server.listen(0, '127.0.0.1', r));
   const port = srv.server.address().port;
 
@@ -68,7 +64,9 @@ test('C5b-1: a client-side REQUEST abort removes the SSE client — del is idemp
   t.after(() => { _setServerTestClock(null); _resetRateLampManagerForTest(); });
 
   const sessionId = `sse-gc-abort-${randomUUID()}`;
-  const srv = createServer({ watcher: fixtureWatcher(), pollIntervalMs: 0, sessionId });
+  const composed = composeFixture(sessionId);
+  const srv = composed.handle;
+  t.after(() => composed.teardown());
   await new Promise(r => srv.server.listen(0, '127.0.0.1', r));
   const port = srv.server.address().port;
 
@@ -109,21 +107,31 @@ test('C5b-1: idle heartbeat skips the tick when a reader advanced recently (mono
   t.after(() => { _setServerTestClock(null); _resetRateLampManagerForTest(); });
 
   const sessionId = `idle-gate-${randomUUID()}`;
-  // Use a counting watcher to spy on advance count
-  let pollCount = 0;
-  const countingWatcher = {
-    poll() { pollCount++; return { changed: false }; },
-    getStatus() { return { segment: 0, model: 'claude-opus-4-8', kAvg: 0, L: 0,
-      baseline: { total: 0, dead: 0, fingerprint: null },
-      rateLamp: { reliable: false, unavailableReason: 'insufficient_data' } }; },
-    rateLampSamplesSince() { return []; },
-    rateLampSeqSamplesSince() { return []; },
-    _currentSegmentCalls() { return []; },
-    _turnSeq: 0,
+  // A counting DRIVER spies on the advance count: the idle gate gates ONE Source advance per tick, so the
+  // driver is where a suppressed tick is observable. It reports no frame, which is the ordinary
+  // "no new rows" answer and is what leaves the gate as the only thing under test.
+  let advanceCount = 0;
+  let installed = false;
+  const countingDriver = {
+    advance() {
+      advanceCount++;
+      // A real driver's first readable advance returns its configured transition, which is what INSTALLS it;
+      // afterwards "no new rows" is no frame. Without that first frame the host would still be acquiring, and
+      // acquisition deliberately runs above the gate — so the gate would never be the thing under test.
+      if (installed) return null;
+      installed = true;
+      return { transition: 'replace', sourceLocator: '/fixture/counting.jsonl', batches: [], sourceObserved: true, captureMode: 'replay' };
+    },
+    get sourceLocator() { return '/fixture/counting.jsonl'; },
   };
 
   // pollIntervalMs = 10 so ticks fire frequently; we control _nowMono via the test clock.
-  const srv = createServer({ watcher: countingWatcher, pollIntervalMs: 10, sessionId });
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({ steps: 1 }), sessionId, pollIntervalMs: 10,
+    createSourceDriver: () => countingDriver,
+  });
+  const srv = composed.handle;
+  t.after(() => composed.teardown());
   await new Promise(r => srv.server.listen(0, '127.0.0.1', r));
 
   try {
@@ -133,27 +141,27 @@ test('C5b-1: idle heartbeat skips the tick when a reader advanced recently (mono
     const baseTime = 50000; // a fixed monotonic value (arbitrary, > IDLE_HEARTBEAT_MS)
     _setServerTestClock(baseTime);
 
-    // Reset pollCount: createServer's initial watcher.poll() in the constructor increments it.
-    pollCount = 0;
+    // Reset the count: the synchronous bootstrap already performed this driver's first advance.
+    advanceCount = 0;
     srv.startPolling();
     // Wait for the first tick to fire (it passes the gate because lastAdvanceMono = -Infinity).
     await new Promise(r => setTimeout(r, 30));
-    // First tick ran → pollCount = 1, lastAdvanceMono = baseTime (set by _nowMono() inside the tick).
-    const afterFirstTick = pollCount;
+    // First tick ran → advanceCount = 1, lastAdvanceMono = baseTime (set by _nowMono() inside the tick).
+    const afterFirstTick = advanceCount;
     assert.equal(afterFirstTick, 1, 'first tick runs (gate open due to initial -Infinity)');
 
     // Now wait for more ticks — they should all be gated:
     // _nowMono() = baseTime, lastAdvanceMono = baseTime → diff = 0 < IDLE_HEARTBEAT_MS → skip.
     await new Promise(r => setTimeout(r, 60)); // ~6 more ticks at 10ms interval
 
-    assert.equal(pollCount, 1, 'idle gate skipped all subsequent ticks (recent advance, no SSE clients)');
+    assert.equal(advanceCount, 1, 'idle gate skipped all subsequent ticks (recent advance, no SSE clients)');
 
     // Now simulate time advancing beyond IDLE_HEARTBEAT_MS:
     _setServerTestClock(baseTime + 6000); // 6s > 5s threshold → diff = 6000 >= 5000
     await new Promise(r => setTimeout(r, 60)); // ~6 ticks
 
     // Now ticks should fire (past the idle threshold).
-    assert.ok(pollCount > 1, `ticks fired after idle threshold exceeded (pollCount=${pollCount})`);
+    assert.ok(advanceCount > 1, `ticks fired after idle threshold exceeded (advanceCount=${advanceCount})`);
   } finally {
     srv.stopTimers();
     _setServerTestClock(null);
@@ -168,7 +176,9 @@ test('C5b-1: heartbeat advances meter but never records an alert (S2: alert is S
   t.after(() => { _setServerTestClock(null); _resetRateLampManagerForTest(); });
 
   const sessionId = `hb-no-alert-${randomUUID()}`;
-  const srv = createServer({ watcher: fixtureWatcher(), pollIntervalMs: 10, sessionId });
+  const composed = composeForTranscript({ transcriptPath: writeMeasuredTranscript({ steps: 30 }), sessionId, pollIntervalMs: 10 });
+  const srv = composed.handle;
+  t.after(() => composed.teardown());
   await new Promise(r => srv.server.listen(0, '127.0.0.1', r));
   const port = srv.server.address().port;
 

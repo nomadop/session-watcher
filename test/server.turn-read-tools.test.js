@@ -89,6 +89,18 @@ describe('turn read tools', () => {
       { message: SCOPE_ABSENT_MESSAGE });
   });
 
+  test('a bare session label reaches the same page over MCP and HTTP, and a missing one is the stale-cursor sentence', async () => {
+    // The tool resolves its own head through this delivery lookup, so the HTTP side asks the lookup
+    // too and both surfaces stay on one head however many loads this session has already performed.
+    const head = ctx.store.findLatestDeliveryInSession(sessionId).handoffId;
+    const viaTool = ctx.turnReadService.turnPage({ before: 'S1' });
+    const viaHttp = await ctx.request(`/api/turn/page?lineage_head=${head}&before=S1`, {});
+    assert.deepEqual(viaTool, viaHttp);
+    assert.ok(viaTool.turn_page.length > 0);
+    assert.throws(() => ctx.turnReadService.turnPage({ before: 'S9' }),
+      { message: STALE_CURSOR_MESSAGE });
+  });
+
   // The delivery lookup carries no project predicate, so a cross-project capability token stays
   // readable through the tools. With a project filter this call would answer no_handoff_loaded about a
   // handoff the session had just loaded, and the load response mints no address at all — these tools

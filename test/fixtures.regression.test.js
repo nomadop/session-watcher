@@ -1,47 +1,55 @@
-// test/fixtures.regression.test.js
-import { test } from 'node:test';
+// One real vendor transcript, read end to end through the shipped composition. Every other measurement test
+// builds its rows, so this is the only place a transcript this project did not author decides the outcome:
+// the fixture is DeepSeek, whose usage rows carry no cache_creation at all, and the assertions are the two
+// facts a provider change could silently break — that snapshot rows of one logical message collapse into one
+// measured call, and that a session with real traffic reports positive stock and a positive belief.
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
-import { SessionWatcher } from '../lib/watcher.js';
-import { extractUsage } from '../lib/extract.js';
+import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { openStore, closeStore } from '../lib/store.js';
+import { createWatcherComposition } from '../server.js';
+import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-driver.js';
 
 const DS = 'fixtures/host/.claude/projects/C--Users-nomad-freshtrack/aa8e3739-3264-48d6-a2a0-75346d583c03.jsonl';
 
-test('deepseek fixture: message.id folding collapses snapshot duplicates', { skip: !existsSync(DS) }, () => {
-  const lines = readFileSync(DS, 'utf8').split('\n').filter(Boolean);
-  const rawAsst = lines.map(l => { try { return JSON.parse(l); } catch { return null; } })
-    .filter(e => e && e.type === 'assistant' && e.message?.usage);
-  const distinctIds = new Set(rawAsst.map(e => e.message.id).filter(Boolean));
-  // Spec-verified: 536 assistant lines fold to ~209 distinct message.ids.
-  assert.ok(rawAsst.length > distinctIds.size, 'raw lines exceed distinct message.ids (snapshots exist)');
+// The shipped composition over the real Source: one advance reads the whole file, and the frame it produces
+// is applied the way the host's poll tick applies it.
+function measureFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-fixture-'));
+  const store = openStore(join(dir, 'store.sqlite'));
+  try {
+    const watcher = createWatcherComposition({
+      sessionId: 'fixture-deepseek', sourceLocator: DS, projectId: '/repo', projectRoot: '/repo',
+      stateDir: join(dir, 'state'), store, isIgnored: null,
+    });
+    const driver = createClaudeCodeSourceDriver({ sourceLocator: DS });
+    const frame = driver.advance();
+    assert.ok(frame, 'the fixture Source produces a frame');
+    watcher.applyHarnessFrame(frame);
+    return { status: watcher.getStatus(), history: watcher.getHistory() };
+  } finally {
+    closeStore(store);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
-  const w = new SessionWatcher(DS, null);
-  w.poll();
-  assert.ok(w._calls.length <= distinctIds.size + 1, 'folded call count ≈ distinct message.ids, not raw lines');
+test('a real DeepSeek transcript folds its snapshot rows into one call each', { skip: !existsSync(DS) }, () => {
+  const rows = readFileSync(DS, 'utf8').split('\n').filter(Boolean)
+    .map(line => { try { return JSON.parse(line); } catch { return null; } })
+    .filter(entry => entry && entry.type === 'assistant' && entry.message?.usage);
+  const distinctIds = new Set(rows.map(entry => entry.message.id).filter(Boolean));
+  assert.ok(rows.length > distinctIds.size, 'the fixture must actually contain snapshot revisions');
+
+  const { history } = measureFixture();
+  assert.ok(history.length <= distinctIds.size + 1,
+    `measured calls (${history.length}) track distinct message ids (${distinctIds.size}), not raw rows (${rows.length})`);
 });
 
-test('deepseek: segment has meaningful call count and L grows', { skip: !existsSync(DS) }, () => {
-  const w = new SessionWatcher(DS, null);
-  w.poll();
-  const s = w.getStatus();
-  const seg = w._calls.filter(c => c.segment === w._segment);
-  assert.ok(seg.length > 5, 'fixture has meaningful segment');
-  assert.ok(s.L > 0, 'L is positive');
-  assert.ok(s.B > 0, 'B (rebuild baseline) is positive');
-});
-
-test('regression guard: input+output on Claude would capture ~11% of true growth', { skip: !existsSync(DS) }, () => {
-  // On deepseek this ratio is ≈1.0; the guard documents the Claude-side collapse the spec warns about.
-  const w = new SessionWatcher(DS, null);
-  w.poll();
-  const seg = w._calls.filter(c => c.segment === w._segment);
-  let sumInOut = 0, trueGrowth = 0;
-  for (let i = 1; i < seg.length; i++) {
-    sumInOut += seg[i].input + seg[i].output;
-    trueGrowth += Math.max(0, seg[i].cacheRead - seg[i - 1].cacheRead);
-  }
-  if (trueGrowth > 0) {
-    const ratio = sumInOut / trueGrowth;
-    assert.ok(ratio > 0.5, `deepseek input+output/ΔL ratio ${ratio.toFixed(2)} ≈ 1 (would be ~0.11 on Claude)`);
-  }
+test('a real DeepSeek transcript reports positive stock and belief', { skip: !existsSync(DS) }, () => {
+  const { status, history } = measureFixture();
+  assert.ok(history.length > 5, `the fixture carries real traffic, got ${history.length} calls`);
+  assert.ok(status.L > 0, 'the observed context stock is positive');
+  assert.ok(status.B > 0, 'the rebuildable belief is positive');
 });

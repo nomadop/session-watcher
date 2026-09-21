@@ -19,12 +19,12 @@ const revision = (over = {}) => ({ pathsToKeep: '[]', summary: 'a revised summar
 
 const DAY_MS = 24 * 3600 * 1000;
 
-test('insertHandoff + loadHandoffByToken roundtrip', async () => {
+test('insertHandoff + deliverHandoffByToken roundtrip', async () => {
   const { openStore } = await import('../lib/store.js');
   store = openStore(join(dir, 't.sqlite'));
   const { handoffId } = store.insertHandoff(row());
   assert.ok(handoffId > 0);
-  const got = store.loadHandoffByToken('auth-mw-fox');
+  const got = store.deliverHandoffByToken('auth-mw-fox');
   assert.equal(got.summary, 'refactor auth middleware');
   assert.deepEqual(JSON.parse(got.pathsToKeep), ['/a.js']);
   assert.equal(got.preparedAtTurn, 12);
@@ -87,20 +87,20 @@ test('searchHandoff respects projectId filter', async () => {
 });
 
 
-test('loadHandoffByProject: returns single pending handoff for project', async () => {
+test('findPendingHandoffsByProject: a single pending handoff for the project is unique', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old-session', segment: 0, loadToken: 'proj-fox',
     createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'work A',
     nextTask: 'continue A', summaryTokens: 100, projectId: '/workspace' });
-  const result = s.loadHandoffByProject('/workspace', 'new-session', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].loadToken, 'proj-fox');
-  assert.equal(result.ambiguous, false);
+  const result = s.findPendingHandoffsByProject('/workspace', 'new-session', { ttlMs: 7 * 86400000 });
+  assert.equal(result.status, 'unique');
+  assert.equal(result.row.loadToken, 'proj-fox');
+  assert.equal(result.rows, undefined, 'a unique answer carries one row, never a list');
   closeStore(s);
 });
 
-test('loadHandoffByProject: returns ambiguous when 2+ pending', async () => {
+test('findPendingHandoffsByProject: two or more pending handoffs are ambiguous', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old-1', segment: 0, loadToken: 'proj-a',
@@ -109,35 +109,35 @@ test('loadHandoffByProject: returns ambiguous when 2+ pending', async () => {
   s.insertHandoff({ sessionId: 'old-2', segment: 0, loadToken: 'proj-b',
     createdAt: Date.now() - 30000, pathsToKeep: '[]', summary: 'B',
     nextTask: 'task B', summaryTokens: 50, projectId: '/workspace' });
-  const result = s.loadHandoffByProject('/workspace', 'new-session', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.ambiguous, true);
+  const result = s.findPendingHandoffsByProject('/workspace', 'new-session', { ttlMs: 7 * 86400000 });
+  assert.equal(result.status, 'ambiguous');
+  assert.deepEqual(result.rows.map(r => r.loadToken).sort(), ['proj-a', 'proj-b']);
   closeStore(s);
 });
 
-test('loadHandoffByProject: excludes own session_id', async () => {
+test('findPendingHandoffsByProject: excludes own session_id', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'my-session', segment: 0, loadToken: 'self-owl',
     createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'self',
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
-  const result = s.loadHandoffByProject('/workspace', 'my-session', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 0);
+  const result = s.findPendingHandoffsByProject('/workspace', 'my-session', { ttlMs: 7 * 86400000 });
+  assert.deepEqual(result, { status: 'none' });
   closeStore(s);
 });
 
-test('loadHandoffByProject: excludes expired (older than TTL)', async () => {
+test('findPendingHandoffsByProject: excludes expired (older than TTL)', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'expired-elm',
     createdAt: Date.now() - 8 * 86400000, pathsToKeep: '[]', summary: 'old',
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
-  const result = s.loadHandoffByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 0);
+  const result = s.findPendingHandoffsByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
+  assert.deepEqual(result, { status: 'none' });
   closeStore(s);
 });
 
-test('loadHandoffByProject: excludes already-delivered', async () => {
+test('findPendingHandoffsByProject: excludes already-delivered', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'done-ash',
@@ -145,34 +145,34 @@ test('loadHandoffByProject: excludes already-delivered', async () => {
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
   // Manually stamp delivered_at
   s._db.prepare('UPDATE handoff SET delivered_at = ? WHERE load_token = ?').run(Date.now(), 'done-ash');
-  const result = s.loadHandoffByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 0);
+  const result = s.findPendingHandoffsByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
+  assert.deepEqual(result, { status: 'none' });
   closeStore(s);
 });
 
-test('loadHandoffByProject: null projectId returns empty', async () => {
+test('findPendingHandoffsByProject: a null projectId is none', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'null-key',
     createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'x',
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
-  const result = s.loadHandoffByProject(null, 'new', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 0);
+  const result = s.findPendingHandoffsByProject(null, 'new', { ttlMs: 7 * 86400000 });
+  assert.deepEqual(result, { status: 'none' });
   closeStore(s);
 });
 
-test('loadHandoffByProject: different project not returned', async () => {
+test('findPendingHandoffsByProject: different project not returned', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 'old', segment: 0, loadToken: 'other-proj',
     createdAt: Date.now() - 60000, pathsToKeep: '[]', summary: 'other',
     nextTask: null, summaryTokens: 50, projectId: '/other-project' });
-  const result = s.loadHandoffByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
-  assert.equal(result.rows.length, 0);
+  const result = s.findPendingHandoffsByProject('/workspace', 'new', { ttlMs: 7 * 86400000 });
+  assert.deepEqual(result, { status: 'none' });
   closeStore(s);
 });
 
-test('loadHandoffByToken: a session-less load is a pure read and stamps NOTHING', async () => {
+test('deliverHandoffByToken: a session-less load is a pure read and stamps NOTHING', async () => {
   // Task 3 changed the session-less contract: a load with no sessionId must NOT stamp the binding.
   // A NULL-consumer stamp would burn delivered_at and permanently block any later real consumer from
   // binding, AND mislabel every later session as 'primary'. So a session-less load returns content
@@ -182,22 +182,22 @@ test('loadHandoffByToken: a session-less load is a pure read and stamps NOTHING'
   s.insertHandoff({ sessionId: 's1', segment: 0, loadToken: 'stamp-test',
     createdAt: Date.now(), pathsToKeep: '[]', summary: 'x',
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
-  const h1 = s.loadHandoffByToken('stamp-test');
+  const h1 = s.deliverHandoffByToken('stamp-test');
   assert.equal(h1.deliveredAt, null, 'a session-less load stamps no delivered_at');
   assert.equal(h1.deliveredSessionId, null, 'and binds no consumer');
   // A repeat session-less load still stamps nothing.
-  const h2 = s.loadHandoffByToken('stamp-test');
+  const h2 = s.deliverHandoffByToken('stamp-test');
   assert.equal(h2.deliveredAt, null, 'still no stamp on a second session-less load');
   closeStore(s);
 });
 
-test('loadHandoffByToken: delivered_segment is NULL (not claim-based)', async () => {
+test('deliverHandoffByToken: delivered_segment is NULL (not claim-based)', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const s = openStore(':memory:');
   s.insertHandoff({ sessionId: 's1', segment: 0, loadToken: 'seg-null',
     createdAt: Date.now(), pathsToKeep: '[]', summary: 'x',
     nextTask: null, summaryTokens: 50, projectId: '/workspace' });
-  const h = s.loadHandoffByToken('seg-null');
+  const h = s.deliverHandoffByToken('seg-null');
   assert.equal(h.deliveredSegment, null, 'load-time stamp sets delivered_segment = NULL');
   closeStore(s);
 });
@@ -309,20 +309,95 @@ test('handoff_fts_update 只在索引列变化时点火：投递戳不碰索引�
   // A delivery stamp writes delivered_at / delivered_session_id / delivered_segment / loader_version and
   // no indexed column, so the trigger must not fire and the fail-closed load must still complete. The
   // rejected revision left the row's own words in place, so the load answers with them.
-  const loaded = s.loadHandoffByToken('when-fox', { sessionId: 'consumer-sess' });
+  const loaded = s.deliverHandoffByToken('when-fox', { sessionId: 'consumer-sess' });
   assert.equal(loaded.error, undefined, '投递戳不该被一次索引写失败拖成 fail-closed');
   assert.equal(loaded.summary, 'refactor the auth middleware layer');
   assert.equal(loaded.claimResult, 'primary');
 });
 
-test('loadHandoffByToken returns null for unknown token', async () => {
+test('deliverHandoffByToken returns null for unknown token', async () => {
   const { openStore } = await import('../lib/store.js');
   store = openStore(join(dir, 't.sqlite'));
-  assert.equal(store.loadHandoffByToken('nonexistent'), null);
+  assert.equal(store.deliverHandoffByToken('nonexistent'), null);
 });
 
 test('loadHandoffBySession returns null for unknown session', async () => {
   const { openStore } = await import('../lib/store.js');
   store = openStore(join(dir, 't.sqlite'));
   assert.equal(store.loadHandoffBySession('nobody'), null);
+});
+
+// Both stored payload shapes are live at once: an older row holds a bare array of kept entries, a newer one
+// holds `{ paths, skills }`. The Adapter carries each through unchanged, so the composition above it can
+// parse either without asking which version wrote it.
+test('both stored path payload shapes survive insert and delivery', async () => {
+  const { openStore } = await import('../lib/store.js');
+  store = openStore(join(dir, 't.sqlite'));
+  const bare = JSON.stringify([{ path: 'src/a.js', hp: 'abc' }]);
+  const wrapped = JSON.stringify({ paths: [{ path: 'src/b.js' }], skills: ['sw-handoff'] });
+  store.insertHandoff(row({ loadToken: 'bare-shape', pathsToKeep: bare, transcriptPath: '/t/one.jsonl' }));
+  store.insertHandoff(row({ loadToken: 'wrapped-shape', pathsToKeep: wrapped, segment: 1, transcriptPath: '/t/two.jsonl' }));
+
+  const first = store.deliverHandoffByToken('bare-shape', { sessionId: 'c1' });
+  assert.deepEqual(JSON.parse(first.pathsToKeep), [{ path: 'src/a.js', hp: 'abc' }]);
+  assert.equal(first.transcriptPath, '/t/one.jsonl', 'the opaque locator is stored as transcript_path');
+
+  const second = store.deliverHandoffByToken('wrapped-shape', { sessionId: 'c2' });
+  const parsed = JSON.parse(second.pathsToKeep);
+  assert.deepEqual(parsed.paths, [{ path: 'src/b.js' }]);
+  assert.deepEqual(parsed.skills, ['sw-handoff']);
+  assert.equal(second.transcriptPath, '/t/two.jsonl');
+});
+
+test('deliverHandoffByToken writes the first primary binding and one load attempt, and returns a detached row', async () => {
+  const { openStore } = await import('../lib/store.js');
+  store = openStore(join(dir, 't.sqlite'));
+  store.insertHandoff(row({ loadToken: 'deliver-once' }));
+
+  const delivered = store.deliverHandoffByToken('deliver-once', {
+    sessionId: 'consumer-a', loaderVersion: '9.9.9', consumerSegment: 3,
+  });
+  assert.equal(delivered.claimResult, 'primary');
+  assert.equal(delivered.claimedNow, true);
+  assert.equal(delivered.deliveredSessionId, 'consumer-a');
+  assert.equal(delivered.deliveredSegment, 3);
+  assert.equal(delivered.loaderVersion, '9.9.9');
+  const attempts = store._db.prepare('SELECT session_id, claim_result, consumer_segment FROM handoff_load WHERE handoff_id=?')
+    .all(delivered.handoffId);
+  assert.deepEqual(attempts.map(a => ({ ...a })), [{ session_id: 'consumer-a', claim_result: 'primary', consumer_segment: 3 }]);
+
+  // Detached: mutating the returned row reaches no stored column.
+  delivered.summary = 'mutated in the caller';
+  delivered.deliveredSessionId = 'someone-else';
+  const stored = store._db.prepare('SELECT summary, delivered_session_id FROM handoff WHERE load_token=?').get('deliver-once');
+  assert.equal(stored.summary, 'refactor auth middleware');
+  assert.equal(stored.delivered_session_id, 'consumer-a');
+
+  // A second session never rebinds the primary; it is recorded as a duplicate attempt.
+  const duplicate = store.deliverHandoffByToken('deliver-once', { sessionId: 'consumer-b', loaderVersion: '9.9.9' });
+  assert.equal(duplicate.claimResult, 'duplicate');
+  assert.equal(duplicate.claimedNow, false);
+  assert.equal(store._db.prepare('SELECT delivered_session_id FROM handoff WHERE load_token=?').get('deliver-once').delivered_session_id, 'consumer-a');
+});
+
+test('deliverHandoffByToken reads the row inside the delivery transaction', async () => {
+  const { openStore } = await import('../lib/store.js');
+  store = openStore(join(dir, 't.sqlite'));
+  store.insertHandoff(row({ loadToken: 'in-txn' }));
+  // A concurrent binder is simulated by stamping the row from underneath the CAS: `markDelivered` then
+  // reports no change and the operation re-reads the committed row rather than trusting its pre-read.
+  const original = store._stmts.markDelivered;
+  store._stmts.markDelivered = {
+    run: (...args) => {
+      store._db.prepare('UPDATE handoff SET delivered_at=?, delivered_session_id=? WHERE load_token=?')
+        .run(Date.now(), 'other-consumer', 'in-txn');
+      return original.run(...args);
+    },
+  };
+  try {
+    const result = store.deliverHandoffByToken('in-txn', { sessionId: 'me' });
+    assert.equal(result.claimResult, 'duplicate', 'the in-transaction re-read saw the other binder');
+    assert.equal(result.deliveredSessionId, 'other-consumer');
+    assert.equal(result.claimedNow, false);
+  } finally { store._stmts.markDelivered = original; }
 });

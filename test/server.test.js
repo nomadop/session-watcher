@@ -6,29 +6,36 @@ import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { SessionWatcher } from '../lib/watcher.js';
 import { createServer, formatLine } from '../server.js';
+import { composeForTranscript } from './helpers/server-boot.js';
 
-function fixtureWatcher() {
-  // input+output ≈ ΔL (=940) so the lag-aligned metricsReliable probe stays healthy.
-  let s = ''; let cr = 42000; let id = 0;
-  for (let i = 0; i < 30; i++) { cr += 940;
-    s += JSON.stringify({ type: 'assistant', uuid: 'u' + id, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
-      message: { id: 'm' + id++, model: 'deepseek-v4-pro', usage: {
-        input_tokens: 560, output_tokens: 380, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
+// One session's worth of measured steps, CHAINED into a single topology. Chaining is load-bearing: a
+// null-parent row is a topology root and a root with a call behind it is a compact epoch, so a run built from
+// the builders' defaults would open an epoch on every row after its first call and leave the segment holding
+// one step.
+function fixtureTranscript() {
+  const rows = [];
+  let cr = 42000;
+  for (let i = 0; i < 30; i++) {
+    cr += 940;
+    rows.push({
+      type: 'assistant', uuid: 'u' + i, parentUuid: i === 0 ? null : 'u' + (i - 1),
+      isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
+      message: { id: 'm' + i, role: 'assistant', model: 'deepseek-v4-pro', content: [], usage: {
+        input_tokens: 560, output_tokens: 380, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } },
+    });
   }
   const p = join(mkdtempSync(join(tmpdir(), 'sw-')), 's.jsonl');
-  writeFileSync(p, s);
-  const w = new SessionWatcher(p, 42000);
-  return w;
+  writeFileSync(p, rows.map(r => JSON.stringify(r) + '\n').join(''));
+  return p;
 }
 
 async function withServer(fn) {
-  const w = fixtureWatcher();
-  const { server } = createServer({ watcher: w, pollIntervalMs: 0 });
-  await new Promise(r => server.listen(0, r));
-  const port = server.address().port;
-  try { await fn(port, w); } finally { await new Promise(r => server.close(r)); }
+  const composed = composeForTranscript({ transcriptPath: fixtureTranscript() });
+  const { handle } = composed;
+  await new Promise(r => handle.server.listen(0, r));
+  const port = handle.server.address().port;
+  try { await fn(port, composed.watcher); } finally { await composed.teardown(); }
 }
 
 test('GET /api/health returns ok', async () => {
@@ -186,6 +193,31 @@ test('GET /api/status?fmt=line returns a non-empty single line', async () => {
   });
 });
 
+test('GET /dashboard serves the same document as /', async () => {
+  await withServer(async (port) => {
+    const root = await fetch(`http://127.0.0.1:${port}/`);
+    const alias = await fetch(`http://127.0.0.1:${port}/dashboard`);
+    assert.equal(alias.status, 200);
+    assert.match(alias.headers.get('content-type') ?? '', /html/);
+    // Same booted server answering both routes, so the comparison is live-to-live rather than a
+    // stored baseline that could drift from the page it mirrors.
+    assert.equal(await alias.text(), await root.text());
+  });
+});
+
+// cycleCountInSegment is debug-only: its absence without the query param is what makes its
+// presence with the param mean anything, so both halves are one case's subject.
+test('GET /api/status?debug=1 attaches billingCycle.cycleCountInSegment, absent without debug', async () => {
+  await withServer(async (port) => {
+    const plain = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    assert.ok(plain.rateLamp?.billingCycle, 'scenario carries a billingCycle to attach onto');
+    assert.equal('cycleCountInSegment' in plain.rateLamp.billingCycle, false, 'absent without debug');
+
+    const debug = await (await fetch(`http://127.0.0.1:${port}/api/status?debug=1`)).json();
+    assert.ok('cycleCountInSegment' in debug.rateLamp.billingCycle, 'present with debug=1');
+  });
+});
+
 test('GET /api/history returns an array of points', async () => {
   await withServer(async (port) => {
     const j = await (await fetch(`http://127.0.0.1:${port}/api/history`)).json();
@@ -198,17 +230,17 @@ test('GET /api/history returns an array of points', async () => {
 // The other server tests use pollIntervalMs:0 (loop never runs) — this one actually drives it.
 test('poll loop emits SSE scan on snapshot output growth (changed, not just newCalls)', async () => {
   const mkLine = (id, output, cacheRead) => JSON.stringify({
-    type: 'assistant', uuid: 'u' + id, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
-    message: { id: 'm' + id, model: 'deepseek-v4-pro', usage: {
+    type: 'assistant', uuid: 'u' + id, parentUuid: null, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
+    message: { id: 'm' + id, role: 'assistant', model: 'deepseek-v4-pro', content: [], usage: {
       input_tokens: 560, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: cacheRead } },
   }) + '\n';
 
-  // One assistant call; createServer's constructor poll() folds it (offset → EOF).
+  // One assistant call; the host's synchronous bootstrap applies it before the server is exposed.
   const p = join(mkdtempSync(join(tmpdir(), 'sw-poll-')), 's.jsonl');
   writeFileSync(p, mkLine(0, 380, 42940));
-  const w = new SessionWatcher(p, 42000);
 
-  const { server, startPolling, stopTimers, sseClients } = createServer({ watcher: w, pollIntervalMs: 25 });
+  const composed = composeForTranscript({ transcriptPath: p, pollIntervalMs: 25 });
+  const { server, startPolling, stopTimers, sseClients } = composed.handle;
   await new Promise(r => server.listen(0, r));
   const port = server.address().port;
 

@@ -22,7 +22,7 @@ async function seed() {
 
 test('first load stamps delivered_session_id + loader_version and writes a primary handoff_load row', async () => {
   const id = await seed();
-  const h = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const h = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   assert.equal(h.claimResult, 'primary');
   const row = store._db.prepare("SELECT delivered_session_id, loader_version, delivered_at FROM handoff WHERE handoff_id=?").get(id);
   assert.equal(row.delivered_session_id, 'consumerA');
@@ -38,8 +38,8 @@ test('first load stamps delivered_session_id + loader_version and writes a prima
 
 test('second load from a DIFFERENT session does not overwrite the binding, returns content, records a duplicate', async () => {
   const id = await seed();
-  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
-  const h2 = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
+  store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const h2 = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
   assert.ok(h2, 'still returns the handoff content (fail-open)');
   assert.equal(h2.claimResult, 'duplicate');
   const row = store._db.prepare("SELECT delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
@@ -52,8 +52,8 @@ test('second load from a DIFFERENT session does not overwrite the binding, retur
 
 test('second load from the SAME session is an idempotent retry (primary, no new binding)', async () => {
   const id = await seed();
-  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
-  const again = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const again = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   assert.equal(again.claimResult, 'primary');
   const row = store._db.prepare("SELECT delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
   assert.equal(row.delivered_session_id, 'consumerA');
@@ -61,7 +61,7 @@ test('second load from the SAME session is an idempotent retry (primary, no new 
 
 test('load with no opts (legacy caller) still returns content and does not throw', async () => {
   await seed();
-  const h = store.loadHandoffByToken('carry-lyric-gear');
+  const h = store.deliverHandoffByToken('carry-lyric-gear');
   assert.ok(h);
   assert.equal(h.loadToken, 'carry-lyric-gear');
 });
@@ -72,30 +72,30 @@ test('a null-session load does NOT stamp the binding, so a later real session ca
   // delivered_at IS NULL guard never fires again) AND make every later different session mislabel
   // as claim_result='primary'.
   const id = await seed();
-  const legacy = store.loadHandoffByToken('carry-lyric-gear');   // no sessionId
+  const legacy = store.deliverHandoffByToken('carry-lyric-gear');   // no sessionId
   assert.ok(legacy, 'still returns content (fail-open)');
   const after = store._db.prepare("SELECT delivered_at, delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
   assert.equal(after.delivered_at, null, 'no binding stamped by a session-less load');
   assert.equal(after.delivered_session_id, null);
   assert.equal(store._db.prepare("SELECT COUNT(*) c FROM handoff_load WHERE handoff_id=?").get(id).c, 0, 'no attempt row for a session-less load');
   // A real session now binds cleanly as primary.
-  const real = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const real = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   assert.equal(real.claimResult, 'primary');
   assert.equal(store._db.prepare("SELECT delivered_session_id FROM handoff WHERE handoff_id=?").get(id).delivered_session_id, 'consumerA');
 });
 
 test('claimedNow separates a first claim from a same-session retry', async () => {
   await seed();
-  const first = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const first = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   assert.equal(first.claimedNow, true, 'the CAS actually stamped on this call');
-  const retry = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  const retry = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   assert.equal(retry.claimResult, 'primary');
   assert.equal(retry.claimedNow, false, 'a same-session retry did not re-claim');
 });
 
 test('CAS-stamp and the handoff_load attempt row are atomic — happy path', async () => {
   const id = await seed();
-  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   const bound = store._db.prepare("SELECT delivered_session_id FROM handoff WHERE handoff_id=?").get(id).delivered_session_id;
   const rows = store._db.prepare("SELECT COUNT(*) c FROM handoff_load WHERE handoff_id=? AND session_id='consumerA'").get(id).c;
   assert.equal(bound, 'consumerA');
@@ -109,7 +109,7 @@ test('delivery 记录失败时 fail-closed：无任何内容字段', async () =>
   const origRun = failingStore._stmts.insertHandoffLoad.run;
   failingStore._stmts.insertHandoffLoad = { run() { throw new Error('injected delivery failure'); } };
   try {
-    const res = failingStore.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
+    const res = failingStore.deliverHandoffByToken(token, { sessionId: 'sess-consumer' });
     assert.equal(res.ok, false);
     assert.equal(res.error, 'handoff_delivery_unavailable');
     assert.equal(res.retryable, true);
@@ -129,8 +129,8 @@ test('重试幂等：同 payload 第二次仍交付内容，且父边可解析',
   store._db.prepare('UPDATE handoff SET project_id = ? WHERE handoff_id = ?').run(projectId, id);
   // 成功形状不变（22 个 camelized handoff 列 + claimResult + claimedNow），没有 ok 字段 ——
   // ok:false 只是新增的失败判别式，不要拿 ok===true 断言成功。
-  const first = store.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
-  const again = store.loadHandoffByToken(token, { sessionId: 'sess-consumer' });
+  const first = store.deliverHandoffByToken(token, { sessionId: 'sess-consumer' });
+  const again = store.deliverHandoffByToken(token, { sessionId: 'sess-consumer' });
   assert.equal(typeof first.summary, 'string');
   assert.equal(typeof again.summary, 'string');
   assert.equal(again.ok, undefined);
@@ -148,7 +148,7 @@ test('a v2 legacy delivery (delivered_at set, delivered_session_id NULL) binds a
   const id = await seed();
   // Simulate a migrated v2 delivery: a delivery timestamp exists, but the consumer was never recorded.
   store._db.prepare("UPDATE handoff SET delivered_at=50, delivered_session_id=NULL WHERE handoff_id=?").run(id);
-  const first = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0', consumerSegment: 2 });
+  const first = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0', consumerSegment: 2 });
   assert.equal(first.claimResult, 'legacy_unattributed', 'a migrated delivery with unknown consumer is not a fresh primary');
   const row = store._db.prepare("SELECT delivered_at, delivered_session_id FROM handoff WHERE handoff_id=?").get(id);
   assert.equal(row.delivered_at, 50, 'historical delivery time preserved, not overwritten');
@@ -157,7 +157,7 @@ test('a v2 legacy delivery (delivered_at set, delivered_session_id NULL) binds a
   assert.equal(hl.claim_result, 'legacy_unattributed');
   assert.equal(hl.consumer_segment, 2, 'consumer segment recorded');
   // A later different session is a duplicate off the now-bound consumer.
-  const second = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
+  const second = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
   assert.equal(second.claimResult, 'duplicate');
 });
 
@@ -165,11 +165,11 @@ test('delivery failure for a secondary consumer: fail-closed, primary binding un
   // consumerA holds the primary binding. When consumerB's delivery write fails, the response
   // carries no content — no falsely-reported claim metadata, no leaked handoff fields.
   const id = await seed();
-  store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
+  store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   // Force the CAS/insert txn to throw for consumerB by breaking the attempt-insert statement.
   const origRun = store._stmts.insertHandoffLoad.run;
   store._stmts.insertHandoffLoad = { run() { throw new Error('injected txn failure'); } };
-  const h = store.loadHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
+  const h = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
   store._stmts.insertHandoffLoad = { run: origRun };
   // Fail-closed: no content returned, no claim metadata fields present.
   assert.equal(h.ok, false, 'fail-closed: no content on delivery failure');

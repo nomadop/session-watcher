@@ -15,7 +15,7 @@ The measurement system requires a stream of structured events. The current imple
 - An optional sidechain flag (marks sub-agent or parallel work that should not count toward main-context measurement)
 - A timestamp and model identifier
 
-**Context-reset signal:** A structural indicator that the context window has been cleared or compacted. This may come from transcript topology or from a totalStock drop. The measurement system uses it to trigger segment boundaries.
+**Context-reset signal:** A structural indicator that the context window has been cleared or compacted. It comes from transcript topology alone — a drop in reported token totals is not one, however steep. The measurement system uses it to trigger segment boundaries.
 
 **Tool-event stream:** File operations (reads, writes, edits) with their content, used to compute per-path token contributions to B. Each event carries a path and enough content to estimate token cost at ingestion time.
 
@@ -27,13 +27,13 @@ Given correct input, the measurement layer guarantees:
 
 **Folding:** When multiple snapshots share the same primary key, only the revision with the highest total token count is retained. Earlier or partial revisions are silently replaced. A fold revision never triggers a segment boundary.
 
-**Segment isolation:** On context-reset, all accumulated state resets: B rebuilds from zero, g returns to floor, the deferred ledger clears, and the rate lamp starts a fresh billing cycle. Cross-segment history is preserved for visualization but does not contaminate current measurements.
+**Segment isolation:** On context-reset, the accumulated cost state resets: B rebuilds from zero, g returns to floor, the deferred ledger clears, the model a segment's reads resolve against is cleared for the next call to fix, and the rate lamp starts a fresh billing cycle. What survives is the turn count and an unconsumed turn boundary, so a user turn already announced still opens its turn on the far side of the reset. Cross-segment history is preserved for visualization but does not contaminate current measurements.
 
 **Token-at-Ingestion:** Per-path token estimates are computed once at write time using a model-specific conversion ratio. Values are never retroactively recomputed — changes in calibration or file content only affect future observations.
 
 **Settlement:** When B grows faster than L (cache-creation credited before cache-read materializes), the surplus is absorbed by a deferred ledger rather than appearing as false residual growth. When L catches up, the ledger retires. Any balance un-retired at segment end is treated as estimation error and corrected out of the path totals.
 
-**Sidechain exclusion:** Snapshots marked as sidechain do not contribute to L, g, segmentation triggers, or turn counting. Path attribution still processes sidechain file events (B may increase) because rebuild cost must track all file access regardless of origin.
+**Sidechain exclusion:** A row marked as sidechain is a self-contained sub-agent context and is dropped before interpretation, so it yields no evidence of any kind: it contributes to L, g, segmentation triggers, turn counting and path attribution alike not at all, and its identifiers never reach topology.
 
 ---
 
@@ -64,7 +64,7 @@ Since the system overhead floor is set from the very first usage snapshot, B_ful
 
 **Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, bp, mf, turns, duration) — enough to reconstruct cross-segment trends.
 
-**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system replays the transcript from byte zero to rebuild this state. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
+**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system reconstructs it by re-reading the transcript from byte zero — the same interpretation the live path applies, so the rebuilt series is the one live observation would have produced. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
 
 **Rate-lamp ledger:** The billing ledger is persisted independently via periodic checkpoints. An unclean exit may lose recent state. On restart, the system loads the last valid checkpoint; if none is usable, it starts a fresh ledger.
 
@@ -111,6 +111,8 @@ The three history tools resolve their own lineage from the handoff delivered int
 
 **Transcript corrupt or unparseable:** Partially readable content is processed up to the last valid entry. Corrupt trailing bytes are skipped. Metrics reflect only the successfully parsed portion.
 
-**Database unavailable:** Persistence failures during operation (handoff discovery, segment archival, bookmark writes) degrade independently — each fails open without stopping measurement.
+**Database unavailable:** Persistence failures during operation (handoff discovery, segment archival, turn-record writes) degrade independently — each fails open without stopping measurement.
+
+**Interpretation fails outright:** An error the system cannot classify as an unreadable or malformed source is treated as a defect rather than absorbed: measurement stops, the owner reports the error, releases what it holds without archiving the open segment, and exits nonzero. The transcript is left untouched, so a fresh owner rebuilds from it.
 
 **Server unreachable during rotation:** The hook injects fallback context instructing the agent to call `rotate_session` manually.

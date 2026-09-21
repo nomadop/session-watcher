@@ -166,7 +166,7 @@ If mf is small, even bad timing costs little. If mf is large, timing matters sig
 
 **Units.** dimensionless ratio
 
-**Definition.** The ratio of cache-write price to cache-read price for the current model (C_write / C_read). Determined from a model lookup table or a user override. "How many reads does one write cost?" A higher cRatio means restarts are more expensive, pushing the sweet spot further out.
+**Definition.** The ratio of cache-write price to cache-read price for the current model (C_write / C_read). Determined from a model lookup table — keyed by the model and, where the provider prices cache lifetimes apart, by the prompt-cache lifetime the host declares — or from a user override. "How many reads does one write cost?" A higher cRatio means restarts are more expensive, pushing the sweet spot further out.
 
 **Validity.** Always positive.
 
@@ -261,7 +261,7 @@ The system tracks different categories of content:
 
 | Type | Description |
 |------|-------------|
-| **File path** | Standard tracked file (Read, Write, Edit, grep hit) |
+| **File path** | Standard tracked file (Read, Write, Edit, grep hit, or a shell read that names one file) |
 | **Skill** | Skill/instruction content loaded into context (included in B_default by default) |
 | **Bash/MCP residual** | Tool output not attributed to a specific file (contributes to residual growth, not B) |
 
@@ -327,7 +327,7 @@ Fixed-token restart policies ignore the session's actual economics. A session wi
 B_default reflects only the files that pass the inclusion filter (not gitignored, not user-excluded). If your session heavily relies on files that are excluded from baseline, B_default understates the true required carry. The session will appear to have a higher premium than it actually deserves. Use the include override mechanism to add critical paths so the measurement accounts for them.
 
 **Scenario: Residual is large — is it all waste?**
-The residual bucket (L minus B) captures everything not attributed to tracked file paths: reasoning history, tool output, conversation structure, and ephemeral working memory. (System prompts and tool definitions are part of the system overhead floor, which is already included in B — they do not appear in the residual.) Much of this is productive context, not waste. A large residual is normal for tool-heavy sessions. The metric does not judge the value of residual content — only that it exists and contributes to cost.
+The residual bucket (context stock minus B) captures everything not attributed to tracked file paths: reasoning history, tool output, conversation structure, and ephemeral working memory. (System prompts and tool definitions are part of the system overhead floor, which is already included in B — they do not appear in the residual.) Much of this is productive context, not waste. A large residual is normal for tool-heavy sessions. The metric does not judge the value of residual content — only that it exists and contributes to cost.
 
 **Scenario: g is climbing but the session feels productive.**
 The growth rate g measures how fast new content arrives relative to the baseline. It does not distinguish productive growth (new files being explored, code being written) from thrashing (repeated failed attempts generating tool output). A high g means cost is accumulating quickly regardless of cause. If the growth is productive, the session is efficiently using expensive context; bp still applies as the cost signal.
@@ -336,7 +336,7 @@ The growth rate g measures how fast new content arrives relative to the baseline
 The movable fraction has a theoretical ceiling around 41.4% (the AM-GM bound). This is by construction: even in the worst case, timing optimization can affect at most this fraction of total bill. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
 
 **Scenario: Detected cache miss during the session.**
-When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as cacheRead plus cacheCreation — it does not drop to near zero. The miss detection logic in the fold stream classifies this pattern and applies stock reconstruction, so the metrics see a continuous L rather than a transient cliff. A topology change (non-first null-parent root UUID, indicating /compact or /continue) is the primary segmentation signal, not a cache miss. A secondary fallback fires only on a totalStock drop past a floor relative to the stock it judges (a quarter of it), and that stock is the only field it reads. New files entering the B bucket do NOT trigger segment boundaries. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
+When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as the whole context stock — it does not drop to near zero. The miss classifier recognizes this pattern and applies that reconstruction, so the metrics see a continuous L rather than a transient cliff. Segmentation is a separate question with a single answer: a topology change (a root UUID that is not the file's first, which is what /compact and /continue produce). A cache miss is not one, a falling token total is not one, and new files entering the B bucket are not one. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
 
 **Scenario: "Metric says amber but the session feels fine" / "Metric says green but output quality dropped."**
 Session Watcher measures cost geometry, not output quality. Amber/red means you are paying more than optimal timing would require — the model may still be performing well. Conversely, green means cost is efficient — but the model could be producing poor output due to task difficulty, prompt issues, or capability limits. Never use lamp state as a quality proxy.
@@ -444,7 +444,7 @@ Claude Code fires a hook on startup, resume, clear, or compact. The hook discove
 
 The MCP entrypoint starts a watcher instance, an HTTP server on a loopback port, and writes a discovery file so that hooks and the statusline can locate it. The server lifecycle is tied to the Claude Code process.
 
-On resume (or any fresh process start with an existing transcript), the watcher replays the transcript from byte zero — reconstructing the full call history, measurement state, and segment boundaries from the file alone. This is how per-call time series data survives a process restart without requiring a separate persistent store for it.
+On resume (or any fresh process start with an existing transcript), the watcher reconstructs its state by re-reading the transcript from byte zero — rebuilding the full call history, measurement state, and segment boundaries from the file alone, through the same interpretation the live path uses. This is how per-call time series data survives a process restart without requiring a separate persistent store for it.
 
 #### 3. Polling
 
@@ -458,7 +458,7 @@ A timer drives the pipeline at regular intervals:
 
 #### 4. Segmentation
 
-A segment is a contiguous stretch of context between resets. Boundaries are detected by topology (a new root UUID from `/compact` or `/continue`) or, as a fallback, by a totalStock drop large relative to the stock itself — a reset replaces the whole conversation prefix, so a small dip is not one. The fallback judges that one quantity and nothing else: cache-read alone lags behind the context it stands for, and whether the prefix survived is a single question.
+A segment is a contiguous stretch of context between resets. Boundaries come from transcript topology alone — a root UUID that is not the file's first, which is what `/compact` and `/continue` produce. No token total starts a boundary, however steeply it falls: a reset replaces the whole conversation prefix, and only topology states that a prefix was replaced. A compact whose new branch keeps its parent in the file is therefore not seen as a boundary.
 
 On boundary: finalize settlement, archive the segment for history, and reset all metrics to initial state. This ensures the cost model always reflects the current context, not a mixture of old and new.
 
@@ -478,7 +478,7 @@ When a session ends, the agent can package its working context for the next sess
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: one headline per session behind the handoff, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 
@@ -505,7 +505,7 @@ The measurement system requires a stream of structured events. The current imple
 - An optional sidechain flag (marks sub-agent or parallel work that should not count toward main-context measurement)
 - A timestamp and model identifier
 
-**Context-reset signal:** A structural indicator that the context window has been cleared or compacted. This may come from transcript topology or from a totalStock drop. The measurement system uses it to trigger segment boundaries.
+**Context-reset signal:** A structural indicator that the context window has been cleared or compacted. It comes from transcript topology alone — a drop in reported token totals is not one, however steep. The measurement system uses it to trigger segment boundaries.
 
 **Tool-event stream:** File operations (reads, writes, edits) with their content, used to compute per-path token contributions to B. Each event carries a path and enough content to estimate token cost at ingestion time.
 
@@ -517,13 +517,13 @@ Given correct input, the measurement layer guarantees:
 
 **Folding:** When multiple snapshots share the same primary key, only the revision with the highest total token count is retained. Earlier or partial revisions are silently replaced. A fold revision never triggers a segment boundary.
 
-**Segment isolation:** On context-reset, all accumulated state resets: B rebuilds from zero, g returns to floor, the deferred ledger clears, and the rate lamp starts a fresh billing cycle. Cross-segment history is preserved for visualization but does not contaminate current measurements.
+**Segment isolation:** On context-reset, the accumulated cost state resets: B rebuilds from zero, g returns to floor, the deferred ledger clears, the model a segment's reads resolve against is cleared for the next call to fix, and the rate lamp starts a fresh billing cycle. What survives is the turn count and an unconsumed turn boundary, so a user turn already announced still opens its turn on the far side of the reset. Cross-segment history is preserved for visualization but does not contaminate current measurements.
 
 **Token-at-Ingestion:** Per-path token estimates are computed once at write time using a model-specific conversion ratio. Values are never retroactively recomputed — changes in calibration or file content only affect future observations.
 
 **Settlement:** When B grows faster than L (cache-creation credited before cache-read materializes), the surplus is absorbed by a deferred ledger rather than appearing as false residual growth. When L catches up, the ledger retires. Any balance un-retired at segment end is treated as estimation error and corrected out of the path totals.
 
-**Sidechain exclusion:** Snapshots marked as sidechain do not contribute to L, g, segmentation triggers, or turn counting. Path attribution still processes sidechain file events (B may increase) because rebuild cost must track all file access regardless of origin.
+**Sidechain exclusion:** A row marked as sidechain is a self-contained sub-agent context and is dropped before interpretation, so it yields no evidence of any kind: it contributes to L, g, segmentation triggers, turn counting and path attribution alike not at all, and its identifiers never reach topology.
 
 ---
 
@@ -554,7 +554,7 @@ Since the system overhead floor is set from the very first usage snapshot, B_ful
 
 **Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, bp, mf, turns, duration) — enough to reconstruct cross-segment trends.
 
-**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system replays the transcript from byte zero to rebuild this state. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
+**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system reconstructs it by re-reading the transcript from byte zero — the same interpretation the live path applies, so the rebuilt series is the one live observation would have produced. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
 
 **Rate-lamp ledger:** The billing ledger is persisted independently via periodic checkpoints. An unclean exit may lose recent state. On restart, the system loads the last valid checkpoint; if none is usable, it starts a fresh ledger.
 
@@ -601,6 +601,8 @@ The three history tools resolve their own lineage from the handoff delivered int
 
 **Transcript corrupt or unparseable:** Partially readable content is processed up to the last valid entry. Corrupt trailing bytes are skipped. Metrics reflect only the successfully parsed portion.
 
-**Database unavailable:** Persistence failures during operation (handoff discovery, segment archival, bookmark writes) degrade independently — each fails open without stopping measurement.
+**Database unavailable:** Persistence failures during operation (handoff discovery, segment archival, turn-record writes) degrade independently — each fails open without stopping measurement.
+
+**Interpretation fails outright:** An error the system cannot classify as an unreadable or malformed source is treated as a defect rather than absorbed: measurement stops, the owner reports the error, releases what it holds without archiving the open segment, and exits nonzero. The transcript is left untouched, so a fresh owner rebuilds from it.
 
 **Server unreachable during rotation:** The hook injects fallback context instructing the agent to call `rotate_session` manually.

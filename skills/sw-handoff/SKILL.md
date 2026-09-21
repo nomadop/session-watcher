@@ -11,6 +11,8 @@ Prepare a handoff package so the next session can resume with minimal re-reading
 
 1. **Get turn skeleton** via MCP `get_turn_skeleton {}` → `{ snapshot_id, skeleton_path, notes_path, protocol }`. Follow the `protocol` sentence it returns; it states how the two files are filled.
 
+   - **The call fails** — an error instead of that shape, whatever its cause. Stop this run: report to the user that the turn skeleton could not be captured; do not produce or submit notes, and do not go on to `prepare_handoff`.
+
 2. **Produce turn notes** you MUST follow [`NOTES.md`](NOTES.md) exactly for what each note says. Write them inline — do not delegate to a subagent.
 
 3. **Submit notes** via MCP `submit_turn_notes { snapshot_id }`. The server reads `notes_path` itself.

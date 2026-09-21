@@ -7,60 +7,50 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve, basename, extname, isAbsolute } from 'node:path';
 import { readdirSync, statSync, readFileSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync, writeFileSync, appendFileSync, rmSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { randomInt } from 'node:crypto';
-import { SessionWatcher } from './lib/watcher.js';
+import { SessionWatcher } from './lib/session-watcher.js';
+import { createResourcePolicy } from './lib/resource-policy.js';
+import { createResourceEnrichment } from './lib/resource-enrichment.js';
+import { createMeasurementEngine } from './lib/measurement/engine.js';
+import { createClaudeCodeSourceDriver } from './lib/harness/claude-code/source-driver.js';
+import { createClaudeCodeMeasurementProjection } from './lib/harness/claude-code/measurement-projection.js';
+import {
+  interpretClaudeCodeToolUse, completeClaudeCodeToolResult,
+  interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
+} from './lib/harness/claude-code/native-tools.js';
+import { resolveClaudeCodeCacheTtl } from './lib/harness/claude-code/cache-ttl.js';
 import { advanceRateLampToCurrent, mergeLedgerIntoStatus, enrichStatusLandmarks, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
 import { stateKeyForStatus } from './lib/rate-lamp-store.js';
-import { IDLE_HEARTBEAT_MS, MODEL_PRICING_PRESETS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_TOKEN_MAX_RETRIES, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, DEFAULT_CTP } from './lib/constants.js';
+import { IDLE_HEARTBEAT_MS, DEFAULT_CTP } from './lib/constants.js';
 import { resolveProjectKey } from './lib/project-key.js';
 import { initStore, closeStoreGlobal, getStore } from './lib/store.js';
 import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
-import { cRatioFor } from './lib/extract.js';
+import { modelPolicyFor } from './lib/model-policy.js';
 import { loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput } from './lib/pricing-store.js';
 import { sweepStaleState, sweepStalePortFiles, sweepStaleTurnNotes } from './lib/state-reaper.js';
 import {
   formatLine,
 } from './lib/statusline-format.js';
 import { loadIsIgnored } from './gitignore-loader.js';
-import { archiveCurrentSegment } from './lib/fold.js';
 import { replaySessionTelemetry } from './lib/carry-sweep.js';
-import { computePp, computeMovableFrac, computeBr } from './lib/bill-regret.js';
-import { nucleus } from './lib/landmarks.js';
-import { charsToTokens, canonicalizePath } from './lib/measure.js';
-import { generateLoadToken, redactSecrets, normalizeKeepPath, cjkBigrams, buildFtsMatch, hashFileContent, HASH_MAX_BYTES } from './lib/handoff.js';
+import { computePp } from './lib/bill-regret.js';
+import { createHandoffComposition } from './lib/handoff.js';
 import { PLUGIN_VERSION } from './lib/version.js';
-import { readCanonicalTranscript, enumerateLines } from './lib/dialogue-fold.js';
-import { groupTurns, buildSkeleton, snapshotDigest, storedUText, buildSearchTerms, parseNoteSections, renderNoteSections, slotKeysOf, TURN_NOTE_PROTOCOL } from './lib/turn.js';
-import { createBookmarkService } from './lib/bookmark-service.js';
-import { resolveDetailTarget, buildBookmarkDetail, DETAIL_NOTICE } from './lib/bookmark-detail.js';
-import { parseBookmarkId, BOOKMARK_PREVIEW_CHARS } from './lib/bookmark-core.js';
-import { isGrammarLoaded, isSupported, canExtract, REGEX_EXTS, buildSymbolRanges, resolveSymbolLines, loadGrammar } from './lib/symbol-outline.js';
+import { parseTurnAddress } from './lib/turn.js';
+import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { fromHandoff, forLoadedHandoff } from './lib/lineage.js';
 import {
   NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE,
   withPageRecovery, withSearchRecovery, withLocateRecovery,
 } from './lib/turn-tool-recovery.js';
 import { buildTurnPage } from './lib/turn-page.js';
-import { buildTurnBrowse } from './lib/turn-browse.js';
-import { searchTranscripts, locateRanges, parseScope } from './lib/turn-query.js';
+import { buildTurnBrowse, lineageHeadlines } from './lib/turn-browse.js';
+import { searchTranscripts, locateRanges } from './lib/turn-query.js';
+import { createClaudeCodeDialogueSource } from './lib/harness/claude-code/dialogue-source.js';
+import { createClaudeCodeDialogueProjection } from './lib/harness/claude-code/history-turn-rules.js';
+import { classifyToolPair } from './lib/harness/claude-code/native-tools.js';
+import { SEARCH_HIT_RECOVERY } from './lib/harness/claude-code/turn-recovery.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Count logical lines without allocating a UTF-8 string/array. statSync-gated on the SAME cap as
-// hashFileContent so a binary/huge/special file is never buffered. Trailing newline does not inflate:
-// a file ending in \n has one fewer logical line than \n count + 1; empty file → 0.
-function countFileLinesBounded(absPath) {
-  try {
-    const st = statSync(absPath);
-    if (!st.isFile() || st.size > HASH_MAX_BYTES) return null;
-    if (st.size === 0) return 0;
-    const buf = readFileSync(absPath);              // ≤ HASH_MAX_BYTES, gated above
-    let nl = 0;
-    for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0A) nl++;
-    // logical lines = newline count, unless the last byte is NOT a newline (a final unterminated line).
-    return buf[buf.length - 1] === 0x0A ? nl : nl + 1;
-  } catch { return null; }
-}
 
 // round-6 GPT#3b: sanitize a sessionId used as a filename segment. Defense-in-depth — a `/`, `\`,
 // `..`, or NUL would let `${sessionId}.json` escape the state dir. Inlined from the deleted
@@ -69,111 +59,6 @@ export function safeSessionId(sessionId) {
   const s = String(sessionId ?? '');
   if (!s || s === '.' || s === '..' || /[/\\\0]/.test(s) || s.includes('..')) return '__invalid_session__';
   return s;
-}
-
-// Collapse a Map<lineNum, tokens> into sorted [start, end] inclusive ranges.
-function collapseLineRanges(linesMap) {
-  const sorted = [...linesMap.keys()].sort((a, b) => a - b);
-  if (!sorted.length) return undefined;
-  const ranges = [];
-  let start = sorted[0], end = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i] <= end + 1) { end = sorted[i]; }
-    else { ranges.push([start, end]); start = sorted[i]; end = sorted[i]; }
-  }
-  ranges.push([start, end]);
-  return ranges;
-}
-
-// Agent sees only what it needs to reload the file; all per-entry telemetry keys
-// (hp/hl/bucket_id/match_status/candidate_bucket_ids/total_line_count/selected_line_count) stay
-// server-side. The stored DB row retains full telemetry — projection is RESPONSE-only.
-const AGENT_ENTRY_KEYS = ['path', 'symbols', 'lines', 'symbolRanges', 'resolvedSymbols'];
-function projectEntry(e) {
-  if (!e || typeof e !== 'object') return e;
-  const out = {};
-  for (const k of AGENT_ENTRY_KEYS) if (e[k] !== undefined) out[k] = e[k];
-  return out;
-}
-
-function resolveSymbolsForLoad(relPath, symbolRanges, projectDir) {
-  if (!relPath) return [];
-  const ext = extname(relPath);
-  if (!canExtract(ext)) {
-    // Cannot parse — return stale markers for all
-    return Object.entries(symbolRanges).map(([name, ranges]) => {
-      const flat = ranges.map(([a, b]) => `${a}-${b}`).join(', ');
-      return `${name} — parser not ready; originally at lines ${flat}`;
-    });
-  }
-
-  // Try to read the file
-  let code;
-  try {
-    const absPath = isAbsolute(relPath) ? relPath : (projectDir ? join(projectDir, relPath) : relPath);
-    code = readFileSync(absPath, 'utf8');
-  } catch {
-    return Object.entries(symbolRanges).map(([name, ranges]) => {
-      const flat = ranges.map(([a, b]) => `${a}-${b}`).join(', ');
-      return `${name} — file removed; originally at lines ${flat}`;
-    });
-  }
-
-  const { resolved, stale } = resolveSymbolLines(code, ext, symbolRanges);
-  // Edge case: 0 resolved out of N → prepend file-level stale warning
-  if (resolved.length === 0 && stale.length > 0) {
-    const allNames = stale.map(s => s.name).join(', ');
-    return [`⚠️ all symbols stale (${allNames}) — file may have been refactored`].concat(
-      stale.map(({ name, storedRanges }) => {
-        const flat = storedRanges.map(([a, b]) => `${a}-${b}`).join(', ');
-        return `${name} — symbol not found; originally at lines ${flat}`;
-      })
-    );
-  }
-
-  const output = [];
-  for (const { name, startLine, endLine } of resolved) {
-    output.push(`${name} (lines ${startLine}-${endLine})`);
-  }
-  for (const { name, storedRanges } of stale) {
-    const flat = storedRanges.map(([a, b]) => `${a}-${b}`).join(', ');
-    output.push(`${name} — symbol not found in current file; originally at lines ${flat}`);
-  }
-  return output;
-}
-
-// R1-H: safe-parse — a single corrupt row must not 500 the endpoint.
-async function formatHandoffCore(h) {
-  let parsed;
-  try { parsed = JSON.parse(h.pathsToKeep || '{}'); }
-  catch { return { found: false, status: 'error', error: 'corrupt_handoff' }; }
-  // Backward compat: old records stored a bare array; new records store {paths, skills}.
-  const rawPaths = Array.isArray(parsed) ? parsed : (parsed.paths || []);
-
-  // On-demand grammar init for cold start (no prior fold warmup)
-  const extsNeeded = new Set(rawPaths.filter(e => e.symbolRanges).map(e => extname(e.path).toLowerCase()));
-  for (const ext of extsNeeded) {
-    if (isSupported(ext) && !REGEX_EXTS.has(ext) && !isGrammarLoaded(ext)) {
-      await loadGrammar(ext).catch(() => {}); // chains initParser internally; swallow failure
-    }
-  }
-
-  const paths = (Array.isArray(rawPaths) ? rawPaths : []).map(entry => {
-    const projected = projectEntry(entry);
-    // Resolve symbolRanges at load time
-    if (entry.symbolRanges && typeof entry.symbolRanges === 'object') {
-      projected.resolvedSymbols = resolveSymbolsForLoad(entry.path, entry.symbolRanges, h.projectId);
-      delete projected.symbolRanges; // agent sees resolved output, not raw ranges
-    }
-    return projected;
-  });
-  const skills = Array.isArray(parsed) ? undefined : (parsed.skills?.length ? parsed.skills : undefined);
-  const out = { found: true, handoff_id: h.handoffId, load_token: h.loadToken, created_at: h.createdAt,
-    summary: h.summary, paths_to_keep: paths };
-  if (h.projectId) out.project_dir = h.projectId;
-  if (skills) out.skills_to_keep = skills;
-
-  return out;
 }
 
 export const PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), '.session-watcher');
@@ -279,18 +164,78 @@ export function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
 }
 
 // The `q` rule of both turn query routes: a present, non-blank literal of at most
-// BOOKMARK_PREVIEW_CHARS UTF-16 characters. That cap is what makes a search hit's excerpt able to
+// HISTORY_EXCERPT_CHARS UTF-16 characters. That cap is what makes a search hit's excerpt able to
 // contain q whole, and locate answers to the same rule rather than a second one. Every rejection is
 // 400 { error: 'invalid_query' } — a missing q is never read as match-all.
 const isValidTurnQuery = (q) =>
-  typeof q === 'string' && q.trim() !== '' && q.length <= BOOKMARK_PREVIEW_CHARS;
+  typeof q === 'string' && q.trim() !== '' && q.length <= HISTORY_EXCERPT_CHARS;
+
+// ── Composition root ─────────────────────────────────────────────────────────
+// The ONE place a shared `SessionWatcher` is built, and the only place the two worlds meet: the portable
+// Engine and the concrete Claude Code Measurement Projection factory are wired here, so neither
+// `lib/measurement/` nor `lib/session-watcher.js` names a Harness and `lib/harness/` names no application.
+//
+// Every composition creates exactly one Resource Policy and one Resource Enrichment. The Engine takes the
+// policy's `resolve` (per-resource default selection) and `SessionWatcher` takes its `infer` (sibling
+// inference) — one object, two roles, so a manual override and an inferred one share the same set. The CLI
+// owner, the in-process MCP owner and each carry reconstruction all call this, so every one of them resolves
+// selection through the same Resource Policy, against the project context its own caller supplies.
+export function createWatcherComposition({
+  sessionId = null,
+  sourceLocator = null,
+  projectId = null,
+  projectRoot = null,
+  stateDir = null,
+  store,
+  isIgnored = null,
+  dialogueSource = null,
+  // Absent an injected lifetime, the one this host process declared for itself. This factory is the only
+  // place production reads the declaration, and every layer below receives the lifetime already bound into
+  // the policy resolver.
+  cacheTtl = resolveClaudeCodeCacheTtl(),
+  now = () => Date.now(),
+} = {}) {
+  const resourcePolicy = createResourcePolicy({ projectRoot, isIgnored });
+  const resourceEnrichment = createResourceEnrichment();
+  return new SessionWatcher({
+    sessionId,
+    sourceLocator,
+    projectId,
+    projectRoot,
+    // Derived once from the host's existing state directory. `SessionWatcher` has no state-directory
+    // fallback, so a composition that forgot this cannot silently write Turn Notes into the real install.
+    turnNotesRoot: join(stateDir || PORT_DIR, 'turn-notes'),
+    resourcePolicy,
+    resourceEnrichment,
+    handoffComposition: createHandoffComposition(),
+    loaderVersion: PLUGIN_VERSION,
+    store,
+    dialogueSource: dialogueSource || createClaudeCodeDialogueSource(),
+    dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: projectRoot || process.cwd() }),
+    createEngine: createMeasurementEngine,
+    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the locator and the
+    // effective model resolver the application owns rather than closing over either.
+    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+      cwd: projectRoot, projectRoot, sourceLocator: locator, resolveModelPolicy,
+      interpretToolUse: interpretClaudeCodeToolUse,
+      completeToolResult: completeClaudeCodeToolResult,
+      interpretSkillPayload: interpretClaudeCodeSkillPayload,
+      interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    }),
+    // The C ratio is a function of the model AND the prompt-cache lifetime this host declared, and that
+    // lifetime is one fact for the whole composition. Binding it here leaves the measured layers below
+    // passing a model id and nothing else, so no cache lifetime enters their vocabulary.
+    modelPolicyFor: (modelId) => modelPolicyFor(modelId, cacheTtl),
+    now,
+  });
+}
 
 // Factory: build an http.Server around an existing watcher (used by tests and CLI).
 // Returns { app, server, sseClients, startPolling, stopTimers, turnService, turnReadService }. `server`
 // is a real node:http.Server so callers do server.listen(0)/server.address()/server.close().
 // `turnService` and `turnReadService` are exposed for in-process MCP reuse — index.js cannot reach a
 // closure, and the turn tools deliberately have no HTTP route to fetch.
-export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSessionId = null, onIdleShutdown = null, projectsRoot = null, stateDir = null, publicDir = join(__dirname, 'public'), store = null, disableTelemetrySweep = false, bookmarkService: injectedBookmarkService = null, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage }) {
+export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join(__dirname, 'public'), store = null, disableTelemetrySweep = false, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
   const app = express();
   const startMs = Date.now();
   const sseClients = new Set();
@@ -305,29 +250,34 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // nor initStore(), and an eager resolve would throw "Store not initialized" at construction instead
   // of only on the routes that actually read the store. Tests that need two
   // independent connections on the same DB file (bootSecondConsumer) inject their own openStore()
-  // handle so the two app instances do NOT share the global singleton. NOTE: the FOLD archival path
-  // (lib/fold.js handleSegmentBoundary → getStore()), which the eager watcher.poll() below already
-  // reaches, is NOT threaded by this seam — an injected store covers only the server's own
-  // reads/writes (prepare/load, profile_snapshot save).
+  // handle so the two app instances do NOT share the global singleton. Segment archival is inside the
+  // seam: every watcher composition here is handed `resolveStore()`, so the application archives through
+  // the same connection the server's own reads/writes use.
   const resolveStore = () => store || getStore();
 
-  // ── Bookmark service ─────────────────────────────────────────────────────────
-  // Injected service wins (test seam for failure-isolation tests); otherwise construct fresh.
-  // Deps are closures over watcher/currentSessionId/resolveStore so they always reflect live state.
-  const bookmarkService = injectedBookmarkService || createBookmarkService({
-    get store() { return resolveStore(); },
-    currentProjectId: () => watcher._projectId || null,
-    currentSessionId: () => currentSessionId,
-    currentTranscriptPath: () => watcher.path || null,
-    currentCtp: () => watcher._ctp || { ascii: 3.5, cjk: 1.5 },
-    warn: (message) => { if (process.env.SW_DEBUG) console.error('[bookmark-warn]', message); },
+  // ── Turn History composition ─────────────────────────────────────────────────
+  // The one Claude Code Dialogue seam every history READ goes through: the Source Adapter interprets the
+  // opaque locator, and the bound Dialogue Adapter carries this composition's fixed History Turn rule
+  // order and resolves each paired tool line's `resourceKey`. `sessionCwd` is the base a relative tool
+  // path resolves against where the row carries none of its own; it falls back the same way every other
+  // path consumer here does, because a null base would key `lib/store.js` as `/lib/store.js`.
+  //
+  // Distinct from the pair inside the shared application: these serve the lineage-scoped read tools, which
+  // open OTHER sessions' Sources, while the application's own pair serves this session's Turn Note capture.
+  const dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource();
+  const dialogueProjection = createClaudeCodeDialogueProjection({
+    sessionCwd: projectRoot || process.cwd(),
   });
+  // Search admits residual evidence only: a pair whose ground truth is the working tree is reachable
+  // there at full length, so ADR 0004 keeps it out of the transcript corpus. The classifier consumes the
+  // target the Adapter already resolved.
+  const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === 'residual';
+  const history = { dialogueSource, dialogueProjection };
 
   // ── turnPageWire ─────────────────────────────────────────────────────────────
   // Maps buildTurnPage's internal { turnPage, nextBefore } to the wire shape. The cursor travels bare:
   // load injection, GET /api/turn/page and the turn_page MCP tool all call this, so all three are
-  // byte-identical for one head and one persisted state. `before` is the route's own public input, so
-  // input and output are symmetric and no second address representation is introduced.
+  // byte-identical for one head and one persisted state.
   function turnPageWire({ turnPage, nextBefore }) {
     return {
       turn_page: turnPage,
@@ -336,18 +286,18 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   }
 
   // ── formatLoadedHandoff ──────────────────────────────────────────────────────
-  // Wraps formatHandoffCore for token-resolved + single auto-resolved successful loads. Injects the turn
-  // page; degrades gracefully if page construction fails. It mints no URLs: the three read tools resolve
-  // this session's lineage themselves, so handing out a capability URL would only offer a second door.
-  const detailUrlFor = (req) =>
-    `http://127.0.0.1:${req.socket.localPort}/api/bookmark/detail`;
-
-  const formatLoadedHandoff = async (h) => {
-    const core = await formatHandoffCore(h);
-    if (!core.found) return core;
+  // Enrich the delivered package with its lineage headlines and its turn page, or attach
+  // turn_page_error on failure. Both projections sit inside the same try and share its error name, so a
+  // fault in either drops both: the reply keeps the core handoff and carries neither.
+  const formatLoadedHandoff = (core) => {
     try {
-      const lineage = fromHandoff({ store: resolveStore(), handoffId: h.handoffId });
-      return { ...core, ...turnPageWire(injectedTurnPageBuilder({ store: resolveStore(), lineage })) };
+      const store = resolveStore();
+      const sessions = fromHandoff({ store, handoffId: core.handoff_id });
+      return {
+        ...core,
+        lineage: lineageHeadlines({ store, lineage: sessions }),
+        ...turnPageWire(injectedTurnPageBuilder({ store, lineage: sessions, ...history })),
+      };
     } catch (err) {
       if (process.env.SW_DEBUG) console.error('[turn_page_load]', err?.message || err);
       return { ...core, turn_page_error: 'turn_page_unavailable' };
@@ -362,35 +312,126 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   let lastRequestMono = performance.now();
   app.use((req, res, next) => { lastRequestMono = performance.now(); next(); });
 
-  // Initial scan so the very first /api/status and /api/history are populated
-  // (tests and the CLI both rely on this; without it /api/history returns []).
-  // This poll folds the transcript from byte 0, so every segment boundary it crosses reconstructs an
-  // epoch that already ended — a replay, not an observation. `_replayMode` is what carries that to
-  // handleSegmentBoundary (archiveSource 'replay' / capture_source 'cc-replay'); foldCall's own
-  // boundaries pass replayMode:false and cannot distinguish the two. The flag is restored in `finally`
-  // to whatever the caller had set, because the poll ticks startPolling() drives after this ARE live.
-  // Pinned by test/server.startup-fold-provenance.test.js.
-  const wasReplayMode = watcher._replayMode;
-  watcher._replayMode = true;
-  try { watcher.poll(); }
-  catch { /* empty/missing transcript → status stays in calibrating */ }
-  finally { watcher._replayMode = wasReplayMode; }
+  // ── Owner identity, discovery, and Source acquisition ────────────────────────
 
-  // #7: /api/health doubles as an IDENTITY proof for the MCP launcher. It returns pid + startedAt so
-  // stopWatcher can confirm the process listening on this port is genuinely OUR server before it ever
-  // SIGTERMs a pid (guards against a recycled/foreign pid). startMs is the SINGLE source of truth:
-  // the CLI writes this exact value to the state file's `startedAt` (see the listen callback below),
-  // so health.startedAt === stateFile.startedAt and health.pid === stateFile.pid for a live server.
+  // Session identity and the state directory are declared here rather than beside the rotation function:
+  // discovery, the poll tick and rotation all read them, and the synchronous bootstrap below runs before
+  // any of those, so a later declaration would leave them in their temporal dead zone at bootstrap.
+  let currentSessionId = sessionId;
+  const effectiveStateDir = stateDir || PORT_DIR;
+
+  // Poll-loop timers and the monotonic gates they read. v2.2-C5b: adaptive keepalive (implementation A —
+  // time-stamp gate + fixed timer). Uses performance.now() (monotonic), NEVER Date.now() (sleep jumps).
+  let pollTimer = null;
+  // -Infinity so the first tick always runs: the gate checks `now - lastAdvanceMono < IDLE_HEARTBEAT_MS`.
+  let lastAdvanceMono = -Infinity;
+  let lastSnapshotMono = -Infinity;   // V3-D3: ensures the first changed tick always writes
+  // Test-injection seam (A20): reads the module-level _globalTestClockMono (set via _setServerTestClock) so
+  // tests drive the idle gate and the resolution schedule deterministically.
+  const _nowMono = () => _globalTestClockMono != null ? _globalTestClockMono : performance.now();
+
+  // Captured ONCE. `/api/health` and every discovery record read these same three values, which is what
+  // makes the launcher's identity handshake (health.pid === discovery.pid, health.startedAt ===
+  // discovery.startedAt) an equality rather than two independent clock reads that can disagree.
+  const ownerMeta = { pid: process.pid, startedAt: startMs, clientPid: process.ppid };
+
+  // The installed driver owns the locator published in discovery. Acquisition installs it after applying a
+  // frame; rotation can install it while the Source is unavailable, and polling retries that same locator.
+  let driver = null;
+  // Acquisition retains a candidate until an advance yields a frame. While it is retained, the next attempt
+  // retries its locator without scanning the directory again.
+  let candidate = null;
+  // Locator resolution starts immediately, then follows the capped RESOLVE_BACKOFF_MS schedule.
+  const RESOLVE_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
+  let resolveAttempts = 0;
+  let nextResolveMono = -Infinity;
+
+  // Each discovery path this owner SUCCESSFULLY published. Cleanup deletes only these, after the existing
+  // pid check — deriving a target from `currentSessionId` would delete a path this owner never wrote, and
+  // after a rotation whose publication failed that is a live sibling's record.
+  const publishedDiscoveryPaths = new Set();
+
+  // The one discovery writer. It REPORTS rather than throws, because each ingress owns its own failure
+  // policy: listen-time creation prevents startup, a deferred-install rewrite is silent, and a rotation
+  // rewrite returns a warning. The record shape is exactly the six retained fields.
+  function writeDiscovery(targetSessionId) {
+    const path = join(effectiveStateDir, `${safeSessionId(targetSessionId)}.json`);
+    try {
+      mkdirSync(effectiveStateDir, { recursive: true });
+      writeFileSync(path, JSON.stringify({
+        port: server.address()?.port ?? null,
+        pid: ownerMeta.pid,
+        clientPid: ownerMeta.clientPid,
+        // The resolved session locator: null while unresolved, the retained candidate's path while unreadable,
+        // and the installed driver's path after acquisition.
+        transcriptPath: driver?.sourceLocator ?? candidate?.sourceLocator ?? null,
+        sessionId: targetSessionId,
+        startedAt: ownerMeta.startedAt,
+      }));
+      publishedDiscoveryPaths.add(path);
+      return { ok: true, path };
+    } catch (error) {
+      if (process.env.SW_DEBUG) console.error('[discovery]', error.message);
+      return { ok: false, path, error };
+    }
+  }
+
+  // A blocking failure after startup stops the poll timer and notifies the sink at most once. Rotation
+  // shares this sink, so an owner cannot be left half-rotated with a live timer.
+  let ownerFatalNotified = false;
+  function failOwner(error) {
+    if (ownerFatalNotified) return;
+    ownerFatalNotified = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (onOwnerFatal) onOwnerFatal(error);
+  }
+
+  // The Projection cannot restore this line: reading process-global env is what its layering forbids, so it
+  // emits an unconditional diagnostic instead and host wiring — which may read env — writes the baseline
+  // stderr line for that code. Diagnostics are otherwise recorded and never added to a response.
+  function recordDiagnostics(diagnostics) {
+    if (!process.env.SW_DEBUG) return;
+    for (const entry of diagnostics ?? []) {
+      // The one line the baseline printed, restored verbatim — its own tag, its own wording, and no extra
+      // argument. The Projection cannot print it: reading process-global env is what its layering forbids, so
+      // it emits the diagnostic and host wiring, which may read env, writes the line.
+      if (entry?.code === 'multiple_load_tokens') {
+        console.error('[telemetry] multiple load_handoff tokens in one step; keeping first');
+        continue;
+      }
+      // Every OTHER code needs a consumer too, or the Interface's "emits an internal diagnostic" describes
+      // something nobody can observe. One debug-gated sink, tagged by the diagnostic's own scope, so a
+      // telemetry join failure or an unusable model policy is visible where baseline's own logs were.
+      console.error(`[${entry?.scope ?? 'diagnostic'}] ${entry?.code ?? 'unknown'}: ${entry?.message ?? ''}`);
+    }
+  }
+
+  // Apply one frame and route its result through the same changed postprocessing an installed-driver tick
+  // uses. Returns the application result so a caller can decide on `changed`.
+  function applyFrame(frame) {
+    const result = watcher.applyHarnessFrame(frame);
+    recordDiagnostics(result.diagnostics);
+    return result;
+  }
+
+  // #7: /api/health doubles as an IDENTITY proof for the MCP launcher. It returns pid + startedAt from the
+  // immutable owner metadata so stopWatcher can confirm the process listening on this port is genuinely OUR
+  // server before it ever SIGTERMs a pid (guards against a recycled/foreign pid). The discovery record
+  // carries these exact values, so health.startedAt === discovery.startedAt for a live owner.
   // Stays fast, unauthenticated, loopback-only, and non-throwing.
   app.get('/api/health', (req, res) => {
-    res.json({ ok: true, port: server.address()?.port ?? null, uptime: Math.floor((Date.now() - startMs) / 1000), pid: process.pid, startedAt: startMs });
+    res.json({ ok: true, port: server.address()?.port ?? null, uptime: Math.floor((Date.now() - startMs) / 1000), pid: ownerMeta.pid, startedAt: ownerMeta.startedAt });
   });
 
-  const parseFitWindow = (q) => { const n = parseInt(q, 10); return [10, 20, 40].includes(n) ? n : undefined; };
+  // Map the application's opaque sourceLocator to the retained transcriptPath wire field.
+  function statusWire(source) {
+    const { sourceLocator, ...rest } = source.getStatus();
+    return { ...rest, transcriptPath: sourceLocator ?? null };
+  }
 
   app.get('/api/status', (req, res, next) => {
     try {
-      const status = activeWatcher.getStatus();
+      const status = statusWire(activeWatcher);
       if (activeWatcher !== watcher && _replayController) {
         // Replay mode: inject billProgress + gate/backstop state, then enrich landmarks
         status.rateLamp = status.rateLamp || {};
@@ -436,7 +477,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   });
 
   app.get('/api/history', (req, res) => {
-    let h = activeWatcher.getHistory(parseFitWindow(req.query.fitWindow));
+    let h = activeWatcher.getHistory();
     if (req.query.since) { const t = Date.parse(req.query.since); if (!Number.isNaN(t)) h = h.filter(p => Date.parse(p.ts) >= t); }
     res.json(h);
   });
@@ -491,25 +532,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       return res.status(400).json({ error: 'invalid_body', message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
     }
 
-    const warnings = [];
-    const validPaths = new Set(watcher._bRebuild.pathTokenPairs().map(p => p.path));
-    const newMap = new Map();
-
-    for (const [path, value] of Object.entries(overrides)) {
-      if (!path || !validPaths.has(path)) {
-        warnings.push(`ignored: path "${path}" not in current bRebuild`);
-        continue;
-      }
-      if (value !== 'include' && value !== 'exclude') {
-        warnings.push(`ignored: invalid value "${value}" for path "${path}"`);
-        continue;
-      }
-      newMap.set(path, value);
-    }
-
-    // Replace semantics
-    watcher._userOverrides.clear();
-    for (const [k, v] of newMap) watcher._userOverrides.set(k, v);
+    // Whole-set replacement through the named operation. The Engine owns the current epoch's override set and
+    // reports each rejected entry structurally; this route is the only place those structures become the
+    // baseline warning STRINGS, because the wording is a wire fact and the Engine has no wire.
+    const replaced = watcher.replaceUserOverrides(overrides);
+    const warnings = (replaced.warnings ?? []).map(w => (w.code === 'unknown_resource'
+      ? `ignored: path "${w.resourceKey}" not in current bRebuild`
+      : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`));
 
     // Broadcast SSE scan so dashboard refreshes
     if (sseClients.size > 0) {
@@ -517,8 +546,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
     }
 
-    const status = watcher.getStatus();
-    const response = { ...status };
+    const response = statusWire(watcher);
     if (warnings.length > 0) response.warnings = warnings;
     res.json(response);
   });
@@ -530,7 +558,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   app.post('/api/replay/start', async (req, res) => {
     const { transcript, speed = 4 } = req.body || {};
-    const replayPath = transcript || watcher.path;
+    const replayPath = transcript || driver?.sourceLocator || null;
     if (!replayPath) return res.status(400).json({ error: 'no transcript available' });
 
     // Stop any existing replay
@@ -542,17 +570,28 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       const index = indexTranscript(replayPath);
       if (index.length === 0) return res.status(400).json({ error: 'no usage rows in transcript' });
 
-      // Fresh watcher — isolated from live, starts at byte 0 with byte-limit valve
-      const replayWatcher = new SessionWatcher(replayPath, null, { cwd: watcher.cwd });
+      // A fresh application and its OWN source driver, isolated from the live pair: Transcript Playback
+      // paces the driver with absolute line-end byte limits and never touches the live Source cursor.
+      const replayWatcher = createWatcherComposition({
+        sessionId: null, sourceLocator: replayPath, projectId, projectRoot,
+        stateDir: effectiveStateDir, store: resolveStore(), isIgnored: null,
+        // This owner's own declared lifetime: playback prices its cache writes the way the live pair beside
+        // it does, so a replayed reading is comparable with a measured one.
+        cacheTtl,
+      });
+      const replayDriver = createClaudeCodeSourceDriver({
+        sourceLocator: replayPath, firstReadableTransition: 'replace',
+      });
       activeWatcher = replayWatcher;
 
       _replayController = new ReplayController(replayWatcher, index, {
+        driver: replayDriver,
         speed,
         onAdvance: () => {
           // Broadcast SSE scan + replay tick so dashboard fetches fresh data and shows replay state
           if (sseClients.size > 0) {
             const prog = _replayController?.progress;
-            const tick = JSON.stringify({ type: 'tick', uptime: activeWatcher._uptimeSec(), replay: prog ? { current: prog.current, total: prog.total, speed: prog.speed, paused: prog.paused } : undefined });
+            const tick = JSON.stringify({ type: 'tick', uptime: activeWatcher.getStatus().uptime, replay: prog ? { current: prog.current, total: prog.total, speed: prog.speed, paused: prog.paused } : undefined });
             for (const c of sseClients) { try { c.write(`data: ${tick}\n\ndata: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
           }
           // Replay finished: keep activeWatcher + _replayController alive so the
@@ -599,355 +638,58 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     res.json({ active: true, ...(_replayController.progress) });
   });
 
-  // ── Handoff (post-v3 §4) ────────────────────────────────────────────────
+  // ── Handoff ──────────────────────────────────────────────────────────────────
+  // The application owns preparation, search and delivery; these routes map its results to HTTP.
+
+  // Identity and consistency failures keep their explicit HTTP status.
+  const PREPARE_ERROR_STATUS = {
+    stale_bucket_summary: 409,
+    token_not_found: 404,
+    token_collision: 500,
+  };
+
   app.post('/api/handoff/prepare', (req, res, next) => {
     try {
-      const { paths_to_keep = [], skills_to_keep, summary = '', next_task = null, observed_segment, load_token: existingToken } = req.body || {};
-      if (typeof observed_segment === 'number' && observed_segment !== watcher.getSegmentIndex())
-        return res.status(409).json({ status: 'error', error: 'stale_bucket_summary', instruction: 'Call get_bucket_summary again before preparing handoff.' });
-      if (!Array.isArray(paths_to_keep))
-        return res.status(400).json({ status: 'error', error: 'invalid_paths_to_keep' });
-      if (paths_to_keep.length > HANDOFF_MAX_PATHS)
-        return res.status(400).json({ status: 'error', error: 'too_many_paths', max_paths: HANDOFF_MAX_PATHS, actual_paths: paths_to_keep.length });
-      if (typeof summary !== 'string' || summary.length === 0)
-        return res.status(400).json({ status: 'error', error: 'summary_required' });
-      if (summary.length > HANDOFF_MAX_SUMMARY_CHARS)
-        return res.status(400).json({ status: 'error', error: 'summary_too_long', max_chars: HANDOFF_MAX_SUMMARY_CHARS, actual_chars: summary.length, instruction: 'Compress the summary and call prepare_handoff again.' });
-      if (next_task != null && String(next_task).length > HANDOFF_MAX_NEXT_TASK_CHARS)
-        return res.status(400).json({ status: 'error', error: 'next_task_too_long', max_chars: HANDOFF_MAX_NEXT_TASK_CHARS, actual_chars: String(next_task).length });
-
-      // Redact FIRST — secrets must never reach token/search_terms/DB.
-      const redSummary = redactSecrets(summary);
-      const redNext = next_task != null ? redactSecrets(String(next_task)) : null;
-
-      // Normalize paths; split invalid (..) from unknown (not in B_rebuild).
-      const bd = watcher.getBucketData();
-      const known = new Map(bd.paths.map(p => [p.path, { tokens: p.tokens, lastTurn: p.lastTurn }]));
-
-      // ── Telemetry (spec decision 7): freeze the candidate universe server-side. The agent never
-      // sees this payload. Each snapshot entry gets a stable local id + (for kept-matched candidates) a
-      // canonical path + whole_bytes.
-      //
-      // NO truncation. bucket_snapshot is written once per prepare and bd.paths is "files touched this
-      // session" (tens–hundreds); the only real cost is stat/canonicalize, and only KEPT paths need
-      // whole_bytes/canonical. So persist EVERY candidate's in-memory {id, raw, tokens, lastTurn}
-      // un-truncated, and stat/canonicalize ONLY the kept-matched ones (below). Cost is bounded by the
-      // kept-path count (single digits) by construction — no cap, no forced/rest, no byte-trim, no
-      // snapshot_truncated. (A giant candidate set is a rare accumulation concern → CST-D8 retention,
-      // not a lossy in-row cap that corrupts bucket_id resolution.)
-      const ctpVersion = (watcher._ctp && watcher._ctp.version) || 1;
-      // id 'b'+i is positional over bd.paths — stable. canonical_path/whole_bytes are filled lazily below
-      // only for candidates a kept path resolves to (the rest keep canonical_path=null, whole_bytes=null).
-      const snapshotPaths = bd.paths.map((p, i) => ({
-        id: 'b' + i,
-        raw_path: p.path,
-        canonical_path: null,       // filled only if this candidate is kept-matched
-        whole_ctp: p.tokens,        // scope-labeled ESTIMATE (K_files_whole_ctp), NOT a K_A bound
-        whole_bytes: null,          // BYTES; filled from an fs stat only for kept-matched candidates
-        lastTurn: p.lastTurn ?? null,
-      }));
-      // NOTE: serialize `bucketSnapshot` AFTER the kept-identity loop below — that loop lazily fills
-      // canonical_path/whole_bytes on the kept-matched snapshot entries, and those must be in the JSON.
-      let bucketSnapshot;
-
-      const invalid_paths = [], keptEntries = [], unknown_paths = [];
-      const seenPaths = new Set();
-      for (const raw of paths_to_keep) {
-        if (!raw || typeof raw !== 'object' || typeof raw.path !== 'string') { invalid_paths.push(raw); continue; }
-        const { path, invalid } = normalizeKeepPath(raw.path, watcher.cwd);
-        if (invalid) { invalid_paths.push(raw); continue; }
-        if (seenPaths.has(path)) continue; // dedupe
-        seenPaths.add(path);
-        const symbols = Array.isArray(raw.symbols) ? raw.symbols.filter(s => typeof s === 'string') : undefined;
-        keptEntries.push({ path, symbols: symbols && symbols.length ? symbols : undefined });
+      const {
+        paths_to_keep = [], skills_to_keep, summary = '', next_task = null,
+        observed_segment, load_token: existingToken,
+      } = req.body || {};
+      const out = watcher.prepareHandoff({
+        pathsToKeep: paths_to_keep, skillsToKeep: skills_to_keep, summary, nextTask: next_task,
+        observedSegment: observed_segment, loadToken: existingToken,
+      });
+      if (out.status === 'error') {
+        return res.status(PREPARE_ERROR_STATUS[out.error] ?? 400).json(out);
       }
-
-      // Bind kept↔bucket identity ONCE, here — never re-guessed by suffix offline. Matching runs against
-      // `snapshotPaths` = exactly what is persisted (every candidate; no truncation), so a bucket_id can
-      // never dangle. Apply PRIORITY — a canonical/raw EXACT match wins outright; suffix matches are
-      // considered ONLY when there is no exact match, so a path that exact-matches one candidate AND
-      // suffix-matches another is NOT falsely ambiguous. NOTE: bd.paths[].path (= sp.raw_path) is the
-      // ALREADY-CANONICALIZED absolute bucket key (getBucketData emits the B_rebuild map key verbatim,
-      // and those keys are canonicalizePath'd at ingestion), while entry.path is project-relative — so
-      // the exact test canonicalizes the candidate's raw_path and compares to the kept path's abs.
-      const keptCanon = (rel) => canonicalizePath(rel, watcher.cwd || process.cwd());
-      for (const entry of keptEntries) {
-        const abs = keptCanon(entry.path);
-        // raw_path IS the canonicalized-absolute bucket key (idempotent under keptCanon), so a direct
-        // `raw_path === abs` is the exact test — no per-candidate canonicalize (honors the kept-only cost
-        // bound). canonical_path===abs also fires once a prior kept entry lazily filled it; raw===entry.path
-        // is a defensive clause for a hypothetical relative bucket key.
-        const exact = snapshotPaths.filter(sp =>
-          sp.canonical_path === abs || sp.raw_path === abs || sp.raw_path === entry.path);
-        const suffix = snapshotPaths.filter(sp =>
-          (sp.canonical_path && sp.canonical_path.endsWith('/' + entry.path))
-          || sp.raw_path.endsWith('/' + entry.path));
-        const matches = exact.length ? exact : suffix;   // exact beats suffix; suffix only if no exact
-        // Hash/line-count the MATCHED candidate's physical file, not cwd/entry.path. On a unique suffix
-        // match to api/src/server.js, the file to hash is that candidate, NOT cwd/src/server.js (which
-        // may not exist → hp=null while match_status='exact' — a silent lie).
-        let hashTarget = null;
-        if (matches.length === 1) {
-          entry.bucket_id = matches[0].id; entry.match_status = 'exact';
-          // Lazily canonicalize + stat the matched candidate (only kept-matched candidates pay this).
-          if (matches[0].canonical_path == null) matches[0].canonical_path = keptCanon(matches[0].raw_path);
-          if (matches[0].whole_bytes == null) { try { const st = statSync(matches[0].canonical_path); if (st.isFile()) matches[0].whole_bytes = st.size; } catch { /* leave null */ } }
-          hashTarget = matches[0].canonical_path;   // the physically-identified file
-        } else if (matches.length > 1) {
-          entry.bucket_id = null; entry.match_status = 'ambiguous';
-          entry.candidate_bucket_ids = matches.map(m => m.id);   // persist so offline never re-guesses
-          // Ambiguous → NO single physical file is authoritative. Do NOT hash a guessed cwd/entry.path
-          // (it may resolve to a third, non-candidate file → a valid-looking hash of the WRONG identity,
-          // worse than null). Leave hp=null; offline compares each candidate's whole_bytes.
-          hashTarget = null;
-        } else {
-          entry.bucket_id = null; entry.match_status = 'unmatched';
-          hashTarget = null;
-        }
-
-        entry.hp = hashTarget ? hashFileContent(hashTarget) : null;   // content_hash_prepare; null if ambiguous/unmatched/unreadable
-        // Re-estimation basis (spec decision 7): store line-count context so a future tokenizer can
-        // recompute without a migration. Count lines with a BOUNDED Buffer scan for 0x0A — NOT
-        // readFileSync(abs,'utf8').split('\n'), which has no size cap and would allocate a full UTF-8
-        // string + array for an 8MB binary. NO trailing-newline off-by-one: "a\nb\n" is 2, "" is 0.
-        entry.total_line_count = hashTarget ? countFileLinesBounded(hashTarget) : null;   // null if ambiguous/unmatched/unreadable/over-cap
-        // selected_line_count is filled after line-range injection below (Step 3b).
-      }
-
-      let kept_tokens = 0;
-      const resolved_paths = [];
-      for (const entry of keptEntries) {
-        // match by suffix/exact against known bucket paths (bucket paths are absolute; kept are project-relative)
-        const matches = [];
-        for (const [kp, info] of known) { if (kp === entry.path || kp.endsWith('/' + entry.path)) matches.push({ kp, ...info }); }
-        if (matches.length > 1) {
-          // Auto-resolve: pick the most recently active match
-          matches.sort((a, b) => b.lastTurn - a.lastTurn);
-          kept_tokens += matches[0].tokens;
-          resolved_paths.push({ from: entry.path, to: matches[0].kp });
-        } else if (matches.length === 1) { kept_tokens += matches[0].tokens; }
-        else { unknown_paths.push(entry.path); }
-      }
-      // Inject line ranges from _bRebuild for each kept path (skip if full file was read)
-      for (const entry of keptEntries) {
-        const resolvedPath = entry.path;
-        const bKey = watcher._bRebuild.paths.has(resolvedPath) ? resolvedPath
-          : [...watcher._bRebuild.paths.keys()].find(k => k.endsWith('/' + resolvedPath));
-        if (!bKey) continue;
-        const hasFullSnapshot = watcher._bRebuild._hasFullSnapshot.get(bKey);
-        const bEntry = watcher._bRebuild.paths.get(bKey);
-        // Full snapshot: skip line injection (load agent reads whole file or uses resolvedSymbols),
-        // but still compute symbolRanges below if symbols were specified
-        if (!hasFullSnapshot && bEntry && bEntry.lines.size > 0) {
-          entry.lines = collapseLineRanges(bEntry.lines);
-        }
-        // Build symbolRanges from kept symbol names + bucket lines (uses already-resolved bKey)
-        if (entry.symbols && entry.symbols.length && bEntry) {
-          const ext = extname(bKey);
-          if (canExtract(ext)) {
-            try {
-              const code = readFileSync(bKey, 'utf8');
-              const bucketLineNumbers = [...bEntry.lines.keys()];
-              const sr = buildSymbolRanges(code, ext, entry.symbols, bucketLineNumbers);
-              if (sr && Object.keys(sr).length) {
-                entry.symbolRanges = sr;
-                delete entry.symbols; // replaced by the richer format
-              }
-            } catch { /* file unreadable — keep symbols as-is */ }
-          }
-        }
-      }
-      // Step 3b: selected_line_count from the injected line ranges (or whole-file total).
-      for (const entry of keptEntries) {
-        if (Array.isArray(entry.lines) && entry.lines.length) {
-          // entry.lines is already disjoint+sorted (collapseLineRanges, server.js), so summing the
-          // spans does NOT double-count overlaps (the merge happens upstream); each [a,b] is inclusive
-          // → b-a+1 lines.
-          entry.selected_line_count = entry.lines.reduce((n, [a, b]) => n + (b - a + 1), 0);
-        } else if (entry.symbolRanges && typeof entry.symbolRanges === 'object') {
-          // Full-snapshot + picked symbols: derive count from symbolRanges (merge overlaps first)
-          const allRanges = Object.values(entry.symbolRanges).flat().sort((a, b) => a[0] - b[0]);
-          let count = 0;
-          let prevEnd = -1;
-          for (const [a, b] of allRanges) {
-            const start = Math.max(a, prevEnd + 1);
-            if (start <= b) count += b - start + 1;
-            prevEnd = Math.max(prevEnd, b);
-          }
-          entry.selected_line_count = count;
-        } else {
-          entry.selected_line_count = entry.total_line_count ?? null;  // whole-file carry
-        }
-      }
-      // Step 3c: serialize bucket_snapshot AFTER the kept-identity loop lazily filled
-      // canonical_path/whole_bytes on kept-matched entries (those must be in the JSON).
-      bucketSnapshot = JSON.stringify({ v: 1, ctp_version: ctpVersion, root: watcher.cwd || null,
-        total_candidates: snapshotPaths.length, paths: snapshotPaths });
-
-      const allPathTokens = bd.paths.reduce((a, p) => a + (p.tokens || 0), 0);
-      const discarded_tokens = Math.max(0, allPathTokens - kept_tokens);
-
-      const s = watcher.getStatus();
-      const ctp = watcher._ctp || undefined;
-      const summary_tokens = Math.round(charsToTokens(redSummary, ctp || { ascii: 3.0, cjk: 1.0 }));
-      const bDefault = s.rateLamp?.B_default ?? s.B;
-      const previousStats = { b_full: s.B, b_default: bDefault, g: s.g, mf: s.mf, br_exit: s.br,
-        pp_exit: computePp(s.x, s.dhat), turns: watcher._turnSeq, total_l: s.L,
-        dead: watcher._bRebuild.dead, session_floor: watcher._warmupCeiling || watcher._bRebuild.dead,
-        residual: Math.max(0, s.L - s.B) };
-      // preparedStats: gate parameters computed with kept_tokens as B basis (selected bucket).
-      // Contrast with previousStats (full B) for post-hoc analysis of keep/discard decisions.
-      // bKept uses _warmupCeiling (= totalStock at segment anchor = dead + session-specific overhead
-      // like skill_listing, deferred tools, agent listing). This is a better predictor of the next
-      // segment's actual baseline than dead alone, which misses ~9k of always-present session floor.
-      const dead = watcher._bRebuild.dead;
-      const sessionFloor = watcher._warmupCeiling || dead;
-      const bKept = kept_tokens > 0 ? kept_tokens + sessionFloor : null;
-      const preparedStats = bKept && s.cRatio > 0 ? (() => {
-        const gKept = s.g;
-        const dhatKept = nucleus(s.cRatio, gKept, bKept);
-        const mfKept = computeMovableFrac(s.cRatio, bKept, gKept);
-        const xKept = s.L / bKept;
-        const brKept = (dhatKept > 0 && Number.isFinite(mfKept)) ? computeBr(xKept, dhatKept, mfKept) : null;
-        const ppKept = computePp(xKept, dhatKept);
-        return { b_kept: bKept, dead, session_floor: sessionFloor, g: gKept, mf: mfKept, br: brKept, pp: ppKept, dhat: dhatKept, x: xKept };
-      })() : null;
-      const searchTerms = [cjkBigrams(redSummary), redNext ? cjkBigrams(redNext) : ''].filter(Boolean).join(' ');
-
-      const keptSkills = Array.isArray(skills_to_keep) ? [...new Set(skills_to_keep.filter(s => typeof s === 'string' && s.length > 0))] : [];
-      const pathsPayload = JSON.stringify(keptSkills.length ? { paths: keptEntries, skills: keptSkills } : keptEntries);
-
-      // If existingToken provided, UPDATE in place (idempotent re-issue); otherwise INSERT with retry.
-      let load_token = null;
-      // Step 3d: whether we must mint a fresh token via the insert path (default: no existingToken).
-      let mustInsert = !(typeof existingToken === 'string' && existingToken.length > 0);
-      if (!mustInsert) {
-        const updated = resolveStore().updateHandoff(existingToken, {
-          pathsToKeep: pathsPayload, summary: redSummary, nextTask: redNext,
-          summaryTokens: summary_tokens, keptTokens: kept_tokens, discardedTokens: discarded_tokens,
-          preparedAtTurn: watcher._turnSeq, previousStats: JSON.stringify(previousStats),
-          preparedStats: preparedStats ? JSON.stringify(preparedStats) : null, searchTerms, bucketSnapshot,
-          transcriptPath: watcher.path || null });
-        if (updated) {
-          load_token = existingToken;
-        } else {
-          // Step 3d: updateHandoff's WHERE now carries `AND delivered_at IS NULL`, so changes===0 has
-          // TWO causes: (a) the token was already DELIVERED — its telemetry is immutable, so we mint a
-          // fresh token via the insert path (never rewrite a consumed handoff at a different instant
-          // than its recorded delivery); or (b) the token never existed — keep the actionable 404. One
-          // cheap existence probe distinguishes them (same raw-_db pattern as stampLoadHashesIfPrimary).
-          const exists = resolveStore().hasHandoff(existingToken);
-          if (!exists) return res.status(404).json({ status: 'error', error: 'token_not_found', instruction: 'The provided load_token does not exist. Omit it to create a new handoff.' });
-          mustInsert = true;   // delivered → fall through to insert (fresh token)
-        }
-      }
-      if (mustInsert) {
-        for (let attempt = 0; attempt < HANDOFF_TOKEN_MAX_RETRIES; attempt++) {
-          const candidate = generateLoadToken(redSummary, redNext, (n) => randomInt(n));
-          try {
-            resolveStore().insertHandoff({ sessionId: currentSessionId, segment: watcher.getSegmentIndex(), loadToken: candidate,
-              createdAt: Date.now(), pathsToKeep: pathsPayload, summary: redSummary, nextTask: redNext,
-              summaryTokens: summary_tokens, keptTokens: kept_tokens, discardedTokens: discarded_tokens,
-              preparedAtTurn: watcher._turnSeq, previousStats: JSON.stringify(previousStats),
-              preparedStats: preparedStats ? JSON.stringify(preparedStats) : null, searchTerms,
-              projectId: watcher._projectId || null, bucketSnapshot, transcriptPath: watcher.path || null });
-            load_token = candidate; break;
-          } catch (e) { if (e.errcode !== 2067) throw e; }
-        }
-        if (!load_token) return res.status(500).json({ status: 'error', error: 'token_collision' });
-      }
-
-      const out = { status: 'ready', load_token, kept_paths: keptEntries.length, kept_tokens,
-        discarded_tokens, summary_tokens,
-        unknown_paths, invalid_paths,
-        instruction: `Handoff prepared. Token: ${load_token}. Please /clear when ready.` };
-      if (resolved_paths.length) out.resolved_paths = resolved_paths;
       res.json(out);
     } catch (e) { next(e); }
   });
-
-  // Re-hash each kept path on THIS (consumer) machine and stamp content_hash_load. Gate:
-  //   - claimedNow (the fresh primary claim), OR
-  //   - this caller is the bound primary (h.deliveredSessionId === currentSessionId) AND hl is still
-  //     absent (crash window: claim committed, hl never written — a same-session retry back-fills it).
-  // A duplicate/second-session consumer is always excluded → never clobbers the primary's hl.
-  // Fail-soft: an unreadable/oversized path gets hl=null (not-comparable); hashing never blocks content.
-  // Uses resolveStore() (the test-injection seam) so the injected-store harness writes to the same
-  // connection it later reads from; production falls through to the getStore() singleton unchanged.
-  const stampLoadHashesIfPrimary = (h) => {
-    if (!h) return;
-    const isBoundPrimary = h.deliveredSessionId != null && h.deliveredSessionId === currentSessionId;
-    if (!h.claimedNow && !isBoundPrimary) return;   // duplicate / session-less → never stamp
-    try {
-      const rawStored = resolveStore()._db.prepare('SELECT paths_to_keep FROM handoff WHERE handoff_id = ?').get(h.handoffId);
-      if (!rawStored) return;
-      let obj; try { obj = JSON.parse(rawStored.paths_to_keep); } catch { obj = null; }
-      const entries = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.paths) ? obj.paths : null);
-      if (!entries) return;
-      // Idempotency: on a non-fresh retry, only stamp if hl is genuinely still missing. `hl===null`
-      // (a prior stamp that resolved to not-comparable) counts as PRESENT — the key exists — so we do
-      // not re-hash a file that was legitimately unreadable at primary-claim time.
-      const hlMissing = entries.some(e => e && typeof e.path === 'string' && !('hl' in e));
-      if (!h.claimedNow && !hlMissing) return;
-      for (const e of entries) {
-        if (!e || typeof e.path !== 'string') continue;
-        const abs = resolve(watcher.cwd || process.cwd(), e.path);
-        e.hl = hashFileContent(abs);   // sha256 hex or null (over-cap/special/missing)
-      }
-      resolveStore().stampContentHashLoad(h.handoffId, JSON.stringify(obj));
-    } catch (e) { if (process.env.SW_DEBUG) console.error('[content_hash_load]', e.message); }
-  };
 
   app.get('/api/handoff/load', async (req, res, next) => {
     try {
       const { load_token, query, query_mode } = req.query;
 
-      // Path 1: explicit token → stamp + return
-      if (load_token) {
-        const h = resolveStore().loadHandoffByToken(String(load_token), { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
-        if (!h) return res.json({ found: false });
-        if (h.ok === false && h.error === 'handoff_delivery_unavailable') return res.status(503).json({ error: 'handoff_delivery_unavailable', retryable: true });
-        stampLoadHashesIfPrimary(h);
-        return res.json(await formatLoadedHandoff(h));
+      // The `query` branch is a read-only search that never stamps; everything else is a delivery.
+      if (!load_token && query) {
+        return res.json(watcher.searchHandoffs({ query: String(query), queryMode: query_mode }));
       }
 
-      // Path 3: query/search → never stamps
-      if (query) {
-        if (!resolveStore().ftsAvailable) return res.json({ status: 'error', error: 'search_unavailable' });
-        let results;
-        try { results = resolveStore().searchHandoff(buildFtsMatch(String(query), query_mode === 'advanced' ? 'advanced' : 'plain'), { projectId: watcher._projectId }); }
-        catch { return res.json({ status: 'error', error: 'invalid_query' }); }
-        if (!results.length) return res.json({ found: false });
-        return res.json({ found: true, mode: 'search',
-          results: results.map(r => ({ load_token: r.loadToken, created_at: r.createdAt, next_task: r.nextTask, summary_preview: r.summaryPreview })),
-          instruction: 'Multiple matches. Call load_handoff with the desired load_token for the full package.' });
+      const delivered = await watcher.deliverHandoff(
+        load_token ? { loadToken: String(load_token) } : {});
+      // Project delivery errors to the HTTP response's error and retryable fields.
+      if (delivered.ok === false) {
+        return res.status(503).json({ error: delivered.error, retryable: delivered.retryable === true });
       }
-
-      // Path 2: auto-match (no params) — project-scoped with ambiguity detection
-      if (!watcher._projectId) return res.json({ found: false });
-      const ttlMs = HANDOFF_HOOK_TTL_DAYS * 24 * 3600 * 1000;
-      const { rows, ambiguous } = resolveStore().loadHandoffByProject(watcher._projectId, currentSessionId, { ttlMs });
-      if (rows.length === 0) return res.json({ found: false });
-      if (ambiguous) {
-        // auto-match 的歧义清单：本项目有多个未投递 handoff 都匹配，谁都不该被盖章，所以这里提前返回、
-        // 由调用方指名一个 load_token 取走。同一路由的 free-text 分支答的是 results 且字段不同，而这个
-        // 文件里 candidates 还指 path 快照的候选集（total_candidates）—— 同名，互不相干的协议。
-        return res.json({ found: false, ambiguous: true,
-          candidates: rows.map(r => ({ load_token: r.loadToken, created_at: r.createdAt, next_task_preview: r.nextTask ? r.nextTask.slice(0, HANDOFF_HOOK_TASK_PREVIEW_CHARS) : null })) });
-      }
-      // Single unambiguous result — stamp and return full
-      const h = resolveStore().loadHandoffByToken(rows[0].loadToken, { sessionId: currentSessionId, loaderVersion: PLUGIN_VERSION, consumerSegment: watcher.getSegmentIndex() });
-      if (!h) return res.json({ found: false });
-      if (h.ok === false && h.error === 'handoff_delivery_unavailable') return res.status(503).json({ error: 'handoff_delivery_unavailable', retryable: true });
-      stampLoadHashesIfPrimary(h);
-      return res.json(await formatLoadedHandoff(h));
+      if (!delivered.found) return res.json(delivered);
+      return res.json(formatLoadedHandoff(delivered));
     } catch (e) { next(e); }
   });
 
   // ── Turn page REST route ──────────────────────────────────────────────────────
 
   // GET /api/turn/page — one page of history turns for an explicit lineage head.
-  // `lineage_head` is the handoff_id that anchors the lineage; `before` is an optional S{k}:{T} cursor.
+  // `lineage_head` is the handoff_id that anchors the lineage; `before` is an optional boundary, either
+  // an S{k} session label or an S{k}:{T} turn address.
   // The route does not read watcher._projectId: lineage scope comes from the handoff row's own project,
   // so an explicit head resolves the same way no matter which project asks for it.
   app.get('/api/turn/page', (req, res, next) => {
@@ -965,6 +707,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           store: resolveStore(),
           lineage,
           before: req.query.before || null,
+          ...history,
         });
         return res.json(turnPageWire(result));
       } catch (err) {
@@ -980,9 +723,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   // GET /api/turn/search — exact literal search over the canonical transcripts of one lineage.
   // `q` is a literal, never a pattern; `scope` is an optional S{k}:{T} turn span. The response is always
-  // sized by BOOKMARK_TOKEN_BUDGET, so a `budget` parameter is ignored rather than rejected. The detail
-  // base URL is generated once here and handed to the search operation, which measures it as part of
-  // every candidate and returns the finished response.
+  // sized by HISTORY_TOKEN_BUDGET, so a `budget` parameter is ignored rather than rejected.
   app.get('/api/turn/search', (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
@@ -996,10 +737,10 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
         const scope = req.query.scope == null ? null : String(req.query.scope);
-        if (scope !== null && parseScope(scope) === null) return res.status(400).json({ error: 'invalid_scope' });
+        if (scope !== null && parseTurnAddress(scope) === null) return res.status(400).json({ error: 'invalid_scope' });
 
         return res.json(searchTranscripts({
-          store: resolveStore(), lineage, q: req.query.q, scope,
+          store: resolveStore(), lineage, q: req.query.q, scope, ...history, includeToolEvidence,
         }));
       } catch (err) {
         if (err && err.code === 'scope_not_found') return res.status(404).json({ error: 'scope_not_found' });
@@ -1011,7 +752,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   // GET /api/turn/locate — the persisted turn index of one lineage, resolved back onto the live
   // active path. No `scope`: locate is what produces one. The response is a fixed pair of shapes whose
-  // size locate caps against the bookmark budget itself, so a `budget` parameter is ignored rather than
+  // size locate caps against HISTORY_TOKEN_BUDGET itself, so a `budget` parameter is ignored rather than
   // rejected.
   app.get('/api/turn/locate', (req, res, next) => {
     try {
@@ -1025,7 +766,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
 
-        return res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q }));
+        return res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q, ...history }));
       } catch (err) {
         if (process.env.SW_DEBUG) console.error('[turn_locate]', err?.message || err);
         return res.status(503).json({ error: 'locate_unavailable' });
@@ -1043,7 +784,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   //
   // Below that label the two faces diverge and are meant to. The page opens session transcripts up to
   // its budget ceiling, addresses records by their active-path ordinal where the source is readable,
-  // drops abandoned anchors and fits itself to the ceiling isWithinBookmarkBudget enforces. This
+  // drops abandoned identities and fits itself to the ceiling isWithinHistoryBudget enforces. This
   // response opens nothing, carries no address and returns every stored row, because a person scrolls
   // and searches a list where an agent reads a window.
   app.get('/api/turn/browse', (req, res) => {
@@ -1056,116 +797,23 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     return res.json({ sections });
   });
 
-  // ── Bookmark REST routes ───────────────────────────────────────────────────
-
-  // GET /api/bookmark/messages — list all messages in applicable lineage with bookmark status
-  app.get('/api/bookmark/messages', (req, res, next) => {
-    try {
-      const detailUrl = detailUrlFor(req);
-      const result = bookmarkService.listMessages({ detailUrl });
-      res.json(result);
-    } catch (e) { next(e); }
-  });
-
-  // PUT /api/bookmark — add or remove a bookmark via desired-state
-  app.put('/api/bookmark', (req, res, next) => {
-    try {
-      const body = req.body || {};
-      // Validate: only identity + boolean (add, anchor_uuid, source_session_id)
-      const ALLOWED = new Set(['add', 'anchor_uuid', 'source_session_id']);
-      const keys = Object.keys(body);
-      if (keys.some(k => !ALLOWED.has(k)) || typeof body.add !== 'boolean'
-          || typeof body.anchor_uuid !== 'string' || typeof body.source_session_id !== 'string') {
-        return res.status(400).json({ error: 'invalid_bookmark_request' });
-      }
-      const detailUrl = detailUrlFor(req);
-      const result = bookmarkService.setDesiredState(body, { detailUrl });
-      if (result.status === 'not_found') {
-        return res.status(404).json({ error: 'bookmark_target_not_found',
-          budget_used_tokens: result.budget_used_tokens, budget_limit_tokens: result.budget_limit_tokens });
-      }
-      if (result.status === 'budget_exceeded') {
-        return res.status(409).json({ error: 'bookmark_budget_exceeded',
-          budget_used_tokens: result.budget_used_tokens, budget_limit_tokens: result.budget_limit_tokens });
-      }
-      res.json(result);
-    } catch (e) { next(e); }
-  });
-
-  // GET /api/bookmark/detail — drill-down detail for a bookmark anchor
-  app.get('/api/bookmark/detail', (req, res, next) => {
-    try {
-      const { bookmark_id, source_session_id, anchor_uuid, with_context } = req.query;
-
-      // Validate with_context — must be literal 'true' or 'false'
-      if (with_context !== 'true' && with_context !== 'false') {
-        return res.status(400).json({ error: 'invalid_with_context' });
-      }
-
-      // Validate locator: exactly one of bookmark_id or identity pair
-      const hasId = bookmark_id != null && bookmark_id !== '';
-      const hasSid = source_session_id != null && source_session_id !== '';
-      const hasAnchor = anchor_uuid != null && anchor_uuid !== '';
-      const hasIdentity = hasSid || hasAnchor;
-
-      if (hasId && hasIdentity) {
-        return res.status(400).json({ error: 'invalid_bookmark_locator' });
-      }
-      if (!hasId && !hasIdentity) {
-        return res.status(400).json({ error: 'invalid_bookmark_locator' });
-      }
-      // Identity mode: both fields required
-      if (!hasId && !(hasSid && hasAnchor)) {
-        return res.status(400).json({ error: 'invalid_bookmark_locator' });
-      }
-
-      // Validate ID format for ID-mode
-      if (hasId) {
-        // normalizeLocatorId: strip B/b prefix, then parseBookmarkId
-        const rawId = String(bookmark_id).trim();
-        const stripped = /^[Bb](\d+)$/.test(rawId) ? rawId.slice(1) : rawId;
-        const parsed = parseBookmarkId(stripped);
-        if (parsed == null) {
-          return res.status(400).json({ error: 'invalid_bookmark_id' });
-        }
-      }
-
-      // Build locator
-      const locator = hasId
-        ? { bookmark_id: String(bookmark_id) }
-        : { source_session_id: String(source_session_id), anchor_uuid: String(anchor_uuid) };
-
-      const target = resolveDetailTarget({
-        store: resolveStore(),
-        projectId: watcher._projectId || null,
-        currentSessionId,
-        currentTranscriptPath: watcher.path || null,
-        locator,
-      });
-
-      if (!target.found) {
-        return res.json({ found: false });
-      }
-
-      const withCtx = with_context === 'true';
-      const detail = buildBookmarkDetail({
-        transcriptPath: target.transcriptPath,
-        sourceSessionId: target.sourceSessionId,
-        anchorUuid: target.anchorUuid,
-        withContext: withCtx,
-      });
-
-      return res.json(detail);
-    } catch (e) { next(e); }
-  });
-
-  // §4 Pricing API — priority: saved > CLI > model_default
-  const cliRatioAtStartup = watcher.ratioOverride; // capture CLI value at construction time
+  // §4 Pricing API — priority: saved > CLI > model_default.
+  // `modelPolicyFor` is the sole owner of model-derived policy, PRICING PRESETS INCLUDED, so this route
+  // reads `policy.pricing` rather than importing the preset table a second time. That is what keeps the
+  // shape described in one place; the member exists for exactly this consumer.
+  const cliRatioAtStartup = ratioOverride;   // the CLI value, captured at construction
 
   const buildPricingResponse = () => {
-    const model = watcher._segmentModel || '';
+    // The EPOCH model, not the latest measured one. Pricing is a model-DEPENDENT read: this same value is the
+    // key `loadPricingOverride`/`savePricingOverride` store under, so taking the latest identity would move
+    // an override's key mid-epoch.
+    const model = watcher.getEpochModel() ?? '';
     const saved = loadPricingOverride(model);
-    const modelRatio = cRatioFor(model);
+    // The declared prompt-cache TTL as well as the model: the reported model default is the price
+    // measurement is actually charging this epoch, which the composition resolved under the same TTL.
+    const policy = modelPolicyFor(model, cacheTtl);
+    const modelRatio = policy.cRatio;
+    const presets = policy.pricing.presets;
 
     let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
     if (saved) {
@@ -1174,7 +822,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
       // Preset drift detection (spec §10.3): if presetId saved, check prices still match
       if (saved.presetId) {
-        const preset = MODEL_PRICING_PRESETS.find(p => p.id === saved.presetId);
+        const preset = presets.find(p => p.id === saved.presetId);
         if (preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice) {
           source = 'preset';
         }
@@ -1189,16 +837,19 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     return {
       effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
       saved: saved || null,
-      modelDefault: { model, ratio: modelRatio, readPrice: null, writePrice: null },
-      presets: MODEL_PRICING_PRESETS,
+      modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
+      presets,
     };
   };
 
+  // The one runtime ratio mutation. `setRatioOverride` refreshes the Engine's named reads without rebuilding
+  // measurement state, recomputing a prior segment's extrema or touching the Rate Lamp integral, so a price
+  // change is visible immediately and the sample stream stays continuous across it. Host wiring keeps the
+  // saved > CLI > null priority here and maintains no second effective model policy.
   const applyEffectiveRatio = () => {
-    const model = watcher._segmentModel || '';
-    const saved = loadPricingOverride(model);
-    watcher.ratioOverride = saved ? saved.ratio : cliRatioAtStartup;
-    watcher._historyCache = null;
+    // Same key as the response builder above: the saved override is looked up under the EPOCH model.
+    const saved = loadPricingOverride(watcher.getEpochModel() ?? '');
+    watcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup);
   };
 
   // Apply saved pricing at startup (persisted override must take effect without POST)
@@ -1221,7 +872,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       // Sanitize presetId: must be null or a short string
       const safePresetId = (typeof presetId === 'string' && presetId.length > 0 && presetId.length <= 80)
         ? presetId : null;
-      const model = watcher._segmentModel || '';
+      // The WRITE key is the epoch model, so an override lands under the same identity the read looks it up
+      // by. A latest-identity key would store under one model and be read back under another mid-epoch.
+      const model = watcher.getEpochModel() ?? '';
       if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });  // #9: guard empty model key
       savePricingOverride(model, { readPrice, writePrice, presetId: safePresetId });
       applyEffectiveRatio();
@@ -1232,7 +885,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   });
 
   app.delete('/api/pricing', (req, res) => {
-    const model = watcher._segmentModel || '';
+    const model = watcher.getEpochModel() ?? '';
     if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });
     deletePricingOverride(model);
     applyEffectiveRatio();
@@ -1279,90 +932,120 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     res.status(status).json({ error: status === 413 ? 'payload_too_large' : status === 400 ? 'bad_request' : 'internal' });
   });
 
-  // Poll loop: emit SSE only on new data.
-  // v2.2-C5b: adaptive keepalive timer (implementation A — time-stamp gate + fixed timer).
-  // Uses performance.now() (monotonic) — NEVER Date.now() (sleep/lid-close jumps).
-  let pollTimer = null;
-  // Initialize to -Infinity so the first poll tick always runs (the gate checks
-  // `now - lastAdvanceMono < IDLE_HEARTBEAT_MS` — with -Infinity the diff is always large).
-  let lastAdvanceMono = -Infinity;
-  let lastSnapshotMono = -Infinity; // V3-D3: ensures first changed-tick always writes
-  // Test-injection seam (A20): _nowMono reads the module-level _globalTestClockMono (set via
-  // _setServerTestClock) so tests can drive the idle gate deterministically.
-  const _nowMono = () => _globalTestClockMono != null ? _globalTestClockMono : performance.now();
+  // ── The one poll tick ────────────────────────────────────────────────────────
+  // Bootstrap and the recurring timer call THIS function, so there is one description of what a tick does
+  // and `pollIntervalMs: 0` disables only the recurrence. Each tick selects acquisition or installed-driver
+  // polling and performs AT MOST one Source advance and one frame application.
+
+  // Everything a changed application result owes, shared by the initial installation and every live tick, so
+  // an installed Source's first frame is postprocessed exactly like the ones after it. Each non-blocking
+  // operation catches its own failure: a rate-lamp, snapshot or SSE fault must not stop later ticks.
+  function afterApplication(changed) {
+    try {
+      const { ledger } = advanceRateLampToCurrent(watcher, currentSessionId, { forcePoll: false });
+      if (process.env.SW_DEBUG && ledger) console.error('[rate-lamp shadow]', JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
+    } catch (e) { if (process.env.SW_DEBUG) console.error('[rate-lamp]', e.message); }
+    try {
+      if (sseClients.size > 0 && !_replayController) {
+        const tick = JSON.stringify({ type: 'tick', uptime: watcher.getStatus().uptime });
+        for (const c of sseClients) { try { c.write(`data: ${tick}\n\n`); } catch { sseClients.delete(c); } }
+      }
+      if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
+    } catch (e) { if (process.env.SW_DEBUG) console.error('[sse]', e.message); }
+    // v3 (spec section 6.7): profile snapshot for GC archival — throttled (V3-D3). The snapshot only needs
+    // to be current at session end; staleness on crash is acceptable because GC archival runs days later.
+    if (changed) {
+      const now = _nowMono();
+      if (now - lastSnapshotMono >= SNAPSHOT_THROTTLE_MS) {
+        lastSnapshotMono = now;
+        try {
+          const snap = watcher.getTerminalSnapshot();
+          resolveStore().saveBatch(currentSessionId, [['profile_snapshot', snap]], { model: snap.model });
+        } catch (e) { if (process.env.SW_DEBUG) console.error('[profile_snapshot]', e.message); }
+      }
+    }
+    try {
+      if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
+        onIdleShutdown();
+      }
+    } catch (e) { if (process.env.SW_DEBUG) console.error('[idle-shutdown]', e.message); }
+  }
+
+  // Acquisition. It runs while `driver === null`, ABOVE the idle gate and independently of SSE state: an
+  // unwired owner has nothing to be idle about, and a dashboard-less session must still attach.
+  //
+  // The caller ends its tick as soon as this has run, so an acquisition tick performs no live advance — one
+  // Source advance per tick, and no frame ends the tick.
+  function runAcquisition() {
+    // Resolution runs only while no candidate has been retained. Once a locator resolves, recursive
+    // directory scans stop for good and the candidate itself is what gets retried.
+    if (candidate === null) {
+      const now = _nowMono();
+      if (now < nextResolveMono) return;
+      // An explicitly supplied locator is ALREADY resolved, so it never costs a directory scan. Only an
+      // owner that was given none searches, and only that search follows the backoff schedule.
+      const found = sourceLocator
+        ?? ((projectsRoot && currentSessionId) ? resolveSourceLocator(projectsRoot, currentSessionId) : null);
+      if (!found) {
+        // A missing locator advances the capped RESOLVE_BACKOFF_MS schedule.
+        const step = RESOLVE_BACKOFF_MS[Math.min(resolveAttempts, RESOLVE_BACKOFF_MS.length - 1)];
+        resolveAttempts += 1;
+        nextResolveMono = now + step;
+        return;
+      }
+      candidate = createSourceDriver({ sourceLocator: found, firstReadableTransition: 'replace' });
+    }
+    // The retained candidate is advanced in Source Reconstruction mode on every tick until its Source is
+    // readable. No frame means the Source is not readable yet, which ends the tick.
+    const frame = candidate.advance({ captureMode: 'replay' });
+    if (!frame) return;
+    // Application failure installs nothing: the candidate is discarded so a later tick rebuilds from a
+    // fresh reader rather than continuing from a cursor whose frame never landed.
+    let result;
+    try { result = applyFrame(frame); }
+    catch (error) { candidate = null; throw error; }
+    driver = candidate;
+    candidate = null;
+    // Discovery already exists from listen time, so this is a rewrite from the installed driver. Its failure
+    // keeps the installed driver and the previous record, with no public warning: the record is a discovery
+    // convenience and the owner is already serving.
+    if (publishedDiscoveryPaths.size > 0) writeDiscovery(currentSessionId);
+    // The successful initial `replace` takes the SAME changed postprocessing an installed-driver tick takes,
+    // so it writes the normal changed snapshot and emits one SSE scan.
+    afterApplication(result.changed);
+  }
+
+  // One tick. Shared by the synchronous bootstrap and the recurring timer.
+  function runPollTick() {
+    if (driver === null) { runAcquisition(); return; }
+    // The idle gate applies ONLY to installed-driver polling: if the last advance was recent and no SSE
+    // client needs a push, skip the tick.
+    const now = _nowMono();
+    if (sseClients.size === 0 && (now - lastAdvanceMono) < IDLE_HEARTBEAT_MS) return;
+    const frame = driver.advance({ captureMode: 'live' });
+    // Recorded BEFORE the application so a throwing advance still marks this tick as recent work, which is
+    // what stops a persistently failing Source from being retried at full timer frequency.
+    lastAdvanceMono = _nowMono();
+    // No frame is not distinguished from temporary Source unavailability: both mean no applicable increment,
+    // and the tick still owes its rate-lamp advance, its SSE tick and its idle check.
+    afterApplication(frame ? applyFrame(frame).changed : false);
+  }
 
   function startPolling() {
     if (pollIntervalMs <= 0) return;
     pollTimer = setInterval(() => {
-      // Late transcript resolution: if the transcript file didn't exist at startup (race with CC
-      // creating it), retry discovery each tick until found. Once resolved, never retries again.
-      // Runs ABOVE the idle gate — the one-readdir cost is negligible and only fires while path=null.
-      if (!watcher.path && projectsRoot && currentSessionId) {
-        const found = resolveBySessionId(projectsRoot, currentSessionId);
-        if (found) {
-          watcher.switchTranscript(found);
-          // Update state file so statusline sees the resolved path
-          try {
-            const port = server.address()?.port;
-            if (port) writeFileSync(join(effectiveStateDir, `${safeSessionId(currentSessionId)}.json`), JSON.stringify({
-              port, pid: process.pid, clientPid: process.ppid,
-              transcriptPath: found, sessionId: currentSessionId, startedAt: startMs,
-            }));
-          } catch {}
-          if (process.env.SW_DEBUG) console.error('[poll] late transcript resolution:', found);
-        }
-      }
-      // v2.2-C5b adaptive idle gate: if the last advance was recent AND no SSE clients need push,
-      // skip this tick (no redundant work). When SSE clients are connected, always run (they need data).
-      const now = _nowMono();
-      if (sseClients.size === 0 && (now - lastAdvanceMono) < IDLE_HEARTBEAT_MS) {
-        return; // idle gate: skip tick
-      }
-      // Poll-loop error boundary (final-review Important #1): symmetric to the terminal Express
-      // error boundary above — the server is a long-lived daemon, so a transient throw here (a bad
-      // watcher.poll() frame, or advanceRateLampToCurrent → saveRateLampState → writeJsonAtomic
-      // RE-THROWING a disk error like ENOSPC/EACCES/ENOTDIR) must NEVER kill the process. The route
-      // path has Express's boundary; this once-per-second timer is the symmetric hole with none.
-      // Mirror the flushAll per-iteration guard: log under SW_DEBUG, swallow otherwise; next poll
-      // proceeds and the last on-disk checkpoint survives.
-      try {
-        const { changed } = watcher.poll();
-        // Record advance timestamp (monotonic) for the idle gate BEFORE the rate-lamp advance,
-        // so that a throwing advance still marks this tick as "recent work" (prevents infinite
-        // high-frequency retries of a persistently failing advance).
-        lastAdvanceMono = _nowMono();
-        // v2.1 PR2 SHADOW: advance the canonical fullCarry ledger via the in-memory single writer.
-        // No local load-modify-save (round-2 GPT#10 race). Manager checkpoints to disk itself.
-        const { ledger } = advanceRateLampToCurrent(watcher, currentSessionId, { forcePoll: false });
-        if (process.env.SW_DEBUG && ledger) console.error('[rate-lamp shadow]', JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
-        if (sseClients.size > 0 && !_replayController) {
-          const tick = JSON.stringify({ type: 'tick', uptime: watcher._uptimeSec() });
-          for (const c of sseClients) { try { c.write(`data: ${tick}\n\n`); } catch { sseClients.delete(c); } }
-        }
-        if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
-        // v3 (spec section 6.7): profile snapshot for GC archival — throttled to once per 30s
-        // (V3-D3). The snapshot only needs to be current at session end; 30s staleness on crash
-        // is acceptable (GC archival runs days later).
-        if (changed) {
-          const now = _nowMono();
-          if (now - lastSnapshotMono >= SNAPSHOT_THROTTLE_MS) {
-            lastSnapshotMono = now;
-            try {
-              const snap = watcher.getTerminalSnapshot();
-              resolveStore().saveBatch(currentSessionId, [['profile_snapshot', snap]], { model: snap.model });
-            } catch (e) { if (process.env.SW_DEBUG) console.error('[profile_snapshot]', e.message); }
-          }
-        }
-        // Idle auto-shutdown: no HTTP requests AND no SSE clients for IDLE_SHUTDOWN_MS → exit
-        if (onIdleShutdown && shouldIdleShutdown({ sseClientsSize: sseClients.size, lastRequestMono, now: performance.now() })) {
-          onIdleShutdown();
-        }
-      } catch (e) {
-        if (process.env.SW_DEBUG) console.error('[poll]', e);
+      // A blocking Source-advance or application error after startup is owner-fatal: it stops the timer and
+      // notifies the sink at most once. The non-blocking operations inside the tick catch their own faults,
+      // so anything reaching here is the Source or the application itself.
+      try { runPollTick(); }
+      catch (error) {
+        if (process.env.SW_DEBUG) console.error('[poll]', error);
+        failOwner(error);
       }
     }, pollIntervalMs);
     pollTimer.unref?.();
   }
+
   // v2.2-C5b SSE ping with dead-client GC: a failed write means the client is dead → delete it.
   const pingTimer = setInterval(() => {
     for (const c of sseClients) {
@@ -1371,62 +1054,75 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   }, 15000);
   pingTimer.unref?.();
 
-  // --- Session rotation (in-process architecture) ---
-  let currentSessionId = sessionId;
-  const effectiveStateDir = stateDir || PORT_DIR;
+  // ── Session rotation ─────────────────────────────────────────────────────────
+  // ONE owner-local rotation function behind both ingresses (the SessionStart HTTP callback and the
+  // `rotate_session` MCP fallback). There is no rotation coordinator Module: rotation is a host concern
+  // because only the host owns the driver, and the application is told about it through one `rotate` frame.
 
   function doRotation(newSessionId, transcriptPath) {
+    // A duplicate-session notification retains driver, application and discovery state and produces no frame.
     if (newSessionId === currentSessionId) return { ok: true, noop: true };
 
-    // Resolve transcript (NO side effects yet)
+    // Resolve the new locator with NO side effects yet: an unresolved notification also produces no frame.
     let newPath = transcriptPath || null;
-    if (!newPath && projectsRoot) {
-      newPath = resolveBySessionId(projectsRoot, newSessionId);
-    }
+    if (!newPath && projectsRoot) newPath = resolveBySessionId(projectsRoot, newSessionId);
     if (!newPath) return { ok: false, error: 'transcript_not_found' };
 
-    // Point of no return: archive current segment
-    try {
-      archiveCurrentSegment(watcher);
-    } catch (e) {
-      if (process.env.SW_DEBUG) console.error('[doRotation archive]', e.message);
-    }
+    // The candidate's immutable first-readable transition is `append`, because the host's own `rotate` frame
+    // is what establishes the new locator — the candidate must not also claim to replace it. Its initial live
+    // read happens WITHOUT mutating the current driver, so a failure here leaves the old Source installed.
+    const rotated = createSourceDriver({ sourceLocator: newPath, firstReadableTransition: 'append' });
+    const initial = rotated.advance({ captureMode: 'live' });
+    // An immediately readable Source contributes its batches; an unavailable one contributes none and
+    // `sourceObserved: false`. Either way this is ONE live `rotate` frame, old segment closure included.
+    const frame = {
+      transition: 'rotate',
+      sessionId: newSessionId,
+      sourceLocator: newPath,
+      batches: initial ? initial.batches : [],
+      sourceObserved: initial ? true : false,
+      captureMode: 'live',
+    };
 
-    // Switch watcher to new transcript
-    watcher.switchTranscript(newPath);
-    lastSnapshotMono = -Infinity; // V3-D3: new session gets an immediate snapshot on first changed-tick
+    // Blocking finalization failure must leave driver, discovery, application identity and the snapshot
+    // throttle exactly as they were, then take the owner-fatal path — the application has already refused
+    // the transition, so continuing would serve a half-rotated owner.
+    let result;
+    try { result = applyFrame(frame); }
+    catch (error) { failOwner(error); throw error; }
 
-    // State file: write-new-then-delete-old (zero-downtime)
-    // F10: identity state updated AFTER successful write to prevent orphaned state files on ENOSPC
     const oldSessionId = currentSessionId;
-    const port = server.address()?.port;
-    const newStateFile = join(effectiveStateDir, `${safeSessionId(newSessionId)}.json`);
+    driver = rotated;
+    currentSessionId = newSessionId;
+    // V3-D3: the new session gets an immediate snapshot on its first changed tick, so a snapshot written
+    // just before the rotation cannot suppress it.
+    lastSnapshotMono = -Infinity;
+
+    // Discovery: write the new record, then retire the old path. A rewrite failure keeps the installed
+    // candidate and the previous record and returns the existing warning.
     const oldStateFile = join(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`);
-    let warning = undefined;
-    try {
-      mkdirSync(effectiveStateDir, { recursive: true });
-      writeFileSync(newStateFile, JSON.stringify({
-        port, pid: process.pid, clientPid: process.ppid,
-        transcriptPath: newPath, sessionId: newSessionId, startedAt: startMs,
-      }));
-      // Write succeeded — now safe to update identity state
-      currentSessionId = newSessionId;
-      watcher._sessionId = newSessionId;
-      if (oldStateFile !== newStateFile) {
-        try { unlinkSync(oldStateFile); } catch {}
+    const published = writeDiscovery(newSessionId);
+    let warning;
+    if (published.ok) {
+      if (published.path !== oldStateFile) {
+        try { unlinkSync(oldStateFile); publishedDiscoveryPaths.delete(oldStateFile); } catch { /* already gone */ }
       }
-    } catch (e) {
-      // Write failed — still update identity (session switched regardless) but warn
-      currentSessionId = newSessionId;
-      watcher._sessionId = newSessionId;
+    } else {
       warning = 'state_file_write_failed';
-      if (process.env.SW_DEBUG) console.error('[doRotation state-file]', e.message);
     }
 
+    // Rate Lamp advances ONCE under the new session identity, so the new session's ledger is keyed before any
+    // reader sees it. No snapshot is written and no SSE is sent from rotation: the installed driver's ordinary
+    // live polling owns both, and the throttle reset above guarantees the next changed tick writes.
+    try { advanceRateLampToCurrent(watcher, currentSessionId, { forcePoll: false }); }
+    catch (e) { if (process.env.SW_DEBUG) console.error('[rotate rate-lamp]', e.message); }
+    void result;
+
+    const port = server.address()?.port;
     const url = port ? `http://127.0.0.1:${port}` : null;
-    const result = { ok: true, old_session_id: oldSessionId, new_session_id: newSessionId, url };
-    if (warning) result.warning = warning;
-    return result;
+    const out = { ok: true, old_session_id: oldSessionId, new_session_id: newSessionId, url };
+    if (warning) out.warning = warning;
+    return out;
   }
 
   app.post('/api/rotate', express.json(), (req, res) => {
@@ -1448,8 +1144,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // running process must never replay another process's still-live session (its transcript is still
   // growing) and prematurely archive its tail. The 250ms defer lands after listen()→initStore(), so
   // resolveStore()→getStore() is initialized by the time the timer fires.
+  // Registered ONCE, and only AFTER the synchronous bootstrap has succeeded: an owner that never started has
+  // no business sweeping other sessions, and the backfill reads `currentSessionId` to exclude the live one,
+  // which is only meaningful once this owner owns it. It enters neither the poll loop nor the owner-fatal
+  // path — a failed sweep is best-effort and the rows stay pending for the next process start.
   let sweepTimer = null;
-  if (!disableTelemetrySweep) {
+  function scheduleStartupMaintenance() {
+    if (disableTelemetrySweep || sweepTimer) return;
     sweepTimer = setTimeout(() => {
       // Wrap the SYNCHRONOUS resolveStore() in the promise chain too: getStore() throws if the store is
       // not yet initialized, and a throw escaping this timer callback would be an uncaughtException (no
@@ -1462,231 +1163,62 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         // under, so an injected state dir sweeps itself instead of the real install.
         //
         // Chained FIRST for short-circuiting, not for latency: a rejection anywhere in this chain skips
-        // every later link, so chaining the sweep last would let a backfill failure cancel it. The cost is
-        // the mirror image — a throw out of the sweep skips the backfill for this process start, and the
-        // shared .catch below prints it under `[telemetry-sweep]`, naming the wrong sweep. That is
-        // currently unreachable: nothing ahead of sweepStaleTurnNotes' per-directory try can throw on a
-        // string, and `effectiveStateDir` is always one. Logged on every run rather than only on a non-zero
-        // count, so "ran, swept nothing" stays distinguishable from "never ran".
+        // every later link, so chaining a sweep after the backfill would let a backfill failure cancel it.
+        // The cost is the mirror image — a throw out of an earlier link skips the backfill for this process
+        // start — and the shared .catch below names this timer rather than any one of its links, because
+        // more than one of them can reach it. Logged on every run rather than only on a non-zero count, so
+        // "ran, swept nothing" stays distinguishable from "never ran".
         .then(() => {
           const swept = sweepStaleTurnNotes(effectiveStateDir);
           if (process.env.SW_DEBUG) console.error('[turn-notes-sweep]', swept);
         })
+        // The session and port-file age sweeps run from this timer because the deployed plugin reaches it:
+        // the manifest starts the MCP entry, which composes `createServer` in-process and never enters the
+        // CLI block below. They take THIS owner's store and state dir, so an injected harness sweeps its own
+        // database and its own directory rather than the real install.
+        .then(() => {
+          const sessions = sweepStaleState({ store: resolveStore(), portDir: effectiveStateDir });
+          const ports = sweepStalePortFiles(effectiveStateDir);
+          if (process.env.SW_DEBUG) console.error('[state-sweep]', sessions, ports);
+        })
         .then(() => resolveStore().backfillPendingTelemetry({
           resolveTranscript: (sid) => resolveBySessionId(projectsRoot, sid),
-          replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, { store: resolveStore() }),
+          // Reconstruction composes its own `SessionWatcher` through the host's factory, so a carry sweep's
+          // archival path is this owner's own rather than a second table. It reconstructs into THIS owner's
+          // store, which is what keeps an injected-store harness sweeping its own database. The project
+          // context is the composition's NEUTRAL one: the sweep selects by pending telemetry, so the session
+          // it reaches may belong to another project, and this owner's `projectRoot` would exclude that
+          // session's resources against a boundary they were never inside.
+          replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, {
+            store: resolveStore(),
+            createWatcher: ({ store: reconciled, sessionId: sid2, sourceLocator }) => createWatcherComposition({
+              sessionId: sid2, sourceLocator, projectId: null, projectRoot: null,
+              stateDir: effectiveStateDir, store: reconciled, isIgnored: null,
+              // The cache lifetime is NOT neutral the way the project context is: it prices the C ratio, so a
+              // reconstructed session is measured under this owner's lifetime rather than resolving one of
+              // its own.
+              cacheTtl,
+            }),
+          }),
           excludeSessionIds: currentSessionId,   // don't sweep the still-live session (Set-or-string accepted)
           limit: 200, budgetMs: 1500,
         }))
         .then((s) => { if (process.env.SW_DEBUG) console.error('[telemetry-sweep]', JSON.stringify(s)); })  // log summary incl. aborted (no silent truncation)
-        .catch((e) => { if (process.env.SW_DEBUG) console.error('[telemetry-sweep]', e.message); });
+        .catch((e) => { if (process.env.SW_DEBUG) console.error('[startup-maintenance]', e.message); });
     }, 250);
     sweepTimer.unref();   // never keep the process alive for the sweep
   }
 
   // ── Turn service ─────────────────────────────────────────────────────────────
-  // The production capture boundary behind get_turn_skeleton / submit_turn_notes. Kept off the HTTP
-  // surface and off `prepare_handoff`: the prepare handler gains no note-state query, pre-rejection or
-  // shared transaction from this, so calling it directly still honors its existing contract. Ordering
-  // the two calls is the sw-handoff skill's job, not the server's.
-
-  // BOTH entry points read through this one function, so getTurnSkeleton and submitTurnNotes always see
-  // the identical capture: same reader mode, same enumeration, same boundary rule.
-  function captureTurns() {
-    const transcript = readCanonicalTranscript(watcher.path, { afterLatestCompact: true });
-    return {
-      // A failed read degrades to zero folds, which is indistinguishable downstream from a genuinely
-      // empty epoch — so the read status travels with the capture and both entry points decide on it.
-      status: transcript.status,
-      // The last turn is the one that is asking for the skeleton; it is excluded whole, so a tool pair
-      // appended to it while the producer writes notes cannot move the fingerprint.
-      turns: groupTurns(enumerateLines(transcript)).slice(0, -1),
-      // resolveToolUse resolves a relative tool path against this; a null cwd would index `lib/store.js`
-      // as `/lib/store.js`, so it falls back the same way every other path consumer here does.
-      cwd: watcher.cwd || process.cwd(),
-    };
-  }
-
-  // The two files' one address, derived here and nowhere else: no caller supplies a path and no
-  // consumer rebuilds a name by convention. The key is the Context Epoch — the capturing session plus
-  // the epoch's first anchor — rather than the Snapshot Fingerprint, so a re-fetch after the epoch
-  // grew still finds the notes already written; a fingerprint would rename the file on every new turn.
-  // Neither name ends in `.json`: lib/probe.js, lib/launcher.js and lib/state-reaper.js each read every
-  // `.json` in the state dir as a port or state record and JSON.parse it. A subdirectory keeps them
-  // out of that scan entirely and lets one rmSync retire the pair.
-  function turnNotePaths(turns) {
-    const dir = join(effectiveStateDir, 'turn-notes',
-      `${safeSessionId(currentSessionId)}-${safeSessionId(turns[0]?.anchorUuid ?? 'empty')}`);
-    return { dir, skeletonPath: join(dir, 'skeleton.txt'), notesPath: join(dir, 'notes.md') };
-  }
-
-  const readNotesFile = (notesPath) => {
-    try { return readFileSync(notesPath, 'utf8'); } catch { return null; }
+  // The production capture boundary behind get_turn_skeleton / submit_turn_notes. Both are shared-application
+  // operations now: the capture, the epoch-keyed file pair beneath the injected Turn Note root, the coverage
+  // validation and the atomic commit all live there, so the two entry points cannot see different Turns and
+  // this layer holds no note state. Kept off the HTTP surface and off `prepare_handoff`: ordering the two
+  // calls is the sw-handoff skill's job, not the server's.
+  const turnService = {
+    getTurnSkeleton: () => watcher.getTurnSkeleton(),
+    submitTurnNotes: (input) => watcher.submitTurnNotes(input || {}),
   };
-
-  // This session's rows by anchor. The store is the DURABLE copy of a committed epoch's notes: the notes
-  // file is retired the moment those rows land, while the next handoff in the same session keeps the epoch
-  // key and therefore lands on that same, now absent, path. Both read points consult this. `has` carries
-  // the coverage judgement — every captured turn gets a row — and `get` carries the note itself, a
-  // note-less turn's legitimate null included.
-  const storedNotes = () => new Map(
-    resolveStore().listTurnNotes(currentSessionId).map(row => [row.anchorUuid, row.note]));
-
-  function getTurnSkeleton() {
-    const { status, turns, cwd } = captureTurns();
-    // Throwing rather than reporting: the success shape carries no way to say "the source could not be
-    // read", and a zero-turn skeleton reads as a legitimate empty epoch whose submission would commit
-    // nothing. test/server.turn.test.js `绝不出现「成功 + 零行」` pins it with the rejection below.
-    if (status !== 'ok') throw new Error('transcript is not readable; no turn skeleton can be captured');
-    const { dir, skeletonPath, notesPath } = turnNotePaths(turns);
-    mkdirSync(dir, { recursive: true });
-    // Read BEFORE writing anything. Every write in here refreshes an mtime, and sweepStaleTurnNotes ages a
-    // directory by the newest mtime inside it — so a fetch that threw after rewriting skeleton.txt would
-    // make an already-expired directory unreapable, and a caller retrying against a broken notes path would
-    // pin an unredacted projection on disk for as long as it kept retrying. Reading first leaves every
-    // mtime where it was. mkdirSync above is safe in this position: on an existing directory it is a no-op
-    // and moves nothing.
-    // ENOENT is the only read failure that means "no notes yet". Any other one leaves a file whose
-    // bodies are the producer's while telling us nothing about them, and the branch below would replace
-    // it — so this reports instead, the same way an unreadable transcript does.
-    let existing = null;
-    try { existing = readFileSync(notesPath, 'utf8'); }
-    catch (error) {
-      if (error?.code !== 'ENOENT') throw new Error(`turn notes file cannot be read: ${notesPath}`);
-    }
-    // Read with the other read and ahead of every write, for the mtime reason above: a throw out of it
-    // must leave the directory reapable. Unguarded on purpose — a store that cannot be read cannot accept
-    // the submission this skeleton exists for, so degrading to an empty document would cost the producer
-    // the notes it already wrote and buy nothing.
-    const stored = storedNotes();
-    // The skeleton is entirely this function's own output, so it is rewritten whole.
-    writeFileSync(skeletonPath, buildSkeleton(turns, currentSessionId, cwd));
-    // The notes file is not. It is APPEND-ONLY from here: a heading is added for a slot that has none,
-    // and nothing already in the file is rewritten or reordered. That is what makes a re-fetch cost the
-    // producer nothing it already wrote — and it holds for a body under a mangled heading and for a
-    // section whose turn a rewound boundary removed, neither of which this server authored.
-    const { sections } = parseNoteSections(existing, slotKeysOf(turns));
-    const missing = slotKeysOf(turns).filter(key => !sections.has(key));
-    // A slot the file has no section for is prefilled with its turn's stored note, so a fetch after a
-    // commit hands the producer back what is already durable rather than an empty heading. Only `missing`
-    // keys are rendered, so this stays inside the append-only rule: a slot the file already carries keeps
-    // its own body, in its own place.
-    // Filtering on the note and not on the row loses no slot, unlike the coverage gate below: a slot's
-    // stored note is never empty. The submission that stored it rejected an empty body as
-    // `missing note for this NOTE slot`, and hasAssistantActivity settles once a later turn opens — which
-    // had already happened for every turn that submission covered — so a turn cannot become a slot after
-    // the fact. A null note therefore belongs to a turn with no slot, which asks for no heading here.
-    const prefill = new Map(turns
-      .filter(turn => stored.get(turn.anchorUuid))
-      .map(turn => [String(turn.t), stored.get(turn.anchorUuid)]));
-    if (existing == null) writeFileSync(notesPath, renderNoteSections(missing, prefill));
-    else if (missing.length > 0) {
-      appendFileSync(notesPath,
-        `${existing.endsWith('\n') ? '' : '\n'}\n${renderNoteSections(missing, prefill)}`);
-    }
-    return {
-      snapshot_id: snapshotDigest(turns, cwd),
-      skeleton_path: skeletonPath,
-      notes_path: notesPath,
-      protocol: TURN_NOTE_PROTOCOL,
-    };
-  }
-
-  function submitTurnNotes({ snapshot_id }) {
-    const { status, turns, cwd } = captureTurns();
-    // Ahead of the fingerprint on purpose: an unreadable source has an empty capture whose digest a
-    // caller can reproduce, so checking identity first would let the empty submission through. An
-    // invalid source identity is an invalid_snapshot; test/server.turn.test.js
-    // `绝不出现「成功 + 零行」` pins this rejection together with the throw above.
-    if (status !== 'ok') return { committed: false, error: 'invalid_snapshot' };
-    if (snapshotDigest(turns, cwd) !== snapshot_id) return { committed: false, error: 'stale_snapshot' };
-
-    // Source fields first: a row is keyed on (session, anchor) and ordered on source_timestamp, so a
-    // missing timestamp or a repeated anchor makes the whole batch unstorable — reject it as a snapshot
-    // fault rather than letting the UNIQUE constraint decide halfway through the write.
-    const anchors = new Set();
-    for (const turn of turns) {
-      if (!turn.anchorUuid || turn.anchorTimestamp == null) return { committed: false, error: 'invalid_snapshot' };
-      if (anchors.has(turn.anchorUuid)) return { committed: false, error: 'invalid_snapshot' };
-      anchors.add(turn.anchorUuid);
-    }
-
-    const slots = slotKeysOf(turns);
-    const { dir, notesPath } = turnNotePaths(turns);
-    // Validation is COVERAGE, not correspondence: every slot this capture asks for must carry a note, and
-    // the file may hold anything else. Rejecting an extra section produced the one `invalid_notes` no
-    // amount of note-writing could clear — a rewind drops a turn from the active path while the epoch key,
-    // and with it the notes file, stays the same, so the section for the dropped turn stays behind; the
-    // file is append-only from here, so nothing could remove it, and the epoch key's stability meant every
-    // later handoff in that epoch hit the same rejection. Passing `slots` into the parser is what keeps the
-    // write path honest as well: a non-slot heading is never a section, so no row can be keyed on one. Its
-    // bytes are not discarded either — they ride along inside the preceding slot's body.
-    //
-    // A file that is absent, unreadable or structurally wrong needs no failure class of its own: it
-    // yields no section for a slot, and that is already `missing note`. So the four codes stay closed
-    // and every issue keeps a numeric `t` the producer can act on.
-    const { sections, issues } = parseNoteSections(readNotesFile(notesPath), slots);
-    // Guarded, unlike the skeleton's read of the same thing: this function's failure set is closed, so a
-    // read failure takes the retryable class the write failure already takes rather than minting a code
-    // or throwing out of a function whose contract has no throw in it.
-    let stored;
-    try { stored = storedNotes(); }
-    catch (error) {
-      // Diagnostics only — the wire already says retryable, the same way the write failure below does.
-      if (process.env.SW_DEBUG) console.error('[turn-note-read]', error?.message || error);
-      return { committed: false, error: 'storage_unavailable', retryable: true };
-    }
-    // A slot is covered by a section in the file OR by a row the store already holds for its turn — that
-    // is what makes a re-submitted epoch commit once its directory has been retired. The judgement is the
-    // ROW's existence and never its note's content: a note-less turn's note is a legitimate null, so
-    // reading content here would report such a slot missing forever, the one shape of invalid_notes no
-    // amount of note-writing can clear. A turn with no row at all is missing exactly as before.
-    const covered = new Set(turns.filter(turn => stored.has(turn.anchorUuid)).map(turn => String(turn.t)));
-    for (const key of slots) {
-      const note = sections.get(key);
-      if (!note) {
-        if (!covered.has(key)) issues.push({ t: Number(key), message: 'missing note for this NOTE slot' });
-        continue;
-      }
-      // Over the cap the submission is rejected whole; a note is never truncated. Only a note arriving
-      // from the file is measured — a stored one passed this same gate when it was first stored.
-      if (Math.round(charsToTokens(note, DEFAULT_CTP)) > NOTE_TOKEN_LIMIT) {
-        issues.push({ t: Number(key), message: `note exceeds ${NOTE_TOKEN_LIMIT} tokens` });
-      }
-    }
-    if (issues.length > 0) return { committed: false, error: 'invalid_notes', issues };
-
-    // Every captured turn gets a row, as `CONTEXT.md` Turn Record requires — a note-less turn's NULL is
-    // supplied here rather than inferred from the absence of a key, so the queue keeps its shape.
-    const rows = turns.map(turn => {
-      const { uText, uOriginalChars } = storedUText(turn.cleanedU);
-      // The file's section where it has one, else whatever is already stored: the file is the incoming
-      // edit and the store is the base, so a slot the store alone covers keeps its note instead of being
-      // blanked by a re-submission — idempotent rather than lossy.
-      const note = sections.get(String(turn.t)) || stored.get(turn.anchorUuid) || null;
-      return {
-        sourceSessionId: currentSessionId, anchorUuid: turn.anchorUuid, uText, uOriginalChars, note,
-        searchTerms: buildSearchTerms({ uText, note, turn, cwd }), sourceTimestamp: turn.anchorTimestamp,
-      };
-    });
-    try {
-      resolveStore().upsertTurnNotes(rows);
-    } catch (error) {
-      // Diagnostics only — the wire already says retryable. Staying silent would hide genuine DB damage.
-      if (process.env.SW_DEBUG) console.error('[turn-note-write]', error?.message || error);
-      return { committed: false, error: 'storage_unavailable', retryable: true };
-    }
-    // Only after the rows are in. A skeleton is an unredacted Turn History Projection, so a committed
-    // epoch's window closes here rather than waiting for sweepStaleTurnNotes — that sweep is the fallback
-    // for the routes which never reach this line, not the retirement path. And because
-    // storage_unavailable is retryable, deleting any earlier would destroy the notes the retry has to
-    // read back.
-    try { rmSync(dir, { recursive: true, force: true }); }
-    catch (error) { if (process.env.SW_DEBUG) console.error('[turn-note-cleanup]', error?.message || error); }
-    return { committed: true };
-  }
-
-  const turnService = { getTurnSkeleton, submitTurnNotes };
 
   // ── Turn read service ────────────────────────────────────────────────────────
   // The three read tools take no lineage identifier. forLoadedHandoff resolves the newest handoff
@@ -1704,7 +1236,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
         if (lineage.length === 0) return NO_HANDOFF_LOADED;
         return withPageRecovery(turnPageWire(injectedTurnPageBuilder({
-          store: resolveStore(), lineage, before: before || null,
+          store: resolveStore(), lineage, before: before || null, ...history,
         })));
       } catch (err) {
         if (err && err.code === 'not_found') throw new Error(STALE_CURSOR_MESSAGE);
@@ -1718,8 +1250,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
         if (lineage.length === 0) return NO_HANDOFF_LOADED;
         return withSearchRecovery(searchTranscripts({
-          store: resolveStore(), lineage, q, scope: scope || null,
-        }));
+          store: resolveStore(), lineage, q, scope: scope || null, ...history, includeToolEvidence,
+        }), { hitRecovery: SEARCH_HIT_RECOVERY });
       } catch (err) {
         if (err && err.code === 'scope_not_found') throw new Error(SCOPE_ABSENT_MESSAGE);
         if (process.env.SW_DEBUG) console.error('[turn_search_tool]', err?.message || err);
@@ -1731,7 +1263,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       try {
         const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
         if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q }));
+        return withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q, ...history }));
       } catch (err) {
         if (process.env.SW_DEBUG) console.error('[turn_locate_tool]', err?.message || err);
         return withLocateRecovery({ error: 'locate_unavailable' });
@@ -1739,9 +1271,31 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     },
   };
 
+  // ── Synchronous bootstrap ────────────────────────────────────────────────────
+  // The SAME tick the recurring timer drives, run exactly once before the server is exposed, so the very
+  // first /api/status, /api/history and /api/buckets are populated rather than racing a promise. A bootstrap
+  // acquisition or application error THROWS out of `createServer` and prevents owner startup: there is no
+  // half-started owner, and the caller's startup-failure cleanup skips current-segment finalization.
+  runPollTick();
+  scheduleStartupMaintenance();
+
   // #7: expose startMs as `startedAt` so the CLI writes the SAME timestamp to the state file that
-  // /api/health reports — one source of truth for the identity handshake (health===stateFile).
-  return { app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio, stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); if (sweepTimer) clearTimeout(sweepTimer); }, doRotation, currentSessionId: () => currentSessionId, turnService, turnReadService };
+  // /api/health reports — one source of truth for the identity handshake (health===discovery).
+  return {
+    app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio,
+    stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); if (sweepTimer) clearTimeout(sweepTimer); },
+    doRotation, currentSessionId: () => currentSessionId, turnService, turnReadService,
+    // Listen-time discovery creation, and every later republication, go through the one writer. It REPORTS
+    // its outcome: the caller decides whether a failure prevents startup or is merely logged.
+    publishDiscovery: () => writeDiscovery(currentSessionId),
+    // The discovery paths this owner actually published. Cleanup deletes only these, after its pid check.
+    publishedDiscoveryPaths: () => [...publishedDiscoveryPaths],
+    // One tick, exposed so a test drives acquisition, the idle gate and live polling deterministically
+    // instead of waiting on a timer.
+    runPollTick,
+    // Terminal application finalization, for the owner's cleanup sequence.
+    closeCurrentSegment: (options) => watcher.closeCurrentSegment(options),
+  };
 }
 
 // v2.2-C5b test-injection seams (A20): allow tests to inspect SSE client count and override the
@@ -1758,8 +1312,9 @@ export function _setServerTestClock(nowMono) {
 }
 
 // Pure CLI-arg parser (exported for unit tests). #1: malformed numeric args must NEVER propagate
-// as NaN — a NaN ratio defeats watcher's `?? cRatioFor(model)` (NaN is not nullish) and poisons
-// every metric silently; a NaN lbase forces carried-baseline mode with a NaN total; a NaN/negative
+// as NaN — a NaN ratio is not nullish, so the application's override gate admits it in place of the C ratio
+// the composition's lifetime-bound policy resolver answered, and poisons every metric silently; a NaN lbase
+// forces carried-baseline mode with a NaN total; a NaN/negative
 // port misbinds server.listen so PORT= is never printed and the launcher times out at 10s. Each
 // numeric field validates with Number.isFinite and falls back to a safe default; drops are reported
 // via `warnings` (the caller prints them to stderr — stdout carries the PORT= line the launcher parses).
@@ -1779,7 +1334,7 @@ export function parseArgs(argv) {
     else warnings.push(`ignoring invalid --lbase ${JSON.stringify(lbaseRaw)} (must be >= 0; using auto baseline)`);
   }
 
-  // ratio: parseFloat semantics; non-finite OR <= 0 → null (cRatio must be > 0 → fall back to cRatioFor(model)).
+  // ratio: parseFloat semantics; non-finite OR <= 0 → null (cRatio must be > 0 → the model policy's own ratio).
   const ratioRaw = get('--ratio');
   let ratioOverride = null;
   if (ratioRaw != null) {
@@ -1832,12 +1387,24 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
   const sessionId = jsonlPath.endsWith('.jsonl') ? basename(jsonlPath).replace(/\.jsonl$/, '') : (session || 'default');
   const hookSessionId = session || null;
   const projectId = resolveProjectKey({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd: project }) || process.env.CLAUDE_PROJECT_ID || null;
-  const watcher = new SessionWatcher(jsonlPath, lbase, { ratioOverride, cwd: project || null, isIgnored: project ? loadIsIgnored(project) : null, sessionId, projectId });
+  const projectRoot = project || null;
+  void lbase;   // the injected baseline is a retired v1/v2 lever; the Engine anchors `dead` from the Source
 
   const STATE_FILE = stateFileFor(sessionId);
   let shutdown; // forward-declared for onIdleShutdown reference
+  // Store BEFORE the composition: the shared application takes the store as a required construction
+  // dependency, and the synchronous bootstrap inside createServer already archives through it.
   try { initStore(); } catch (e) { console.error('[session-watcher] fatal: store init failed —', e.message); process.exit(1); }
-  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, hookSessionId, onIdleShutdown: () => shutdown() });
+  // One read of this process's declaration, handed to the composition that measures under it and to the
+  // application that reports its price, so the two cannot name different lifetimes.
+  const cacheTtl = resolveClaudeCodeCacheTtl();
+  const watcher = createWatcherComposition({
+    sessionId, sourceLocator: jsonlPath, projectId, projectRoot,
+    stateDir: PORT_DIR, store: getStore(), isIgnored: projectRoot ? loadIsIgnored(projectRoot) : null,
+    cacheTtl,
+  });
+  let failOwner;   // forward-declared: the sink is defined below, beside the shutdown it reuses
+  const { server, startPolling, sseClients, stopTimers, startedAt, applyEffectiveRatio } = createServer({ watcher, pollIntervalMs: 1000, sessionId, hookSessionId, projectsRoot, projectRoot, projectId, sourceLocator: jsonlPath, ratioOverride, cacheTtl, onIdleShutdown: () => shutdown(), onOwnerFatal: (error) => failOwner(error) });
   server.listen(wantPort, '127.0.0.1', () => {   // loopback only — never expose local session data
     const port = server.address().port;
     mkdirSync(PORT_DIR, { recursive: true });
@@ -1861,8 +1428,6 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
       throw e;
     }
     console.log(`PORT=${port}`);
-    sweepStaleState({ portDir: PORT_DIR });
-    sweepStalePortFiles(PORT_DIR);
     startPolling();
     if (open && !process.env.SW_NO_OPEN) {
       import('node:child_process').then(({ spawn }) => {
@@ -1885,14 +1450,24 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
     }
   });
 
-  shutdown = function shutdown() {
+  shutdown = function shutdown({ code = 0 } = {}) {
     stopTimers();
     for (const c of sseClients) { try { c.end(); } catch {} }
     try { flushAll(); } catch {}  // persist in-memory ledgers while store is still open
     closeStoreGlobal();
     try { unlinkSync(STATE_FILE); } catch {}
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2000).unref();
+    server.close(() => process.exit(code));
+    setTimeout(() => process.exit(code), 2000).unref();
+  };
+
+  // The CLI owner's owner-fatal sink. Without one, `createServer`'s guard stopped the poll timer and returned:
+  // polling was dead forever while the HTTP server and the discovery record stayed live, so the owner went on
+  // advertising itself as alive while serving frozen state — worse than the baseline, which caught the throw
+  // and kept polling. Same shape as the in-process owner: report, clean up, exit NONZERO so a supervisor and
+  // the discovery record both stop pointing at a stopped owner. A fresh owner rebuilds from the Source.
+  failOwner = function failOwner(error) {
+    console.error('[session-watcher] fatal:', error?.message || error);
+    shutdown({ code: 1 });
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

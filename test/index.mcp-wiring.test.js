@@ -236,6 +236,9 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
     assert.equal(loaded.found, true);
     assert.equal(loaded.load_token, load_token);
     assert.equal(loaded.summary, 'wiring load summary');
+    assert.ok(Array.isArray(loaded.lineage));
+    assert.deepEqual(loaded.lineage.map(e => e.label), ['S1']);
+    for (const entry of loaded.lineage) assert.deepEqual(Object.keys(entry).sort(), ['headline', 'label']);
     // A healthy load passes through withLoadRecovery untouched.
     assert.equal(loaded.recovery, undefined);
   });

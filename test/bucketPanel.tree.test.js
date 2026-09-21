@@ -4,7 +4,7 @@ import { buildTree, paintIndentGuides } from '../public/elements/bucketPanel.js'
 
 const base = {
   dead: 8500, skills: [], paths: [], residual: { bash: [], mcp: [] },
-  totalB: 0, totalL: 0, totalResidual: 0, totalResidualRaw: 0, ctpOvershootRatio: 0, currentTurnSeq: 0, segment: 0,
+  totalB: 0, totalL: 0, totalResidual: 0, totalResidualRaw: 0, currentTurnSeq: 0, segment: 0,
 };
 
 function flatten(nodes, out = []) {

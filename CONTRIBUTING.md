@@ -2,45 +2,51 @@
 
 ## Code style
 
-- JavaScript ES modules only (`import`/`export`), `"type": "module"`. Node ≥22.16 built-ins
-  (`node:fs`, `node:http`, `node:path`, `node:os`, `node:child_process`) — prefer these
-  over third-party where possible; `lib/` MUST stay dependency-free (only Node built-ins
-  + sibling `lib/` imports) so it is testable with zero-dep `node:test`.
-- No TypeScript, no build step. `public/index.html` is a single zero-build file.
+- JavaScript ES modules only (`import`/`export`), `"type": "module"`. Prefer the Node built-ins
+  (`node:fs`, `node:http`, `node:path`, `node:os`, `node:child_process`, `node:sqlite`) over a
+  third-party package, at the runtime `package.json`'s `engines` field pins.
+- What a `lib/` module may import — the default, and the exceptions named against it — is stated once,
+  in `.serena/memories/conventions.md`. Read the rule there; do not infer it from a neighbouring file.
+- No TypeScript. The dashboard is un-built: `public/dashboard.html` loads `app.js` as a native ES
+  module, with `lib/` and `elements/` beside it and Chart.js from a CDN. `public/index.html` is a
+  separate self-contained landing page. Shipping does have a build — `npm run build` bundles into
+  `dist/`, which is committed with its source change.
 - 2-space indent; concise. Comments explain WHY (a hidden invariant, a verified-against-real-data
-  decision), not WHAT.
+  decision), not WHAT. `.serena/memories/conventions.md` also carries the resolvable form a comment or
+  test title must cite in.
 
 ## Testing (TDD is mandatory)
 
-- Tests use `node:test` + `node:assert/strict`.
-- `lib/` split (extract/metrics/baseline/watcher) is deliberate: each unit has its own
-  test cycle. `server.js`/`index.js` stay single-file.
-- Pure functions (`lib/metrics.js`, `lib/baseline.js`) are tested directly; stateful
-  pieces (`SessionWatcher`, server) get integration tests with tmp JSONL fixtures.
+- Tests use `node:test` + `node:assert/strict`; `npm test` runs the suite and reports the count.
+- A suite is named after the module or Interface it drives, so search for that name rather than
+  consulting a list here. Pure functions are tested directly; stateful pieces — the application
+  `SessionWatcher`, the server, the store — get integration tests over temporary fixtures.
+- `server.js` and `index.js` stay single-file.
+- Browser cases run under Playwright (`npm run e2e`) and need a browser binary installed.
 
 ## Domain vocabulary
 
-Use consistent naming across code, tests, and API:
-
-`L`, `Lstar`, `LstarFit`, `Lcap`, `Lthreshold`, `kAvg`, `kFitSlope`,
-`kStable`, `paybackP`, `phi`, `rho`, `timingWeight`, `sweetP`, `regret`,
-`etaCalls`, `metricsReliable`, `restartReason`, `calibratingReason`,
-`baseline{dead,task,total,source,confidence,kneeTurn}`.
+`CONTEXT.md` is the glossary, and it is the only one. Use its terms in code, tests and API shapes, and add a
+term there before spending it in prose rather than coining one here — a list copied into this file would drift
+away from the definitions the moment either side moved. The v1/v2 statistical vocabulary those terms replaced
+is retired; `.serena/memories/domain_model.md` keeps it as history and marks it so.
 
 ## Hard invariants
 
-- **Never hardcode environment values** (L_base≈42k, k≈940, warmup≈6 rounds). These are
-  computed live; empirical anchors are for TEST fixtures ONLY.
-- **Zero context pollution**: MCP tools return only `{url}`/status shapes — NEVER
-  metric numbers. Both frontends read `/api/status`; nothing re-enters the model.
-- **Sidecar pattern**: all state lives in the long-running `server.js`; MCP + both
-  frontends are stateless leaves.
-- **Three-operator discipline**: `k_avg` drives authoritative L*, `Σg` drives P/φ,
-  `k_fit` is extrapolation-only.
-- Field access to JSONL goes through `extractUsage` only (single isolation layer).
-- **Dedup PRIMARY key = `message.id` folding**, NOT top-level `uuid`.
-- **L-drop AFTER message.id snapshot folding** — a late low-cacheRead snapshot must not
-  fake a segment boundary.
+- **Never hardcode environment values.** The context floor, the growth rate and the warm-up length are
+  computed live; empirical anchors belong to test fixtures only.
+- **Zero context pollution**: MCP tools return status and data shapes, never metric numbers, and
+  nothing a tool returns re-enters the model as a measurement.
+- **Sidecar pattern** (the name `.serena/memories/core.md` uses for it): measurement state lives in the process
+  that owns the transcript, and the MCP face, the dashboard and the statusline are stateless readers of it.
+- **The harness is the only layer that knows the agent.** Native rows, content blocks, byte cursors and
+  branch topology stop inside `lib/harness/claude-code/`; everything below consumes normalized
+  observations and names no transcript format.
+- **A native usage field is read in exactly one place** — `normalizeClaudeCodeUsage`, module-private to
+  the observation reducer. No other layer reaches a raw usage field.
+- **The dedup key is the message id, not the row uuid**, and an accepted revision folds into the step it
+  revises rather than becoming a new one.
+- **Only explicit source topology creates an epoch.** A drop in reported token totals never does.
 
-For the full domain model (g≡ΔL, L_base two-layer design, metricsReliable probe,
-restart gating, etc.), see [`docs/domain-model.md`](docs/domain-model.md).
+For the domain model read `CONTEXT.md`; for the measurement stack,
+`.serena/memories/v3_measurement.md`.

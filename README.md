@@ -50,23 +50,26 @@ SW reads from the transcript, never writes to it. The dashboard and statusline a
 Your coding agent (Claude Code)
         │  writes session transcript
         ▼
-┌──────────────────────────────────────────┐
-│  Session Watcher (in-process MCP server)  │
-│  ─────────────────────────────────────── │
-│  fold.js     — tail JSONL, fold usage    │
-│  measure.js  — B (context belief)        │
-│  rate-lamp   — bill premium (br) + gate  │
-│  server.js   — Express + SSE dashboard   │
-│  statusline  — one-line shell client     │
-└──────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│  Session Watcher (in-process MCP server)              │
+│  ───────────────────────────────────────────────────  │
+│  harness/claude-code  — read rows, emit observations  │
+│  measurement/engine   — B (context belief), epochs    │
+│  session-watcher      — apply frames, run operations  │
+│  rate-lamp            — bill premium (br) + gate      │
+│  server.js            — Express + SSE dashboard       │
+│  statusline           — one-line shell client         │
+└───────────────────────────────────────────────────────┘
         │  dashboard  ·  statusline  ·  MCP
         ▼
    Your browser / terminal status bar
 ```
 
-**Core model:** `B = cache_read_input_tokens` (your context inventory). `g = ΔL − ΔB` (growth gap). `x = L / B` (position on the EOQ cost curve). `br = mf × pp` (bill premium — the percentage you're overpaying relative to optimal).
+The harness layer is the only part that knows Claude Code: it reads transcript rows, decides the active branch, and emits normalized observations. Everything below it — measurement, dialogue history, handoff — consumes those observations and carries no transcript format, no row shape, and no tool name of any particular agent.
 
-Lamp thresholds: green (br < 10%), amber (10–24%), red (≥ 25%). See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
+**Core model:** `L = cache_read_input_tokens` — the context stock you are renting. `B` is the rebuild baseline: the session's overhead floor plus the tokens of every file, skill and tool it has pulled in, which is what a restart would have to re-read. `g` is the growth no path accounts for, a smoothed `ΔtotalStock − ΔB`. `x = L / B` places the session on the EOQ cost curve, and `br = mf × pp` is the bill premium — how much you are overpaying relative to ideal restart timing.
+
+Lamp thresholds are the named constants `BR_AMBER` and `BR_RED` in `lib/bill-regret.js`: below the amber one the lamp is green, between them amber, at or above the red one red. See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
 
 ## Quick Start
 
@@ -180,7 +183,7 @@ Tools return data for you to decide on — only handoff injects context back int
 
 ## Agent support
 
-Session Watcher is agent-agnostic. The measurement pipeline only needs `cache_read_input_tokens` from each turn — it doesn't care which agent produced the transcript.
+Session Watcher is agent-agnostic. Everything below the harness layer consumes normalized observations, so it never learns which agent produced the session.
 
 | Agent | Driver | Status |
 |-------|--------|--------|
@@ -190,14 +193,14 @@ Session Watcher is agent-agnostic. The measurement pipeline only needs `cache_re
 | Hermes | adapter-ready | pending |
 | Aider | adapter-ready | pending |
 
-Adding a new agent requires implementing one interface: extract `cache_read_input_tokens` from the agent's session transcript. See [`lib/extract.js`](lib/extract.js) for the Claude Code reference driver. PRs welcome.
+Adding a new agent means writing a harness for it: a source driver that turns that agent's own session evidence into normalized observations, and a projection that maps those observations onto measurement records. The engine, dialogue history, handoff, and every product surface are shared and need no change. See [`lib/harness/claude-code/`](lib/harness/claude-code/) for the reference harness — [`source-driver.js`](lib/harness/claude-code/source-driver.js) and [`measurement-projection.js`](lib/harness/claude-code/measurement-projection.js) are the two pieces a new agent supplies. PRs welcome.
 
 ## Paper
 
 > **Context Is Inventory: A Rent-or-Buy Model for Prompt-Cached LLM Sessions**
 > Longju Cheng (2026) · DOI: [`10.5281/zenodo.21236704`](https://doi.org/10.5281/zenodo.21236704)
 
-The paper derives the full theoretical specification: EOQ→LLM mapping, the 41.4% movable-cost bound, the ski-rental restart strategy, and measurements on 1,016 real session transcripts. See [`paper/paper.pdf`](paper/paper.pdf).
+The paper derives the full theoretical specification: EOQ→LLM mapping, the 41.4% movable-cost bound, the ski-rental restart strategy, and measurements on 1,016 real session transcripts. Read it at the [DOI](https://doi.org/10.5281/zenodo.21236704) above.
 
 ## Uninstall
 

@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
 import { registerTurnReadTools } from '../index.js';
-import { BOOKMARK_PREVIEW_CHARS } from '../lib/bookmark-core.js';
+import { HISTORY_EXCERPT_CHARS } from '../lib/turn-history-budget.js';
 
 const decoded = (result) => JSON.parse(result.content[0].text);
 
@@ -51,11 +51,12 @@ describe('registerTurnReadTools', () => {
     const search = tools.find(({ name }) => name === 'turn_search');
     const locate = tools.find(({ name }) => name === 'turn_locate');
     assert.equal(typeof page.inputSchema.properties.before.pattern, 'string');
-    assert.equal(search.inputSchema.properties.scope.pattern, page.inputSchema.properties.before.pattern);
+    assert.equal(typeof search.inputSchema.properties.scope.pattern, 'string');
+    assert.notEqual(search.inputSchema.properties.scope.pattern, page.inputSchema.properties.before.pattern);
     assert.deepEqual(search.inputSchema.required, ['q']);
     assert.deepEqual(locate.inputSchema.required, ['q']);
-    assert.equal(search.inputSchema.properties.q.maxLength, BOOKMARK_PREVIEW_CHARS);
-    assert.equal(locate.inputSchema.properties.q.maxLength, BOOKMARK_PREVIEW_CHARS);
+    assert.equal(search.inputSchema.properties.q.maxLength, HISTORY_EXCERPT_CHARS);
+    assert.equal(locate.inputSchema.properties.q.maxLength, HISTORY_EXCERPT_CHARS);
     // Every tool and parameter description is the sole carrier of its own contract, and each one has to
     // survive the schema conversion to reach the client at all — a `.describe()` dropped from the
     // registration leaves every other assertion here green. What a description SAYS is not asserted:
@@ -116,5 +117,17 @@ describe('registerTurnReadTools', () => {
     });
     assert.equal(result.isError, true);
     assert.equal(result.content[0].text, 'Omit before and start from the newest page.');
+  });
+
+  test('a bare session label passes the page schema and is refused as a search scope', async () => {
+    const count = calls.length;
+    assert.deepEqual(decoded(await client.callTool({
+      name: 'turn_page', arguments: { before: 'S2' },
+    })), { turn_page: 'page' });
+    assert.deepEqual(calls.at(-1), ['page', { before: 'S2' }]);
+
+    const refused = await client.callTool({ name: 'turn_search', arguments: { q: 'literal', scope: 'S2' } });
+    assert.equal(refused.isError, true);
+    assert.equal(calls.length, count + 1);   // search 的服务方法一次都没跑
   });
 });

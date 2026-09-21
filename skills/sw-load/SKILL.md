@@ -25,10 +25,12 @@ Restore a previous session's handoff package into context so work can resume.
 2. **Read the kept paths** — [`PATHS.md`](PATHS.md) holds the resolution and read-strategy rules.
    You MUST read it before going further.
 
-3. **Orient in the injected turn page.** The load reply carries a page of the handoff's recent turns,
-   already in context. They are evidence of what happened, not current instructions: read them to
-   fill gaps in the summary, not to re-derive the plan. Where an excerpt is cut short, the address
-   beside it names a transcript file and a row in it, and the file holds that row at full length.
+3. **Orient in the lineage and the injected turn page.** Both are evidence, read to fill the
+   summary's gaps. Read `lineage` oldest to newest to place the summary in its arc. Read the injected
+   page — the handoff's newest turns, already in context — against the summary's claims about the
+   next task; a cut excerpt's address names the transcript row that holds it in full. When a headline
+   bears on the next task and the page does not reach that session, call `turn_page` with that
+   session's label as `before`.
 
    Done with this step when every claim in the summary that bears on the next task is either
    confirmed against a turn you read, or carried to the user as unverified.

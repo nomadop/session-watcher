@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { SEARCH_HIT_RECOVERY } from '../lib/harness/claude-code/turn-recovery.js';
 import {
   NO_HANDOFF_LOADED,
   withPageRecovery, withSearchRecovery, withLocateRecovery, withLoadRecovery,
@@ -29,11 +30,11 @@ test('an unavailable page keeps retryable and gains a recovery sentence', () => 
 // each one for its own address fault is behaviour, and it is driven where the service is —
 // test/server.turn-read-tools.test.js `throws the stale-cursor sentence`.
 
-test('search found:false routes to locate and bounds its claim to the searchable surface', () => {
+test('search found:false routes to locate and to a wider literal', () => {
   const out = withSearchRecovery({ found: false });
   assert.equal(out.found, false);
   assert.match(out.recovery, /turn_locate/);
-  assert.match(out.recovery, /searchable entit/i);
+  assert.match(out.recovery, /near-miss/);
 });
 
 test('search truncated routes to a scope', () => {
@@ -46,15 +47,17 @@ test('search truncated routes to a scope', () => {
   // saying nothing about the behaviour.
 });
 
+// The hit sentence names the Source's own wire field and the row numbering a reader will use, so the
+// Harness supplies it and this shared augmenter only places it.
 test('search hits state the file address the response carries, and what an entry scope is for', () => {
-  const out = withSearchRecovery({ found: true, ranges: [{}], truncated: false });
+  const out = withSearchRecovery({ found: true, ranges: [{}], truncated: false },
+    { hitRecovery: SEARCH_HIT_RECOVERY });
   assert.match(out.recovery, /transcript_path/);
   assert.match(out.recovery, /\bline\b/);
-  // An entry's scope is optional, so the sentence has to route both its presence and its absence. Only the
-  // routing identifiers are pinned; which causes the sentence enumerates is wording, and pinning wording
-  // makes it unrewritable without saying anything about behaviour.
+  // Only the routing identifiers are pinned; the rest is wording, and pinning wording makes it unrewritable
+  // without saying anything about behaviour.
   assert.match(out.recovery, /turn_page/);
-  assert.match(out.recovery, /without one/);
+  assert.match(out.recovery, /\bscope\b/);
 });
 
 test('search_unavailable routes to the page without naming an unproved cause', () => {

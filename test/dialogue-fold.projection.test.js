@@ -1,468 +1,495 @@
-// test/dialogue-fold.projection.test.js — Dialogue Projection behavior for the Bookmark route.
-// Moved verbatim from canonical-fold.test.js when the compat re-export was retired: these
-// exercise dialogue-fold.js, so they must import it directly (§7.2 dependency-direction gate).
+// test/dialogue-fold.projection.test.js — the shared Dialogue Projection over normalized observations.
+// Every case drives projectDialogue with an in-memory observation array read through the Claude Code
+// DialogueSource: no path, no file handle and no anchor reaches the projection, and the same array read
+// twice — sealed and incrementally — has to produce the same folds.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { enumerateDialogueLines, projectDialogue } from '../lib/dialogue-fold.js';
 import {
-  readCanonicalTranscript,
-  visibleMessages,
-  enumerateLines,
-  findCanonicalMessage,
-  foldAnchor,
-} from '../lib/dialogue-fold.js';
+  createClaudeCodeObservationReducer,
+  readClaudeCodeRows,
+} from '../lib/harness/claude-code/transcript-observation.js';
 import {
-  userMessage, assistantObservation, assistantToolUse, toolResult, writeTranscript, ts,
+  assistantObservation, assistantToolUse, chain, observationsOf, toolResult, transcriptBytes,
+  ts, userMessage,
 } from './helpers/transcript-fixtures.js';
 
-// --- Checkpoint B: Dialogue Projection tests ---
+const foldsOf = (entries) => projectDialogue(observationsOf(entries)).folds;
+const textsOf = (folds) => folds.filter(f => f.message).map(f => f.message.text);
 
-describe('readCanonicalTranscript', () => {
-  let dir;
-  test.before(() => { dir = mkdtempSync(join(tmpdir(), 'sw-dialogue-')); });
-
-  test('same message.id applies field-level streaming revisions', () => {
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [{ type: 'text', text: 'provisional text' }],
-      }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'a1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'final text' }],
-      }),
-      assistantObservation({
-        uuid: 'a3', parentUuid: 'a2', messageId: 'm1', timestamp: ts(3),
-        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'partial' } }],
-      }),
-      assistantObservation({
-        uuid: 'a4', parentUuid: 'a3', messageId: 'm1', timestamp: ts(4),
-        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/repo/a.js' } }],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    assert.equal(visibleMessages(c).length, 1);
-    assert.equal(visibleMessages(c)[0].text, 'final text');
-    assert.equal(visibleMessages(c)[0].anchorUuid, 'a1');
-    assert.equal(c.folds[0].toolPairs.length, 1);
-    assert.equal(c.folds[0].toolPairs[0].input.file_path, '/repo/a.js');
+describe('logical message revisions', () => {
+  test('one messageId is one fold: the last text-bearing row supplies the text', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'provisional text' }] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'final text' }] }),
+      assistantObservation({ uuid: 'a3', messageId: 'm1', timestamp: ts(3),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'partial' } }] }),
+      assistantObservation({ uuid: 'a4', messageId: 'm1', timestamp: ts(4),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/repo/a.js' } }] }),
+    ]));
+    assert.equal(folds.length, 1);
+    assert.equal(folds[0].message.text, 'final text');
+    assert.equal(folds[0].toolPairs.length, 1);
+    assert.equal(folds[0].toolPairs[0].input.file_path, '/repo/a.js');
   });
 
-  test('compact summary / sidechain / meta / task notification are absent from dialogue', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'hello', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'u1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'response' }],
-      }),
-      // Sidechain
-      assistantObservation({
-        uuid: 'sc1', parentUuid: 'a1', messageId: 'msc', timestamp: ts(3),
-        blocks: [{ type: 'text', text: 'sidechain' }],
-        extra: { isSidechain: true },
-      }),
-      // Meta
-      { type: 'assistant', uuid: 'meta1', parentUuid: 'a1', isSidechain: false, isMeta: true,
-        timestamp: ts(4), message: { id: 'mmeta', role: 'assistant', model: 'claude-opus-4-8',
-        content: [{ type: 'text', text: 'meta content' }] } },
-      // Task notification
-      { type: 'user', uuid: 'tn1', parentUuid: 'a1', isSidechain: false,
-        timestamp: ts(5), message: { role: 'user',
-        content: '<task-notification><task-id>abc12345</task-id><summary>Agent "test" finished</summary></task-notification>' } },
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    // Only user 'hello' and assistant 'response' visible
-    assert.equal(visibleMessages(c).length, 2);
-    assert.equal(visibleMessages(c)[0].text, 'hello');
-    assert.equal(visibleMessages(c)[1].text, 'response');
+  test('the fold keeps the coordinates of its first text-bearing row', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'early text' }] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'late text' }] }),
+    ]));
+    assert.equal(folds[0].message.text, 'late text');
+    assert.equal(folds[0].sourceOrdinal, 1);
+    assert.equal(folds[0].sourceEntryId, 'a1');
+    assert.equal(folds[0].timestamp, Date.parse(ts(1)));
   });
 
-  test('each compact root contributes only its active branch in physical root order', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'r1', text: 'first', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'r1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'answer 1' }],
-      }),
-      userMessage({ uuid: 'r2', text: 'second', timestamp: ts(3) }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'r2', messageId: 'm2', timestamp: ts(4),
-        blocks: [{ type: 'text', text: 'answer 2' }],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    assert.equal(visibleMessages(c).length, 4);
-    assert.equal(visibleMessages(c)[0].text, 'first');
-    assert.equal(visibleMessages(c)[1].text, 'answer 1');
-    assert.equal(visibleMessages(c)[2].text, 'second');
-    assert.equal(visibleMessages(c)[3].text, 'answer 2');
+  test('a tool-only first row hands its coordinates to the row that first bears text', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/x' } }] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'now visible' }] }),
+    ]));
+    assert.equal(folds[0].sourceEntryId, 'a2');
+    assert.equal(folds[0].sourceOrdinal, 2);
   });
 
-  test('user message.content supports string and visible text-block array', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'string content', timestamp: ts(1) }),
-      { type: 'user', uuid: 'u2', parentUuid: 'u1', isSidechain: false, timestamp: ts(2),
+  test('a promoting row with no identity keeps the identity its group already had', () => {
+    // The body arrives on a row the Source could give no identity. The group already holds one from the row
+    // that created it, and that is the identity the fold answers with — Turn Note capture requires a head
+    // identity, so a fold reached through an identified row stays persistable.
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/x' } }] }),
+      assistantObservation({ uuid: null, messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'now visible' }] }),
+    ]));
+    assert.equal(folds[0].sourceEntryId, 'a1');
+    // Position still moves to the row that bears the body; only the identity falls back.
+    assert.equal(folds[0].sourceOrdinal, 2);
+    assert.equal(folds[0].timestamp, Date.parse(ts(2)));
+  });
+
+  test('an identity the Source reports as empty is no identity at all', () => {
+    // Empty is not a usable key — capture rejects a head that carries one — so it neither survives on a
+    // fold nor displaces an identity the group already holds.
+    const promoted = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/x' } }] }),
+      assistantObservation({ uuid: '', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'now visible' }] }),
+    ]));
+    assert.equal(promoted[0].sourceEntryId, 'a1');
+    const alone = foldsOf([
+      assistantObservation({ uuid: '', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'only row' }] }),
+    ]);
+    assert.equal(alone[0].sourceEntryId, null);
+  });
+
+  test('an assistant row whose whole body is an empty string is still a visible body', () => {
+    // A row that spoke nothing still spoke: its body is empty, not absent. The block form is the one an
+    // empty text says nothing in, and the Source declines that one before Dialogue sees it.
+    const folds = foldsOf(chain([
+      { type: 'assistant', uuid: 'a1', parentUuid: null, isSidechain: false, timestamp: ts(1),
+        message: { id: 'm1', role: 'assistant', model: 'claude-opus-4-8', content: '' } },
+    ]));
+    assert.equal(folds.length, 1);
+    assert.notEqual(folds[0].message, null);
+    assert.deepEqual(folds[0].message, { role: 'assistant', text: '' });
+    assert.equal(folds[0].sourceEntryId, 'a1');
+  });
+
+  test('a later empty-string body supersedes the text an earlier row supplied', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'said something' }] }),
+      { type: 'assistant', uuid: 'a2', parentUuid: null, isSidechain: false, timestamp: ts(2),
+        message: { id: 'm1', role: 'assistant', model: 'claude-opus-4-8', content: '' } },
+    ]));
+    assert.deepEqual(textsOf(folds), ['']);
+    // The coordinates stay on the first body row: only a group with no body yet promotes them.
+    assert.equal(folds[0].sourceEntryId, 'a1');
+  });
+
+  test('a later tool-only revision does not erase retained text', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'kept text' }] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.js' } }] }),
+    ]));
+    assert.equal(folds.length, 1);
+    assert.equal(folds[0].message.text, 'kept text');
+    assert.equal(folds[0].toolPairs.length, 1);
+  });
+
+  test('two messageIds are two folds even when their rows interleave', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'one' }] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm2', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'two' }] }),
+      assistantObservation({ uuid: 'a3', messageId: 'm1', timestamp: ts(3),
+        blocks: [{ type: 'text', text: 'one revised' }] }),
+    ]));
+    assert.deepEqual(textsOf(folds), ['one revised', 'two']);
+  });
+
+  test('a human row is its own fold and is never grouped with another row', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'first ask', timestamp: ts(1) }),
+      userMessage({ uuid: 'u2', text: 'second ask', timestamp: ts(2) }),
+    ]));
+    assert.deepEqual(textsOf(folds), ['first ask', 'second ask']);
+    assert.deepEqual(folds.map(f => f.sourceEntryId), ['u1', 'u2']);
+  });
+
+  test('a human row whose text blocks are all empty produces no fold', () => {
+    // Nothing was said, so there is no body to project and no line for a rule to judge. The row keeps its
+    // ordinal and its turn boundary; it simply contributes no Dialogue.
+    const folds = foldsOf(chain([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false, timestamp: ts(1),
+        message: { role: 'user', content: [{ type: 'text', text: '' }] } },
+      userMessage({ uuid: 'u2', text: 'a real ask', timestamp: ts(2) }),
+    ]));
+    assert.deepEqual(textsOf(folds), ['a real ask']);
+    assert.deepEqual(folds.map(f => f.sourceEntryId), ['u2']);
+  });
+
+  test("a human row's text blocks concatenate into one body", () => {
+    const folds = foldsOf(chain([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false, timestamp: ts(1),
         message: { role: 'user', content: [
           { type: 'text', text: 'block one' },
           { type: 'text', text: ' block two' },
         ] } },
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    assert.equal(visibleMessages(c)[0].text, 'string content');
-    assert.equal(visibleMessages(c)[1].text, 'block one block two');
+    ]));
+    assert.deepEqual(textsOf(folds), ['block one block two']);
+  });
+});
+
+describe('native order', () => {
+  test('visible text and tool uses keep native observation order within one fold', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2), blocks: [
+        { type: 'text', text: 'answer' },
+        { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
+        { type: 'tool_use', id: 'tu2', name: 'Read', input: { file_path: '/a.js' } },
+      ] }),
+      toolResult({ uuid: 'r1', toolUseId: 'tu1', content: 'out' }),
+      toolResult({ uuid: 'r2', toolUseId: 'tu2', content: 'src' }),
+    ]));
+    const lines = enumerateDialogueLines(folds);
+    assert.deepEqual(lines.map(l => l.kind), ['visible', 'visible', 'tool', 'tool']);
+    assert.deepEqual(lines.slice(2).map(l => l.tool.name), ['Bash', 'Read']);
   });
 
-  test('last text-bearing observation supplies text; first visible-text keeps anchor', () => {
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [{ type: 'text', text: 'early text' }],
-      }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'a1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'late text' }],
-      }),
+  test('folds are ordered by the row that created each logical message', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'first' }] }),
+      userMessage({ uuid: 'u2', text: 'again', timestamp: ts(3) }),
+      assistantObservation({ uuid: 'a2', messageId: 'm2', timestamp: ts(4),
+        blocks: [{ type: 'text', text: 'second' }] }),
+    ]));
+    assert.deepEqual(folds.map(f => f.ordinal), [0, 1, 2, 3]);
+    assert.deepEqual(textsOf(folds), ['go', 'first', 'again', 'second']);
+  });
+});
+
+describe('tool pairing', () => {
+  test('an empty tool use id admits no pair, and the observation still reaches Measurement', () => {
+    // An empty id names nothing, so there is no call for Dialogue to show and nothing a result could pair
+    // with. The judgement is Dialogue's alone: Measurement counts every tool use its step issued and
+    // correlates by the id it was given, so the observation itself has to survive.
+    const entries = chain([
+      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2), blocks: [
+        { type: 'tool_use', id: '', name: 'Read', input: { file_path: '/nameless.js' } },
+        { type: 'tool_use', id: 'tu-real', name: 'Bash', input: { command: 'ls' } },
+      ] }),
+      toolResult({ uuid: 'r1', toolUseId: '', content: 'nameless output' }),
+      toolResult({ uuid: 'r2', toolUseId: 'tu-real', content: 'real output' }),
     ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(visibleMessages(c)[0].text, 'late text');
-    assert.equal(visibleMessages(c)[0].anchorUuid, 'a1');
-    assert.equal(visibleMessages(c)[0].anchorTimestamp, Date.parse(ts(1)));
+    const observations = observationsOf(entries);
+    // The Source reports both, unchanged: the empty id is a fact about the row, not a Dialogue decision.
+    assert.deepEqual(observations.filter(o => o.type === 'tool-use').map(o => o.toolUseId), ['', 'tu-real']);
+    assert.deepEqual(observations.filter(o => o.type === 'tool-result').map(o => o.toolUseId),
+      ['', 'tu-real']);
+
+    const folds = projectDialogue(observations).folds;
+    const pairs = folds.flatMap(f => f.toolPairs);
+    assert.deepEqual(pairs.map(p => p.toolUseId), ['tu-real'], 'only the named call becomes a pair');
+    assert.equal(pairs[0].result, 'real output');
+    // No tool line either, so nothing counts it, indexes it or fingerprints it.
+    assert.deepEqual(enumerateDialogueLines(folds).filter(l => l.kind === 'tool').map(l => l.tool.toolUseId),
+      ['tu-real']);
   });
 
-  test('a later tool-only observation does not erase retained text', () => {
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [{ type: 'text', text: 'kept text' }],
-      }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'a1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.js' } }],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(visibleMessages(c)[0].text, 'kept text');
-    assert.equal(c.folds[0].toolPairs.length, 1);
+  test('a repeated result for one tool use id is last-result-wins', () => {
+    const folds = foldsOf(chain([
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Read',
+        input: { file_path: '/a.js' }, timestamp: ts(1) }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'first-content' }),
+      toolResult({ uuid: 'r2', toolUseId: 't1', content: 'last-content' }),
+    ]));
+    assert.equal(folds[0].toolPairs[0].result, 'last-content');
   });
 
-  test('duplicate tool use/result ID is payload-last-wins with first-seen ID order', () => {
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [
-          { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/old.js' } },
-          { type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: '/b.js' } },
-        ],
-      }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'a1', messageId: 'm1', timestamp: ts(2),
-        blocks: [
-          { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/new.js' } },
-        ],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    // t1 is first-seen, t2 is second. t1 payload is last-wins (/new.js)
-    assert.equal(c.folds[0].toolPairs[0].id, 't1');
-    assert.equal(c.folds[0].toolPairs[0].input.file_path, '/new.js');
-    assert.equal(c.folds[0].toolPairs[1].id, 't2');
-    assert.equal(c.folds[0].toolPairs[1].input.file_path, '/b.js');
-    // 行号随胜出的载荷一起走：搜到 /new.js 的读者要落在写它的那一行。
-    assert.equal(c.folds[0].toolPairs[0].useLineOrdinal, 2);
-    assert.equal(c.folds[0].toolPairs[1].useLineOrdinal, 1);
+  test('distinct ids pair correctly whatever order their results arrive in', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1), blocks: [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.js' } },
+        { type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: '/b.js' } },
+      ] }),
+      toolResult({ uuid: 'r1', toolUseId: 't2', content: 'edit-result' }),
+      toolResult({ uuid: 'r2', toolUseId: 't1', content: 'read-result' }),
+    ]));
+    assert.deepEqual(folds[0].toolPairs.map(p => [p.toolUseId, p.result]),
+      [['t1', 'read-result'], ['t2', 'edit-result']]);
   });
 
-  test('result pairs by tool_use_id; missing result remains null', () => {
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [
-          { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.js' } },
-          { type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: '/b.js' } },
-        ],
-      }),
-      toolResult({ uuid: 'tr1', parentUuid: 'a1', toolUseId: 't1', content: 'file contents' }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.folds[0].toolPairs[0].id, 't1');
-    assert.equal(c.folds[0].toolPairs[0].result, 'file contents');
-    assert.equal(c.folds[0].toolPairs[1].id, 't2');
-    assert.equal(c.folds[0].toolPairs[1].result, null);
+  test('an unpaired tool use keeps a null result and no result coordinates', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1), blocks: [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a.js' } },
+        { type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: '/b.js' } },
+      ] }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'file contents' }),
+    ]));
+    assert.equal(folds[0].toolPairs[0].result, 'file contents');
+    const unpaired = folds[0].toolPairs[1];
+    assert.equal(unpaired.result, null);
+    assert.equal(unpaired.resultSourceOrdinal, null);
+    assert.equal(unpaired.resultMeta, null);
+    assert.equal(unpaired.isError, undefined);
   });
 
-  test('the whole transcript is materialized regardless of embedded tokens', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'first', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'u1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'CUT_HERE response' }],
-      }),
-      userMessage({ uuid: 'u2', parentUuid: 'a1', text: 'last', timestamp: ts(3) }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    assert.deepEqual(visibleMessages(c).map(m => m.text), ['first', 'CUT_HERE response', 'last']);
-    assert.deepEqual(c.warnings, []);
+  test('a consumed result does not carry to a later reuse of its id', () => {
+    const folds = foldsOf(chain([
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Read',
+        input: { file_path: '/a.js' }, timestamp: ts(1) }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'only-result' }),
+      assistantToolUse({ uuid: 'a2', messageId: 'm2', toolUseId: 't1', name: 'Read',
+        input: { file_path: '/b.js' }, timestamp: ts(2) }),
+    ]));
+    assert.equal(folds[0].toolPairs[0].result, 'only-result');
+    assert.equal(folds[1].toolPairs[0].result, null);
   });
 
-  test('afterLatestCompact:true starts strictly after the last native compact summary', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'r1', text: 'old context', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'r1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'old answer' }],
-      }),
-      // Simulate compact summary (type attachment/compact)
-      { type: 'user', uuid: 'cs', parentUuid: 'a1', isSidechain: false,
-        timestamp: ts(3), message: { role: 'user', content: '(compact summary)' },
-        isCompactSummary: true },
-      userMessage({ uuid: 'u2', parentUuid: 'cs', text: 'new context', timestamp: ts(4) }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'u2', messageId: 'm2', timestamp: ts(5),
-        blocks: [{ type: 'text', text: 'new answer' }],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path, { afterLatestCompact: true });
-    assert.equal(c.status, 'ok');
-    // Only post-compact messages
-    assert.ok(visibleMessages(c).every(m => m.text !== 'old context' && m.text !== 'old answer'));
-    assert.ok(visibleMessages(c).some(m => m.text === 'new context'));
+  test('a duplicate tool use id keeps first-seen order and the surviving payload', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1), blocks: [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/old.js' } },
+        { type: 'tool_use', id: 't2', name: 'Edit', input: { file_path: '/b.js' } },
+      ] }),
+      assistantObservation({ uuid: 'a2', messageId: 'm1', timestamp: ts(2), blocks: [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/new.js' } },
+      ] }),
+    ]));
+    assert.deepEqual(folds[0].toolPairs.map(p => p.toolUseId), ['t1', 't2']);
+    assert.equal(folds[0].toolPairs[0].input.file_path, '/new.js');
+    // The row travels with the payload that survived: a reader sent to this line has to find /new.js.
+    assert.equal(folds[0].toolPairs[0].sourceOrdinal, 2);
+    assert.equal(folds[0].toolPairs[1].sourceOrdinal, 1);
   });
 
-  // A bare attachment is ordinary turn content, not a boundary. Measured across 1017 real
-  // transcripts: type:'attachment' occurs 8081 times and never once carries isCompactSummary,
-  // so treating it as a boundary clipped 86.5% of transcripts down to their trailing turn.
-  test('afterLatestCompact:true does not treat a bare attachment as a boundary', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'first', timestamp: ts(1) }),
-      { type: 'attachment', uuid: 'att1', parentUuid: 'u1', isSidechain: false,
-        timestamp: ts(2), message: { role: 'user', content: 'pasted file' } },
-      userMessage({ uuid: 'u2', parentUuid: 'att1', text: 'second', timestamp: ts(3) }),
+  test('raw input, result and native error flag stay on the pair whatever the outcome was', () => {
+    const folds = foldsOf(chain([
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(1), blocks: [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/repo/missing.js' } },
+        { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/repo/exists.js' } },
+        { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'npm test' } },
+      ] }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'Error: file not found', isError: true }),
+      toolResult({ uuid: 'r2', toolUseId: 't2', content: '1\tconst x = 1;\n' }),
+      toolResult({ uuid: 'r3', toolUseId: 't3', content: 'Tests passed' }),
+    ]));
+    assert.deepEqual(folds[0].toolPairs.map(p => [p.name, p.result, p.isError]), [
+      ['Read', 'Error: file not found', true],
+      ['Read', '1\tconst x = 1;\n', undefined],
+      ['Bash', 'Tests passed', undefined],
     ]);
-    const c = readCanonicalTranscript(path, { afterLatestCompact: true });
-    assert.deepEqual(visibleMessages(c).map(m => m.text), ['first', 'second']);
+    assert.deepEqual(folds[0].toolPairs[2].input, { command: 'npm test' });
   });
 
-  // The boundary is the topology: a compact starts a second null-parent root. isCompactSummary is
-  // not guaranteed to accompany it, so a flag-only rule leaks the entire pre-compact context.
-  test('afterLatestCompact:true keeps only the newest root when no isCompactSummary is present', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'r1', text: 'pre-compact user', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'r1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'pre-compact answer' }],
-      }),
-      // Second null-parent root = compact, carrying no isCompactSummary field at all.
-      userMessage({ uuid: 'r2', text: 'post-compact user', timestamp: ts(3) }),
-      assistantObservation({
-        uuid: 'a2', parentUuid: 'r2', messageId: 'm2', timestamp: ts(4),
-        blocks: [{ type: 'text', text: 'post-compact answer' }],
-      }),
+  test('a result row carries its own annotation through uninterpreted', () => {
+    const answers = { answers: { 'Which?': 'this one' } };
+    const folds = foldsOf(chain([
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'AskUserQuestion',
+        input: { questions: [] }, timestamp: ts(1) }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'Q="A"', timestamp: ts(2),
+        toolUseResult: answers }),
+    ]));
+    assert.deepEqual(folds[0].toolPairs[0].resultMeta.annotation, answers);
+  });
+});
+
+describe('anchor-free folds', () => {
+  test('no fold, message or pair carries an anchor', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Bash',
+        input: { command: 'ls' }, timestamp: ts(2) }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'out', timestamp: ts(3) }),
+    ]));
+    for (const fold of folds) {
+      assert.ok(!('anchorUuid' in fold) && !('anchorTimestamp' in fold) && !('sourceRef' in fold));
+      if (fold.message) {
+        assert.deepEqual(Object.keys(fold.message).sort(), ['role', 'text']);
+      }
+      for (const pair of fold.toolPairs) {
+        assert.ok(!('anchor' in pair) && !('useLineOrdinal' in pair));
+      }
+    }
+    for (const line of enumerateDialogueLines(folds)) assert.ok(!('anchor' in line));
+  });
+
+  test('a row with no native identity still projects, with a null sourceEntryId', () => {
+    const folds = foldsOf([
+      assistantObservation({ uuid: null, messageId: 'm1', timestamp: ts(1),
+        blocks: [{ type: 'text', text: 'no uuid' }] }),
     ]);
-    const c = readCanonicalTranscript(path, { afterLatestCompact: true });
+    assert.deepEqual(textsOf(folds), ['no uuid']);
+    assert.equal(folds[0].sourceEntryId, null);
+  });
+
+  test('two rows sharing one native identity stay two folds in canonical order', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'dup', text: 'first ask', timestamp: ts(1) }),
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'answer' }] }),
+      userMessage({ uuid: 'dup', parentUuid: 'a1', text: 'second ask', timestamp: ts(3) }),
+    ]));
+    assert.deepEqual(textsOf(folds), ['first ask', 'answer', 'second ask']);
+  });
+});
+
+describe('per-line source coordinates', () => {
+  test('a tool line takes the tool-use row while its fold keeps the body row', () => {
+    // One assistant message writes each content block as its own row, so the body row and the tool-use
+    // row of one logical message are different lines.
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
+      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2),
+        blocks: [{ type: 'text', text: 'let me look' }] }),
+      assistantToolUse({ uuid: 'a2', messageId: 'm1', toolUseId: 't1', name: 'Bash',
+        input: { command: 'echo hi' }, timestamp: ts(3) }),
+      toolResult({ uuid: 'r1', toolUseId: 't1', content: 'output', timestamp: ts(4) }),
+    ]));
+    const fold = folds.find(f => f.toolPairs.length > 0);
+    assert.equal(fold.sourceOrdinal, 2);
+    const [body, tool] = enumerateDialogueLines([fold]);
+    assert.deepEqual([body.sourceOrdinal, body.sourceEntryId, body.timestamp],
+      [2, 'a1', Date.parse(ts(2))]);
+    assert.deepEqual([tool.sourceOrdinal, tool.sourceEntryId, tool.timestamp],
+      [3, 'a2', Date.parse(ts(3))]);
+    assert.deepEqual([tool.tool.resultSourceOrdinal, tool.tool.resultSourceEntryId,
+      tool.tool.resultTimestamp], [4, 'r1', Date.parse(ts(4))]);
+  });
+
+  test('every line carries its own fold ordinal', () => {
+    const folds = foldsOf(chain([
+      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Bash',
+        input: { command: 'ls' }, timestamp: ts(2) }),
+    ]));
+    assert.deepEqual(enumerateDialogueLines(folds).map(l => l.foldOrdinal), [0, 1]);
+  });
+
+  test('enumerateDialogueLines answers [] for a degenerate projection', () => {
+    for (const bad of [null, undefined, {}, 'folds']) {
+      assert.deepEqual(enumerateDialogueLines(bad), []);
+    }
+    assert.deepEqual(enumerateDialogueLines([]), []);
+  });
+});
+
+describe('human text without a turn boundary', () => {
+  test('a human text observation whose row opened no turn is not dialogue', () => {
+    // A harness row feeding a result back into the model's own turn may carry a text block beside it. Its
+    // row emits no `turn-boundary`, and that shared fact — not a native field — is what keeps it out.
+    const observations = observationsOf(chain([
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Read',
+        input: { file_path: '/a.js' }, timestamp: ts(1) }),
+      { type: 'user', uuid: 'r1', parentUuid: 'a1', isSidechain: false, timestamp: ts(2),
+        message: { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 't1', content: 'file body' },
+          { type: 'text', text: '<system-reminder>injected</system-reminder>' },
+        ] } },
+    ]));
+    assert.ok(observations.some(o => o.type === 'text' && o.role === 'human'),
+      'the Source does emit the text observation; the projection is what declines it');
+    assert.ok(!observations.some(o => o.type === 'turn-boundary' && o.sourceOrdinal === 2));
+    const folds = projectDialogue(observations).folds;
+    assert.deepEqual(textsOf(folds), []);
+    assert.equal(folds[0].toolPairs[0].result, 'file body');
+  });
+});
+
+describe('sealed and incremental reads agree', () => {
+  const entries = chain([
+    userMessage({ uuid: 'u1', text: 'read a file', timestamp: ts(1) }),
+    assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2),
+      blocks: [{ type: 'text', text: 'on it' }] }),
+    assistantToolUse({ uuid: 'a2', messageId: 'm1', toolUseId: 't1', name: 'Read',
+      input: { file_path: '/a.js' }, timestamp: ts(3) }),
+    toolResult({ uuid: 'r1', toolUseId: 't1', content: 'body', timestamp: ts(4) }),
+    assistantObservation({ uuid: 'a3', messageId: 'm2', timestamp: ts(5),
+      blocks: [{ type: 'text', text: 'done' }] }),
+  ]);
+
+  // Row-at-a-time through one incremental reducer: the same reducer implementation the Source uses,
+  // driven with separate mutable state and a cursor that advances one row at a time.
+  function incrementalObservations() {
+    const buffer = transcriptBytes(entries);
+    const reducer = createClaudeCodeObservationReducer();
+    const observations = [];
+    let offset = 0;
+    let ordinal = 1;
+    while (offset < buffer.length) {
+      const end = buffer.indexOf(0x0a, offset) + 1;
+      const { rows, nextSourceOrdinal } = readClaudeCodeRows(buffer.subarray(offset, end), {
+        baseOffset: offset, sourceOrdinal: ordinal,
+      });
+      for (const batch of reducer.append(rows).batches) observations.push(...batch);
+      ordinal = nextSourceOrdinal;
+      offset = end;
+    }
+    return observations;
+  }
+
+  test('an incremental observation set projects to the same folds as a sealed read', () => {
     assert.deepEqual(
-      visibleMessages(c).map(m => m.text),
-      ['post-compact user', 'post-compact answer'],
+      projectDialogue(incrementalObservations()).folds,
+      projectDialogue(observationsOf(entries)).folds,
     );
   });
 
-  test('unavailable path returns {status:unavailable}', () => {
-    const c = readCanonicalTranscript('/nonexistent/path/transcript.jsonl');
-    assert.equal(c.status, 'unavailable');
-    assert.deepEqual(c.folds, []);
-    assert.deepEqual(visibleMessages(c), []);
-  });
-
-  test('a paired tool result carries its own physical line ordinal, not the fold\'s', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-      assistantToolUse({
-        uuid: 'a1', parentUuid: 'u1', messageId: 'm1', toolUseId: 't1',
-        name: 'Bash', input: { command: 'echo hi' }, timestamp: ts(2),
-      }),
-      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: 'output', timestamp: ts(3) }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    const fold = c.folds.find(f => f.toolPairs.length > 0);
-    // fold 自己的物理行与它 result 所在的行必须不同，否则读 line 会读到不含 excerpt 的一行。
-    assert.equal(fold.sourceRef.lineOrdinal, 2);
-    assert.equal(fold.toolPairs[0].resultLineOrdinal, 3);
-  });
-
-  test('an unpaired tool use has no result line ordinal', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-      assistantToolUse({
-        uuid: 'a1', parentUuid: 'u1', messageId: 'm1', toolUseId: 't1',
-        name: 'Bash', input: { command: 'echo hi' }, timestamp: ts(2),
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    const fold = c.folds.find(f => f.toolPairs.length > 0);
-    assert.equal(fold.toolPairs[0].result, null);
-    assert.equal(fold.toolPairs[0].resultLineOrdinal, null);
-  });
-
-  test('a tool use carries its own physical line ordinal, not the fold\'s', () => {
-    // CC writes each content block of one assistant message as its own JSONL row, so the fold's
-    // anchor row (first visible text) and the tool_use row of the same message are different lines.
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-      assistantObservation({ uuid: 'a1', parentUuid: 'u1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'let me look' }] }),
-      assistantToolUse({
-        uuid: 'a2', parentUuid: 'a1', messageId: 'm1', toolUseId: 't1',
-        name: 'Bash', input: { command: 'echo hi' }, timestamp: ts(3),
-      }),
-      toolResult({ uuid: 'r1', parentUuid: 'a2', toolUseId: 't1', content: 'output', timestamp: ts(4) }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    const fold = c.folds.find(f => f.toolPairs.length > 0);
-    assert.equal(fold.sourceRef.lineOrdinal, 2);
-    assert.equal(fold.toolPairs[0].useLineOrdinal, 3);
-    assert.equal(fold.toolPairs[0].resultLineOrdinal, 4);
+  test('projecting one observation array twice returns equal folds', () => {
+    const observations = observationsOf(entries);
+    assert.deepEqual(projectDialogue(observations).folds, projectDialogue(observations).folds);
   });
 });
 
-describe('findCanonicalMessage', () => {
-  let dir;
-  test.before(() => { dir = mkdtempSync(join(tmpdir(), 'sw-findmsg-')); });
-
-  test('finds a message by anchor UUID', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'hello', timestamp: ts(1) }),
-      assistantObservation({
-        uuid: 'a1', parentUuid: 'u1', messageId: 'm1', timestamp: ts(2),
-        blocks: [{ type: 'text', text: 'world' }],
-      }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    const found = findCanonicalMessage(c, 'a1');
-    assert.equal(found.text, 'world');
-  });
-
-  test('returns null for unknown UUID', () => {
-    const path = writeTranscript(dir, [
-      userMessage({ uuid: 'u1', text: 'hello', timestamp: ts(1) }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    const found = findCanonicalMessage(c, 'nonexistent');
-    assert.equal(found, null);
-  });
-});
-
-// --- Task 3: raw tool pairs preserved regardless of classification ---
-
-describe('raw tool pairs on DialogueFold', () => {
-  let dir;
-  test.before(() => { dir = mkdtempSync(join(tmpdir(), 'sw-rawpairs-')); });
-
-  test('raw tool input and result block remain on the pair regardless of classification', () => {
-    // A failed Read (is_error) and a successful Read — both should have raw pairs preserved
-    const path = writeTranscript(dir, [
-      assistantObservation({
-        uuid: 'a1', messageId: 'm1', timestamp: ts(1),
-        blocks: [
-          { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/repo/missing.js' } },
-          { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/repo/exists.js' } },
-          { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'npm test' } },
-        ],
-      }),
-      toolResult({ uuid: 'tr1', parentUuid: 'a1', toolUseId: 't1', content: 'Error: file not found', isError: true }),
-      toolResult({ uuid: 'tr2', parentUuid: 'tr1', toolUseId: 't2', content: '1\tconst x = 1;\n' }),
-      toolResult({ uuid: 'tr3', parentUuid: 'tr2', toolUseId: 't3', content: 'Tests passed' }),
-    ]);
-    const c = readCanonicalTranscript(path);
-    assert.equal(c.status, 'ok');
-    assert.equal(c.folds[0].toolPairs.length, 3);
-
-    // Failed Read: raw input and result preserved
-    const failedPair = c.folds[0].toolPairs[0];
-    assert.equal(failedPair.id, 't1');
-    assert.equal(failedPair.name, 'Read');
-    assert.deepEqual(failedPair.input, { file_path: '/repo/missing.js' });
-    assert.equal(failedPair.result, 'Error: file not found');
-
-    // Successful Read: raw input and result preserved
-    const successPair = c.folds[0].toolPairs[1];
-    assert.equal(successPair.id, 't2');
-    assert.equal(successPair.name, 'Read');
-    assert.deepEqual(successPair.input, { file_path: '/repo/exists.js' });
-    assert.equal(successPair.result, '1\tconst x = 1;\n');
-
-    // Unmatched Bash (residual): raw input and result preserved
-    const bashPair = c.folds[0].toolPairs[2];
-    assert.equal(bashPair.id, 't3');
-    assert.equal(bashPair.name, 'Bash');
-    assert.deepEqual(bashPair.input, { command: 'npm test' });
-    assert.equal(bashPair.result, 'Tests passed');
-  });
-});
-
-// --- Line enumeration: the single traversal every line consumer is built on ---
-
-describe('enumerateLines', () => {
-  // Fixtures live in the describe body, not a test.before hook, so all four cases below share
-  // them without one test block reaching into another's locals.
-  const dir = mkdtempSync(join(tmpdir(), 'sw-enumlines-'));
-
-  const mixedPath = writeTranscript(dir, [
-    userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
-    assistantObservation({ uuid: 'a1', parentUuid: 'u1', messageId: 'm1', timestamp: ts(2), blocks: [
-      { type: 'text', text: 'answer' },
-      { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
-      { type: 'tool_use', id: 'tu2', name: 'Read', input: { file_path: '/a.js' } },
-    ] }),
-    toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 'tu1', content: 'out' }),
-    toolResult({ uuid: 'r2', parentUuid: 'r1', toolUseId: 'tu2', content: 'src' }),
-  ]);
-  // 纯工具 fold：assistantToolUse 不带可见正文 ⇒ fold.message 为 null，anchor 落到 sourceRef.uuid
-  const toolOnlyPath = writeTranscript(dir, [
-    userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-    assistantToolUse({ uuid: 'a1', parentUuid: 'u1', messageId: 'm1', toolUseId: 'tu1',
-      name: 'Bash', input: { command: 'ls' }, timestamp: ts(2) }),
-    toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 'tu1', content: 'out' }),
-  ]);
-
-  test('enumerateLines: 每个 toolPair 一行、同 fold 共用 t、原顺序不变', () => {
-    const lines = enumerateLines(readCanonicalTranscript(mixedPath));
-    assert.deepEqual(lines.map(l => l.kind), ['visible', 'visible', 'tool', 'tool']);
-    assert.equal(lines[1].t, lines[2].t);
-    assert.equal(lines[2].t, lines[3].t);
-    assert.deepEqual(lines.slice(2).map(l => l.tool.name), ['Bash', 'Read']);
-    assert.equal(lines[0].anchor, 'u1');
-  });
-
-  test('visibleMessages 输出与枚举的可见投影逐字相同', () => {
-    const t = readCanonicalTranscript(mixedPath);
-    assert.deepEqual(visibleMessages(t), enumerateLines(t).filter(l => l.kind === 'visible').map(l => l.message));
-  });
-
-  test('visibleMessages / enumerateLines 对退化输入返回 []（既有契约不得收窄）', () => {
-    for (const bad of [null, undefined, {}, { status: 'unavailable', folds: [] }]) {
-      assert.deepEqual(visibleMessages(bad), []);
-      assert.deepEqual(enumerateLines(bad), []);
+describe('the projection reaches nothing outside its argument', () => {
+  // Observed rather than read: a symbol either lands in the live namespace or it does not. The retired
+  // reader took a path and opened it; every consumer now hands in an observation array instead.
+  test('the file-reading and anchor-resolving Interfaces are gone from the module namespace', async () => {
+    const ns = await import('../lib/dialogue-fold.js');
+    for (const symbol of ['readCanonicalTranscript', 'findFoldByAnchor', 'findCanonicalMessage',
+      'visibleMessages', 'foldAnchor', 'foldLines', 'enumerateLines']) {
+      assert.ok(!(symbol in ns), `dialogue-fold.js still exports ${symbol}`);
     }
-  });
-
-  test('纯工具 fold 的 anchor 取 sourceRef.uuid', () => {
-    const lines = enumerateLines(readCanonicalTranscript(toolOnlyPath));
-    const toolLine = lines.find(l => l.kind === 'tool');
-    assert.equal(toolLine.message, null);
-    assert.equal(toolLine.anchor, 'a1');   // 该 fold 的 sourceRef.uuid
-  });
-
-  // 读取器产出的 fold 上这两个键必然同值：anchorUuid 由同一条 observation 的 sourceRef.uuid 派生。
-  // 所以规则的分支次序只能在手造 fold 上钉住 —— 有可见 message 就取它的 anchor，没有才回落。
-  test('foldAnchor: 有 message 取 message.anchorUuid，message 为 null 才回落 sourceRef.uuid', () => {
-    assert.equal(foldAnchor({ message: { anchorUuid: 'from-message' }, sourceRef: { uuid: 'from-source' } }),
-      'from-message');
-    assert.equal(foldAnchor({ message: null, sourceRef: { uuid: 'from-source' } }), 'from-source');
+    assert.deepEqual(Object.keys(ns).sort(),
+      ['dialogueFoldLines', 'enumerateDialogueLines', 'projectDialogue']);
   });
 });

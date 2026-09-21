@@ -1,16 +1,19 @@
-// test/turn-page.test.js — the single Turn Page Operation: window selection, lazy per-session
-// parse, budget accounting and the frozen page text.
+// test/turn-page.test.js — the single Turn Page Operation: window selection, lazy per-session Source
+// read, budget accounting and the frozen page text. Every case passes only `sourceLocator` down to the
+// Source Adapter and prints `sourceLabel` where the page names a Source; the transient `S{k}` view is
+// derived from lineage position, so no fixture carries a label.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openStore, closeStore } from '../lib/store.js';
-import { readCanonicalTranscript } from '../lib/dialogue-fold.js';
-import { charsToTokens } from '../lib/measure.js';
+import { charsToTokens } from '../lib/token-estimate.js';
 import { DEFAULT_CTP } from '../lib/constants.js';
-import { BOOKMARK_TOKEN_BUDGET } from '../lib/bookmark-core.js';
+import { HISTORY_TOKEN_BUDGET } from '../lib/turn-history-budget.js';
 import { TURN_NOTICE, buildTurnPage } from '../lib/turn-page.js';
+import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
+import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
 import {
   assistantObservation, compactSummary, ts, userMessage, writeTranscript,
 } from './helpers/transcript-fixtures.js';
@@ -18,6 +21,14 @@ import {
 const dir = mkdtempSync(join(tmpdir(), 'sw-turn-page-'));
 const store = openStore(join(dir, 't.sqlite'));
 after(() => { closeStore(store); rmSync(dir, { recursive: true, force: true }); });
+
+// The real Claude Code Dialogue seam: a page's `T` is a Source row, so nothing here fakes the projection.
+const dialogueSource = createClaudeCodeDialogueSource();
+const dialogueProjection = createClaudeCodeDialogueProjection();
+const HISTORY = { dialogueSource, dialogueProjection };
+// One History Source, spelled the way lib/lineage.js spells it.
+const source = (sessionId, locator, handoffId = 700) =>
+  ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 // 合成 transcript + 直接 upsert 的 turn_note，本文件自带定义（不与 turn-query 共享）。转录里的物理行
@@ -61,16 +72,16 @@ const seedLineage = (specs) => specs.map((spec, i) => {
   for (const turn of spec.persist ?? spec.turns ?? []) {
     store.upsertTurnNotes([noteRow(spec.sessionId, turn)]);
   }
-  return { label: `S${i + 1}`, sessionId: spec.sessionId, transcriptPath, handoffId: 700 + i };
+  return source(spec.sessionId, transcriptPath, 700 + i);
 });
 
 const rawLineage = (specs) => specs.map((spec, i) => {
   for (const turn of spec.persist ?? []) store.upsertTurnNotes([noteRow(spec.sessionId, turn)]);
-  return { label: `S${i + 1}`, sessionId: spec.sessionId, transcriptPath: spec.transcriptPath, handoffId: 800 + i };
+  return source(spec.sessionId, spec.transcriptPath, 800 + i);
 });
 
 // 缺省页：每个 turn 一对 U/A 行，所以头 U 隔一行落一个；turn 数与每条 note 的长度都够，让整段
-// wire 超过 BOOKMARK_TOKEN_BUDGET，第一页因此装不下最老的那条 —— 「before 取回上一页」需要一个
+// wire 超过 HISTORY_TOKEN_BUDGET，第一页因此装不下最老的那条 —— 「before 取回上一页」需要一个
 // 非空 nextBefore。
 const sessACount = 10;
 const sessATurns = Array.from({ length: sessACount }, (_, i) => ({
@@ -249,53 +260,53 @@ const [unreadableOlder, readableNewer] = rawLineage([
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 test('页文本形状：notice + 空行 + session 头 + turn 行 + A 续行', () => {
-  const { turnPage } = buildTurnPage({ store, lineage });
+  const { turnPage } = buildTurnPage({ store, lineage, ...HISTORY });
   const lines = turnPage.split('\n');
   assert.equal(lines[0], TURN_NOTICE);
   assert.equal(lines[1], '');
-  assert.equal(lines[2], `S1  ${lineage[0].transcriptPath}`);
+  assert.equal(lines[2], `S1  ${lineage[0].sourceLabel}`);
   assert.match(turnPage, /^S1:13 \| U: /m);
   assert.match(turnPage, /^ {6}\| A: /m);
 });
 
-test('页头行给出转录文件，且不再给出 session id', () => {
-  const { turnPage } = buildTurnPage({ store, lineage });
+test('页头行给出 Source 标签，且不再给出 session id', () => {
+  const { turnPage } = buildTurnPage({ store, lineage, ...HISTORY });
   assert.match(turnPage, /^S1 {2}\//m);
-  // 行下每个 T 都是这个文件的物理行号，而 session id 在文件名里 —— 头行没有第二个地址要给
+  // 行下每个 T 都是这个 Source 的物理行号，而 session id 在标签里 —— 头行没有第二个地址要给
   assert.equal(turnPage.includes('session sess-A'), false);
 });
 
 test('t:null 行以 `| U: ` 开头且无前导填充', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [{ label: 'S1', sessionId: 'sess-A', transcriptPath: '/missing.jsonl' }] });
+  const { turnPage } = buildTurnPage({ store, lineage: [source('sess-A', '/missing.jsonl')], ...HISTORY });
   assert.match(turnPage, /^\| U: /m);
   assert.ok(!/^S1:/m.test(turnPage));
 });
 
 test('空历史精确返回 turnPage:"" 且无 nextBefore', () => {
-  assert.deepEqual(buildTurnPage({ store, lineage: [] }), { turnPage: '', nextBefore: null });
+  assert.deepEqual(buildTurnPage({ store, lineage: [], ...HISTORY }), { turnPage: '', nextBefore: null });
 });
 
 test('单条 turn 就超预算 ⇒ 与空历史同形（n 无硬下界）', () => {
-  const { turnPage, nextBefore } = buildTurnPage({ store, lineage: [hugeSingleTurnSession] });
+  const { turnPage, nextBefore } = buildTurnPage({ store, lineage: [hugeSingleTurnSession], ...HISTORY });
   assert.equal(turnPage, '');
   assert.equal(nextBefore, null);
 });
 
 test('U 截断后缀由 u_original_chars > u_text.length 派生，形状与既有标记一致', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [truncatedUSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [truncatedUSession], ...HISTORY });
   assert.match(turnPage, / \[truncated; \d+ chars\]$/m);
   assert.match(turnPage, /^ {5}\| U: u-cut-second \[truncated; 999 chars\]$/m);   // 只在最后一个 U 物理行
   assert.equal((turnPage.match(/\[truncated;/g) || []).length, 1);
 });
 
 test('| A: 续行填充按行宽计算（短地址与长地址各自定尺）', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [wideOrdinalSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [wideOrdinalSession], ...HISTORY });
   assert.match(turnPage, /^ {6}\| A: /m);
   assert.match(turnPage, /^ {8}\| A: /m);
 });
 
 test('多行 U/note 的每个物理行都保留角色前缀，且 renderer 统一换行符', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [multilineSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [multilineSession], ...HISTORY });
   assert.ok(turnPage.includes([
     'S1:13 | U: u-first',
     '      | U: u-second',
@@ -307,110 +318,138 @@ test('多行 U/note 的每个物理行都保留角色前缀，且 renderer 统�
   assert.ok(!turnPage.includes('\r'));
 });
 
-test('预算：按实际完整 wire 实算，不超 BOOKMARK_TOKEN_BUDGET', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: bigLineage });
-  assert.ok(Math.round(charsToTokens(JSON.stringify({ turn_page: turnPage }), DEFAULT_CTP)) <= BOOKMARK_TOKEN_BUDGET);
+test('预算：按实际完整 wire 实算，不超 HISTORY_TOKEN_BUDGET', () => {
+  const { turnPage } = buildTurnPage({ store, lineage: bigLineage, ...HISTORY });
+  assert.ok(Math.round(charsToTokens(JSON.stringify({ turn_page: turnPage }), DEFAULT_CTP)) <= HISTORY_TOKEN_BUDGET);
   assert.ok(turnPage.includes('sess-big-3-turn-6'));      // 装到了最新一条
   assert.ok(!turnPage.includes('sess-big-1-turn-1'));     // 也确实被预算截住
 });
 
 
-test('懒解析：预算装满后更老会话的 transcript 不被打开', () => {
-  const opened = [];
-  const counting = (p, opts) => { opened.push(p); return readCanonicalTranscript(p, opts); };
-  buildTurnPage({ store, lineage: threeSessionLineage, readTranscript: counting });
-  // threeSessionLineage[2] 是最新会话，它的 turn 已能装满 5000 预算
-  assert.deepEqual(opened, [threeSessionLineage[2].transcriptPath]);
+test('懒读：预算装满后更老会话的 Source 不被读', () => {
+  const read = [];
+  const counting = { read: (locator) => { read.push(locator); return dialogueSource.read(locator); } };
+  buildTurnPage({ store, lineage: threeSessionLineage, dialogueSource: counting, dialogueProjection });
+  // threeSessionLineage[2] 是最新会话，它的 turn 已能装满预算
+  assert.deepEqual(read, [threeSessionLineage[2].sourceLocator]);
 });
 
 test('before 取回上一页，且是同一操作（不返回目标 turn detail）', () => {
-  const first = buildTurnPage({ store, lineage });
+  const first = buildTurnPage({ store, lineage, ...HISTORY });
   assert.match(first.nextBefore, /^S1:\d+$/);
-  const older = buildTurnPage({ store, lineage, before: first.nextBefore });
+  const older = buildTurnPage({ store, lineage, before: first.nextBefore, ...HISTORY });
   assert.ok(!older.turnPage.includes(firstTurnUText));
   assert.ok(older.turnPage.startsWith(TURN_NOTICE));   // 仍是整页形状
 });
 
 test('before 跨 session 严格切窗：同 session 只留 t<T，保留更老 session，整条排除更新 session', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: crossSessionLineage, before: 'S2:21' });
+  const { turnPage } = buildTurnPage({ store, lineage: crossSessionLineage, before: 'S2:21', ...HISTORY });
   assert.ok(turnPage.includes(s2Turn10Text));
   assert.ok(turnPage.includes(s1OlderText));
   assert.ok(!turnPage.includes(s2Turn20Text));
   assert.ok(!turnPage.includes(s2Turn30Text));
   assert.ok(!turnPage.includes(s3NewerText));                    // label 更大的会话一条都不进页
   assert.ok(!turnPage.includes(
-    crossSessionLineage.find(e => e.sessionId === 'sess-cross-3').transcriptPath));  // 连 session 头也不出现
+    crossSessionLineage.find(e => e.sessionId === 'sess-cross-3').sourceLabel));  // 连 session 头也不出现
 });
 
-test('before 只认精确 label + 精确 T，其余一律 not_found', () => {
-  for (const before of ['nonsense', 'S2:22', 'S9:21', 'S01:21', 's2:21', 'S2:21 ', '', 21]) {
-    assert.throws(() => buildTurnPage({ store, lineage: crossSessionLineage, before }),
+test('before 只认 lineage 里的 label，带 T 时还要精确命中该记录，其余一律 not_found', () => {
+  for (const before of ['nonsense', 'S2:22', 'S9:21', 'S9', 'S01:21', 'S01', 's2:21', 's2',
+    'S2:21 ', 'S2 ', 'S2:', 'S', '', 21]) {
+    assert.throws(() => buildTurnPage({ store, lineage: crossSessionLineage, before, ...HISTORY }),
       /not_found/, String(before));
   }
 });
 
-test('before 指向不可读会话或废弃 anchor 时 not_found，不退化成整页', () => {
-  const unreadable = [{ label: 'S1', sessionId: 'sess-A', transcriptPath: '/missing.jsonl' }];
-  assert.throws(() => buildTurnPage({ store, lineage: unreadable, before: 'S1:1' }), /not_found/);
-  assert.throws(() => buildTurnPage({ store, lineage: [branchedSession], before: 'S1:3' }), /not_found/);
+test('before 指向不可读会话或废弃 identity 时 not_found，不退化成整页', () => {
+  const unreadable = [source('sess-A', '/missing.jsonl')];
+  assert.throws(() => buildTurnPage({ store, lineage: unreadable, before: 'S1:1', ...HISTORY }), /not_found/);
+  assert.throws(() => buildTurnPage({ store, lineage: [branchedSession], before: 'S1:3', ...HISTORY }), /not_found/);
 });
 
 test('消费默认模式把 compact 前后记录留在同一个 S，T 不按 epoch 重置', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [compactSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [compactSession], ...HISTORY });
   assert.equal((turnPage.match(/^S1 {2}\//gm) || []).length, 1);
   assert.match(turnPage, /^S1:1 \| U: pre-compact-u$/m);
   assert.match(turnPage, /^S1:4 \| U: post-compact-u$/m);
 });
 
 test('page 顺序只认运行时 T，不认 DB 插入顺序或 source_timestamp', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [timestampOrderSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [timestampOrderSession], ...HISTORY });
   const positions = ['t-first-u', 't-middle-u', 't-last-u'].map(text => turnPage.indexOf(text));
   assert.ok(positions.every(i => i >= 0));
   assert.ok(positions[0] < positions[1] && positions[1] < positions[2]);
 });
 
 test('同一 lineage contract 内容活读：后续覆盖 note 与新增 active Turn Record 立即可见', () => {
-  const first = buildTurnPage({ store, lineage: [liveReadSession] }).turnPage;
+  const first = buildTurnPage({ store, lineage: [liveReadSession], ...HISTORY }).turnPage;
   assert.ok(first.includes('old-note'));
   assert.ok(!first.includes('later-persisted-u'));
   store.upsertTurnNotes([
     liveReadRow1({ note: 'updated-note' }),
     liveReadRow2({ uText: 'later-persisted-u', note: 'later-note' }),
   ]);
-  const after = buildTurnPage({ store, lineage: [liveReadSession] }).turnPage;
+  const after = buildTurnPage({ store, lineage: [liveReadSession], ...HISTORY }).turnPage;
   assert.ok(!after.includes('old-note'));
   assert.ok(after.includes('updated-note'));
   assert.ok(after.includes('later-persisted-u'));
 });
 
 test('废弃分支的 turn_note 行不进页，且不得伪装成 t:null', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [branchedSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [branchedSession], ...HISTORY });
   assert.ok(turnPage.includes('kept-u-text'));
   assert.ok(!turnPage.includes('abandoned-u-text'));
-  assert.ok(!/^\| U: /m.test(turnPage));               // 转录可读 ⇒ 不存在无地址行
+  assert.ok(!/^\| U: /m.test(turnPage));               // Source 可读 ⇒ 不存在无地址行
 });
 
-test('转录可读但无 fold（空 ordinals）⇒ 未定位而非废弃：记录保留', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [foldlessSession] });
+test('Source 可读但无 fold（空 ordinals）⇒ 未定位而非废弃：记录保留', () => {
+  const { turnPage } = buildTurnPage({ store, lineage: [foldlessSession], ...HISTORY });
   assert.match(turnPage, /^\| U: /m);
   assert.ok(turnPage.includes('foldless-u-text'));
   assert.ok(turnPage.includes('foldless-note'));
 });
 
 test('未定位记录按 anchor uuid 升序，不取 DB 插入顺序，也不取 source_timestamp', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [unverifiedOrderSession] });
+  const { turnPage } = buildTurnPage({ store, lineage: [unverifiedOrderSession], ...HISTORY });
   const positions = ['unordered-alpha', 'unordered-mu', 'unordered-zeta'].map(t => turnPage.indexOf(t));
   assert.ok(positions.every(i => i >= 0));
   assert.ok(positions[0] < positions[1] && positions[1] < positions[2]);
 });
 
-test('转录缺失时整会话为 t:null，仍展示 u_text + note', () => {
-  const { turnPage } = buildTurnPage({ store, lineage: [{ label: 'S1', sessionId: 'sess-A', transcriptPath: '/missing.jsonl' }] });
+test('Source 不可读时整会话为 t:null，仍展示 u_text + note', () => {
+  const { turnPage } = buildTurnPage({ store, lineage: [source('sess-A', '/missing.jsonl')], ...HISTORY });
   assert.match(turnPage, /^\| U: /m);
   assert.match(turnPage, /^\| A: /m);
 });
 
 test('页首为 t:null 时省略 nextBefore', () => {
-  const { nextBefore } = buildTurnPage({ store, lineage: [unreadableOlder, readableNewer], before: 'S2:1' });
+  const { nextBefore } = buildTurnPage({ store, lineage: [unreadableOlder, readableNewer], before: 'S2:1', ...HISTORY });
   assert.equal(nextBefore, null);
+});
+
+test('before 只给 label：从该 session 末尾起页，继续填更老 session，更新的一条不进', () => {
+  const { turnPage } = buildTurnPage({ store, lineage: crossSessionLineage, before: 'S2', ...HISTORY });
+  assert.ok(turnPage.includes(s2Turn30Text));   // 该 session 最新一条也在页里 —— 不是排他边界
+  assert.ok(turnPage.includes(s2Turn20Text));
+  assert.ok(turnPage.includes(s2Turn10Text));
+  assert.ok(turnPage.includes(s1OlderText));    // 更老 session 继续填
+  assert.ok(!turnPage.includes(s3NewerText));
+  assert.ok(!turnPage.includes(
+    crossSessionLineage.find(e => e.sessionId === 'sess-cross-3').sourceLabel));  // 连 session 头也不出现
+});
+
+test('label 边界只按 lineage 成员解析：更新会话的 Source 不被读，不可读的边界会话照旧成页', () => {
+  const read = [];
+  const counting = { read: (locator) => { read.push(locator); return dialogueSource.read(locator); } };
+  buildTurnPage({ store, lineage: crossSessionLineage, before: 'S2',
+    dialogueSource: counting, dialogueProjection });
+  assert.deepEqual(read, [crossSessionLineage[1].sourceLocator, crossSessionLineage[0].sourceLocator]);
+
+  // 同一个会话带 T 时要求可读且有该记录，只给 label 时只要求它在 lineage 里
+  const unreadable = [source('sess-A', '/missing.jsonl')];
+  assert.throws(() => buildTurnPage({ store, lineage: unreadable, before: 'S1:1', ...HISTORY }), /not_found/);
+  const { turnPage, nextBefore } = buildTurnPage({ store, lineage: unreadable, before: 'S1', ...HISTORY });
+  assert.ok(turnPage.startsWith(TURN_NOTICE));
+  assert.ok(turnPage.includes('u-turn-'));
+  assert.equal(nextBefore, null);              // 页首 t 为 null，交不出合法 S:T
 });

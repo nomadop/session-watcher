@@ -3,17 +3,42 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SessionWatcher } from '../lib/watcher.js';
-import { createServer } from '../server.js';
+import { openStore, closeStore } from '../lib/store.js';
+import { createServer, createWatcherComposition } from '../server.js';
+import { strictWatcherFacade } from './helpers/server-boot.js';
+import { assistantToolUse, chain, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
 import { discoverServerByClientPid } from '../hooks/session-start.js';
 
-function usageLine(cacheRead) {
-  return {
-    type: 'assistant', message: { id: `msg-${Math.random().toString(36).slice(2)}` },
-    usage: { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0 },
-    model: 'claude-sonnet-4-20250514',
-  };
+// One measured step and its result, as its own chain root: a null-parent row is a topology root, so a run
+// assembled without a chain would open a compact epoch on every row.
+let rowSeq = 0;
+function usageRows(cacheRead) {
+  const tag = `ir${++rowSeq}`;
+  return chain([
+    assistantToolUse({
+      uuid: `u-${tag}`, parentUuid: null, messageId: `m-${tag}`, toolUseId: `t-${tag}`, name: 'Bash',
+      input: { command: `echo ${tag}` }, timestamp: ts(1), model: 'claude-sonnet-4-20250514',
+      usage: usage({ input: 100, output: 10, cacheRead }),
+    }),
+    toolResult({ uuid: `r-${tag}`, toolUseId: `t-${tag}`, content: `out ${tag}` }),
+  ]);
 }
+const usageJsonl = (cacheRead) => usageRows(cacheRead).map(r => JSON.stringify(r) + '\n').join('');
+
+// The post-cutover composition, wired the way every host path wires it.
+const stores = [];
+function composeOwner({ sessionId, sourceLocator, projectsRoot, stateDir, dir }) {
+  const store = openStore(join(dir, `store-${sessionId}.sqlite`));
+  stores.push(store);
+  const watcher = createWatcherComposition({
+    sessionId, sourceLocator, projectId: null, projectRoot: dir, stateDir, store, isIgnored: null,
+  });
+  return createServer({
+    watcher: strictWatcherFacade(watcher), pollIntervalMs: 0, sessionId, onIdleShutdown: null,
+    sourceLocator, projectsRoot, projectRoot: dir, stateDir, store, disableTelemetrySweep: true,
+  });
+}
+process.on('exit', () => { for (const store of stores) { try { closeStore(store); } catch { /* closed */ } } });
 
 test('integration: full rotation lifecycle (discover → POST /api/rotate → verify)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sw-integ-'));
@@ -26,13 +51,11 @@ test('integration: full rotation lifecycle (discover → POST /api/rotate → ve
   const newSessionId = 'sess-new-integ';
   const oldPath = join(projRoot, `${oldSessionId}.jsonl`);
   const newPath = join(projRoot, `${newSessionId}.jsonl`);
-  writeFileSync(oldPath, JSON.stringify(usageLine(1000)) + '\n');
-  writeFileSync(newPath, JSON.stringify(usageLine(2000)) + '\n');
+  writeFileSync(oldPath, usageJsonl(1000));
+  writeFileSync(newPath, usageJsonl(2000));
 
-  const watcher = new SessionWatcher(oldPath, null, { sessionId: oldSessionId });
-  const { server, stopTimers, doRotation, currentSessionId, sseClients } = createServer({
-    watcher, pollIntervalMs: 0, sessionId: oldSessionId, onIdleShutdown: null,
-    projectsRoot: join(dir, 'projects'), stateDir,
+  const { server, stopTimers, doRotation, currentSessionId, sseClients } = composeOwner({
+    sessionId: oldSessionId, sourceLocator: oldPath, projectsRoot: join(dir, 'projects'), stateDir, dir,
   });
 
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -64,10 +87,12 @@ test('integration: full rotation lifecycle (discover → POST /api/rotate → ve
     assert.equal(result.old_session_id, oldSessionId);
     assert.equal(result.new_session_id, newSessionId);
 
-    // 4. Verify watcher switched
-    assert.equal(watcher.path, newPath);
-    assert.equal(watcher._sessionId, newSessionId);
+    // 4. Verify the owner switched. The locator lives on the discovery record and on the status wire, which
+    // are the two places a consumer can actually see it — the application's own copy is not readable.
     assert.equal(currentSessionId(), newSessionId);
+    const rotated = JSON.parse(readFileSync(join(stateDir, `${newSessionId}.json`), 'utf8'));
+    assert.equal(rotated.transcriptPath, newPath, 'discovery names the rotated-in Source');
+    assert.equal(rotated.sessionId, newSessionId);
 
     // 5. State file: new exists, old deleted
     assert.ok(existsSync(join(stateDir, `${newSessionId}.json`)));
@@ -91,16 +116,16 @@ test('integration: rotation is idempotent (same session_id = noop)', async () =>
   mkdirSync(projRoot, { recursive: true });
   const sessionId = 'sess-idem';
   const path = join(projRoot, `${sessionId}.jsonl`);
-  writeFileSync(path, JSON.stringify(usageLine(1000)) + '\n');
+  writeFileSync(path, usageJsonl(1000));
 
-  const watcher = new SessionWatcher(path, null, { sessionId });
-  const { server, stopTimers } = createServer({
-    watcher, pollIntervalMs: 0, sessionId, onIdleShutdown: null,
-    projectsRoot: join(dir, 'projects'), stateDir,
+  const owner = composeOwner({
+    sessionId, sourceLocator: path, projectsRoot: join(dir, 'projects'), stateDir, dir,
   });
+  const { server, stopTimers } = owner;
 
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
+  owner.publishDiscovery();   // listen-time creation, as the real owners do it
 
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/api/rotate`, {
@@ -111,7 +136,8 @@ test('integration: rotation is idempotent (same session_id = noop)', async () =>
     const result = await resp.json();
     assert.equal(result.ok, true);
     assert.equal(result.noop, true);
-    assert.equal(watcher.path, path);
+    // A duplicate-session notification changes nothing, so the record still names the original Source.
+    assert.equal(JSON.parse(readFileSync(join(stateDir, `${sessionId}.json`), 'utf8')).transcriptPath, path);
   } finally {
     stopTimers();
     await new Promise(r => server.close(r));

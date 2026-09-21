@@ -34,7 +34,7 @@ test('sweepStaleState removes expired sessions from store', async () => {
   store._db.prepare("INSERT INTO state (session_id, key, value, updated_at) VALUES ('old1', 'ledger', '{}', ?)").run(old);
   // Fresh session
   store.save('fresh1', 'ledger', { x: 1 });
-  const count = sweepStaleState();
+  const count = sweepStaleState({ store });
   assert.equal(count, 1);
   assert.equal(store.load('old1', 'ledger'), null);
   assert.deepEqual(store.load('fresh1', 'ledger'), { x: 1 });
@@ -47,9 +47,9 @@ test('sweepStaleState respects custom maxAgeMs', async () => {
   const twoDay = Date.now() - 2 * 24 * 3600 * 1000;
   store._db.prepare('INSERT INTO sessions (session_id, created_at, updated_at) VALUES (?, ?, ?)').run('med1', twoDay, twoDay);
   // Default 7-day max: should NOT sweep
-  assert.equal(sweepStaleState(), 0);
+  assert.equal(sweepStaleState({ store }), 0);
   // 1-day max: should sweep
-  assert.equal(sweepStaleState({ maxAgeMs: 1 * 24 * 3600 * 1000 }), 1);
+  assert.equal(sweepStaleState({ store, maxAgeMs: 1 * 24 * 3600 * 1000 }), 1);
 });
 
 test('sweepStalePortFiles removes old port files with dead pid', async () => {

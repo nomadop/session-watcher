@@ -122,17 +122,6 @@ export function buildServerContext(serverUrl) {
   return `[Session Watcher] Server: ${serverUrl}`;
 }
 
-// Pure decision function — no I/O, unit-tested directly.
-export function launchOptionsFor(payload = {}, baseEnv = process.env) {
-  const env = { ...baseEnv };
-  if (payload.session_id) env.CLAUDE_CODE_SESSION_ID = payload.session_id;
-  return {
-    env,
-    open: payload.source === "startup",
-    transcript: payload.transcript_path || undefined,
-  };
-}
-
 // Resolves the state directory from env or default.
 function resolveStateDir() {
   return process.env.SW_STATE_DIR || join(homedir(), ".session-watcher");

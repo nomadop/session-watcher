@@ -1,3 +1,5 @@
+// test/store-migration-v3.test.js — the v2-to-v3 migration owner. It also states the terminal shape a v2
+// database reaches: Turn Note exists, and no Bookmark table is created on the way.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,6 +58,10 @@ test('v3 migration: adds handoff columns, profile.telemetry_status, new tables +
   }
   assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '5');
   assert.equal(store._db.prepare("SELECT load_token FROM handoff WHERE session_id='s1'").get().load_token, 'tok-old-alpha', 'existing rows preserved');
+  // The terminal shape: Turn Note is required at version 5, Bookmark is not created for it.
+  assert.ok(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_note'").get());
+  assert.equal(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bookmark'").get(),
+    undefined, 'a v2 database reaches v5 without growing a Bookmark table');
   closeStore(store);
 });
 
@@ -112,11 +118,14 @@ test('ensureV3Shape self-heals a single missing handoff column (per-column PRAGM
   closeStore(store);
 });
 
-test('fresh DB ends at v5 with all telemetry shape present', async () => {
+test('fresh DB ends at v5 with all telemetry shape present and no bookmark table', async () => {
   const { openStore, closeStore } = await import('../lib/store.js');
   const store = openStore(dbPath);
   assert.equal(store._db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, '5');
   assert.ok(store._db.prepare("PRAGMA table_info(profile)").all().map(c => c.name).includes('telemetry_status'));
   assert.ok(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_load'").get());
+  assert.ok(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='turn_note'").get());
+  assert.equal(store._db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bookmark'").get(),
+    undefined);
   closeStore(store);
 });

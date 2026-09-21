@@ -1,17 +1,19 @@
 // test/server.turn.test.js — 生产捕获边界：骨架、snapshot 身份、原子提交。
-// 两个入口共用一条确定性捕获路径（afterLatestCompact → enumerateLines → groupTurns → 去掉当前
-// handoff turn），所以这里的 fixture 全部按物理行号断言，不按数组下标。
+// 两个入口共用一条确定性捕获路径（Source 读取 → 当前 epoch 后缀 → 分组 → 去掉当前 handoff turn），
+// 所以这里的 fixture 全部按物理行号断言，不按数组下标。
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { bootTestServer } from './helpers/server-boot.js';
-import { enumerateLines, findFoldByAnchor, readCanonicalTranscript } from '../lib/dialogue-fold.js';
-import { groupTurns, parseNoteSections, slotKeysOf, snapshotDigest } from '../lib/turn.js';
+import { parseNoteSections, readHistorySource, slotKeysOf, snapshotDigest } from '../lib/turn.js';
+import { captureCurrentEpochTurns } from '../lib/turn-note.js';
+import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
+import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
 import { sweepStaleTurnNotes } from '../lib/state-reaper.js';
 import {
-  userMessage, assistantObservation, assistantToolUse, toolResult, compactSummary, ts,
+  userMessage, assistantObservation, assistantToolUse, toolResult, compactSummary, ts, usage,
   writeTranscript,
 } from './helpers/transcript-fixtures.js';
 import { _seedDeliveredHandoff } from './helpers/handoff-seed.js';
@@ -42,10 +44,12 @@ const baseEntries = ({ dropTimestamp = false } = {}) => [
 
 // compact summary 之后的头 U 自成一行：捕获只取最新 epoch，但 T 是它在整个文件里的行号，不随 epoch
 // 重新起编。
+// The pre-compact call carries usage because that is what a compact replaces, and a root with no call
+// behind it is session-start preamble rather than a boundary.
 const compactEntries = () => [
   userMessage({ uuid: 'u-pre', parentUuid: null, text: 'pre-compact-u', timestamp: ts(1) }),
   assistantObservation({ uuid: 'a-pre', parentUuid: 'u-pre', messageId: 'm-pre', timestamp: ts(2),
-    blocks: [{ type: 'text', text: 'pre-compact-a' }] }),
+    blocks: [{ type: 'text', text: 'pre-compact-a' }], usage: usage({ input: 2, output: 5, cacheRead: 10_000 }) }),
   compactSummary({ uuid: 'c-sum', timestamp: ts(3), text: 'summary of the epoch' }),
   userMessage({ uuid: 'u-post', parentUuid: 'c-sum', text: 'post-compact-u', timestamp: ts(4) }),
   assistantObservation({ uuid: 'a-post', parentUuid: 'u-post', messageId: 'm-post', timestamp: ts(5),
@@ -105,8 +109,13 @@ const appendUserMessage = (path, text) => appendTranscriptEntries(path, [
 ]);
 
 // 测试侧对捕获路径的独立复算 —— 只用来算「应该有几行/哪个 turn 是 note-less/该填哪些槽」，不参与断言的产物。
-const capture = (path) =>
-  groupTurns(enumerateLines(readCanonicalTranscript(path, { afterLatestCompact: true }))).slice(0, -1);
+const dialogueSource = createClaudeCodeDialogueSource();
+// The Adapter resolves a relative tool path against the session directory, and the snapshot digest covers
+// the key it attaches — so the recomputation has to be bound to the same directory the server is.
+const projectionFor = (cwd) => createClaudeCodeDialogueProjection({ sessionCwd: cwd });
+const capture = (path, cwd) => captureCurrentEpochTurns({
+  observations: dialogueSource.read(path).observations, dialogueProjection: projectionFor(cwd),
+}).turns;
 
 // 服务端预写的空标题清单就是槽清单 —— 测试不从骨架反推槽键，读它写好的那份文件。
 const headingKeysOf = (notesPath) =>
@@ -127,19 +136,26 @@ let uncommittedPath;
 // 共享一份「已填好的文件」会让用例顺序变成隐性依赖。
 const produce = ({ body } = {}) => {
   const captured = svc.getTurnSkeleton();
-  const keys = slotKeysOf(capture(ctx.watcher.path));
+  const keys = slotKeysOf(capture(currentSourcePath, ctx.cwd));
   return { ...captured, keys: fillNotes(captured.notes_path, body, keys) };
 };
 
-const useTranscript = (path) => { ctx.watcher.path = path; };
+// Repoint the Source through the only Interface that moves it. A `replace` with no batches swaps the
+// locator and installs fresh measurement state; the Turn Note capture re-reads the file itself, so the
+// locator is all this needs to change.
+let transcriptDir;
+let currentSourcePath;
+const useTranscript = (path) => { ctx.switchSource(path); currentSourcePath = path; transcriptDir = dirname(path); };
 
 before(async () => {
   ctx = await bootTestServer({ sessionId: SESSION_ID });
   store = ctx.store;
   svc = ctx.turnService;
   sessionId = ctx.sessionId;
-  transcriptPath = ctx.watcher.path;
+  transcriptPath = ctx.transcriptPath;
+  currentSourcePath = transcriptPath;
   const dir = dirname(transcriptPath);
+  transcriptDir = dir;
 
   writeEntries(transcriptPath, baseEntries());
   currentTurnGrowthPath = writeEntries(join(dir, 'growth.jsonl'), baseEntries());
@@ -149,8 +165,8 @@ before(async () => {
   duplicateAnchorPath = writeEntries(join(dir, 'duplicate.jsonl'), duplicateEntries());
   uncommittedPath = writeEntries(join(dir, 'uncommitted.jsonl'), uncommittedEntries());
 
-  turns = capture(transcriptPath);
-  headT = turns[0].t;
+  turns = capture(transcriptPath, ctx.cwd);
+  headT = turns[0].sourceOrdinal;
 });
 
 after(async () => { await ctx.teardown(); });
@@ -158,10 +174,14 @@ after(async () => { await ctx.teardown(); });
 test('get_turn_skeleton 成功形状：snapshot_id + 两个路径 + 协议句，两文件真的落在 state dir', () => {
   const res = svc.getTurnSkeleton();
   assert.deepEqual(Object.keys(res).sort(), ['notes_path', 'protocol', 'skeleton_path', 'snapshot_id']);
-  assert.equal(typeof res.snapshot_id, 'string');
+  // FORMAT, not just presence — a sha256 digest in lowercase hex, so the field cannot turn into another
+  // shape unnoticed.
+  assert.match(res.snapshot_id, /^[0-9a-f]{64}$/, 'the fingerprint is a lowercase sha256 hex digest');
+  // And determinism: the same capture re-fetched mints the same fingerprint.
+  assert.equal(svc.getTurnSkeleton().snapshot_id, res.snapshot_id, 'the same capture digests identically');
   assert.ok(res.protocol.length > 0);
   // 路径由服务端从 state dir + Context Epoch 键（捕获 session + 本 epoch 首个 anchor）自推。
-  const epochDir = join(ctx.stateDir, 'turn-notes', `${sessionId}-${turns[0].anchorUuid}`);
+  const epochDir = join(ctx.stateDir, 'turn-notes', `${sessionId}-${turns[0].sourceEntryId}`);
   assert.equal(res.skeleton_path, join(epochDir, 'skeleton.txt'));
   assert.equal(res.notes_path, join(epochDir, 'notes.md'));
   // 骨架不再随回复内联，它在那份文件里。
@@ -182,7 +202,7 @@ test('重取：已写正文原样存活，新出现的槽在末尾补标题', (t
   const again = svc.getTurnSkeleton();
   assert.equal(again.notes_path, first.notes_path, 'epoch 键不随 turn 增长改变，所以撞的是同一份文件');
   const grown = readFileSync(again.notes_path, 'utf8');
-  const grownKeys = slotKeysOf(capture(transcriptPath));
+  const grownKeys = slotKeysOf(capture(transcriptPath, ctx.cwd));
   const { sections } = parseNoteSections(grown, grownKeys);
   assert.equal(sections.get(String(headT)), 'kept body');
   const newKey = grownKeys.find(key => key !== String(headT));
@@ -204,7 +224,7 @@ test('重取：已有文件没有末尾换行时，新标题仍独占一行', (t
       blocks: [{ type: 'text', text: 'answered' }] }),
     userMessage({ uuid: 'u-cur-c', parentUuid: 'a-nl', text: 'prepare the handoff', timestamp: ts(32) }),
   ]);
-  const grownKeys = slotKeysOf(capture(transcriptPath));
+  const grownKeys = slotKeysOf(capture(transcriptPath, ctx.cwd));
   const { sections } = parseNoteSections(readFileSync(svc.getTurnSkeleton().notes_path, 'utf8'), grownKeys);
   const newKey = grownKeys.find(key => key !== String(headT));
   assert.equal(sections.get(String(headT)), 'body without a trailing newline');
@@ -283,11 +303,11 @@ test('submit：捕获里没有的槽号不是分隔符 —— 它留在正文里
 // 写路径也只认槽。一个落在 note-less turn 的 T 上的标题不切段,所以那个 turn 的行仍是 null ——
 // `CONTEXT.md` Turn Record 要的正是「including a truly note-less turn whose note is null」。
 test('submit：note-less turn 的 T 上发明的标题不会给它落一条 note', async () => {
-  const noteless = capture(transcriptPath).find(turn => !turn.hasAssistantActivity);
+  const noteless = capture(transcriptPath, ctx.cwd).find(turn => !turn.hasAssistantActivity);
   const { snapshot_id, notes_path } = produce({ body: (k) => `real body ${k}` });
   appendFileSync(notes_path, `\n## NOTE[${noteless.t}]\n\nINVENTED\n`);
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id }), { committed: true });
-  const row = store.listTurnNotes(sessionId).find(r => r.anchorUuid === noteless.anchorUuid);
+  const row = store.listTurnNotes(sessionId).find(r => r.anchorUuid === noteless.sourceEntryId);
   assert.equal(row.note, null, 'note-less turn 的 note 必须是 null');
 });
 
@@ -325,7 +345,7 @@ test('零 turn 捕获：目录名用 empty 兜底,提交成功且落零行', asy
 test('submit：notes 文件不存在 → invalid_notes（不是崩溃，也不是成功零 note）', async (t) => {
   useTranscript(uncommittedPath);            // 库里没有这一段的行，缺段才只能是 missing note
   t.after(() => useTranscript(transcriptPath));
-  const [slotKey] = slotKeysOf(capture(uncommittedPath));
+  const [slotKey] = slotKeysOf(capture(uncommittedPath, ctx.cwd));
   const { snapshot_id, notes_path } = svc.getTurnSkeleton();
   rmSync(notes_path);
   const beforeRows = store.listTurnNotes(sessionId);
@@ -338,7 +358,7 @@ test('submit：notes 文件不存在 → invalid_notes（不是崩溃，也不�
 test('submit：分隔符严格是 `## ` —— `###` 写出来的段不算填了那个槽', async (t) => {
   useTranscript(uncommittedPath);
   t.after(() => useTranscript(transcriptPath));
-  const [slotKey] = slotKeysOf(capture(uncommittedPath));
+  const [slotKey] = slotKeysOf(capture(uncommittedPath, ctx.cwd));
   const { snapshot_id, notes_path } = svc.getTurnSkeleton();
   writeFileSync(notes_path, `### NOTE[${slotKey}]\n\na note under the wrong heading level\n`);
   const res = await svc.submitTurnNotes({ snapshot_id });
@@ -365,6 +385,27 @@ test('submit：boundary 前移（新用户消息到达）→ stale_snapshot、�
   const res = await svc.submitTurnNotes({ snapshot_id });
   assert.deepEqual(res, { committed: false, error: 'stale_snapshot' });
   assert.deepEqual(store.listTurnNotes(sessionId), beforeRows);
+});
+
+// snapshot_id 是同版本内的握手凭证：取回时铸造，提交时重新校验，没有任何消费者跨版本比较它 —— 等价性
+// 工具因此把它投影成固定占位符（`VOLATILE_MCP_POSITIONS.mcpTurnSkeleton`）。这条守卫钉住占位符没有连带
+// 放过握手的否定分支：正文已经填好，所以唯一挡得下提交的就是身份本身，三种坏凭证都必须落 stale_snapshot
+// 且一行不写。缺失与畸形不各自成类：能提交的身份只有一个值，其余一切都不是它。
+test('submit：缺失、畸形、以及格式合法但非本次捕获的 snapshot_id 都被拒，且零写入', async () => {
+  const { snapshot_id } = produce();
+  const beforeRows = store.listTurnNotes(sessionId);
+  const rejected = [
+    undefined,            // 缺失：调用方根本没带
+    'not-a-digest',       // 畸形：不是摘要的形状
+    'f'.repeat(64),       // 形状合法的 64 位十六进制，但不是这次捕获的摘要
+  ];
+  for (const candidate of rejected) {
+    const res = await svc.submitTurnNotes({ snapshot_id: candidate });
+    assert.deepEqual(res, { committed: false, error: 'stale_snapshot' }, `accepted ${String(candidate)}`);
+    assert.deepEqual(store.listTurnNotes(sessionId), beforeRows, `wrote rows for ${String(candidate)}`);
+  }
+  // 同一次捕获、同一份正文，真凭证仍然提交成功：上面的拒绝来自身份检查，而不是这份 fixture 本就提交不了。
+  assert.deepEqual(await svc.submitTurnNotes({ snapshot_id }), { committed: true });
 });
 
 // 覆盖率判据要读库，所以读失败排在 note 判断之前：这一段的槽是空的，库好着的时候它就是 invalid_notes。
@@ -407,7 +448,7 @@ test('submit 成功：{committed:true}，note-less turn 也有行，两文件与
   assert.deepEqual(res, { committed: true });
   const rows = store.listTurnNotes(sessionId);
   assert.equal(rows.length, turns.length);
-  const noteLessAnchor = turns.find(turn => !turn.hasAssistantActivity).anchorUuid;
+  const noteLessAnchor = turns.find(turn => !turn.hasAssistantActivity).sourceEntryId;
   assert.equal(rows.find(row => row.anchorUuid === noteLessAnchor).note, null);
   // 骨架是未脱敏的 Turn History Projection，note 落库后它没有第二个读者。
   assert.ok(!existsSync(notes_path) && !existsSync(skeleton_path));
@@ -424,7 +465,7 @@ test('重提交已落库的 epoch：库里有行即算覆盖 → committed，已
   const committed = store.listTurnNotes(sessionId);
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id }), { committed: true });
   assert.deepEqual(store.listTurnNotes(sessionId), committed, '文件没了也不改一行 —— 幂等而非有损');
-  assert.equal(committed.find(r => r.anchorUuid === turns[0].anchorUuid).note, 'durable body');
+  assert.equal(committed.find(r => r.anchorUuid === turns[0].sourceEntryId).note, 'durable body');
 });
 
 // 重取撞的是同一个 epoch 键，而目录已随提交退休：交出一份空文档等于让生产者把已经写好的 note 重写一遍。
@@ -434,11 +475,11 @@ test('重取已提交的 epoch：新 notes 文件从库里预填已存的 note',
   const again = svc.getTurnSkeleton();
   assert.equal(again.notes_path, first.notes_path, 'epoch 键不随提交改变，撞的是同一条路径');
   const refetched = readFileSync(again.notes_path, 'utf8');
-  const { sections } = parseNoteSections(refetched, slotKeysOf(capture(transcriptPath)));
+  const { sections } = parseNoteSections(refetched, slotKeysOf(capture(transcriptPath, ctx.cwd)));
   assert.equal(sections.get(String(headT)), 'prefilled body', '已落库的正文回到它自己的标题下');
   // 预填出来的文档本身可提交：第二份 handoff 不必重写一遍 note。
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id: again.snapshot_id }), { committed: true });
-  const row = store.listTurnNotes(sessionId).find(r => r.anchorUuid === turns[0].anchorUuid);
+  const row = store.listTurnNotes(sessionId).find(r => r.anchorUuid === turns[0].sourceEntryId);
   assert.equal(row.note, 'prefilled body');
 });
 
@@ -447,23 +488,23 @@ test('重取已提交的 epoch：新 notes 文件从库里预填已存的 note',
 // assistant 活动：它于是成了一个槽，而库里那一行的 note 是 null。
 test('note-less 的槽由它那一行兜住：不报 missing，null 也不被空正文改写', async (t) => {
   t.after(() => writeEntries(transcriptPath, baseEntries()));   // 共享 fixture，失败也要复原
-  const noteless = capture(transcriptPath).find(turn => !turn.hasAssistantActivity);
+  const noteless = capture(transcriptPath, ctx.cwd).find(turn => !turn.hasAssistantActivity);
   const { snapshot_id } = produce({ body: () => 'head body' });
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id }), { committed: true });
   const storedNoteOf = () =>
-    store.listTurnNotes(sessionId).find(r => r.anchorUuid === noteless.anchorUuid).note;
+    store.listTurnNotes(sessionId).find(r => r.anchorUuid === noteless.sourceEntryId).note;
   assert.equal(storedNoteOf(), null, '前提：这一行的 note 是合法的 null');
   // 那个裸命令 turn 长出一条 assistant 回复，新的当前 handoff turn 接在它后面。
   appendTranscriptEntries(transcriptPath, [
-    assistantObservation({ uuid: 'a-late', parentUuid: noteless.anchorUuid, messageId: 'm-late',
+    assistantObservation({ uuid: 'a-late', parentUuid: noteless.sourceEntryId, messageId: 'm-late',
       timestamp: ts(40), blocks: [{ type: 'text', text: 'answered the bare command turn' }] }),
     userMessage({ uuid: 'u-cur-d', parentUuid: 'a-late', text: 'prepare the handoff', timestamp: ts(41) }),
   ]);
   const again = svc.getTurnSkeleton();
-  const grownKeys = slotKeysOf(capture(transcriptPath));
-  assert.ok(grownKeys.includes(String(noteless.t)), 'fixture 自证：那个 turn 现在真的有槽了');
+  const grownKeys = slotKeysOf(capture(transcriptPath, ctx.cwd));
+  assert.ok(grownKeys.includes(String(noteless.sourceOrdinal)), 'fixture 自证：那个 turn 现在真的有槽了');
   const { sections } = parseNoteSections(readFileSync(again.notes_path, 'utf8'), grownKeys);
-  assert.equal(sections.get(String(noteless.t)), '', 'null 的 note 没有正文可预填');
+  assert.equal(sections.get(String(noteless.sourceOrdinal)), '', 'null 的 note 没有正文可预填');
   // 空正文 + 有行 ⇒ 覆盖成立；那一行的 null 也不被这段空正文改写。
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id: again.snapshot_id }), { committed: true });
   assert.equal(storedNoteOf(), null);
@@ -480,25 +521,6 @@ test('submit 落库：u_text 过 200-token 反解，search_terms 带解析后的
   assert.ok(row.searchTerms.split(' ').includes(join(ctx.cwd, 'lib/store.js')));
 });
 
-test('submit：当前 handoff turn 增长不改变捕获快照', async (t) => {
-  useTranscript(currentTurnGrowthPath);
-  t.after(() => useTranscript(transcriptPath));
-  const { snapshot_id } = produce();
-  appendTranscriptEntries(currentTurnGrowthPath, [
-    assistantToolUse({
-      uuid: 'handoff-grow-a', parentUuid: currentHandoffLeafUuid,
-      messageId: 'handoff-grow-m', toolUseId: 'handoff-grow-tu',
-      name: 'mcp__session-watcher__get_turn_skeleton', input: {}, timestamp: ts(59),
-    }),
-    toolResult({
-      uuid: 'handoff-grow-r', parentUuid: 'handoff-grow-a',
-      toolUseId: 'handoff-grow-tu', content: '{"snapshot_id":"observed"}',
-    }),
-  ]);
-  const res = await svc.submitTurnNotes({ snapshot_id });
-  assert.deepEqual(res, { committed: true });
-});
-
 test('骨架只捕获最新 compact epoch，T 仍是文件绝对行号', (t) => {
   useTranscript(compactCapturePath);
   t.after(() => useTranscript(transcriptPath));
@@ -509,25 +531,25 @@ test('骨架只捕获最新 compact epoch，T 仍是文件绝对行号', (t) => 
   assert.match(skeleton, /^T +4 \| U/m);               // compact 后不重新起编，T 仍是 grep -n 的行号
 });
 
-test('submit：任一 turn 缺 source_timestamp → invalid_snapshot、零写入', async (t) => {
-  useTranscript(missingTimestampPath);        // fixture：第二个 head U 无 timestamp
-  t.after(() => useTranscript(transcriptPath));
-  const { snapshot_id } = produce();
-  const beforeRows = store.listTurnNotes(sessionId);
-  const res = await svc.submitTurnNotes({ snapshot_id });
-  assert.deepEqual(res, { committed: false, error: 'invalid_snapshot' });
-  assert.deepEqual(store.listTurnNotes(sessionId), beforeRows);
-});
-
-test('submit：snapshot 内重复 (session, anchor) → 整组拒绝、零写入', async (t) => {
-  useTranscript(duplicateAnchorPath);         // fixture：两条可见 U 共用同一 anchorUuid
-  t.after(() => useTranscript(transcriptPath));
-  const { snapshot_id } = produce();
-  const beforeRows = store.listTurnNotes(sessionId);
-  const res = await svc.submitTurnNotes({ snapshot_id });
-  assert.deepEqual(res, { committed: false, error: 'invalid_snapshot' });
-  assert.deepEqual(store.listTurnNotes(sessionId), beforeRows);
-});
+// 头行缺时间或组内重复 identity 的捕获，两个入口都拒：骨架侧在写任何文件之前就抛（钉在
+// test/turn.capture.test.js `malformed Turn Head fails before skeleton`），提交侧仍是 invalid_snapshot。
+// 提交侧的 snapshot 取自这些捕获自己的指纹 —— 骨架已经拿不到它了。
+for (const [label, pathOf] of [
+  ['缺 source_timestamp', () => missingTimestampPath],
+  ['重复 (session, anchor)', () => duplicateAnchorPath],
+]) {
+  test(`submit：${label} → invalid_snapshot、零写入`, async (t) => {
+    const path = pathOf();
+    useTranscript(path);
+    t.after(() => useTranscript(transcriptPath));
+    assert.throws(() => svc.getTurnSkeleton(), /identity/i, '骨架侧先拒，一个文件都不写');
+    const snapshot_id = snapshotDigest(capture(path, ctx.cwd));
+    const beforeRows = store.listTurnNotes(sessionId);
+    const res = await svc.submitTurnNotes({ snapshot_id });
+    assert.deepEqual(res, { committed: false, error: 'invalid_snapshot' });
+    assert.deepEqual(store.listTurnNotes(sessionId), beforeRows);
+  });
+}
 
 test('转录读不到时：骨架抛错，submit 以 invalid_snapshot 拒绝，绝不出现「成功 + 零行」', async (t) => {
   const missingPath = join(dirname(transcriptPath), 'no-such-transcript.jsonl');
@@ -536,15 +558,15 @@ test('转录读不到时：骨架抛错，submit 以 invalid_snapshot 拒绝，�
   useTranscript(missingPath);
   t.after(() => useTranscript(transcriptPath));
 
-  assert.equal(readCanonicalTranscript(missingPath).status, 'unavailable', 'fixture 自证：该路径真的读不到');
+  assert.equal(dialogueSource.read(missingPath).status, 'unavailable', 'fixture 自证：该路径真的读不到');
   assert.throws(() => svc.getTurnSkeleton(), /transcript/i, '零 turn 的骨架看起来是合法空 epoch，不能交出去');
 
   const beforeRows = store.listTurnNotes(sessionId);
   assert.deepEqual(await svc.submitTurnNotes({ snapshot_id }),
     { committed: false, error: 'invalid_snapshot' });
-  // 丢弃读取状态时服务端会自己算出这个 digest（groupTurns([]) → 空捕获）。连它都必须被拒 ——
+  // 丢弃读取状态时服务端会自己算出这个 digest（空捕获）。连它都必须被拒 ——
   // 否则一个零槽的空捕获会以 { committed: true } 提交零行，整个 epoch 的 note 静默丢失。
-  assert.deepEqual(await svc.submitTurnNotes({ snapshot_id: snapshotDigest([], ctx.cwd) }),
+  assert.deepEqual(await svc.submitTurnNotes({ snapshot_id: snapshotDigest([]) }),
     { committed: false, error: 'invalid_snapshot' });
   assert.deepEqual(store.listTurnNotes(sessionId), beforeRows);
 });
@@ -884,7 +906,9 @@ describe('Turn page endpoint — 负载形态与 load_handoff 同一性', () => 
   test('search 成功响应不回显输入', async () => {
     const res = await ctx.request(`/api/turn/search?lineage_head=${handoffId}&q=turn9data`, {});
     assert.deepEqual(Object.keys(res).sort(), ['found', 'ranges', 'truncated']);
-    const at = findFoldByAnchor(readCanonicalTranscript(pageTranscriptPath), 'u-tp-9').sourceRef.lineOrdinal;
+    const at = readHistorySource({ dialogueSource, dialogueProjection: projectionFor(ctx.cwd) },
+      pageTranscriptPath)
+      .folds.find(f => f.sourceEntryId === 'u-tp-9').sourceOrdinal;
     assert.deepEqual(res.ranges.flatMap(g => g.matches).map(m => m.line), [at]);
   });
 
@@ -893,16 +917,12 @@ describe('Turn page endpoint — 负载形态与 load_handoff 同一性', () => 
     assert.deepEqual(res, { found: false });
   });
 
-  test('bookmark 表有 active 行也不改变 turn page', async () => {
-    // Notes seeded in before() give non-zero turn_page on both sides, so isolation of the turn page
-    // from the bookmark table is exercised on real content rather than on two empty strings.
-    const turnPageBefore = (await ctx.request(`/api/turn/page?lineage_head=${handoffId}`, {})).turn_page;
-    assert.ok(turnPageBefore.length > 0, 'sanity: page is non-empty before bookmark insert');
-    store.upsertBookmark({ projectId, sourceSessionId: 'session-tp-src', anchorUuid: 'a-tp-0', role: 'assistant',
-      previewText: 'p', originalChars: 1, truncated: 0, sourceTimestamp: 1000, createdAt: Date.now() });
-    const turnPageAfter = (await ctx.request(`/api/turn/page?lineage_head=${handoffId}`, {})).turn_page;
-    assert.equal(turnPageAfter, turnPageBefore);
+  test('load 带 lineage：每段一条 headline，label 与页里的 session 头同源', async () => {
+    const res = await ctx.request(`/api/handoff/load?load_token=${loadToken}`, {});
+    assert.deepEqual(res.lineage, [{ label: 'S1', headline: 'turn0data' }]);
+    assert.ok(res.turn_page.includes(`S1  ${pageTranscriptPath}`));
   });
+
 });
 
 // ── Turn page failure seam ────────────────────────────────────────────────────
@@ -937,6 +957,7 @@ describe('Turn page construction failure seam', () => {
     assert.equal(res.turn_page_error, 'turn_page_unavailable');
     assert.equal(res.turn_page, undefined);
     assert.equal(res.next_before, undefined);
+    assert.equal(res.lineage, undefined);
     for (const key of ['turn_page_url', 'turn_search_url', 'turn_locate_url']) {
       assert.equal(res[key], undefined, key);
     }
@@ -954,14 +975,16 @@ describe('Turn page construction failure seam', () => {
 // 这份文件里唯一往共享 store 落新 anchor 的用例，而上面两条按行数断言「无重复行」的用例只在这个
 // session 只被基准转录写过时才成立。
 describe('/exit 回显 turn — 与 /clear 落库同形', () => {
-  let ctx, store, svc;
+  let ctx, store, svc, sourcePath;
   const sessionId = 'sid-exit-echo';
 
   before(async () => {
     ctx = await bootTestServer({ sessionId });
     store = ctx.store;
     svc = ctx.turnService;
-    writeEntries(ctx.watcher.path, exitEchoEntries());
+    // This suite has its OWN owner, so it writes its OWN Source rather than the outer suite's.
+    sourcePath = ctx.transcriptPath;
+    writeEntries(sourcePath, exitEchoEntries());
   });
 
   after(async () => { await ctx.teardown(); });
@@ -969,14 +992,14 @@ describe('/exit 回显 turn — 与 /clear 落库同形', () => {
   // 槽的那半在服务端预写的标题清单上断言 —— 生产者看到的就是那份文件，它没有那个标题就不会为一个
   // 零内容的 turn 写 note。
   test('服务端不给它预写槽，落库仍是一行 note=null', async () => {
-    const exitTurn = capture(ctx.watcher.path).find(turn => turn.cleanedU === '/exit');
+    const exitTurn = capture(sourcePath, ctx.cwd).find(turn => turn.cleanedU === '/exit');
     const captured = svc.getTurnSkeleton();
     assert.deepEqual(headingKeysOf(captured.notes_path), ['1', '7'], '`/exit` 回显自成一块，它不得成为一个槽');
     fillNotes(captured.notes_path, (k) => `exit-fixture body ${k}`);
     assert.deepEqual(await svc.submitTurnNotes({ snapshot_id: captured.snapshot_id }), { committed: true });
     const rows = store.listTurnNotes(sessionId);
     assert.equal(rows.length, 3, '三个捕获的 turn 各落一行 —— 少给槽不等于少落行');
-    const row = rows.find(r => r.anchorUuid === exitTurn.anchorUuid);
+    const row = rows.find(r => r.anchorUuid === exitTurn.sourceEntryId);
     assert.equal(row.uText, '/exit', '行照旧落 —— 和 `/clear` 一样是个重启边界标记');
     assert.equal(row.note, null);
   });

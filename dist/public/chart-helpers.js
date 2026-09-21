@@ -24,7 +24,8 @@ export function computeYRatchet(currentRatchetY, yMax) {
 export function computeYMax(hist) {
   let yMax = 1;
   for (const p of hist) {
-    // ER-5: server already resolved effectiveL into p.L; client must not re-derive the miss rule.
+    // ER-5: the server already resolved the step's measured L into p.L; the client must not re-derive the
+    // miss rule.
     const eL = Number.isFinite(p.L) ? p.L : 0;
     if (eL > yMax) yMax = eL;
     // Lthreshold excluded from Y-axis sizing — on large R it dwarfs actual L data,

@@ -34,6 +34,27 @@ test('settleDeferred: Dₐ=max(0,D+ΔB−ΔL) & residual=max(0,ΔL−ΔB−D) ho
   }
 });
 
+test('settleDeferred: one interval reports exactly residual, banked and retired', () => {
+  const g = { total: 0, byPath: new Map() };
+  assert.deepEqual(settleDeferred(0, 100, new Map([['/a', 100]]), g),
+    { residual: 0, banked: 100, retired: 0 });
+  assert.deepEqual(settleDeferred(150, 0, new Map(), g),
+    { residual: 50, banked: 0, retired: 100 });
+});
+
+// The whole B-surplus banks, so a growth map that accounts for less than the surplus still lands all of it
+// on the paths that DID grow, and Dₐ = max(0, D + ΔB − ΔL) keeps holding. Placing only the accountable part
+// would leave the remainder in neither the ledger nor the residual. An EMPTY growth map is a different
+// input and this says nothing about it: the attribution has nowhere to put the surplus, and the Engine's
+// shortfall invariant is what keeps that input from reaching here at all.
+test('settleDeferred: banks the complete B-surplus across the paths that grew', () => {
+  const g = { total: 0, byPath: new Map() };
+  const r = settleDeferred(0, 100, new Map([['/a', 40]]), g);
+  assert.equal(r.banked, 100);
+  assert.ok(Math.abs(g.total - 100) < 1e-6, `deferred total: got ${g.total}, want the whole surplus`);
+  assert.ok(Math.abs(g.byPath.get('/a') - 100) < 1e-6, 'the sole grown path carries the whole surplus');
+});
+
 test('settleDeferred: scalar/Map never desync across many fractional retirements', () => {
   const g = { total: 0, byPath: new Map() };
   settleDeferred(0, 999, new Map([['/x', 333], ['/y', 333], ['/z', 333]]), g);

@@ -1,8 +1,7 @@
 // test/session-start-hook.test.js
 // Unit tests for the SessionStart hook wrapper (hooks/session-start.js).
-// The pure decision function (launchOptionsFor) is tested directly; the CLI entry's
-// best-effort "never block session start" guarantee is tested by spawning the hook
-// with malformed stdin and asserting a clean exit 0 with NO server spawned.
+// The CLI entry's best-effort "never block session start" guarantee is tested by spawning the
+// hook with malformed stdin and asserting a clean exit 0 with NO server spawned.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -11,40 +10,12 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { launchOptionsFor, readStdin, isMainModule, buildServerContext, discoverHandoffs, formatHandoffContext, discoverServerByClientPid, buildRotationFallbackContext } from '../hooks/session-start.js';
+import { readStdin, isMainModule, buildServerContext, discoverHandoffs, formatHandoffContext, discoverServerByClientPid, buildRotationFallbackContext } from '../hooks/session-start.js';
 import { openStore, closeStore } from '../lib/store.js';
 import { HANDOFF_HOOK_SOURCES } from '../lib/constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(__dirname, '..', 'hooks', 'session-start.js');
-
-test('launchOptionsFor: open ONLY on source=startup', () => {
-  assert.equal(launchOptionsFor({ source: 'startup' }).open, true);
-  for (const source of ['resume', 'clear', 'compact', undefined, 'anything']) {
-    assert.equal(launchOptionsFor({ source }).open, false, `source=${source} must not open`);
-  }
-});
-
-test('launchOptionsFor: transcript_path passes through as transcript (1:1 bind)', () => {
-  const o = launchOptionsFor({ transcript_path: '/x/y/abc.jsonl' });
-  assert.equal(o.transcript, '/x/y/abc.jsonl');
-});
-
-test('launchOptionsFor: missing transcript_path → transcript undefined (falls back to --session)', () => {
-  assert.equal(launchOptionsFor({}).transcript, undefined);
-  assert.equal(launchOptionsFor({ transcript_path: '' }).transcript, undefined);
-});
-
-test('launchOptionsFor: session_id is injected into env.CLAUDE_CODE_SESSION_ID', () => {
-  const o = launchOptionsFor({ session_id: 'sess-123' }, { HOME: '/home/u' });
-  assert.equal(o.env.CLAUDE_CODE_SESSION_ID, 'sess-123');
-  assert.equal(o.env.HOME, '/home/u'); // base env preserved
-});
-
-test('launchOptionsFor: missing session_id → no CLAUDE_CODE_SESSION_ID injected', () => {
-  const o = launchOptionsFor({}, { HOME: '/home/u' });
-  assert.ok(!('CLAUDE_CODE_SESSION_ID' in o.env));
-});
 
 test('readStdin reads a stream to completion', async () => {
   const s = Readable.from(['{"a":', '1}']);

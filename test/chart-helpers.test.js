@@ -11,7 +11,7 @@ test('computeYMax uses only L (ignores Lthreshold), floored at 1', () => {
   assert.equal(computeYMax(hist2), 40000, 'Lthreshold ignored even when much larger');
 });
 
-// ER-5: the server always resolves effectiveL into p.L (computeHistoryPoint always emits a finite L),
+// ER-5: the server always resolves the step's measured L into p.L (a history point always emits a finite L),
 // so the client no longer re-derives from cacheRead. A point carrying ONLY cacheRead (no p.L) is an
 // impossible production shape; computeYMax now reads p.L directly and therefore does NOT count it.
 // (Previously this asserted the cacheRead fallback === 42000; that fallback is exactly what ER-5 removes.)

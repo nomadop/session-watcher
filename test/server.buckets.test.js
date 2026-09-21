@@ -13,28 +13,22 @@ process.on('exit', () => {
   try { rmSync(TMP, { recursive: true, force: true }); } catch {}
 });
 
-import { SessionWatcher } from '../lib/watcher.js';
 import { createServer } from '../server.js';
+import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
 
-function fixtureWatcher() {
-  // Build a transcript with enough data for getBucketData to produce meaningful output
-  let s = ''; let cr = 42000; let id = 0;
-  for (let i = 0; i < 30; i++) { cr += 940;
-    s += JSON.stringify({ type: 'assistant', uuid: 'u' + id, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
-      message: { id: 'm' + id++, model: 'deepseek-v4-pro', usage: {
-        input_tokens: 560, output_tokens: 380, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
-  }
-  const p = join(mkdtempSync(join(tmpdir(), 'sw-')), 's.jsonl');
-  writeFileSync(p, s);
-  return new SessionWatcher(p, 42000);
-}
+void createServer;   // the composition helper owns the wiring; the import documents what it wires
 
 async function withServer(fn) {
-  const w = fixtureWatcher();
-  const { server, stopTimers } = createServer({ watcher: w, pollIntervalMs: 0, sessionId: 'test-buckets' });
+  // Enough measured steps for getBucketData to have meaningful output, plus two resident paths fed the way
+  // production feeds them: real Read tool pairs in the Source.
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({ steps: 28, paths: ['/workspace/src/app.js'] }),
+    sessionId: 'test-buckets', projectRoot: '/workspace',
+  });
+  const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
-  try { await fn(port, w); } finally { stopTimers(); await new Promise(r => server.close(r)); }
+  try { await fn(port, composed.watcher); } finally { stopTimers(); await composed.teardown(); }
 }
 
 test('GET /api/buckets returns expected shape', async () => {
@@ -50,7 +44,9 @@ test('GET /api/buckets returns expected shape', async () => {
     assert.equal(typeof data.totalB, 'number', 'totalB is a number');
     assert.equal(typeof data.totalL, 'number', 'totalL is a number');
     assert.equal(typeof data.totalResidual, 'number', 'totalResidual is a number');
-    assert.equal(typeof data.ctpOvershootRatio, 'number', 'ctpOvershootRatio is a number');
+    // CTP overshoot telemetry left status, bucket data and the terminal snapshot with the approved delta;
+    // `test/session-watcher.interface.test.js` pins its absence at the Interface.
+    assert.equal('ctpOvershootRatio' in data, false, 'the retired overshoot field is absent');
     assert.equal(typeof data.currentTurnSeq, 'number', 'currentTurnSeq is a number');
     assert.equal(typeof data.segment, 'number', 'segment is a number');
   });

@@ -1,15 +1,19 @@
+// test/turn-browse.test.js — the human browse snapshot. It reads Store Turn Records and the transient
+// `S{k}` view of the lineage it was handed, and no Source at all: `buildTurnBrowse` takes a store and a
+// lineage, so Source health has no way into this snapshot.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTurnBrowse } from '../lib/turn-browse.js';
+import { buildTurnBrowse, lineageHeadlines } from '../lib/turn-browse.js';
 
 const rowOf = (turnNoteId, anchorUuid, over = {}) => ({
   turnNoteId, anchorUuid, uText: `u ${anchorUuid}`,
   uOriginalChars: `u ${anchorUuid}`.length, note: `note ${anchorUuid}`,
   sourceTimestamp: 1, ...over,
 });
+// No `label`: the transient `S{k}` view is derived from lineage position, so a fixture cannot supply one.
 const lineage = [
-  { label: 'S1', sessionId: 'old', transcriptPath: '/t/old.jsonl', handoffId: 41 },
-  { label: 'S2', sessionId: 'new', transcriptPath: '/t/new.jsonl', handoffId: 42 },
+  { sessionId: 'old', sourceLocator: '/t/old.jsonl', sourceLabel: '/t/old.jsonl', handoffId: 41 },
+  { sessionId: 'new', sourceLocator: '/t/new.jsonl', sourceLabel: '/t/new.jsonl', handoffId: 42 },
 ];
 const rowsBySession = {
   old: [rowOf(7, 'o1')],
@@ -24,13 +28,13 @@ const listAll = (sid) => rowsBySession[sid] ?? [];
 const store = { listTurnNotes: listAll, getHandoff: (id) => handoffs[id] ?? null };
 const build = () => buildTurnBrowse({ store, lineage });
 
-test('三段 lineage 得到三个 section，label 自老到新就是 lineage 自己的标', () => {
+test('三段 lineage 得到三个 section，label 由 lineage 位置派生，自老到新', () => {
   const { sections } = buildTurnBrowse({
     store: { listTurnNotes: (sid) => [rowOf(1, sid)], getHandoff: () => null },
     lineage: [
-      { label: 'S1', sessionId: 'a', handoffId: 91 },
-      { label: 'S2', sessionId: 'b', handoffId: 92 },
-      { label: 'S3', sessionId: 'c', handoffId: 93 },
+      { sessionId: 'a', sourceLocator: null, sourceLabel: null, handoffId: 91 },
+      { sessionId: 'b', sourceLocator: null, sourceLabel: null, handoffId: 92 },
+      { sessionId: 'c', sourceLocator: null, sourceLabel: null, handoffId: 93 },
     ],
   });
   assert.deepEqual(sections.map(s => s.label), ['S1', 'S2', 'S3']);
@@ -128,4 +132,32 @@ test('段内按 turn_note_id 升序，不认 DB 返回顺序；note 为 NULL 时
 
 test('空 lineage 得到空快照，不抛错', () => {
   assert.deepEqual(buildTurnBrowse({ store, lineage: [] }), { sections: [] });
+});
+
+test('标签、正文、headline 与各段条目数全部由 Store 行与 lineage 定出', () => {
+  const { sections } = build();
+  assert.deepEqual(sections.map(s => s.label), ['S1', 'S2']);
+  assert.deepEqual(sections.map(s => s.entries.length), [1, 2]);
+  assert.deepEqual(sections[1].entries.map(e => e.u_text), ['u n1', 'u n2']);
+  assert.equal(sections[1].headline, 'S1 交出的任务');
+});
+
+test('lineageHeadlines 与 buildTurnBrowse 同段同序，每项只有 label 与 headline', () => {
+  const { sections } = build();
+  const headlines = lineageHeadlines({ store, lineage });
+  assert.deepEqual(headlines, sections.map(({ label, headline }) => ({ label, headline })));
+  for (const entry of headlines) assert.deepEqual(Object.keys(entry).sort(), ['headline', 'label']);
+});
+
+test('零笔记 session 不产生项，后继项的 label 仍由 lineage 位置派生', () => {
+  const sparse = {
+    listTurnNotes: (sid) => (sid === 'new' ? rowsBySession.new : []),
+    getHandoff: (id) => handoffs[id] ?? null,
+  };
+  assert.deepEqual(lineageHeadlines({ store: sparse, lineage }),
+    [{ label: 'S2', headline: handoffs[41].nextTask }]);
+});
+
+test('空 lineage 得到空列表，不抛错', () => {
+  assert.deepEqual(lineageHeadlines({ store, lineage: [] }), []);
 });

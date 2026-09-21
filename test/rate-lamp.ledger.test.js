@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFingerprint: 'd30000|t25000|k6|T', contextCap: 1000000, schemaVersion: 1 });
-// sample helper — field is L_read (effectiveL), NEVER cacheRead (Task 2.5 locked contract).
+// sample helper — field is L_read, the step's measured L, NEVER cacheRead (Task 2.5 locked contract).
 const rs = (seq, burnRate, L_read, turnSeq = 1) => ({ seq, reliable: true, burnRate, L_read, turnSeq });
 
 test('5: trapezoidal integration billProgress += ½(prev+now), not rectangular', () => {
@@ -188,8 +188,8 @@ test('REVIEW A2: an unreliable sample freezes lastBurnRate → null AND carries 
 
 // Task 4: currentTurnDeltaW per-turn reset test retired (field removed; backstop now via bill-count interval).
 
-test('REVIEW GPT#1: reducer uses L_read (effectiveL) — always positive progression', () => {
-  // The ledger only ever sees L_read (effectiveL). A miss row has HIGHER L_read than prior,
+test('REVIEW GPT#1: reducer uses L_read — always positive progression', () => {
+  // The ledger only ever sees L_read, the step's measured L. A miss row has HIGHER L_read than prior,
   // so the reducer integrates normally — never pauses from a miss.
   let s = freshLedger(KEY);
   s = applyFoldedCallSample(s, rs(1, 0.3, 200000));

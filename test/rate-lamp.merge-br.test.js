@@ -66,15 +66,13 @@ describe('mergeLedgerIntoStatus — br from live B/g (v3)', () => {
     assert.equal(status.rateLamp.billProgress, undefined);
   });
 
-  test('lastBillEvent and lastStopEvent passthrough', () => {
+  test('lastStopEvent passthrough', () => {
     const status = { rateLamp: { reliable: true, L_read: 40000, B_post: 20000, B_rebuild: 20000,
       C_RATIO: 12.5, gEma: 500 } };
     const ledger = { stateKey: 'k', billProgress: 0.1, billCycleCount: 0, currentTurnSeq: 1,
       lastAppliedFoldedCallSeq: 5,
-      lastBillEvent: { kind: 'non_idle_burn', turnSeq: 1 },
       lastStopEvent: { kind: 'wall', delivery: 'stop_hook', seq: 3 } };
     mergeLedgerIntoStatus(status, ledger, 'k');
-    assert.deepEqual(status.rateLamp.lastBillEvent, { kind: 'non_idle_burn', turnSeq: 1 });
     assert.deepEqual(status.rateLamp.lastStopEvent, { kind: 'wall', delivery: 'stop_hook', seq: 3 });
   });
 

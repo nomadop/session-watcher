@@ -17,7 +17,7 @@ process.on('exit', () => { try { rmSync(RL_TMP, { recursive: true, force: true }
 
 import { formatLine, createServer } from '../server.js';
 import { _resetRenderState } from '../lib/statusline-format.js';
-import { SessionWatcher } from '../lib/watcher.js';
+import { composeForTranscript } from './helpers/server-boot.js';
 
 const execFileP = promisify(execFile);
 
@@ -241,10 +241,20 @@ test('B3: an ABSENT rateLamp renders measuring… and does not throw', () => {
 // A REAL server (a latched healthy fixture → reliable rateLamp) → /api/status?fmt=line contains
 // `break-even`, and statusline.js renders it verbatim (plus the dashboard URL).
 function healthyFixtureFile() {
-  const asst = (id, cr, input, out) => JSON.stringify({ type: 'assistant', uuid: id + '_' + cr, isSidechain: false,
-    timestamp: '2026-07-01T00:00:00Z',
-    message: { id, model: 'deepseek-v4-pro', usage: { input_tokens: input, output_tokens: out,
-      cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
+  // Chained into ONE topology on purpose: a null-parent row is a topology root and a root with a call behind
+  // it is a compact epoch, so an unchained run of these would be one epoch per row rather than the single
+  // healthy session this fixture is named for.
+  let prevUuid = null;
+  const asst = (id, cr, input, out) => {
+    const uuid = id + '_' + cr;
+    const row = JSON.stringify({ type: 'assistant', uuid, parentUuid: prevUuid, isSidechain: false,
+      timestamp: '2026-07-01T00:00:00Z',
+      message: { id, role: 'assistant', model: 'deepseek-v4-pro', content: [],
+        usage: { input_tokens: input, output_tokens: out,
+          cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
+    prevUuid = uuid;
+    return row;
+  };
   const deltas = [9000, 8000, 7000, 3000, 1500, 900];
   for (let i = 6; i < 40; i++) deltas.push(940);
   let s = ''; let cr = 42000;
@@ -255,14 +265,18 @@ function healthyFixtureFile() {
   const p = join(dir, 's.jsonl'); writeFileSync(p, s); return p;
 }
 
-test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout when reliable, and statusline.js passes it through', async () => {
+test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout when reliable, and statusline.js passes it through', async (t) => {
   chmodSync(SCRIPT, 0o755);
-  const watcher = new SessionWatcher(healthyFixtureFile(), null);
-  watcher.poll();
-  const st = watcher.getStatus();
-  assert.equal(st.rateLamp?.reliable, true, 'precondition: the healthy fixture latched → reliable rateLamp');
   const sid = `sl-fmt-${randomUUID()}`;
-  const srv = createServer({ watcher, pollIntervalMs: 0, sessionId: sid });
+  // The host's synchronous bootstrap acquires the fixture before the server is exposed, so the reliable
+  // frame this asserts on is already in place — no explicit poll.
+  const composed = composeForTranscript({ transcriptPath: healthyFixtureFile(), sessionId: sid });
+  const srv = composed.handle;
+  // The composition owns the temp store as well as the server, and the precondition below can fail before the
+  // stop-and-close the exit path performs, so its own `teardown` is the release registered from here on.
+  t.after(() => composed.teardown());
+  const st = composed.watcher.getStatus();
+  assert.equal(st.rateLamp?.reliable, true, 'precondition: the healthy fixture latched → reliable rateLamp');
   await new Promise((r) => srv.server.listen(0, '127.0.0.1', r));
   const port = srv.server.address().port;
   const stateDir = mkdtempSync(join(tmpdir(), 'sw-state-'));

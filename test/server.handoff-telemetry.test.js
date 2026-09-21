@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import { writeFileSync, openSync, ftruncateSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootTestServer } from './helpers/server-boot.js';
+import { modelPolicyFor } from '../lib/model-policy.js';
+import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
+
+// A partial Read of `absPath` covering exactly [from, to]: one measured step whose result carries those
+// physical line numbers, which is what makes the resident coverage assertable as those lines.
+let readSeq = 0;
+const partialRead = (absPath, from, to) => {
+  const tag = `cmp${++readSeq}`;
+  const lines = [];
+  for (let n = from; n <= to; n++) lines.push(`${n}\tconst v${n} = ${n};`);
+  return [
+    assistantToolUse({
+      uuid: `u-${tag}`, messageId: `m-${tag}`, toolUseId: `t-${tag}`, name: 'Read',
+      input: { file_path: absPath, offset: from, limit: to - from + 1 }, timestamp: ts(8),
+      model: 'claude-opus-4-8', usage: usage({ input: 40, output: 30, cacheRead: 80000 + readSeq * 500 }),
+    }),
+    toolResult({ uuid: `r-${tag}`, toolUseId: `t-${tag}`, content: lines.join('\n') }),
+  ];
+};
 
 // Load-side telemetry tests (Task 4). Prepare-side tests are added in Task 5.
 // Uses the Task 0 harness: bootTestServer → { get, prepareHandoff, store, sessionId, cwd,
@@ -77,7 +96,7 @@ test('claim-then-crash: the SAME primary session back-fills hl on retry when it 
   const token = await ctx.prepareHandoff({ paths_to_keep: [{ path: 'a.js' }], summary: 's' });
   // Simulate: the claim txn committed but the process crashed before hl was written. We reproduce that
   // state by claiming the binding directly (no hash stamp), leaving entries with no `hl` key.
-  ctx.store.loadHandoffByToken(token, { sessionId: ctx.sessionId, loaderVersion: '0.5.0', consumerSegment: 0 });
+  ctx.store.deliverHandoffByToken(token, { sessionId: ctx.sessionId, loaderVersion: '0.5.0', consumerSegment: 0 });
   const beforeStored = JSON.parse(ctx.store._db.prepare("SELECT paths_to_keep FROM handoff WHERE load_token=?").get(token).paths_to_keep);
   assert.ok(!('hl' in (Array.isArray(beforeStored) ? beforeStored : beforeStored.paths)[0]), 'precondition: hl not yet written');
   // The same primary session reloads (claimedNow=false now) → the gate back-fills hl.
@@ -92,20 +111,17 @@ test('claim-then-crash: the SAME primary session back-fills hl on retry when it 
 // return (path + symbols + lines), load it, and assert all three round-trip — WHILE the telemetry
 // keys stay absent. If a future change adds a public entry field, this fails until it is whitelisted.
 test('compat: path + symbols + lines round-trip through the projection; telemetry keys stay absent', async () => {
-  // Seed _bRebuild line data (no full snapshot) so prepare injects collapsed line ranges — the only
-  // way a `lines` field lands on a kept entry (see server.js prepare handler).
+  // A PARTIAL Read of the path in the Source: a line-fragment update keyed by source line is the only thing
+  // that gives a kept entry its `lines`, and the coverage is what the result's own `N\t` prefixes say.
   const testPath = 'src/compat.js';
-  const be = ctx.watcher._bRebuild._ensure(testPath);
-  ctx.watcher._bRebuild._setLine(be, 10, 50);
-  ctx.watcher._bRebuild._setLine(be, 11, 40);
-  ctx.watcher._bRebuild._setLine(be, 12, 60);
   writeFileSync(join(ctx.cwd, 'compat.js'), 'export const y = 2;\n');
+  ctx.appendRows(partialRead(join(ctx.cwd, testPath), 10, 12));
   const token = await ctx.prepareHandoff({ paths_to_keep: [{ path: testPath, symbols: ['doThing'] }], summary: 's' });
   const res = await ctx.get(`/api/handoff/load?load_token=${token}`);
   assert.equal(res.found, true);
   const entries = Array.isArray(res.paths_to_keep) ? res.paths_to_keep : res.paths_to_keep.paths;
   const e = entries[0];
-  assert.equal(e.path, testPath, 'path preserved');
+  assert.ok(e.path.endsWith('src/compat.js'), 'path preserved');
   assert.deepEqual(e.symbols, ['doThing'], 'symbols preserved');
   assert.deepEqual(e.lines, [[10, 12]], 'lines preserved (collapsed range)');
   for (const leaked of ['hp', 'hl', 'bucket_id', 'match_status', 'candidate_bucket_ids', 'total_line_count', 'selected_line_count']) {
@@ -126,6 +142,10 @@ test('prepare stores bucket_snapshot server-side; the agent-visible response nev
   assert.ok(snapRaw, 'bucket_snapshot persisted');
   const snap = JSON.parse(snapRaw);
   assert.equal(typeof snap.v, 'number');
+  // The stored CTP generation comes from the model policy that priced the bucket, so a snapshot stays
+  // attributable to the calibration it was measured under rather than to a number written at this call site.
+  assert.equal(snap.ctp_version, modelPolicyFor(ctx.watcher.getCurrentModel() ?? '').ctp.version);
+  assert.ok(Number.isInteger(snap.ctp_version) && snap.ctp_version > 0);
   assert.ok(Array.isArray(snap.paths));
   assert.ok(snap.paths.every(p => typeof p.id === 'string' && typeof p.canonical_path === 'string' && typeof p.whole_ctp === 'number'));
 });
@@ -240,7 +260,12 @@ test('total_line_count has no trailing-newline off-by-one; empty file → 0', as
   // touchBucketPaths so both files are matched bucket candidates (total_line_count counts the MATCHED
   // candidate's physical file; a write-only path is unmatched → count=null). Content differs per file.
   await ctx.touchBucketPaths(['two.js'], { content: 'line1\nline2\n' });   // 2 logical lines
-  await ctx.touchBucketPaths(['empty.js'], { content: '' });
+  // `empty.js` is read with content, so it becomes a bucket candidate, and is THEN truncated on disk. That is
+  // the reachable shape of this case — a file emptied after it was read — and it keeps the count end-to-end:
+  // a zero-token resource is no candidate at all, in this runtime and in the pinned baseline alike, so a Read
+  // returning nothing could never reach the counter being asserted.
+  await ctx.touchBucketPaths(['empty.js'], { content: 'placeholder\n' });
+  writeFileSync(join(ctx.cwd, 'empty.js'), '');
   const { token } = await ctx.prepareHandoffFull({ paths_to_keep: [{ path: 'two.js' }, { path: 'empty.js' }], summary: 's' });
   const stored = JSON.parse(ctx.store._db.prepare("SELECT paths_to_keep FROM handoff WHERE load_token=?").get(token).paths_to_keep);
   const entries = Array.isArray(stored) ? stored : stored.paths;

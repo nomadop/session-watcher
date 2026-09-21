@@ -154,7 +154,7 @@ If mf is small, even bad timing costs little. If mf is large, timing matters sig
 
 **Units.** dimensionless ratio
 
-**Definition.** The ratio of cache-write price to cache-read price for the current model (C_write / C_read). Determined from a model lookup table or a user override. "How many reads does one write cost?" A higher cRatio means restarts are more expensive, pushing the sweet spot further out.
+**Definition.** The ratio of cache-write price to cache-read price for the current model (C_write / C_read). Determined from a model lookup table — keyed by the model and, where the provider prices cache lifetimes apart, by the prompt-cache lifetime the host declares — or from a user override. "How many reads does one write cost?" A higher cRatio means restarts are more expensive, pushing the sweet spot further out.
 
 **Validity.** Always positive.
 
@@ -249,7 +249,7 @@ The system tracks different categories of content:
 
 | Type | Description |
 |------|-------------|
-| **File path** | Standard tracked file (Read, Write, Edit, grep hit) |
+| **File path** | Standard tracked file (Read, Write, Edit, grep hit, or a shell read that names one file) |
 | **Skill** | Skill/instruction content loaded into context (included in B_default by default) |
 | **Bash/MCP residual** | Tool output not attributed to a specific file (contributes to residual growth, not B) |
 

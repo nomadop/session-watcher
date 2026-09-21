@@ -1,5 +1,5 @@
-// NOT in lib/ — uses the `ignore` npm package (lib/ must stay dependency-free). Collects .gitignore
-// files from the git root down to cwd (nested rules), returns an isIgnored(rel) => boolean callback.
+// Owns the `ignore` npm package so `createResourcePolicy` can take its answer as a parameter. Collects
+// .gitignore files from the git root down to cwd (nested rules), returns an isIgnored(rel) => boolean callback.
 // Fallback: no .gitignore anywhere / parse throws → returns null (all paths kept, no regression).
 import fs from 'node:fs';
 import path from 'node:path';

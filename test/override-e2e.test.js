@@ -13,105 +13,140 @@ process.on('exit', () => {
   try { rmSync(TMP, { recursive: true, force: true }); } catch {}
 });
 
-import { SessionWatcher } from '../lib/watcher.js';
-import { createServer } from '../server.js';
+import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
 
-function makeWatcher() {
-  const dir = mkdtempSync(join(tmpdir(), 'sw-'));
-  const p = join(dir, 'transcript.jsonl');
-  // Multi-call transcript so status metrics are populated
-  let s = ''; let cr = 42000;
-  for (let i = 0; i < 10; i++) {
-    cr += 800;
-    s += JSON.stringify({ type: 'assistant', uuid: 'u' + i, isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
-      message: { id: 'm' + i, model: 'deepseek-v4-pro', usage: {
-        input_tokens: 500, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } } }) + '\n';
-  }
-  writeFileSync(p, s);
-  return new SessionWatcher(p, 42000, { cwd: '/workspace' });
+// Both paths become resident through real Read tool pairs in the Source — a big one and a small one, so an
+// override that excludes the big path moves bDefault enough to move x and br with it.
+const BIG = '/workspace/src/big.ts';
+const SMALL = '/workspace/src/small.ts';
+
+const SIB_A = '/workspace/lib/a.js';
+const SIB_B = '/workspace/lib/b.js';
+const SIB_C = '/workspace/lib/c.js';
+// The leaf the sibling append chains onto: `measuredTranscript`'s last row is the final step's tool result.
+const LAST_LEAF = 'sr9';
+
+// One Read tool pair making `path` resident, as its own measured step.
+const readOf = (path, tag) => [
+  assistantToolUse({
+    uuid: `sib-${tag}`, messageId: `sibm-${tag}`, toolUseId: `sibt-${tag}`, name: 'Read',
+    input: { file_path: path }, timestamp: ts(5), model: 'deepseek-v4-pro',
+    usage: usage({ input: 40, output: 30, cacheRead: 70000 }),
+  }),
+  toolResult({
+    uuid: `sibr-${tag}`, toolUseId: `sibt-${tag}`,
+    content: Array.from({ length: 20 }, (unused, i) => `${i + 1}\tconst s${i} = ${i};`).join('\n'),
+  }),
+];
+
+// Two siblings resident from the start, so the third can be inferred from them.
+async function withServerWithSiblings(fn) {
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({
+      steps: 10, paths: [SIB_A, SIB_B],
+      content: 'export const filler = 1;\n'.repeat(40),
+    }),
+    sessionId: 'test-e2e-siblings', projectRoot: '/workspace',
+  });
+  const { server, stopTimers } = composed.handle;
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  try { await fn(port, composed.watcher, composed); } finally { stopTimers(); await composed.teardown(); }
 }
 
 async function withServer(fn) {
-  const w = makeWatcher();
-  const { server, stopTimers } = createServer({ watcher: w, pollIntervalMs: 0, sessionId: 'test-e2e' });
-  // Inject paths AFTER createServer (which runs an initial poll that rebuilds bRebuild)
-  // so the paths survive and are visible to the POST /api/user-overrides validator.
-  w._bRebuild.apply({ type: 'fullSet', lines: [[1, 2000]], overhead: 0 }, '/workspace/src/big.ts', 1, 1);
-  w._bRebuild.apply({ type: 'fullSet', lines: [[1, 500]], overhead: 0 }, '/workspace/src/small.ts', 1, 1);
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({
+      steps: 10, paths: [BIG, SMALL],
+      content: 'export const filler = 1;\n'.repeat(80),
+    }),
+    sessionId: 'test-e2e', projectRoot: '/workspace',
+  });
+  const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
-  try { await fn(port, w); } finally { stopTimers(); await new Promise(r => server.close(r)); }
+  try { await fn(port, composed.watcher); } finally { stopTimers(); await composed.teardown(); }
 }
 
 test('Apply override changes bDefault which changes x/br in status', async () => {
   await withServer(async (port, w) => {
-    // Get status before override
     const before = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
-    const bDefaultBefore = w._computeBDefault();
+    const bDefaultBefore = w.getBucketData().bDefault;
 
     // Exclude the big file
     const res = await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides: { '/workspace/src/big.ts': 'exclude' } }),
+      body: JSON.stringify({ overrides: { [BIG]: 'exclude' } }),
     });
     assert.equal(res.status, 200);
 
-    const bDefaultAfter = w._computeBDefault();
+    const bDefaultAfter = w.getBucketData().bDefault;
     assert.ok(bDefaultAfter < bDefaultBefore, `bDefault should decrease: ${bDefaultAfter} < ${bDefaultBefore}`);
 
-    // Get status after override — x should change (higher since bDefault decreased)
+    // `x` is read against the SELECTED basis, so the identity has to hold on both sides of the override —
+    // a disjunction over "something moved" would stay green if x silently switched to the unfiltered total.
     const after = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
-    // bDefault in status should reflect the change; x may also shift
-    assert.ok(after.bDefault !== before.bDefault || after.x !== before.x,
-      'Metrics should change after override');
+    assert.equal(before.bDefault, bDefaultBefore);
+    assert.equal(after.bDefault, bDefaultAfter);
+    for (const status of [before, after]) {
+      assert.ok(Math.abs(status.x - status.L / status.bDefault) < 1e-9,
+        `x must be L/bDefault: got ${status.x}, L=${status.L}, bDefault=${status.bDefault}`);
+    }
+    assert.ok(after.x > before.x, 'excluding a resource shrinks the basis, so x rises');
   });
 });
 
 test('Reset (empty overrides) restores original bDefault', async () => {
   await withServer(async (port, w) => {
-    const bOriginal = w._computeBDefault();
+    const bOriginal = w.getBucketData().bDefault;
 
-    // Apply override
     await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides: { '/workspace/src/big.ts': 'exclude' } }),
+      body: JSON.stringify({ overrides: { [BIG]: 'exclude' } }),
     });
-    assert.notEqual(w._computeBDefault(), bOriginal);
+    assert.notEqual(w.getBucketData().bDefault, bOriginal);
 
-    // Reset
     await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ overrides: {} }),
     });
-    assert.equal(w._computeBDefault(), bOriginal);
+    assert.equal(w.getBucketData().bDefault, bOriginal);
   });
 });
 
-test('Inference + Apply interaction preserves inferred entries', async () => {
-  await withServer(async (port, w) => {
-    // Set up siblings with override (absolute paths)
-    w._bRebuild.apply({ type: 'fullSet', lines: [[1, 300]], overhead: 0 }, '/workspace/lib/a.js', 1, 1);
-    w._bRebuild.apply({ type: 'fullSet', lines: [[1, 200]], overhead: 0 }, '/workspace/lib/b.js', 1, 1);
-    w._userOverrides.set('/workspace/lib/a.js', 'exclude');
-    w._userOverrides.set('/workspace/lib/b.js', 'exclude');
+// Sibling inference is driven by the SOURCE now: a resource key the Engine reports as newly created is what
+// triggers the resource-policy flush, and the flush takes ONE snapshot of the resident set per Engine epoch.
+// So the new sibling has to arrive as a real Read in the Source rather than as an injected map entry — which
+// is also the only way the inference under test is the one production runs.
+test('a new sibling of excluded siblings is inferred excluded, and an Apply preserves it', async () => {
+  await withServerWithSiblings(async (port, w, composed) => {
+    const overrideOf = (path) => w.getBucketData().paths.find(row => row.path === path)?.userOverride ?? null;
 
-    // Simulate new file arrival
-    w._bRebuild.apply({ type: 'fullSet', lines: [[1, 150]], overhead: 0 }, '/workspace/lib/c.js', 1, 1);
-    w._tryInferOverride('/workspace/lib/c.js');
-    assert.equal(w._userOverrides.get('/workspace/lib/c.js'), 'exclude', 'c.js should be inferred as exclude');
-
-    // Now POST an Apply that includes all current non-default state
-    // (simulating what frontend would send — it sees userOverride on all three)
+    // Exclude the two siblings through the route, which is the only way a manual override is established.
     const res = await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides: { '/workspace/lib/a.js': 'exclude', '/workspace/lib/b.js': 'exclude', '/workspace/lib/c.js': 'exclude' } }),
+      body: JSON.stringify({ overrides: { [SIB_A]: 'exclude', [SIB_B]: 'exclude' } }),
     });
     assert.equal(res.status, 200);
-    // All three should remain in the map
-    assert.equal(w._userOverrides.get('/workspace/lib/c.js'), 'exclude');
+    assert.equal(overrideOf(SIB_A), 'exclude');
+    assert.equal(overrideOf(SIB_B), 'exclude');
+
+    // A THIRD file in the same directory arrives in the Source. The flush infers from its siblings.
+    composed.appendRows(readOf(SIB_C, 'zz'), { parentUuid: LAST_LEAF });
+    assert.equal(overrideOf(SIB_C), 'exclude', 'the new sibling is inferred excluded from its siblings');
+
+    // An Apply that re-sends every non-default entry keeps all three: manual and inferred share one set.
+    const applied = await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: { [SIB_A]: 'exclude', [SIB_B]: 'exclude', [SIB_C]: 'exclude' } }),
+    });
+    assert.equal(applied.status, 200);
+    assert.equal(overrideOf(SIB_C), 'exclude');
   });
 });

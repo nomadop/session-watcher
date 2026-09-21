@@ -24,6 +24,20 @@ import { homedir } from "node:os";
 import { performance } from "node:perf_hooks";
 
 // lib/constants.js
+var DEFAULT_CACHE_TTL = "5m";
+var C_RATIO_TABLE = [
+  // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
+  // not express invariance, a scalar row does, and a provider whose price does not move with the lifetime
+  // takes one.
+  // The quotient divides out the base input price, so one row covers every model a provider bills at the same
+  // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
+  // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
+  // precedes the broader one whose pattern also matches its ids.
+  { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
+  { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
+  { match: /deepseek.*pro/i, ratio: 30 },
+  { match: /deepseek/i, ratio: 50 }
+];
 var HANDOFF_HOOK_TTL_DAYS = 7;
 var HANDOFF_HOOK_MAX_DISPLAY = 3;
 var HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1;
@@ -171,15 +185,6 @@ Task: ${truncTask(r.next_task)}` : "";
 function buildServerContext(serverUrl) {
   if (!serverUrl) return null;
   return `[Session Watcher] Server: ${serverUrl}`;
-}
-function launchOptionsFor(payload = {}, baseEnv = process.env) {
-  const env = { ...baseEnv };
-  if (payload.session_id) env.CLAUDE_CODE_SESSION_ID = payload.session_id;
-  return {
-    env,
-    open: payload.source === "startup",
-    transcript: payload.transcript_path || void 0
-  };
 }
 function resolveStateDir() {
   return process.env.SW_STATE_DIR || join3(homedir3(), ".session-watcher");
@@ -344,6 +349,5 @@ export {
   discoverServerByClientPid,
   formatHandoffContext,
   isMainModule,
-  launchOptionsFor,
   readStdin
 };
