@@ -66,14 +66,6 @@ export function buildProjectionData(points, lastGEma, currentRatchetX, currentRa
   ];
 }
 
-// Bill-regret at a preview position: br = mf*(u-1)^2/(2u) where u = (x-1)/dhat.
-// Guards u<=0 (undefined/degenerate) by returning 0, matching the call-site behaviour in
-// both heroDiptych and depthAux before this was extracted.
-export function computePreviewBr(mf, u) {
-  if (u <= 0) return 0;
-  return mf * (u - 1) * (u - 1) / (2 * u);
-}
-
 // §10.4 miss-marker demotion: small triangles at x-axis (6px), semi-transparent.
 // One point per miss at y=0 — rendered as triangle pointStyle by the dataset config.
 // Each point carries historyIndex so the tooltip can map back to the source history row.

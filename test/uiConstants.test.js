@@ -7,7 +7,6 @@ import {
   GHOST_OPACITY,
   HOVER_LINE_COLOR,
   COPY_FEEDBACK_MS,
-  MIN_B_PREVIEW,
   OTHERS_DRIFT_WARN_PCT,
   MAG_VISIBLE_TICKS as UI_MAG_VISIBLE_TICKS,
   CHURN_ELEVATED_THRESHOLD as UI_CHURN_ELEVATED_THRESHOLD,
@@ -48,11 +47,6 @@ describe('uiConstants', () => {
   it('COPY_FEEDBACK_MS is a number equal to 1500', () => {
     assert.equal(typeof COPY_FEEDBACK_MS, 'number');
     assert.equal(COPY_FEEDBACK_MS, 1500);
-  });
-
-  it('MIN_B_PREVIEW is a number equal to 1000', () => {
-    assert.equal(typeof MIN_B_PREVIEW, 'number');
-    assert.equal(MIN_B_PREVIEW, 1000);
   });
 
   it('OTHERS_DRIFT_WARN_PCT is a number equal to 0.02', () => {

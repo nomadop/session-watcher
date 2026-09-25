@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.7.1",
+      version: "0.8.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -370,7 +370,7 @@ var init_dialogue_fold = __esm({
 });
 
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, SEGMENT_DROP_EPSILON, NOTIFY_DWELL, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES;
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, SEGMENT_DROP_EPSILON, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES;
 var init_constants = __esm({
   "lib/constants.js"() {
     RECENT_STOP_EVENTS_LIMIT = 32;
@@ -385,6 +385,7 @@ var init_constants = __esm({
       // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
       // precedes the broader one whose pattern also matches its ids.
       { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
+      { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, "1h": 40 } },
       { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
@@ -450,7 +451,6 @@ var init_constants = __esm({
     G_FLOOR = 100;
     MISS_CR_DROP = 0.95;
     SEGMENT_DROP_EPSILON = 100;
-    NOTIFY_DWELL = 3;
     GC_BATCH_LIMIT = 3;
     GC_REPLAY_MAX_FILE_BYTES = 5e7;
     GC_HANDOFF_MAX_AGE_DAYS = 90;
@@ -497,25 +497,6 @@ function computePp(x, dhat) {
   if (!Number.isFinite(u) || u <= 0) return null;
   return (u - 1) * (u - 1) / (2 * u);
 }
-function xRightFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uRight = 1 + p + Math.sqrt(disc);
-  return 1 + uRight * dhat;
-}
-function xLeftFromBr(brTarget, dhat, mf) {
-  if (!(brTarget >= 0) || !(dhat > 0) || !(mf > 0)) return NaN;
-  const p = brTarget / mf;
-  const disc = p * p + 2 * p;
-  const uLeft = 1 + p - Math.sqrt(disc);
-  return 1 + uLeft * dhat;
-}
-function isInDeepWater(x, xSweet, br) {
-  if (!Number.isFinite(br) || !Number.isFinite(x) || !Number.isFinite(xSweet)) return false;
-  if (x < xSweet) return false;
-  return br >= BR_AMBER;
-}
 function uAtBr(mf, brTarget) {
   if (!Number.isFinite(mf) || mf <= 0) return Infinity;
   if (!Number.isFinite(brTarget)) return Infinity;
@@ -527,10 +508,16 @@ function uAtBr(mf, brTarget) {
   if (disc < 0) return Infinity;
   return (-b + Math.sqrt(disc)) / (2 * a);
 }
-function backstopIntervalFor(mf, brTarget) {
+function walletIntervalFor(mf, brTarget) {
   const u = uAtBr(mf, brTarget);
   if (!Number.isFinite(u)) return Infinity;
   return u * u;
+}
+function uLeftAtBr(mf, brTarget) {
+  return 1 / uAtBr(mf, brTarget);
+}
+function wallPositionFor(cRatio) {
+  return 1 + cRatio;
 }
 var BR_AMBER, BR_RED;
 var init_bill_regret = __esm({
@@ -677,7 +664,7 @@ function createHandoffComposition({
       return null;
     }
   }
-  function composePrepared({ input, measurement, filePaths, ctp, projectRoot, symbolRangesFor }) {
+  function composePrepared({ input, measurement, filePaths, ctp, projectRoot, symbolRangesFor, rateForKept }) {
     const { pathsToKeep = [], skillsToKeep, summary = "", nextTask = null } = input ?? {};
     if (!Array.isArray(pathsToKeep)) return { status: "error", error: "invalid_paths_to_keep" };
     if (pathsToKeep.length > HANDOFF_MAX_PATHS) {
@@ -764,6 +751,7 @@ function createHandoffComposition({
     }
     const known = new Map(filePaths.map((row) => [row.path, { tokens: row.tokens, lastTurn: row.lastTurn }]));
     const resolvedPaths = [];
+    const keptKeys = [];
     let keptTokens = 0;
     for (const entry of keptEntries) {
       const matches = [];
@@ -773,9 +761,11 @@ function createHandoffComposition({
       if (matches.length > 1) {
         matches.sort((a, b) => b.lastTurn - a.lastTurn);
         keptTokens += matches[0].tokens;
+        keptKeys.push(matches[0].key);
         resolvedPaths.push({ from: entry.path, to: matches[0].key });
       } else if (matches.length === 1) {
         keptTokens += matches[0].tokens;
+        keptKeys.push(matches[0].key);
       } else {
         unknownPaths.push(entry.path);
       }
@@ -828,10 +818,10 @@ function createHandoffComposition({
     const previousStats = {
       b_full: m.B,
       b_default: bDefault,
-      g: m.g,
+      g: m.gBar,
       mf: m.mf,
       br_exit: m.br,
-      pp_exit: computePp(m.x, m.dhat),
+      pp_exit: m.pp,
       turns: measurement.turnSeq,
       total_l: m.L,
       dead,
@@ -840,7 +830,7 @@ function createHandoffComposition({
     };
     const bKept = keptTokens > 0 ? keptTokens + sessionFloor : null;
     const preparedStats = bKept && m.cRatio > 0 ? (() => {
-      const gKept = m.g;
+      const gKept = rateForKept(keptKeys);
       const dhatKept = nucleus(m.cRatio, gKept, bKept);
       const mfKept = computeMovableFrac(m.cRatio, bKept, gKept);
       const xKept = m.L / bKept;
@@ -46907,7 +46897,8 @@ var init_session_watcher = __esm({
           x: status.x,
           dhat: status.dhat,
           xSweet: status.xSweet,
-          burnRate: status.burnRate,
+          u: status.u,
+          pp: status.pp,
           mf: status.mf,
           br: status.br,
           // The displayed model identity is the latest measured step's, while every policy value the reads
@@ -46929,8 +46920,10 @@ var init_session_watcher = __esm({
           segment: point.segment,
           L: point.L,
           B: point.B,
-          x: point.x,
           g: point.g,
+          bDefault: point.bDefault,
+          u: point.u,
+          pp: point.pp,
           miss: point.miss,
           cacheRead: point.cacheRead,
           cacheCreation: point.cacheWrite,
@@ -47025,9 +47018,16 @@ var init_session_watcher = __esm({
       replaceUserOverrides(entries) {
         return this._engine.replaceResourceOverrides(entries);
       }
-      // The only runtime ratio mutation. It rebuilds no measurement state, recomputes no prior segment extremum
-      // and no Rate Lamp integral, and leaves `streamRevision` alone: the sample stream is continuous across a
-      // price change, and the Engine finalizer freezes the effective close-time ratio in the closed segment.
+      // The same fold under a CANDIDATE override set. It validates through the same parse Apply does and mutates
+      // nothing, so the position a consumer previews is the position the Apply it may follow with then reads.
+      readScenario(overrides) {
+        return this._engine.readScenario(overrides);
+      }
+      // The only runtime ratio mutation. It moves the policy signature, so the Engine re-stamps every step of the
+      // open segment under the new price. It recomputes no closed segment's extremum, leaves the Rate Lamp
+      // ledger's integral as it stands and does not move `streamRevision`, so the ledger keeps what it already
+      // integrated and the re-stamped increments reach it with the frames drained after the change. The Engine
+      // finalizer freezes the effective close-time ratio in the closed segment.
       setRatioOverride(value) {
         this._ratioOverride = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
         return this._engine.refreshReadPolicies();
@@ -47056,7 +47056,16 @@ var init_session_watcher = __esm({
           filePaths,
           ctp: this._resolveModelPolicy(measurement.epochModel).ctp,
           projectRoot: this._projectRoot,
-          symbolRangesFor: (request) => this._enrichment.symbolRanges(request)
+          symbolRangesFor: (request) => this._enrichment.symbolRanges(request),
+          // The kept scenario: every file resource the handoff keeps is carried, every other one is left out
+          // as excess. Skills keep their default selection — the kept-token total counts files alone.
+          rateForKept: (keptKeys) => {
+            const kept = new Set(keptKeys);
+            const overrides = {};
+            for (const row2 of filePaths) overrides[row2.path] = kept.has(row2.path) ? "include" : "exclude";
+            const scenario = this._engine.readScenario(overrides);
+            return scenario.reliable ? scenario.gBar : 0;
+          }
         });
         if (composed.status === "error") return composed;
         const row = {
@@ -51847,6 +51856,98 @@ var init_rate_lamp = __esm({
   }
 });
 
+// lib/measurement/position.js
+function baselineOf(dead, carried, selector) {
+  let sum = dead;
+  for (const [resourceKey, tokens] of carried) if (selector(resourceKey)) sum += tokens;
+  return sum;
+}
+function createPathFold({ dead, R, selector }) {
+  const carried = /* @__PURE__ */ new Map();
+  let u = 0, lambda = 0, F = 0;
+  let growthSum = 0, intervals = 0;
+  let prev = null;
+  function absorb(growth) {
+    if (!growth) return;
+    let excess = growth.stock;
+    for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
+    growthSum += Math.max(0, excess);
+    intervals += 1;
+  }
+  const rate = () => intervals > 0 ? growthSum / intervals : 0;
+  return {
+    rate,
+    push(frame) {
+      for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
+      const B = baselineOf(dead, carried, selector);
+      const x = frame.L / B;
+      if (prev === null) {
+        absorb(frame.growth);
+        prev = { B, g: rate(), L: frame.L };
+        return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
+      }
+      u += Math.sqrt(prev.g / (2 * R * prev.B));
+      const V = Math.sqrt(2 * R * prev.B * prev.g);
+      lambda += V;
+      F += prev.B + R * prev.g;
+      const mfLocal = V / (prev.B + R * prev.g + V);
+      const pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null;
+      const mf = lambda / (F + lambda);
+      const br = pp === null ? null : mf * pp;
+      let deltaW = null;
+      if (prev.B > 0) {
+        const rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R });
+        const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
+        deltaW = 0.5 * (rPrev + rNow);
+      }
+      absorb(frame.growth);
+      prev = { B, g: rate(), L: frame.L };
+      return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
+    }
+  };
+}
+function fitAffine(points) {
+  const fitted = [];
+  let su = 0;
+  const distinct = /* @__PURE__ */ new Set();
+  for (const p of points) {
+    if (p.pp === null) continue;
+    fitted.push(p);
+    su += p.u;
+    distinct.add(p.u);
+  }
+  if (distinct.size < 2) return null;
+  const n = fitted.length, uMean = su / n, x0 = fitted[0].x;
+  let suu = 0, sux = 0, sx = 0;
+  for (const p of fitted) {
+    const du = p.u - uMean;
+    suu += du * du;
+    sux += du * (p.x - x0);
+    sx += p.x;
+  }
+  const d = sux / suu;
+  if (!(Number.isFinite(d) && d > 0)) return null;
+  return { a: sx / n - d * uMean, d };
+}
+function landmarksOf(reference, mf) {
+  if (!reference || !(Number.isFinite(mf) && mf > 0)) {
+    return { xSweet: null, xBrAmberL: null, xBrAmberR: null, xBrRedR: null };
+  }
+  const xAt = (u) => reference.a + reference.d * u;
+  return {
+    xSweet: xAt(1),
+    xBrAmberL: xAt(uLeftAtBr(mf, BR_AMBER)),
+    xBrAmberR: xAt(uAtBr(mf, BR_AMBER)),
+    xBrRedR: xAt(uAtBr(mf, BR_RED))
+  };
+}
+var init_position = __esm({
+  "lib/measurement/position.js"() {
+    init_rate_lamp();
+    init_bill_regret();
+  }
+});
+
 // lib/measurement/resident-ledger.js
 function invariant2(ok, message) {
   if (!ok) throw new Error(`resident ledger invariant: ${message}`);
@@ -52053,16 +52154,11 @@ function emaStep(prevG, gInput) {
 function effectiveG(gEma) {
   return Math.max(Number.isFinite(gEma) ? gEma : G_FLOOR, G_FLOOR);
 }
-function deriveQuantities({ L, bFull, bDefault, cRatio, g }) {
-  const baselineValid = bFull > 0 && cRatio > 0;
-  const bPos = bDefault > 0 ? bDefault : bFull;
-  const x = baselineValid ? L / bPos : 1;
-  const dhat = baselineValid ? nucleus(cRatio, g, bPos) : null;
-  const xSweet = dhat != null ? 1 + dhat : null;
-  const burnRate = baselineValid ? computeFullCarryBurnRate({ L_read: L, B_post: bPos, B_rebuild: bPos, cRatio }) : null;
-  const mf = baselineValid ? computeMovableFrac(cRatio, bPos, g) : null;
-  const br = dhat > 0 && Number.isFinite(mf) ? computeBr(x, dhat, mf) : null;
-  return { baselineValid, bPos, x, dhat, xSweet, burnRate, mf, br };
+function deriveQuantities({ L, bDefault, cRatio, g }) {
+  const baselineValid = bDefault > 0 && cRatio > 0;
+  const x = baselineValid ? L / bDefault : 1;
+  const dhat = baselineValid ? nucleus(cRatio, g, bDefault) : null;
+  return { baselineValid, x, dhat };
 }
 function diagnostic2(code, message) {
   return { scope: "measurement-engine", code, message };
@@ -52090,6 +52186,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   let resourceGrowth = /* @__PURE__ */ new Map();
   let resourceOverrides = /* @__PURE__ */ new Map();
   let resourcePolicyByKey = /* @__PURE__ */ new Map();
+  let frames = [];
+  let recordedTokens = /* @__PURE__ */ new Map();
+  let defaultFold = null;
   let segmentStartTurn = 0;
   let segmentOutputSum = 0;
   let segmentUsageCount = 0;
@@ -52097,10 +52196,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   let segmentFirstTs = null;
   let segmentLastTs = null;
   let segmentLPeak = 0;
-  let segmentBrPeak = 0;
-  let segmentPpPeak = 0;
   let segmentGMin = Infinity;
-  let segmentTurnAtBrAmber = null;
   function openFreshSegment() {
     segmentSeq += 1;
     epochModel = null;
@@ -52118,6 +52214,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     resourceGrowth = /* @__PURE__ */ new Map();
     resourceOverrides = /* @__PURE__ */ new Map();
     resourcePolicyByKey = /* @__PURE__ */ new Map();
+    frames = [];
+    recordedTokens = /* @__PURE__ */ new Map();
+    defaultFold = null;
     segmentStartTurn = turnSeq;
     segmentOutputSum = 0;
     segmentUsageCount = 0;
@@ -52125,10 +52224,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     segmentFirstTs = null;
     segmentLastTs = null;
     segmentLPeak = 0;
-    segmentBrPeak = 0;
-    segmentPpPeak = 0;
     segmentGMin = Infinity;
-    segmentTurnAtBrAmber = null;
   }
   function readModelPolicy(raw) {
     if (raw === null || typeof raw !== "object") return null;
@@ -52186,12 +52282,87 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     for (const [resourceKey, value] of resourceOverrides) parts2.push(resourceKey, value);
     return JSON.stringify(parts2);
   }
-  function isSelected(resourceKey) {
-    const override = resourceOverrides.get(resourceKey);
+  function selectedUnder(overrides, resourceKey) {
+    const override = overrides.get(resourceKey);
     if (override === "include") return true;
     if (override === "exclude") return false;
     const entry = resourcePolicyByKey.get(resourceKey);
     return entry ? entry.selectedByDefault : true;
+  }
+  function selectorOf(overrides) {
+    return (resourceKey) => selectedUnder(overrides, resourceKey);
+  }
+  function isSelected(resourceKey) {
+    return selectedUnder(resourceOverrides, resourceKey);
+  }
+  function recordFrame(step, growth) {
+    const resourceTokens = /* @__PURE__ */ new Map();
+    const totals = ledger.residentTotals();
+    const present = /* @__PURE__ */ new Set();
+    for (const { resourceKey, tokens } of totals) {
+      present.add(resourceKey);
+      if (recordedTokens.get(resourceKey) === tokens) continue;
+      resourceTokens.set(resourceKey, tokens);
+      recordedTokens.set(resourceKey, tokens);
+    }
+    for (const [resourceKey, tokens] of recordedTokens) {
+      if (!(tokens > 0) || present.has(resourceKey)) continue;
+      resourceTokens.set(resourceKey, 0);
+      recordedTokens.set(resourceKey, 0);
+    }
+    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens };
+    frames.push(frame);
+    return frame;
+  }
+  function foldFor(selector) {
+    return epochPolicy ? createPathFold({ dead, R: epochPolicy.cRatio, selector }) : null;
+  }
+  function stampOf(point) {
+    return {
+      bDefault: point.bDefault,
+      x: point.x,
+      u: point.u,
+      pp: point.pp,
+      mf: point.mf,
+      mfLocal: point.mfLocal,
+      br: point.br,
+      deltaW: point.deltaW
+    };
+  }
+  function scenarioPoints(selector) {
+    const fold = foldFor(selector);
+    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate() } : { points: [], gBar: 0 };
+  }
+  function stampNewFrame(step, frame) {
+    if (frames.length === 1) defaultFold = foldFor(isSelected);
+    step.stamp = defaultFold ? stampOf(defaultFold.push(frame)) : null;
+  }
+  function restampSegment() {
+    defaultFold = foldFor(isSelected);
+    const bySeq = new Map(segmentSteps.map((step) => [step.foldedSeq, step]));
+    for (const step of segmentSteps) step.stamp = null;
+    if (!defaultFold) return;
+    for (const frame of frames) bySeq.get(frame.seq).stamp = stampOf(defaultFold.push(frame));
+  }
+  function stampedPoints() {
+    const points = [];
+    for (const step of segmentSteps) if (step.stamp) points.push(step.stamp);
+    return points;
+  }
+  function describeScenario(points) {
+    const last = points[points.length - 1];
+    const relabelled = points.map((p) => ({ u: p.u, pp: p.pp, x: 1 + (p.x - 1) * p.bDefault / last.bDefault }));
+    const fit = fitAffine(relabelled);
+    return {
+      u: last.u,
+      pp: last.pp,
+      mf: last.mf,
+      mfLocal: last.mfLocal,
+      br: last.br,
+      bDefault: last.bDefault,
+      reference: fit ? { a: fit.a, d: fit.d, provisional: last.u < 1 } : null,
+      ...landmarksOf(fit, last.mf)
+    };
   }
   function bDefaultOf(totals) {
     let sum = dead;
@@ -52263,9 +52434,19 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     if (Number.isFinite(timestamp)) segmentLastTs = timestamp;
     result.revisedCalls += 1;
   }
-  function settle({ L, totalStock, residentTotal }) {
+  function settle({ L, totalStock, residentTotal, totals }) {
     const cursor = settlementCursor;
     const deltaResident = residentTotal - cursor.residentTotal;
+    const resourceDeltas = /* @__PURE__ */ new Map();
+    const present = /* @__PURE__ */ new Set();
+    for (const { resourceKey, tokens } of totals) {
+      present.add(resourceKey);
+      const delta = tokens - (cursor.resourceTotals.get(resourceKey) ?? 0);
+      if (delta !== 0) resourceDeltas.set(resourceKey, delta);
+    }
+    for (const [resourceKey, tokens] of cursor.resourceTotals) {
+      if (!present.has(resourceKey)) resourceDeltas.set(resourceKey, -tokens);
+    }
     let deltaL = L - cursor.L;
     if (cursor.L < sessionFloor && deltaL > 0) deltaL = Math.max(0, L - sessionFloor);
     const pathDeltas = resourceGrowth;
@@ -52285,6 +52466,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const unplacedGrowth = Math.max(0, deltaStock - deltaResident);
     gEma = emaStep(gEma, unplacedGrowth);
     distributeResidual(unplacedGrowth);
+    return { stock: deltaStock, resources: resourceDeltas };
   }
   function distributeResidual(residual) {
     if (pendingResiduals.length === 0) return;
@@ -52306,30 +52488,16 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       });
     }
   }
-  function updateSegmentExtrema(L, residentTotal, bDefault) {
+  function updateSegmentExtrema(L) {
     segmentLPeak = Math.max(segmentLPeak, L);
-    const g = effectiveG(gEma);
-    segmentGMin = Math.min(segmentGMin, g);
-    const { x, dhat, br } = deriveQuantities({
-      L,
-      bFull: residentTotal,
-      bDefault,
-      cRatio: epochPolicy ? epochPolicy.cRatio : 0,
-      g
-    });
-    const pp = computePp(x, dhat);
-    if (Number.isFinite(br)) {
-      segmentBrPeak = Math.max(segmentBrPeak, br);
-      if (br >= BR_AMBER && segmentTurnAtBrAmber === null) segmentTurnAtBrAmber = turnSeq - segmentStartTurn;
-    }
-    if (Number.isFinite(pp)) segmentPpPeak = Math.max(segmentPpPeak, pp);
+    segmentGMin = Math.min(segmentGMin, effectiveG(gEma));
   }
   function acceptNewStep(record2, usage, usageTotal, timestamp, result) {
     const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
     const model = record2.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
     if (settlementCursor === null && totalStock > 0) {
-      dead = Math.max(usage.input, usage.cacheRead, usage.cacheWrite);
+      dead = totalStock;
       sessionFloor = totalStock;
     }
     const totals = ledger.residentTotals();
@@ -52341,8 +52509,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       prevTotalStock: settlementCursor.totalStock
     });
     const L = miss ? totalStock : usage.cacheRead;
+    let growth = null;
     if (settlementCursor !== null) {
-      settle({ L, totalStock, residentTotal });
+      growth = settle({ L, totalStock, residentTotal, totals });
     } else {
       if (gEma === null) gEma = G_FLOOR;
       resourceGrowth = /* @__PURE__ */ new Map();
@@ -52372,7 +52541,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       bAtCall: Math.min(residentTotal, totalStock),
       gAtCall: effectiveG(gEma),
       turn: turnSeq,
-      foldedSeq
+      foldedSeq,
+      stamp: null
     };
     stepsById.set(step.id, step);
     segmentSteps.push(step);
@@ -52384,8 +52554,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       if (segmentFirstTs === null) segmentFirstTs = timestamp;
       segmentLastTs = timestamp;
     }
-    updateSegmentExtrema(L, residentTotal, bDefaultOf(totals));
-    if (totalStock > 0) settlementCursor = { L, totalStock, residentTotal };
+    updateSegmentExtrema(L);
+    if (totalStock > 0) {
+      settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
+      stampNewFrame(step, recordFrame(step, growth));
+    }
     result.newCalls += 1;
   }
   function ingestStep(record2, result) {
@@ -52451,26 +52624,26 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     }));
     const closingDead = dead;
     const paths = [];
-    const correctedTotals = [];
+    let bTotal = closingDead;
     for (const resource of closing.resources) {
       const tokens = resourceTokensOf(resource, corrections.get(resource.resourceKey) || 0);
       if (!(tokens > 0)) continue;
       paths.push({ path: resource.resourceKey, tokens });
-      correctedTotals.push({ resourceKey: resource.resourceKey, tokens });
+      bTotal += tokens;
     }
     paths.sort((a, b) => b.tokens - a.tokens);
-    let bTotal = closingDead;
-    for (const { tokens } of correctedTotals) bTotal += tokens;
     const cRatio = epochPolicy ? epochPolicy.cRatio : null;
     const g = effectiveG(gEma);
-    const exitL = segmentSteps[segmentSteps.length - 1].L;
-    const q = deriveQuantities({
-      L: exitL,
-      bFull: bTotal,
-      bDefault: bDefaultOf(correctedTotals),
-      cRatio: cRatio ?? 0,
-      g
-    });
+    let brPeak = 0, ppPeak = 0, turnAtBrAmber = null, last = null;
+    for (const step of segmentSteps) {
+      if (!step.stamp) continue;
+      last = step.stamp;
+      brPeak = Math.max(brPeak, step.stamp.br);
+      if (turnAtBrAmber === null && step.stamp.u >= 1 && step.stamp.br >= BR_AMBER) {
+        turnAtBrAmber = step.turn - segmentStartTurn;
+      }
+      ppPeak = Math.max(ppPeak, step.stamp.pp);
+    }
     const oAvg = segmentUsageCount > 0 ? segmentOutputSum / segmentUsageCount : null;
     const durationMs = Number.isFinite(segmentFirstTs) && Number.isFinite(segmentLastTs) ? segmentLastTs - segmentFirstTs : null;
     const closed = {
@@ -52487,16 +52660,16 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         turns: turnSeq - segmentStartTurn,
         durationMs,
         totalTokensRead: Number.isFinite(segmentInputSum) ? segmentInputSum : null,
-        mf: q.mf,
-        ppExit: computePp(q.x, q.dhat),
-        brExit: q.br,
-        brPeak: segmentBrPeak,
-        ppPeak: segmentPpPeak,
+        mf: last ? last.mf : null,
+        ppExit: last ? last.pp : null,
+        brExit: last ? last.br : null,
+        brPeak,
+        ppPeak,
         p0: cRatio > 0 && g > 0 ? closingDead / (cRatio * g) : null,
         bAxis: g > 0 && segmentUsageCount > 0 ? 2 * oAvg / g : null,
         xAxis: closingDead > 0 ? segmentLPeak / closingDead : null,
         gMin: Number.isFinite(segmentGMin) ? segmentGMin : null,
-        turnAtBrAmber: segmentTurnAtBrAmber
+        turnAtBrAmber
       },
       paths
     };
@@ -52508,17 +52681,17 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     return { closedSegments: closed ? [closed] : [], diagnostics: [] };
   }
   function readView() {
-    const totals = ledger.residentTotals();
-    const residentTotal = residentTotalOf(totals);
-    const bDefault = bDefaultOf(totals);
     const lastStep = segmentSteps.length ? segmentSteps[segmentSteps.length - 1] : null;
+    const stamp = lastStep ? lastStep.stamp : null;
     const L = lastStep ? lastStep.L : 0;
+    const B = lastStep ? lastStep.bAtCall : 0;
+    const bDefault = stamp ? stamp.bDefault : 0;
     const g = effectiveG(gEma);
     const cRatio = epochPolicy ? epochPolicy.cRatio : null;
-    const B = settlementCursor ? Math.min(residentTotal, settlementCursor.totalStock) : residentTotal;
-    const q = deriveQuantities({ L, bFull: residentTotal, bDefault, cRatio: cRatio ?? 0, g });
+    const q = deriveQuantities({ L, bDefault, cRatio: cRatio ?? 0, g: defaultFold ? defaultFold.rate() : 0 });
     const lCap = epochPolicy ? epochPolicy.contextCapacity - RESERVED_OUTPUT - CTX_SAFETY_MARGIN : null;
-    const rateLamp = q.baselineValid ? {
+    const scenario = q.baselineValid && stamp ? describeScenario(stampedPoints()) : null;
+    const rateLamp = scenario ? {
       reliable: true,
       basis: "fullCarry",
       L_read: L,
@@ -52526,27 +52699,27 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       B_post: B,
       B_rebuild: B,
       B_default: bDefault,
-      lBase: B,
       C_RATIO: cRatio,
       x_display: q.x,
-      burnRate: q.burnRate,
-      hBreak: q.burnRate > 0 ? 1 / q.burnRate : Infinity,
       dhat: q.dhat,
-      xSweet: q.xSweet,
-      mf: q.mf,
-      br: q.br,
+      uInst: q.dhat > 0 ? (q.x - 1) / q.dhat : null,
       gEma: g,
-      inDeepWater: isInDeepWater(q.x, q.xSweet, q.br)
+      ...scenario
     } : { reliable: false, unavailableReason: "insufficient_data" };
     return {
-      ...q,
+      x: q.x,
+      dhat: q.dhat,
       L,
       B,
-      residentTotal,
       bDefault,
       g,
       cRatio,
       rateLamp,
+      u: scenario ? scenario.u : null,
+      pp: scenario ? scenario.pp : null,
+      mf: scenario ? scenario.mf : null,
+      br: scenario ? scenario.br : null,
+      xSweet: scenario ? scenario.xSweet : null,
       totalStock: settlementCursor ? settlementCursor.totalStock : 0,
       usage: lastStep ? { ...lastStep.usage } : null
     };
@@ -52561,7 +52734,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       x: view.x,
       dhat: view.dhat,
       xSweet: view.xSweet,
-      burnRate: view.burnRate,
+      u: view.u,
+      pp: view.pp,
       mf: view.mf,
       br: view.br,
       model: epochModel,
@@ -52576,15 +52750,18 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function getHistory() {
     return calls.map((step) => {
-      const B = Number.isFinite(step.bAtCall) ? step.bAtCall : 0;
+      const B = step.bAtCall;
       const L = step.usage.input + step.usage.cacheRead + step.usage.cacheWrite;
       return {
         ts: step.timestamp,
         segment: step.segment,
         L,
         B,
-        x: B > 0 ? L / B : 1,
-        g: Number.isFinite(step.gAtCall) ? step.gAtCall : 0,
+        x: step.stamp ? step.stamp.x : 1,
+        bDefault: step.stamp ? step.stamp.bDefault : null,
+        u: step.stamp ? step.stamp.u : null,
+        pp: step.stamp ? step.stamp.pp : null,
+        g: step.gAtCall,
         miss: step.miss === true,
         cacheRead: step.usage.cacheRead,
         cacheWrite: step.usage.cacheWrite,
@@ -52599,7 +52776,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     return out2.sort((a, b) => a - b);
   }
   function getBucketData() {
-    const view = readView();
+    const totals = ledger.residentTotals();
+    const residentTotal = residentTotalOf(totals);
+    const totalStock = settlementCursor ? settlementCursor.totalStock : 0;
+    const B = settlementCursor ? Math.min(residentTotal, totalStock) : residentTotal;
+    const lastStep = segmentSteps.length ? segmentSteps[segmentSteps.length - 1] : null;
     const closing = ledger.snapshot();
     const paths = [];
     for (const resource of closing.resources) {
@@ -52640,15 +52821,15 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       dead,
       paths,
       residual,
-      totalB: view.B,
-      totalL: view.L,
-      bDefault: view.bDefault,
+      totalB: B,
+      totalL: lastStep ? lastStep.L : 0,
+      bDefault: bDefaultOf(totals),
       // Read off the same cursor stock the residual candidates are drawn from, not off L: the
       // remainder a consumer derives by subtracting the allocated groups from this total then sits
       // on the channel those groups came from, where a cacheRead-channel total would fall short by
       // a tool result the stock already carries.
-      totalResidualRaw: view.totalStock - view.B,
-      totalResidual: Math.max(0, view.totalStock - view.B),
+      totalResidualRaw: totalStock - B,
+      totalResidual: Math.max(0, totalStock - B),
       currentTurnSeq: turnSeq,
       segment: segmentSeq
     };
@@ -52678,8 +52859,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         B: view.B,
         bDefault: view.bDefault,
         g: view.g,
+        gBar: defaultFold ? defaultFold.rate() : 0,
         mf: view.mf,
         br: view.br,
+        u: view.u,
+        pp: view.pp,
         x: view.x,
         dhat: view.dhat,
         cRatio: view.cRatio,
@@ -52696,12 +52880,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       if (!(step.foldedSeq > sinceFoldedSeq)) continue;
       const sample = { seq: step.foldedSeq, reliable: view.rateLamp.reliable, turnSeq: step.turn, L_read: step.L };
       if (view.rateLamp.reliable) {
-        sample.burnRate = computeFullCarryBurnRate({
-          L_read: step.L,
-          B_post: view.bPos,
-          B_rebuild: view.bPos,
-          cRatio: view.cRatio
-        });
+        sample.deltaW = step.stamp ? step.stamp.deltaW : null;
+        sample.mf = step.stamp ? step.stamp.mfLocal : null;
       } else {
         sample.unavailableReason = view.rateLamp.unavailableReason;
       }
@@ -52715,7 +52895,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       foldedCallSeq: foldedSeq
     };
   }
-  function replaceResourceOverrides(overrides) {
+  function parseOverrides(overrides) {
     invariant3(
       overrides !== null && typeof overrides === "object" && !Array.isArray(overrides),
       "resource overrides must be a plain object"
@@ -52734,6 +52914,10 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       }
       next.set(resourceKey, value);
     }
+    return { next, warnings };
+  }
+  function replaceResourceOverrides(overrides) {
+    const { next, warnings } = parseOverrides(overrides);
     let changed = next.size !== resourceOverrides.size;
     if (!changed) {
       for (const [resourceKey, value] of next) {
@@ -52744,6 +52928,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       }
     }
     resourceOverrides = next;
+    if (changed) restampSegment();
     return { changed, warnings, diagnostics: [] };
   }
   function refreshReadPolicies() {
@@ -52753,7 +52938,23 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     for (const resourceKey of [...resourcePolicyByKey.keys()]) {
       resourcePolicyByKey.set(resourceKey, resolveResourceEntry(resourceKey, diagnostics));
     }
-    return { changed: policySignature() !== before, diagnostics };
+    const changed = policySignature() !== before;
+    if (changed) restampSegment();
+    return { changed, diagnostics };
+  }
+  function readScenario(overrides) {
+    const { next, warnings } = parseOverrides(overrides);
+    const view = readView();
+    if (!view.rateLamp.reliable) return { reliable: false };
+    const { points, gBar } = scenarioPoints(selectorOf(next));
+    return {
+      reliable: true,
+      gBar,
+      trajectory: points.filter((p) => p.pp !== null).map((p) => ({ seq: p.seq, x: p.x, u: p.u, pp: p.pp })),
+      ...describeScenario(points),
+      wallP: wallPositionFor(view.cRatio),
+      warnings
+    };
   }
   return {
     ingest,
@@ -52763,6 +52964,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     getBucketData,
     getHandoffMeasurement,
     readRateLampFrame,
+    readScenario,
     replaceResourceOverrides,
     refreshReadPolicies
   };
@@ -52775,7 +52977,7 @@ var init_engine = __esm({
     init_settle();
     init_landmarks();
     init_bill_regret();
-    init_rate_lamp();
+    init_position();
     init_resident_ledger();
     USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
     SETTLEMENT_EPSILON = 1e-6;
@@ -53043,6 +53245,10 @@ function observationsForRow(row, { epoch }) {
   }
   return observations;
 }
+function carriesToolResult(entry) {
+  const content = entry.message?.content;
+  return Array.isArray(content) && content.some((block) => block?.type === "tool_result");
+}
 function createClaudeCodeObservationReducer() {
   let topology = createTopology();
   let epochOpenedForRoot = /* @__PURE__ */ new Set();
@@ -53072,7 +53278,7 @@ function createClaudeCodeObservationReducer() {
       if (firstUsageOrdinal === null && normalizeClaudeCodeUsage(row.entry) !== null) {
         firstUsageOrdinal = row.sourceOrdinal;
       }
-      if (id !== null && !resolved.acceptedIds.has(id)) {
+      if (id !== null && !resolved.acceptedIds.has(id) && !(carriesToolResult(row.entry) && resolved.acceptedIds.has(topology.parentById.get(id)))) {
         unobservedIds.add(id);
         continue;
       }
@@ -54004,11 +54210,12 @@ function bashFeature(command) {
   cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
   cmd = stripShellPreamble(cmd).rest;
   while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
-  cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)+/, "");
-  cmd = cmd.trim();
-  if (!cmd) return { name: "(bash)", detail: "" };
-  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
-  if (!cmd) return { name: "(bash)", detail: "" };
+  for (; ; ) {
+    const before = cmd;
+    cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, "");
+    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest;
+    if (cmd === before) break;
+  }
   const firstLine = cmd.split("\n")[0];
   const tokens = firstLine.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
   if (tokens.length === 0) return { name: "(bash)", detail: "" };
@@ -54049,6 +54256,7 @@ function bashFeature(command) {
   if (name2.length > DISPLAY_CHARS) name2 = name2.slice(0, DISPLAY_CHARS);
   let detail = "";
   for (const arg of tokens.slice(argsStart)) {
+    if (/^(?:&&|;|>>?|<<?|&)$/.test(arg)) break;
     if (arg.startsWith("-")) continue;
     const urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
     if (urlMatch) {
@@ -56010,7 +56218,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
 // lib/ledger-schema.js
 function validateLedgerState(obj) {
   if (!obj || typeof obj !== "object") return null;
-  if (obj.schemaVersion !== 2) return null;
+  if (obj.schemaVersion !== SCHEMA_VERSION) return null;
   if (typeof obj.stateKey !== "string") return null;
   if (obj.billingBasis !== "fullCarry") return null;
   if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
@@ -56018,22 +56226,9 @@ function validateLedgerState(obj) {
   if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
   for (const f of numFields) if (!Number.isFinite(obj[f])) return null;
   if (!(obj.billProgress >= 0 && obj.billProgress < 1)) return null;
+  if (!(obj.walletPhase >= 0 && obj.walletPhase < 1)) return null;
   for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  for (const f of ["billAnchorLRead", "kStableFrozen"]) if (obj[f] < 0) return null;
-  if (typeof obj.hasDeepWaterGateFired !== "boolean") obj.hasDeepWaterGateFired = false;
-  if (obj.deepWaterDwell === void 0) obj.deepWaterDwell = 0;
-  if (!(Number.isInteger(obj.deepWaterDwell) && obj.deepWaterDwell >= 0)) obj.deepWaterDwell = 0;
-  if (obj.deepWaterDwellCycled === void 0) obj.deepWaterDwellCycled = 0;
-  if (!(Number.isInteger(obj.deepWaterDwellCycled) && obj.deepWaterDwellCycled >= 0)) obj.deepWaterDwellCycled = 0;
-  for (const f of ["dwBillsSinceLastAlert", "backstopLapCount"]) {
-    if (obj[f] === void 0) obj[f] = 0;
-  }
-  if (!(Number.isFinite(obj.dwBillsSinceLastAlert) && obj.dwBillsSinceLastAlert >= 0)) return null;
-  if (!(Number.isInteger(obj.backstopLapCount) && obj.backstopLapCount >= 0)) return null;
   if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
-  if (obj.lastBurnRate !== null && !(Number.isFinite(obj.lastBurnRate) && obj.lastBurnRate >= 0)) return null;
-  if (obj.lastAppliedLRead != null && !(Number.isFinite(obj.lastAppliedLRead) && obj.lastAppliedLRead >= 0)) return null;
-  if (obj.lastBillEvent != null && typeof obj.lastBillEvent !== "object") return null;
   if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
   if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
   for (const e of obj.recentStopEvents) {
@@ -56050,28 +56245,29 @@ function validateRateLampSample(obj) {
   if (!Number.isInteger(obj.seq) || obj.seq < 0) return false;
   if (!Number.isInteger(obj.turnSeq) || obj.turnSeq < 0) return false;
   if (obj.reliable) {
-    if (!(Number.isFinite(obj.burnRate) && obj.burnRate >= 0)) return false;
     if (!(Number.isFinite(obj.L_read) && obj.L_read >= 0)) return false;
+    if (obj.deltaW !== null && !(Number.isFinite(obj.deltaW) && obj.deltaW >= 0)) return false;
+    if (obj.mf !== null && !Number.isFinite(obj.mf)) return false;
   }
   return true;
 }
-var numFields, intFields, PAUSE_REASONS;
+var SCHEMA_VERSION, numFields, intFields, PAUSE_REASONS;
 var init_ledger_schema = __esm({
   "lib/ledger-schema.js"() {
     init_constants();
+    SCHEMA_VERSION = 3;
     numFields = [
       "billProgress",
       "billCycleCount",
-      "billAnchorLRead",
-      "billAnchorFoldedCallSeq",
+      "walletPhase",
+      "walletLapCount",
       "lastAppliedFoldedCallSeq",
       "currentTurnSeq",
-      "cacheExpiryCount",
-      "kStableFrozen"
+      "cacheExpiryCount"
     ];
     intFields = [
       "billCycleCount",
-      "billAnchorFoldedCallSeq",
+      "walletLapCount",
       "lastAppliedFoldedCallSeq",
       "currentTurnSeq",
       "cacheExpiryCount",
@@ -56085,14 +56281,13 @@ var init_ledger_schema = __esm({
       "insufficient_data",
       "cache_unstable",
       "seq_history_mismatch",
-      "invalid_sample",
-      "folded_call_mutated"
+      "invalid_sample"
     ]);
   }
 });
 
 // lib/rate-lamp-store.js
-function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion = SCHEMA_VERSION }) {
+function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion }) {
   return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
 }
 function stateKeyForStatus(status) {
@@ -56105,30 +56300,21 @@ function stateKeyForStatus(status) {
     schemaVersion: 1
   });
 }
-function freshLedger(stateKey, kStableFrozen = 0) {
+function freshLedger(stateKey) {
   return {
     schemaVersion: SCHEMA_VERSION,
     stateKey,
     billingBasis: "fullCarry",
     billProgress: 0,
     billCycleCount: 0,
-    billAnchorLRead: 0,
-    billAnchorFoldedCallSeq: 0,
-    lastBurnRate: null,
+    walletPhase: 0,
+    walletLapCount: 0,
     lastAppliedFoldedCallSeq: 0,
-    lastAppliedLRead: null,
     currentTurnSeq: 0,
-    hasDeepWaterGateFired: false,
-    dwBillsSinceLastAlert: 0,
-    backstopLapCount: 0,
-    deepWaterDwell: 0,
-    deepWaterDwellCycled: 0,
     pausedReason: null,
     cacheExpiryCount: 0,
-    kStableFrozen,
-    lastBillEvent: null,
     lastStopEvent: null,
-    // condition-cleared: visible until next human turn boundary
+    // condition-cleared: visible until the next human turn boundary
     ledgerRevision: 0,
     recentStopEvents: [],
     recentProcessedHookEventIds: []
@@ -56136,8 +56322,7 @@ function freshLedger(stateKey, kStableFrozen = 0) {
 }
 function invalidPausedLedger(prev) {
   const stateKey = prev && typeof prev === "object" && typeof prev.stateKey === "string" ? prev.stateKey : "__invalid__";
-  const kStable = prev && Number.isFinite(prev.kStableFrozen) && prev.kStableFrozen >= 0 ? prev.kStableFrozen : 0;
-  const s = freshLedger(stateKey, kStable);
+  const s = freshLedger(stateKey);
   s.pausedReason = "invalid_sample";
   return s;
 }
@@ -56155,75 +56340,56 @@ function applyFoldedCallSample(prev, sample) {
     s.pausedReason = "invalid_sample";
     return s;
   }
-  if (sample.seq === s.lastAppliedFoldedCallSeq && sample.reliable && Number.isFinite(s.lastAppliedLRead) && Number.isFinite(sample.L_read) && sample.L_read !== s.lastAppliedLRead) {
-    s.pausedReason = "folded_call_mutated";
-    return s;
-  }
   if (sample.seq <= s.lastAppliedFoldedCallSeq) return s;
   if (s.lastAppliedFoldedCallSeq !== 0 && sample.seq !== s.lastAppliedFoldedCallSeq + 1) {
     s.pausedReason = "folded_seq_gap";
     s.lastAppliedFoldedCallSeq = sample.seq;
-    if (sample.reliable && Number.isFinite(sample.L_read)) s.lastAppliedLRead = sample.L_read;
     return s;
   }
+  s.lastAppliedFoldedCallSeq = sample.seq;
   if (!sample.reliable) {
     s.pausedReason = sample.unavailableReason || "insufficient_data";
-    s.lastBurnRate = null;
-    s.lastAppliedFoldedCallSeq = sample.seq;
     return s;
   }
-  const br = Number.isFinite(sample.burnRate) ? Math.max(0, sample.burnRate) : 0;
-  const recovering = s.pausedReason != null || s.lastBurnRate == null;
-  if (recovering) {
-    s.pausedReason = null;
-    s.lastBurnRate = br;
-    s.lastAppliedFoldedCallSeq = sample.seq;
-    s.lastAppliedLRead = sample.L_read;
-    if (s.billAnchorFoldedCallSeq === 0) {
-      s.billAnchorLRead = sample.L_read;
-      s.billAnchorFoldedCallSeq = sample.seq;
-    }
-    return s;
-  }
-  const trap = 0.5 * (s.lastBurnRate + br);
-  let next = s.billProgress + trap;
-  while (next >= 1) {
-    next -= 1;
+  if (sample.deltaW === null) return s;
+  s.pausedReason = null;
+  let bill = s.billProgress + sample.deltaW;
+  while (bill >= 1) {
+    bill -= 1;
     s.billCycleCount += 1;
   }
-  s.billProgress = Math.floor(next * 1e6) / 1e6;
-  s.lastBurnRate = br;
-  s.lastAppliedFoldedCallSeq = sample.seq;
-  s.lastAppliedLRead = sample.L_read;
+  s.billProgress = bill;
+  const interval = walletIntervalFor(sample.mf, BR_AMBER);
+  let phase = s.walletPhase + sample.deltaW / interval;
+  while (phase >= 1) {
+    phase -= 1;
+    s.walletLapCount += 1;
+  }
+  s.walletPhase = phase;
   return s;
 }
-function advanceGateAndBackstop(draft, { inDeepWater, billCycleIncrement, mf }) {
-  if (!draft.hasDeepWaterGateFired) {
-    if (inDeepWater) {
-      draft.deepWaterDwell = (draft.deepWaterDwell || 0) + 1;
-      draft.deepWaterDwellCycled = (draft.deepWaterDwellCycled || 0) + billCycleIncrement;
-      if (draft.deepWaterDwell >= NOTIFY_DWELL && draft.deepWaterDwellCycled > 0) {
-        draft.hasDeepWaterGateFired = true;
-        draft.dwBillsSinceLastAlert = 0;
-        return { fired: true, kind: "gate" };
-      }
-    } else {
-      draft.deepWaterDwell = 0;
-      draft.deepWaterDwellCycled = 0;
+function drainFrame(ledger, frame) {
+  const preExisting = ledger.lastStopEvent;
+  for (const sample of frame.samples) {
+    if (!(sample.seq > ledger.lastAppliedFoldedCallSeq)) continue;
+    if (sample.turnSeq > ledger.currentTurnSeq && ledger.lastStopEvent && ledger.lastStopEvent === preExisting) {
+      ledger.lastStopEvent = null;
     }
-    return { fired: false };
-  }
-  if (!inDeepWater) return { fired: false };
-  draft.dwBillsSinceLastAlert += billCycleIncrement;
-  if (mf > 0) {
-    const interval = backstopIntervalFor(mf, BR_AMBER);
-    if (Number.isFinite(interval) && interval > 0 && draft.dwBillsSinceLastAlert >= interval) {
-      draft.dwBillsSinceLastAlert = 0;
-      draft.backstopLapCount += 1;
-      return { fired: true, kind: "backstop" };
+    const lapsBefore = ledger.walletLapCount;
+    Object.assign(ledger, applyFoldedCallSample(ledger, sample));
+    if (ledger.walletLapCount > lapsBefore) {
+      const event = {
+        kind: "backstop",
+        delivery: "reader_path",
+        message: `Carry rent reminder ${ledger.walletLapCount}: accumulated rent reached the reminder point. Consider restart/compact at the next natural boundary.`,
+        billCount: ledger.walletLapCount,
+        seq: sample.seq
+      };
+      ledger.lastStopEvent = event;
+      pushStopEventRing(ledger, event);
     }
   }
-  return { fired: false };
+  ledger.currentTurnSeq = frame.turnSeq;
 }
 function loadRateLampState(sessionId) {
   try {
@@ -56235,14 +56401,12 @@ function loadRateLampState(sessionId) {
 function saveRateLampState(sessionId, state) {
   getStore().save(sessionId, "ledger", state);
 }
-var SCHEMA_VERSION;
 var init_rate_lamp_store = __esm({
   "lib/rate-lamp-store.js"() {
     init_store();
     init_ledger_schema();
     init_constants();
     init_bill_regret();
-    SCHEMA_VERSION = 2;
   }
 });
 
@@ -56264,23 +56428,6 @@ __export(rate_lamp_manager_exports, {
   schedulePersist: () => schedulePersist,
   setLiveLedger: () => setLiveLedger
 });
-import { existsSync as _probeExists, appendFileSync as _probeAppend } from "node:fs";
-function _dProbe(msg) {
-  if (_PROBE_OFF) return;
-  try {
-    _probeAppend("/tmp/sw-depth-probe/depth.log", `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
-`);
-  } catch {
-  }
-}
-function _cProbe(msg) {
-  if (_PROBE_OFF) return;
-  try {
-    _probeAppend("/tmp/sw-depth-probe/depth.log", `${(/* @__PURE__ */ new Date()).toISOString()} ${msg}
-`);
-  } catch {
-  }
-}
 function _startCoalescedTimer() {
   if (_coalescedTimer) return;
   const schedulerFn = _testScheduler || setInterval;
@@ -56366,27 +56513,18 @@ function persistLedger(sessionId, ledger, { force = false } = {}) {
   _lastPersistedRevision.set(sessionId, ledgerRev);
   _counters.diskWrites++;
 }
-function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq, frameLRead, kStableFrozen }) {
+function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq }) {
   const matches = persisted && persisted.stateKey === currentKey;
-  const base = matches ? { ...persisted } : freshLedger(currentKey, kStableFrozen);
+  const base = matches ? { ...persisted } : freshLedger(currentKey);
   return {
     ...base,
     stateKey: currentKey,
-    // PRESERVED on a match: billProgress, billCycleCount, kStableFrozen.
+    // PRESERVED on a match: billProgress, billCycleCount, walletPhase, walletLapCount.
     // The folded cursor moves to the frame TAIL, which is what skips this frame's samples.
     lastAppliedFoldedCallSeq: frameTailSeq,
-    billAnchorFoldedCallSeq: frameTailSeq,
-    // The anchor's L is SEEDED from the frame, not zeroed: the reducer owns this field's runtime semantics
-    // and the manager only seeds it when it independently selects an anchor. A zero here would make the
-    // first later integration measure its interval from an L the session never had.
-    billAnchorLRead: Number.isFinite(frameLRead) ? frameLRead : 0,
-    lastBurnRate: null,
-    lastAppliedLRead: null,
     pausedReason: null,
     // A pulse is an in-process single-turn signal. Carrying `lastStopEvent` across a discontinuity would
-    // re-render an alert for context this stream no longer contains; `lastBillEvent` has no reader since its
-    // publisher retired, and is cleared with it so the shape a later reader meets stays the live one.
-    lastBillEvent: null,
+    // re-render an alert for context this stream no longer contains.
     lastStopEvent: null,
     currentTurnSeq: frameTurnSeq
   };
@@ -56398,58 +56536,31 @@ function mergeLedgerIntoStatus(status, ledger, currentKey) {
     status.rateLamp.dhat = status.rateLamp.dhat ?? null;
     return status;
   }
-  status.rateLamp.billProgress = ledger.billProgress;
-  status.rateLamp.billingCycle = { progress: ledger.billProgress };
-  status.rateLamp.billCycleCount = ledger.billCycleCount ?? 0;
-  status.rateLamp.currentTurnSeq = ledger.currentTurnSeq;
-  if (ledger.lastStopEvent) status.rateLamp.lastStopEvent = ledger.lastStopEvent;
-  status.rateLamp.dwBillsSinceLastAlert = ledger.dwBillsSinceLastAlert ?? 0;
-  status.rateLamp.hasDeepWaterGateFired = ledger.hasDeepWaterGateFired === true;
-  status.rateLamp.backstopLapCount = ledger.backstopLapCount ?? 0;
-  if (!_PROBE_OFF && ledger.hasDeepWaterGateFired && ledger.dwBillsSinceLastAlert > 0) {
-    const _int2 = status.rateLamp.mf > 0 ? backstopIntervalFor(status.rateLamp.mf, BR_AMBER) : null;
-    const _prog = _int2 ? Math.min(1, ledger.dwBillsSinceLastAlert / _int2) : "?";
-    _dProbe(`[display] billCycle=${ledger.billCycleCount} dwBills=${ledger.dwBillsSinceLastAlert}/${_int2?.toFixed(1) ?? "?"} progress=${typeof _prog === "number" ? _prog.toFixed(2) : _prog} laps=${ledger.backstopLapCount} billProgress=${ledger.billProgress?.toFixed(3)}`);
-  }
+  const rl = status.rateLamp;
+  rl.billProgress = ledger.billProgress;
+  rl.billingCycle = { progress: ledger.billProgress };
+  rl.billCycleCount = ledger.billCycleCount ?? 0;
+  rl.currentTurnSeq = ledger.currentTurnSeq;
+  if (ledger.lastStopEvent) rl.lastStopEvent = ledger.lastStopEvent;
+  const interval = walletIntervalFor(rl.mfLocal, BR_AMBER);
+  rl.rentMeter = {
+    cycleProgress: ledger.billProgress,
+    depthActive: true,
+    depthProgress: ledger.walletPhase,
+    backstopInterval: Number.isFinite(interval) ? interval : null,
+    backstopLapCount: ledger.walletLapCount,
+    depthHot: ledger.walletLapCount >= DEPTH_HOT_LAP_COUNT
+  };
   enrichStatusLandmarks(status);
   return status;
 }
 function enrichStatusLandmarks(status) {
   status.rateLamp = status.rateLamp || {};
   if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
-  const B = status.rateLamp.B_default > 0 ? status.rateLamp.B_default : status.rateLamp.B_post, cRatio = status.rateLamp.C_RATIO, g = status.rateLamp.gEma;
-  if (!(B > 0 && cRatio > 0 && g > 0)) return status;
-  const dhat = status.rateLamp.dhat ?? nucleus(cRatio, g, B);
-  const mf = status.rateLamp.mf ?? computeMovableFrac(cRatio, B, g);
-  status.rateLamp.dhat = dhat;
-  status.rateLamp.mf = mf;
-  if (dhat > 0 && mf > 0) {
-    if (!Number.isFinite(status.rateLamp.br)) {
-      const x = status.rateLamp.L_read / B;
-      status.rateLamp.br = computeBr(x, dhat, mf);
-    }
-    status.rateLamp.xBrAmberR = xRightFromBr(BR_AMBER, dhat, mf);
-    status.rateLamp.xBrAmberL = xLeftFromBr(BR_AMBER, dhat, mf);
-    status.rateLamp.xBrRedR = xRightFromBr(BR_RED, dhat, mf);
-  }
-  status.rateLamp.xSweet = status.rateLamp.xSweet ?? 1 + dhat;
-  status.rateLamp.wallP = 1 + cRatio;
-  status.rateLamp.lBase = B;
-  const interval = backstopIntervalFor(status.rateLamp.mf, BR_AMBER);
-  const dwBills = status.rateLamp.dwBillsSinceLastAlert ?? 0;
-  const depthProgress = Number.isFinite(interval) && interval > 0 ? Math.min(1, Math.max(0, dwBills / interval)) : 0;
-  const sweetRentRate = Number.isFinite(dhat) && cRatio > 0 ? dhat / cRatio : null;
-  const liveBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : Number.isFinite(status.rateLamp.burnRate) ? status.rateLamp.burnRate : null;
-  status.rateLamp.rentMeter = {
-    cycleProgress: status.rateLamp.billProgress ?? 0,
-    rentRate: liveBurnRate,
-    sweetRentRate,
-    depthActive: status.rateLamp.hasDeepWaterGateFired === true,
-    depthProgress,
-    backstopInterval: Number.isFinite(interval) ? interval : null,
-    backstopLapCount: status.rateLamp.backstopLapCount ?? 0,
-    depthHot: (status.rateLamp.backstopLapCount ?? 0) >= DEPTH_HOT_LAP_COUNT
-  };
+  const rl = status.rateLamp;
+  const B = rl.B_default > 0 ? rl.B_default : rl.B_post;
+  if (!(B > 0 && rl.C_RATIO > 0)) return status;
+  rl.wallP = wallPositionFor(rl.C_RATIO);
   return status;
 }
 function mutateLedger(ledger, reason, fn) {
@@ -56466,7 +56577,7 @@ function hydrateLedger(sessionId) {
   if (live) return live;
   const disk = loadRateLampState(sessionId);
   if (!disk) return null;
-  const cleaned = { ...disk, lastBillEvent: null, lastStopEvent: null };
+  const cleaned = { ...disk, lastStopEvent: null };
   _lastPersistedRevision.set(sessionId, cleaned.ledgerRevision ?? 0);
   _ledgers.set(sessionId, cleaned);
   return cleaned;
@@ -56480,7 +56591,6 @@ function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}
     if (!ledger) return { ledger: null, status: frame.status, bill: null };
     ledger = mutateLedger(ledger, "unreliable-frame", (l) => {
       l.pausedReason = frame.status?.unavailableReason || "insufficient_data";
-      l.lastBurnRate = null;
       l.lastAppliedFoldedCallSeq = frame.foldedCallSeq;
       l.currentTurnSeq = frame.turnSeq;
     });
@@ -56489,57 +56599,19 @@ function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}
     return { ledger, status: frame.status, bill: null };
   }
   const currentKey = stateKeyForStatus({ segment: frame.progress.segment });
-  const kStableFrozen = 0;
   const seenRevision = _lastSeenRevision.get(sessionId);
   const revisionChanged = seenRevision !== frame.streamRevision;
   const sequenceGap = ledger != null && frame.foldedCallSeq < ledger.lastAppliedFoldedCallSeq;
   if (sequenceGap && process.env.SW_DEBUG) {
     console.error("[rate-lamp] seq mismatch \u2192 re-anchored, cycleCount preserved");
   }
-  let samples = frame.samples;
+  let drained = frame;
   if (revisionChanged || sequenceGap || !ledger || ledger.stateKey !== currentKey) {
-    ledger = reanchorLedger(ledger, {
-      currentKey,
-      frameTailSeq: frame.foldedCallSeq,
-      frameTurnSeq: frame.turnSeq,
-      frameLRead: frame.status.L_read,
-      kStableFrozen
-    });
-    samples = [];
+    ledger = reanchorLedger(ledger, { currentKey, frameTailSeq: frame.foldedCallSeq, frameTurnSeq: frame.turnSeq });
+    drained = { ...frame, samples: [] };
     _lastSeenRevision.set(sessionId, frame.streamRevision);
   }
-  const status = frame.status;
-  const bPos = status.B_default > 0 ? status.B_default : status.B_post;
-  const cRatioGate = Number.isFinite(status.C_RATIO) ? status.C_RATIO : 0;
-  const gGate = status.gEma;
-  const mfGate = gGate > 0 && bPos > 0 && cRatioGate > 0 ? computeMovableFrac(cRatioGate, bPos, gGate) : 0;
-  const dhatGate = gGate > 0 && bPos > 0 && cRatioGate > 0 ? nucleus(cRatioGate, gGate, bPos) : 0;
-  ledger = mutateLedger(ledger, "advance-events", (l) => {
-    const preExistingStopEvent = l.lastStopEvent;
-    for (const s of samples) {
-      if (!(s.seq > l.lastAppliedFoldedCallSeq)) continue;
-      if (s.turnSeq > l.currentTurnSeq && l.lastStopEvent && l.lastStopEvent === preExistingStopEvent) l.lastStopEvent = null;
-      const _prevCycle = l.billCycleCount;
-      Object.assign(l, applyFoldedCallSample(l, s));
-      const cycled = l.billCycleCount - _prevCycle;
-      if (!_PROBE_OFF && cycled > 0) {
-        _cProbe(`[cycle] bill=${l.billCycleCount} progress=${l.billProgress?.toFixed(3)} br=${l.lastBurnRate?.toFixed(3) ?? "?"} seq=${s.seq} turn=${s.turnSeq} inDeep=${l.hasDeepWaterGateFired} dwBills=${l.dwBillsSinceLastAlert}`);
-      }
-      if (bPos > 0) {
-        const x = s.L_read / bPos;
-        const br = dhatGate > 0 && mfGate > 0 ? computeBr(x, dhatGate, mfGate) : 0;
-        const inDeep = isInDeepWater(x, 1 + dhatGate, br);
-        const { fired, kind } = advanceGateAndBackstop(l, { inDeepWater: inDeep, billCycleIncrement: cycled, mf: mfGate });
-        if (fired) {
-          const message = kind === "gate" ? "Session Watcher: bill-regret above amber and holding. Consider restart/compact at the next natural boundary." : `Backstop lap ${l.backstopLapCount}: session in deep water`;
-          const stopEvent = { kind, delivery: "reader_path", message, billCount: kind === "gate" ? 0 : l.backstopLapCount, seq: s.seq };
-          l.lastStopEvent = stopEvent;
-          pushStopEventRing(l, stopEvent);
-        }
-      }
-    }
-    l.currentTurnSeq = frame.turnSeq;
-  });
+  ledger = mutateLedger(ledger, "advance-events", (l) => drainFrame(l, drained));
   _ledgers.set(sessionId, ledger);
   schedulePersist(sessionId);
   return { ledger, status: frame.status, bill: null };
@@ -56589,18 +56661,14 @@ function flushAll() {
     }
   }
 }
-var _PROBE_OFF, RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
+var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
 var init_rate_lamp_manager = __esm({
   "lib/rate-lamp-manager.js"() {
     init_rate_lamp_store();
-    init_landmarks();
     init_bill_regret();
     init_constants();
-    _PROBE_OFF = Date.now() > (/* @__PURE__ */ new Date("2026-07-25T00:00:00Z")).getTime() || _probeExists("/tmp/sw-depth-probe/off");
     RENT_METER_DEFAULT = () => ({
       cycleProgress: 0,
-      rentRate: null,
-      sweetRentRate: null,
       depthActive: false,
       depthProgress: 0,
       backstopInterval: null,
@@ -56848,10 +56916,7 @@ var init_state_reaper = __esm({
 // lib/statusline-format.js
 function renderLamp(br, opts) {
   if (!Number.isFinite(br)) return "\u26AA";
-  if (opts?.x != null && opts?.xSweet != null && opts.x < opts.xSweet) {
-    if (opts.xBrAmberL != null && opts.x >= opts.xBrAmberL) return "\u{1F7E2}";
-    return "\u26AA";
-  }
+  if (opts?.u < 1) return opts.u >= uLeftAtBr(opts.mf, BR_AMBER) ? "\u{1F7E2}" : "\u26AA";
   if (br >= BR_RED) return "\u{1F534}";
   if (br >= BR_AMBER) return "\u{1F7E1}";
   return "\u{1F7E2}";
@@ -56862,26 +56927,20 @@ function renderBr(br) {
   if (pct > 99) return "b+99%";
   return `b+${String(pct).padStart(2, "0")}%`;
 }
-function renderMeterV3(billProgress) {
-  const bp = Math.min(0.999999, Math.max(0, billProgress ?? 0));
-  const pct = Math.floor(bp * 100);
-  const filled = Math.floor(bp * 10);
-  const bar = "\u2593".repeat(filled) + "\u2591".repeat(10 - filled);
+function renderMeterV3(walletPhase) {
+  const phase = Math.min(0.999999, Math.max(0, walletPhase ?? 0));
+  const pct = Math.floor(phase * 100);
+  const filled = Math.floor(phase * BAR_WIDTH);
+  const bar = "\u2593".repeat(filled) + "\u2591".repeat(BAR_WIDTH - filled);
   return `${bar}${(pct + "%").padEnd(3)}`;
 }
 function renderBackstopProgress(rl) {
-  if (!rl?.hasDeepWaterGateFired) return "-/-";
-  const interval = backstopIntervalFor(rl.mf, BR_AMBER);
-  if (!Number.isFinite(interval)) return "-/-";
-  const denom = Math.max(1, Math.round(interval));
-  const numer = Math.min(denom - 1, Math.floor(rl.dwBillsSinceLastAlert ?? 0));
-  return `${numer}/${denom}`;
+  const rm = rl?.rentMeter;
+  if (!rm?.depthActive) return `${"\u2591".repeat(BAR_WIDTH)}--%`;
+  return renderMeterV3(rm.depthProgress);
 }
 function renderU(rl) {
-  const x = rl?.x_display;
-  const dhat = rl?.dhat;
-  if (!Number.isFinite(x) || !Number.isFinite(dhat) || dhat <= 0) return "u---";
-  const u = (x - 1) / dhat;
+  const u = rl?.u;
   if (!Number.isFinite(u)) return "u---";
   return `u${u.toFixed(1)}`;
 }
@@ -56910,24 +56969,24 @@ function formatLine(s) {
   if (!rl?.reliable) {
     return `\u26AA measuring\u2026 \xB7 ${tagOf(s.model)}`;
   }
-  const lamp = renderLamp(rl.br, { x: rl.x_display, xSweet: rl.xSweet, xBrAmberL: rl.xBrAmberL });
-  const meter = renderMeterV3(rl.billProgress);
-  const bill = renderBackstopProgress(rl);
+  const lamp = renderLamp(rl.br, { u: rl.u, mf: rl.mf });
+  const meter = renderBackstopProgress(rl);
   const br = renderBr(rl.br);
   const u = renderU(rl);
   const delta = renderDelta(rl.gEma);
   const lb = renderLB(s.L, s.bDefault ?? s.B);
   const tag = tagOf(s.model);
-  let line = `${lamp} ${meter} ${bill} \xB7 ${br} ${u} \xB7 ${delta} ${lb} \xB7 ${tag}`;
+  let line = `${lamp} ${meter} \xB7 ${br} ${u} \xB7 ${delta} ${lb} \xB7 ${tag}`;
   const alertMsg = renderAlertLine(rl);
   if (alertMsg) line += `
 \u21BB ${alertMsg}`;
   return line;
 }
-var tagOf, kFmt;
+var BAR_WIDTH, tagOf, kFmt;
 var init_statusline_format = __esm({
   "lib/statusline-format.js"() {
     init_bill_regret();
+    BAR_WIDTH = 10;
     tagOf = (model) => {
       const m = model || "";
       return m ? m.match(/opus|sonnet|haiku|deepseek/i)?.[0] || m : "model";
@@ -58124,7 +58183,6 @@ var INDEX_HEAD_BYTES, ReplayController;
 var init_replay = __esm({
   "lib/replay.js"() {
     init_rate_lamp_store();
-    init_bill_regret();
     INDEX_HEAD_BYTES = 8192;
     ReplayController = class {
       constructor(watcher, index, { speed = 4, onAdvance = null, driver = null } = {}) {
@@ -58137,29 +58195,17 @@ var init_replay = __esm({
         this._onAdvance = onAdvance;
         this._paused = false;
         this._done = false;
-        this._billProgress = 0;
-        this._prevBurnRate = null;
-        this._gateDraft = {
-          hasDeepWaterGateFired: false,
-          dwBillsSinceLastAlert: 0,
-          backstopLapCount: 0,
-          deepWaterDwell: 0,
-          deepWaterDwellCycled: 0
-        };
-        this._lastNotify = null;
-        this._notifyTTL = 0;
+        this._ledger = null;
       }
-      /** Current billProgress [0,1) for rentMeter cycleProgress */
-      get billProgress() {
-        return this._billProgress;
+      /** The playback rent ledger, merged into the playback status by the host. */
+      get ledger() {
+        return this._ledger;
       }
-      /** Gate/backstop state for depth meter */
-      get gateState() {
-        return this._gateDraft;
-      }
-      /** Last notification fired (or null) */
-      get lastNotify() {
-        return this._lastNotify;
+      _drain() {
+        const frame = this._watcher.readRateLampFrame(this._ledger ? this._ledger.lastAppliedFoldedCallSeq : 0);
+        const key = stateKeyForStatus({ segment: frame.progress.segment });
+        if (!this._ledger || this._ledger.stateKey !== key) this._ledger = freshLedger(key);
+        drainFrame(this._ledger, frame);
       }
       get speed() {
         return this._speed;
@@ -58193,7 +58239,10 @@ var init_replay = __esm({
         if (this._paused || this._done) return;
         if (this._cursor >= this._index.length) {
           const frame2 = this._advance(Infinity);
-          if (frame2) this._watcher.applyHarnessFrame(frame2);
+          if (frame2) {
+            this._watcher.applyHarnessFrame(frame2);
+            this._drain();
+          }
           this._done = true;
           if (this._onAdvance) this._onAdvance();
           return;
@@ -58201,35 +58250,9 @@ var init_replay = __esm({
         const step = this._index[this._cursor];
         this._cursor++;
         const frame = this._advance(step.byteEnd);
-        if (frame) this._watcher.applyHarnessFrame(frame);
-        const status = this._watcher.getStatus();
-        const currBurnRate = Number.isFinite(status.burnRate) ? status.burnRate : 0;
-        let billCycleIncrement = 0;
-        if (this._prevBurnRate == null) {
-          this._prevBurnRate = currBurnRate;
-        } else {
-          const trap = 0.5 * (this._prevBurnRate + currBurnRate);
-          this._billProgress += trap;
-          while (this._billProgress >= 1) {
-            this._billProgress -= 1;
-            billCycleIncrement++;
-          }
-          this._billProgress = Math.floor(this._billProgress * 1e6) / 1e6;
-          this._prevBurnRate = currBurnRate;
-        }
-        const rl = status.rateLamp;
-        const deepWater = rl?.reliable ? isInDeepWater(rl.x_display, rl.xSweet, rl.br) : false;
-        const { fired, kind } = advanceGateAndBackstop(this._gateDraft, {
-          inDeepWater: deepWater,
-          billCycleIncrement,
-          mf: rl?.mf ?? 0
-        });
-        if (fired) {
-          this._lastNotify = { kind };
-          this._notifyTTL = 6;
-        } else if (this._lastNotify) {
-          this._notifyTTL--;
-          if (this._notifyTTL <= 0) this._lastNotify = null;
+        if (frame) {
+          this._watcher.applyHarnessFrame(frame);
+          this._drain();
         }
         if (this._onAdvance) this._onAdvance();
         if (this._cursor < this._index.length) {
@@ -58506,20 +58529,8 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     try {
       const status = statusWire(activeWatcher);
       if (activeWatcher !== watcher && _replayController) {
-        status.rateLamp = status.rateLamp || {};
-        status.rateLamp.billProgress = _replayController.billProgress;
-        const gate = _replayController.gateState;
-        status.rateLamp.hasDeepWaterGateFired = gate.hasDeepWaterGateFired;
-        status.rateLamp.dwBillsSinceLastAlert = gate.dwBillsSinceLastAlert;
-        status.rateLamp.backstopLapCount = gate.backstopLapCount;
-        const notify = _replayController.lastNotify;
-        if (notify) {
-          status.rateLamp.lastStopEvent = {
-            kind: notify.kind,
-            message: notify.kind === "gate" ? "Deep water \u2014 bill premium is accumulating." : "Still in deep water \u2014 consider restarting."
-          };
-        }
-        enrichStatusLandmarks(status);
+        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
+        mergeLedgerIntoStatus(status, _replayController.ledger, currentKey);
       } else {
         const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
         const ledger = getLiveLedger(currentSessionId);
@@ -58566,7 +58577,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
         segment: bd.segment,
         current_turn: bd.currentTurnSeq,
         generated_at: Date.now(),
-        metrics: { br: s.br, mf: s.mf, pp: computePp(s.x, s.dhat), g: s.g, b_total: s.B, c_ratio: s.cRatio }
+        metrics: { br: s.br, mf: s.mf, pp: s.pp, g: s.g, b_total: s.B, c_ratio: s.cRatio }
       });
     } catch (e) {
       next(e);
@@ -58609,6 +58620,16 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     const response = statusWire(watcher);
     if (warnings.length > 0) response.warnings = warnings;
     res.json(response);
+  });
+  app.post("/api/preview", (req, res) => {
+    if (_replayController) {
+      return res.status(409).json({ error: "replay_active", message: "Cannot preview overrides during replay" });
+    }
+    const { overrides } = req.body || {};
+    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+      return res.status(400).json({ error: "invalid_body", message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    }
+    res.json({ scenario: watcher.readScenario(overrides) });
   });
   let _replayController = null;
   app.post("/api/replay/start", async (req, res) => {
@@ -59207,6 +59228,9 @@ data: ${JSON.stringify({ type: "scan" })}
     // One tick, exposed so a test drives acquisition, the idle gate and live polling deterministically
     // instead of waiting on a timer.
     runPollTick,
+    // The Transcript Playback controller this closure owns, exposed so a consumer reads the very ledger the
+    // playback status branch merges rather than a copy of it.
+    replayController: () => _replayController,
     // Terminal application finalization, for the owner's cleanup sequence.
     closeCurrentSegment: (options) => watcher.closeCurrentSegment(options)
   };
@@ -59279,7 +59303,6 @@ var init_server3 = __esm({
     init_statusline_format();
     init_gitignore_loader();
     init_carry_sweep();
-    init_bill_regret();
     init_handoff();
     init_version();
     init_turn();

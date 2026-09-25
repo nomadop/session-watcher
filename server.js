@@ -18,7 +18,7 @@ import {
   interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
 } from './lib/harness/claude-code/native-tools.js';
 import { resolveClaudeCodeCacheTtl } from './lib/harness/claude-code/cache-ttl.js';
-import { advanceRateLampToCurrent, mergeLedgerIntoStatus, enrichStatusLandmarks, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
+import { advanceRateLampToCurrent, mergeLedgerIntoStatus, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
 import { stateKeyForStatus } from './lib/rate-lamp-store.js';
 import { IDLE_HEARTBEAT_MS, DEFAULT_CTP } from './lib/constants.js';
 import { resolveProjectKey } from './lib/project-key.js';
@@ -32,7 +32,6 @@ import {
 } from './lib/statusline-format.js';
 import { loadIsIgnored } from './gitignore-loader.js';
 import { replaySessionTelemetry } from './lib/carry-sweep.js';
-import { computePp } from './lib/bill-regret.js';
 import { createHandoffComposition } from './lib/handoff.js';
 import { PLUGIN_VERSION } from './lib/version.js';
 import { parseTurnAddress } from './lib/turn.js';
@@ -52,9 +51,9 @@ import { SEARCH_HIT_RECOVERY } from './lib/harness/claude-code/turn-recovery.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// round-6 GPT#3b: sanitize a sessionId used as a filename segment. Defense-in-depth — a `/`, `\`,
-// `..`, or NUL would let `${sessionId}.json` escape the state dir. Inlined from the deleted
-// lib/atomic-store.js (previously shared; now only used here and lib/launcher.js, each inline).
+// Sanitize a sessionId used as a filename segment. Defense-in-depth — a `/`, `\`, `..`, or NUL would let
+// `${sessionId}.json` escape the state dir. Inlined from the deleted lib/atomic-store.js (previously
+// shared; now only used here and lib/launcher.js, each inline).
 export function safeSessionId(sessionId) {
   const s = String(sessionId ?? '');
   if (!s || s === '.' || s === '..' || /[/\\\0]/.test(s) || s.includes('..')) return '__invalid_session__';
@@ -65,9 +64,9 @@ export const PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), '.session-wa
 // Discovery file is scoped by session_id (NOT a single global file, NOT project-hash):
 // server↔transcript is 1:1, and session_id is the finest key — it also disambiguates two
 // windows open on the SAME project (which a project-path hash would still collide).
-// round-7 GPT#6: route the sid through safeSessionId so all THREE sid→path writers (this
-// port-discovery file + gate-store's + rate-lamp-store's pathFor) agree — a `/` or `..` in the
-// sid can no longer escape PORT_DIR. Defense-in-depth: the sid is a harness UUID in practice.
+// The sid goes through safeSessionId so every sid→path writer (this port-discovery file, gate-store's and
+// rate-lamp-store's pathFor) agrees — a `/` or `..` in the sid can no longer escape PORT_DIR.
+// Defense-in-depth: the sid is a harness UUID in practice.
 export const stateFileFor = (sessionId) => join(PORT_DIR, `${safeSessionId(sessionId || 'default')}.json`);
 
 // Atomic exclusive create (spec §5.2, invariant #20): O_CREAT|O_EXCL. Throws EEXIST if a live sibling
@@ -84,8 +83,8 @@ export function writeStateFileExclusive(path, record) {
   }
 }
 
-// formatLine is now imported from lib/statusline-format.js (v3 layout: 灯 bar %% ×N · ~Nt u · Δ L/b · model :port).
-// Re-export so existing test imports from server.js continue to resolve.
+// Re-exported from lib/statusline-format.js, which owns the layout, so existing test imports from server.js
+// continue to resolve.
 export { formatLine };
 
 // Resolve the newest .jsonl. If given a directory, search RECURSIVELY — CC transcripts live at
@@ -433,29 +432,16 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     try {
       const status = statusWire(activeWatcher);
       if (activeWatcher !== watcher && _replayController) {
-        // Replay mode: inject billProgress + gate/backstop state, then enrich landmarks
-        status.rateLamp = status.rateLamp || {};
-        status.rateLamp.billProgress = _replayController.billProgress;
-        const gate = _replayController.gateState;
-        status.rateLamp.hasDeepWaterGateFired = gate.hasDeepWaterGateFired;
-        status.rateLamp.dwBillsSinceLastAlert = gate.dwBillsSinceLastAlert;
-        status.rateLamp.backstopLapCount = gate.backstopLapCount;
-        // Notification banner: surface gate/backstop fire as lastStopEvent
-        const notify = _replayController.lastNotify;
-        if (notify) {
-          status.rateLamp.lastStopEvent = {
-            kind: notify.kind,
-            message: notify.kind === 'gate' ? 'Deep water — bill premium is accumulating.' : 'Still in deep water — consider restarting.',
-          };
-        }
-        enrichStatusLandmarks(status);
+        // Transcript Playback: the controller's ledger is merged exactly as the live one is.
+        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
+        mergeLedgerIntoStatus(status, _replayController.ledger, currentKey);
       } else {
         // Live mode: full ledger merge
         const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
         const ledger = getLiveLedger(currentSessionId);
         mergeLedgerIntoStatus(status, ledger, currentKey);
       }
-      // billCycleCount is DEBUG-ONLY (GPT#16): attach only when ?debug query param is set.
+      // billCycleCount is DEBUG-ONLY: attached only when the ?debug query param is set.
       if (req.query.debug && status.rateLamp?.billingCycle) {
         const debugLedger = (activeWatcher === watcher) ? getLiveLedger(currentSessionId) : null;
         status.rateLamp.billingCycle.cycleCountInSegment = debugLedger?.billCycleCount ?? 0;
@@ -473,7 +459,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         return res.type('text/plain').send(line.slice(0, firstNewline) + url + line.slice(firstNewline));
       }
       res.json(status);
-    } catch (e) { next(e); } // round-2 gemini 一.2: error boundary — a bad request must not crash the daemon
+    } catch (e) { next(e); } // error boundary — a bad request must not crash the daemon
   });
 
   app.get('/api/history', (req, res) => {
@@ -494,7 +480,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         segment: bd.segment,
         current_turn: bd.currentTurnSeq,
         generated_at: Date.now(),
-        metrics: { br: s.br, mf: s.mf, pp: computePp(s.x, s.dhat), g: s.g, b_total: s.B, c_ratio: s.cRatio },
+        metrics: { br: s.br, mf: s.mf, pp: s.pp, g: s.g, b_total: s.B, c_ratio: s.cRatio },
       });
     } catch (e) { next(e); }
   });
@@ -516,9 +502,10 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     if (req.socket) req.socket.setTimeout(30000, () => req.socket.destroy());
   });
 
-  // Mount the JSON body parser for POST routes (pricing + handoff). A malformed body → express.json
-  // throws → the terminal error middleware returns 500 (daemon stays up).
-  // Limit raised to 64kb: handoff prepare accepts summaries up to 10000 chars + paths + JSON framing.
+  // Mount the JSON body parser for POST routes (pricing + handoff). A body-parser rejection carries its own
+  // status (400 on a malformed body, 413 over the limit) and the terminal error boundary reports that code,
+  // so the daemon stays up. The limit accommodates a handoff prepare body: a summary up to
+  // HANDOFF_MAX_SUMMARY_CHARS, plus paths and JSON framing.
   app.use(express.json({ limit: '64kb' }));
 
   // ── User overrides (§6: bDefault override) ────────────────────────────────
@@ -549,6 +536,22 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     const response = statusWire(watcher);
     if (warnings.length > 0) response.warnings = warnings;
     res.json(response);
+  });
+
+  // ── Preview ──────────────────────────────────────────────────────────────────
+  // A candidate override set folded on read: nothing is applied and nothing is broadcast, so the position
+  // a consumer already sees stays where it was and the Apply it may follow with reads the same numbers.
+  app.post('/api/preview', (req, res) => {
+    // Refused rather than answered during Transcript Playback: the scenario would fold from the playback
+    // watcher's segment, while the Apply it precedes reaches the live one.
+    if (_replayController) {
+      return res.status(409).json({ error: 'replay_active', message: 'Cannot preview overrides during replay' });
+    }
+    const { overrides } = req.body || {};
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+      return res.status(400).json({ error: 'invalid_body', message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    }
+    res.json({ scenario: watcher.readScenario(overrides) });
   });
 
   // ── Replay (post-v3: transcript replay for demo recording) ──────────────
@@ -916,14 +919,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); }
   }));
 
-  // Terminal error boundary (Global Constraints / round-2 gemini 一.2): the server is a long-lived
-  // daemon — one bad request (a route's next(err) or a synchronous throw Express catches for us) must
-  // return an HTTP error, NEVER take the process down. Covers every /api/* route at one place; does not
-  // fire on success paths, so existing behavior is unchanged. round-8 gemini#3: HONOR the framework's
-  // status code when it set one — express.json throws a PayloadTooLargeError with err.status===413 on an
-  // over-4kb body, other body-parser errors carry 400. Flattening all of these to 500 would lose the
-  // network-layer semantics (a 413 misread as a server-code bug). Still never crashes (this middleware
-  // always responds); it just reports the accurate code.
+  // Terminal error boundary: the server is a long-lived daemon — one bad request (a route's next(err) or a
+  // synchronous throw Express catches for us) must return an HTTP error, NEVER take the process down. Covers
+  // every /api/* route at one place; does not fire on success paths, so existing behavior is unchanged. It
+  // HONORS the framework's status code when it set one — express.json throws a PayloadTooLargeError with
+  // err.status===413 on a body over the limit that mount configures, other body-parser errors carry 400. Flattening all
+  // of these to 500 would lose the network-layer semantics (a 413 misread as a server-code bug). Still never
+  // crashes (this middleware always responds); it just reports the accurate code.
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     if (process.env.SW_DEBUG) console.error('[route error]', err);
@@ -1132,7 +1134,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     res.json(result);
   });
 
-  // ── Startup compensating telemetry sweep (Task 10) ──────────────────────────
+  // ── Startup compensating telemetry sweep ────────────────────────────────────
   // Once per process start, DEFERRED (setTimeout) + .unref()'d so it never blocks startup nor keeps the
   // process alive. The genuine chunking + real budget live INSIDE backfillPendingTelemetry (it awaits
   // setImmediate between sessions and enforces a performance.now() deadline); server.js just schedules it.
@@ -1293,6 +1295,9 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     // One tick, exposed so a test drives acquisition, the idle gate and live polling deterministically
     // instead of waiting on a timer.
     runPollTick,
+    // The Transcript Playback controller this closure owns, exposed so a consumer reads the very ledger the
+    // playback status branch merges rather than a copy of it.
+    replayController: () => _replayController,
     // Terminal application finalization, for the owner's cleanup sequence.
     closeCurrentSegment: (options) => watcher.closeCurrentSegment(options),
   };

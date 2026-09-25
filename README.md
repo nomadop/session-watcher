@@ -56,7 +56,7 @@ Your coding agent (Claude Code)
 │  harness/claude-code  — read rows, emit observations  │
 │  measurement/engine   — B (context belief), epochs    │
 │  session-watcher      — apply frames, run operations  │
-│  rate-lamp            — bill premium (br) + gate      │
+│  rate-lamp            — rent ledger + wallet clock    │
 │  server.js            — Express + SSE dashboard       │
 │  statusline           — one-line shell client         │
 └───────────────────────────────────────────────────────┘
@@ -67,7 +67,7 @@ Your coding agent (Claude Code)
 
 The harness layer is the only part that knows Claude Code: it reads transcript rows, decides the active branch, and emits normalized observations. Everything below it — measurement, dialogue history, handoff — consumes those observations and carries no transcript format, no row shape, and no tool name of any particular agent.
 
-**Core model:** `L = cache_read_input_tokens` — the context stock you are renting. `B` is the rebuild baseline: the session's overhead floor plus the tokens of every file, skill and tool it has pulled in, which is what a restart would have to re-read. `g` is the growth no path accounts for, a smoothed `ΔtotalStock − ΔB`. `x = L / B` places the session on the EOQ cost curve, and `br = mf × pp` is the bill premium — how much you are overpaying relative to ideal restart timing.
+**Core model:** `L = cache_read_input_tokens` — the context stock you are renting. `B` is the rebuild baseline: the session's overhead floor plus the tokens of every file, skill and tool it has pulled in, which is what a restart would have to re-read. `g` is the growth no path accounts for, a smoothed `ΔtotalStock − ΔB`. `x = L / B` is the raw position ratio; the authoritative position is `u`, which every call advances by its own fraction of the restart interval that held while it ran, so the position records the path travelled rather than a ratio of today's numbers, and each landmark on the x axis is read off the reference skeleton fitted across that path. `br = mf × pp` is the bill premium — how much you are overpaying relative to ideal restart timing. The restart reminder is separate: it reads the rent the ledger has accumulated, so no revision of the position can withdraw one.
 
 Lamp thresholds are the named constants `BR_AMBER` and `BR_RED` in `lib/bill-regret.js`: below the amber one the lamp is green, between them amber, at or above the red one red. See the [paper](#paper) for the full derivation — EOQ inventory theory mapped to LLM prompt caching.
 

@@ -1,7 +1,13 @@
 // test/xScale.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeLandmarkPositions, validateLandmarks, computeEoqViewport } from '../public/lib/xScale.js';
+import { computeLandmarkPositions, computeEoqViewport, projectedX } from '../public/lib/xScale.js';
+
+test('projectedX places a causal position on the reference skeleton, and nowhere without one', () => {
+  assert.equal(projectedX({ a: 0.8, d: 0.5 }, 1.4), 1.5);
+  assert.equal(projectedX(null, 1.4), null);
+  assert.equal(projectedX({ a: 0.8, d: 0.5 }, null), null);
+});
 
 test('landmarks map to correct percentages', () => {
   const domain = { minX: 1, maxX: 11 };
@@ -14,107 +20,80 @@ test('x < minX clamps marker to 0%', () => {
   const r = computeLandmarkPositions({ domain: { minX: 1, maxX: 11 }, xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11, x: 0.5 });
   assert.equal(r.markerPct, 0); assert.equal(r.clamped, true);
 });
-test('valid monotonic landmarks', () => {
-  assert.equal(validateLandmarks({ xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 }).ok, true);
-});
-test('non-monotonic landmarks fail', () => {
-  assert.equal(validateLandmarks({ xBrAmberL: 1.3, xSweet: 3.0, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 }).ok, false);
-});
-test('NaN xSweet landmark fails', () => {
-  assert.equal(validateLandmarks({ xBrAmberL: 1.3, xSweet: NaN, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 }).ok, false);
-});
-test('xBrAmberL NaN is tolerated (optional)', () => {
-  assert.equal(validateLandmarks({ xBrAmberL: NaN, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 }).ok, true);
-});
-
-test('computeEoqViewport — normal case: domain starts at 1, marker always inside', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.8, previousDomainMax: null,
-  });
-  // mainDomain.min = 1 (always starts from 1 so marker is never left of viewport)
-  assert.ok(Math.abs(r.mainDomain.min - 1) < 0.001);
-  // mainDomain.max = min(11, max(3.5, 1.8) * 1.2) = min(11, 4.2) = 4.2
-  assert.ok(Math.abs(r.mainDomain.max - 4.2) < 0.001);
-  assert.deepEqual(r.overviewDomain, { min: 1, max: 11 });
+test('computeEoqViewport — opens at [1, √wallP] while the point is left of the lock point', () => {
+  const r = computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null });
+  assert.deepEqual(r.mainDomain, { min: 1, max: 4 });
+  assert.deepEqual(r.overviewDomain, { min: 1, max: 16 });
   assert.equal(r.isPastWall, false);
-  // viewportPct.left = (1 - 1) / (11 - 1) * 100 = 0
-  assert.ok(Math.abs(r.viewportPct.left) < 0.001);
-  // viewportPct.right = (4.2 - 1) / (11 - 1) * 100 = 32
-  assert.ok(r.viewportPct.right > 25 && r.viewportPct.right < 40);
+  assert.ok(Math.abs(r.viewportPct.left) < 1e-9);
+  assert.ok(Math.abs(r.viewportPct.right - 20) < 1e-9);
 });
 
-test('computeEoqViewport — ratchet: previousDomainMax prevents shrink', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.5, previousDomainMax: 5.0,
-  });
-  // Without ratchet, max would be min(11, max(3.5, 1.5)*1.2) = 4.2
-  // With ratchet, max = max(5.0, 4.2) = 5.0
-  assert.ok(Math.abs(r.mainDomain.max - 5.0) < 0.001);
+// The axis opens where the reference's asymptote stands — u = 0, the segment's starting position a — so the left
+// arm always hugs the axis; without a reference the origin is the baseline itself.
+test('computeEoqViewport — the window starts at the origin, and locks the point against it', () => {
+  const r = computeEoqViewport({ wallP: 16, xCurrent: 2.5, previousDomainMax: null, origin: 1.2 });
+  assert.deepEqual(r.mainDomain, { min: 1.2, max: 4 });
+  assert.ok(Math.abs(r.viewportPct.left - (0.2 / 15) * 100) < 1e-9);
+  const widened = computeEoqViewport({ wallP: 16, xCurrent: 4.2, previousDomainMax: null, origin: 1.2 });
+  assert.ok(Math.abs(widened.mainDomain.max - 5.2) < 1e-9);
+  assert.equal(computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null, origin: null }).mainDomain.min, 1);
 });
 
-test('computeEoqViewport — xCurrent > wallP: isPastWall + clamp', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 13, previousDomainMax: null,
-  });
-  assert.equal(r.isPastWall, true);
-  // mainDomain.max clamped to wallP
-  assert.ok(r.mainDomain.max <= 11);
-  // markerPct clamped to 100
-  assert.equal(r.markerPct, 100);
+test('computeEoqViewport — a point past the lock point widens the window to hold the point there', () => {
+  const r = computeEoqViewport({ wallP: 16, xCurrent: 4, previousDomainMax: null });
+  assert.deepEqual(r.mainDomain, { min: 1, max: 5 });
+  assert.ok(Math.abs((4 - r.mainDomain.min) / (r.mainDomain.max - r.mainDomain.min) - 0.75) < 1e-9);
 });
 
-test('computeEoqViewport — minimum span guard', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 1.0, xSweet: 1.0, xBrRedR: 1.0, wallP: 11, xCurrent: 1.0, previousDomainMax: null,
-  });
-  // min span = 0.3
-  assert.ok(r.mainDomain.max - r.mainDomain.min >= 0.3);
+test('computeEoqViewport — a retreating point leaves the window where it stood', () => {
+  const r = computeEoqViewport({ wallP: 16, xCurrent: 2, previousDomainMax: 5 });
+  assert.equal(r.mainDomain.max, 5);
+  assert.equal(r.actualDomainMax, 5);
 });
 
-test('computeEoqViewport — min floors at 1', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 1.8, xSweet: 1.3, xBrRedR: 2.5, wallP: 11, xCurrent: 1.2, previousDomainMax: null,
-  });
-  // min is always 1 (viewport starts from origin)
-  assert.equal(r.mainDomain.min, 1);
+test('computeEoqViewport — the window never reaches past the wall', () => {
+  const inside = computeEoqViewport({ wallP: 16, xCurrent: 13, previousDomainMax: null });
+  assert.equal(inside.mainDomain.max, 16);
+  assert.equal(inside.isPastWall, false);
+  const past = computeEoqViewport({ wallP: 16, xCurrent: 17, previousDomainMax: 16 });
+  assert.equal(past.mainDomain.max, 16);
+  assert.equal(past.actualDomainMax, 16);
+  assert.equal(past.isPastWall, true);
+  assert.equal(past.markerPct, 100);
 });
 
-test('computeEoqViewport — previewGroup expands viewport ephemerally', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
-    xCurrent: 1.8, previousDomainMax: null,
-    previewGroup: { xRedR: 6.0, x: 5.5 },
-  });
-  // Ghost max = max(6.0, 5.5, 3.5, 1.8) * 1.12 = 6.72
-  // Without ghost: max(3.5, 1.8) * 1.2 = 4.2
-  // Final visible max = max(4.2, 6.72) = 6.72
-  assert.ok(Math.abs(r.mainDomain.max - 6.72) < 0.01, `Expected ~6.72, got ${r.mainDomain.max}`);
-  // actualDomainMax is pre-ghost (ratchet-safe); callers use this to avoid a second invocation
-  assert.ok(Math.abs(r.actualDomainMax - 4.2) < 0.01, `Expected actualDomainMax ~4.2 (pre-ghost), got ${r.actualDomainMax}`);
+test('computeEoqViewport — √wallP floors the right edge: a ratchet carried from a smaller wall widens to it', () => {
+  const r = computeEoqViewport({ wallP: 100, xCurrent: 1.2, previousDomainMax: 4 });
+  assert.equal(r.mainDomain.max, 10);
+  assert.equal(r.actualDomainMax, 10);
+  // An origin right of the baseline separates the two readings: flooring the right edge leaves the max at √wallP,
+  // where flooring the opening span, √wallP − 1, would add it to the origin instead.
+  const shifted = computeEoqViewport({ wallP: 100, xCurrent: 1.2, previousDomainMax: null, origin: 2 });
+  assert.equal(shifted.mainDomain.min, 2);
+  assert.equal(shifted.mainDomain.max, 10);
 });
 
-test('computeEoqViewport — previewGroup does not advance ratchet', () => {
-  // With previewGroup: viewport is 6.72
-  computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
-    xCurrent: 1.8, previousDomainMax: null,
-    previewGroup: { xRedR: 6.0, x: 5.5 },
-  });
-  // Without previewGroup using same inputs: viewport should NOT retain ghost expansion
-  const actual = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
-    xCurrent: 1.8, previousDomainMax: null,
-  });
-  // Actual max = max(3.5, 1.8) * 1.2 = 4.2
-  assert.ok(Math.abs(actual.mainDomain.max - 4.2) < 0.01, `Expected ~4.2, got ${actual.mainDomain.max}`);
+test('computeEoqViewport — a non-finite point holds the window and does not advance the ratchet', () => {
+  const fresh = computeEoqViewport({ wallP: 16, xCurrent: null, previousDomainMax: null });
+  assert.equal(fresh.mainDomain.max, 4);
+  assert.equal(fresh.actualDomainMax, 4);
+  const held = computeEoqViewport({ wallP: 16, xCurrent: NaN, previousDomainMax: 5 });
+  assert.equal(held.mainDomain.max, 5);
+  assert.equal(held.actualDomainMax, 5);
 });
 
-test('computeEoqViewport — previewGroup with NaN values is filtered safely', () => {
-  const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11,
-    xCurrent: 1.8, previousDomainMax: null,
-    previewGroup: { xRedR: NaN, x: 5.0 },
-  });
-  // Only finite candidate is 5.0; ghost max = max(5.0, 3.5, 1.8) * 1.12 = 5.6
-  assert.ok(Math.abs(r.mainDomain.max - 5.6) < 0.01, `Expected ~5.6, got ${r.mainDomain.max}`);
+test('computeEoqViewport — previewX widens the window by the same rule without advancing the ratchet', () => {
+  const r = computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null, previewX: 7 });
+  assert.equal(r.mainDomain.max, 9);
+  assert.equal(r.actualDomainMax, 4);
+  const capped = computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null, previewX: 13 });
+  assert.equal(capped.mainDomain.max, 16);
+});
+
+test('computeEoqViewport — a previewX left of the lock point, or non-finite, leaves the window alone', () => {
+  const inside = computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null, previewX: 2 });
+  assert.equal(inside.mainDomain.max, 4);
+  const nan = computeEoqViewport({ wallP: 16, xCurrent: 1.5, previousDomainMax: null, previewX: NaN });
+  assert.equal(nan.mainDomain.max, 4);
 });

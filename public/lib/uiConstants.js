@@ -3,7 +3,6 @@ export const AUTO_COLLAPSE_THRESHOLD = 5;   // dirs with >5 children start colla
 export const GHOST_OPACITY = 0.3;           // original curve opacity when ghost active
 export const HOVER_LINE_COLOR = '#6cc6f0';  // --sky; history hover linkage line
 export const COPY_FEEDBACK_MS = 1500;       // "✓ Copied" duration
-export const MIN_B_PREVIEW = 1000;          // floor for B_preview
 export const OTHERS_DRIFT_WARN_PCT = 0.02;  // |others_raw| negative beyond this × L → console.warn
 export const MAG_VISIBLE_TICKS = 5;         // magazine tail depth ticks shown (mirrors lib/constants MAG_VISIBLE_TICKS)
 

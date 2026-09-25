@@ -64,8 +64,8 @@ function playbackFixture(rows, tail) {
 // `pause` right after leaves the timer cancelled and the step already applied.
 const stepOnce = (controller) => { controller.start(); controller.pause(); };
 
-const usageRow = ({ uuid, parent, id, output, cacheRead, second }) => ({
-  type: 'assistant', uuid, parentUuid: parent, isSidechain: false,
+const usageRow = ({ uuid, parent, id, output, cacheRead, second, sidechain = false }) => ({
+  type: 'assistant', uuid, parentUuid: parent, isSidechain: sidechain,
   timestamp: `2026-07-01T00:00:0${second}Z`,
   message: { id, role: 'assistant', model: 'claude-opus-4-8', content: [],
     usage: { input_tokens: 10, output_tokens: output, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0 } },
@@ -128,6 +128,56 @@ test('a complete non-usage row after the final indexed row is submitted by the f
   } finally { fx.controller.stop(); closeStore(fx.store); rmSync(fx.dir, { recursive: true, force: true }); }
 });
 
+test('the controller drains every step of a multi-step frame into one ledger and restarts it on a segment change', () => {
+  const rows = [
+    userRow({ uuid: 'u-root', parent: null, text: 'start', second: 1 }),
+    usageRow({ uuid: 'a-one', parent: 'u-root', id: 'm1', output: 5, cacheRead: 50000, second: 2 }),
+    usageRow({ uuid: 'a-two', parent: 'a-one', id: 'm2', output: 5, cacheRead: 60000, second: 3 }),
+    usageRow({ uuid: 'a-three', parent: 'a-two', id: 'm3', output: 5, cacheRead: 70000, second: 4 }),
+    // A null-parent root with a measured call behind it is a compact epoch, so this row opens the second
+    // segment and the ledger keyed on the first one can no longer be drained onto.
+    userRow({ uuid: 'u-clear', parent: null, text: 'after clear', second: 5 }),
+    usageRow({ uuid: 'b-one', parent: 'u-clear', id: 'm4', output: 5, cacheRead: 50000, second: 6 }),
+    usageRow({ uuid: 'b-two', parent: 'b-one', id: 'm5', output: 5, cacheRead: 61000, second: 7 }),
+  ];
+  const fx = playbackFixture(rows, null);
+  try {
+    stepOnce(fx.controller); stepOnce(fx.controller); stepOnce(fx.controller);
+    const first = fx.controller.ledger;
+    assert.equal(fx.watcher.getStatus().segment, 0, 'the first three steps are one segment');
+    assert.equal(first.lastAppliedFoldedCallSeq, 3, 'every step of the first segment was drained');
+    assert.ok(first.billProgress > 0, 'the stamped intervals carried rent');
+    stepOnce(fx.controller); stepOnce(fx.controller);
+    const second = fx.controller.ledger;
+    assert.notEqual(second.stateKey, first.stateKey, 'a segment change starts a fresh ledger');
+    assert.equal(second.billCycleCount, 0);
+    assert.equal(second.lastAppliedFoldedCallSeq, 5, 'the fresh ledger drained the new segment’s own steps');
+    assert.equal(fx.controller.billProgress, undefined);
+    assert.equal(fx.controller.gateState, undefined);
+  } finally { fx.controller.stop(); closeStore(fx.store); rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
+test('the final unbounded advance drains the calls the index missed', () => {
+  const big = usageRow({ uuid: 'a-big', parent: 'a-one', id: 'm-big', output: 5, cacheRead: 70000, second: 3 });
+  // A payload this size pushes `usage` past the head slice `indexTranscript` reads, so the row is absent from
+  // the pacing index and only the final unbounded advance ever carries it.
+  big.message.content = [{ type: 'text', text: 'x'.repeat(9000) }];
+  const rows = [
+    userRow({ uuid: 'u-root', parent: null, text: 'start', second: 1 }),
+    usageRow({ uuid: 'a-one', parent: 'u-root', id: 'm1', output: 5, cacheRead: 50000, second: 2 }),
+    big,
+  ];
+  const fx = playbackFixture(rows, null);
+  try {
+    assert.equal(fx.index.length, 1, 'the payload row is outside the index');
+    stepOnce(fx.controller);   // the indexed row
+    stepOnce(fx.controller);   // the final unbounded advance
+    assert.equal(fx.controller.progress.done, true);
+    assert.equal(fx.watcher.getStatus().apiCalls, 2, 'the Engine measured the row the index missed');
+    assert.equal(fx.controller.ledger.lastAppliedFoldedCallSeq, 2, 'the ledger followed the measurement to its tail');
+  } finally { fx.controller.stop(); closeStore(fx.store); rmSync(fx.dir, { recursive: true, force: true }); }
+});
+
 describe('replay-server', () => {
   let instance;
 
@@ -162,6 +212,18 @@ describe('replay-server', () => {
     const served = Buffer.from(await res.arrayBuffer());
     const onDisk = readFileSync(join(__dirname, '..', 'public', 'dashboard.html'));
     assert.deepEqual(served, onDisk);
+  });
+
+  // Playback owns the position the dashboard is reading, so a preview folded from the playback segment would
+  // describe a different application than the Apply it precedes. The route refuses instead of answering.
+  it('refuses a preview while playback holds the controller', async () => {
+    const res = await fetch(`${instance.url}/api/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: {} }),
+    });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).error, 'replay_active');
   });
 
   it('does not create port-discovery state files', async () => {
@@ -220,5 +282,56 @@ describe('replay control routes', () => {
     assert.equal((await stop.json()).ok, true, 'stop response reports ok');
     const afterStop = await (await ctx.requestRaw('/api/replay/status')).json();
     assert.equal(afterStop.active, false, 'status reads back stopped');
+  });
+});
+
+describe('playback status', () => {
+  let ctx;
+
+  after(async () => { if (ctx) await ctx.teardown(); });
+
+  it('serves the playback ledger through the /api/status playback branch', async () => {
+    ctx = await bootTestServer({
+      sessionId: 'sess-playback-ledger',
+      entries: [
+        userRow({ uuid: 'u-root', parent: null, text: 'start', second: 1 }),
+        // A sidechain usage row IS a pacing-index step and is NOT a measured call, so playback opens on a
+        // status with no stamp behind it — the unreliable side of the merge, reached without a timing race.
+        usageRow({ uuid: 's-one', parent: 'u-root', id: 'ms1', output: 5, cacheRead: 1000, second: 2, sidechain: true }),
+        usageRow({ uuid: 's-two', parent: 'u-root', id: 'ms2', output: 5, cacheRead: 1100, second: 3, sidechain: true }),
+        usageRow({ uuid: 'a-one', parent: 'u-root', id: 'm1', output: 5, cacheRead: 50000, second: 4 }),
+        usageRow({ uuid: 'a-two', parent: 'a-one', id: 'm2', output: 5, cacheRead: 60000, second: 5 }),
+        usageRow({ uuid: 'a-three', parent: 'a-two', id: 'm3', output: 5, cacheRead: 70000, second: 6 }),
+      ],
+    });
+    // The speed is low enough that the controller's step delay takes its slow-playback floor, and that
+    // floor is the window this pause has to arrive in; every later step is driven by hand, so the served
+    // status has a settled ledger behind it.
+    const start = await ctx.requestRaw('/api/replay/start', {
+      method: 'POST', body: { transcript: ctx.transcriptPath, speed: 4 },
+    });
+    assert.equal(start.status, 200, 'playback started');
+    await ctx.requestRaw('/api/replay/pause', { method: 'POST' });
+    const controller = ctx.replayController();
+    assert.equal(controller.progress.current, 1, 'playback paused inside the unmeasured head of the index');
+
+    const opening = await ctx.get('/api/status');
+    assert.equal(opening.rateLamp.reliable, false, 'the sidechain step measured no call');
+    assert.deepEqual(opening.rateLamp.rentMeter, {
+      cycleProgress: 0, depthActive: false, depthProgress: 0,
+      backstopInterval: null, backstopLapCount: 0, depthHot: false,
+    }, 'an unreliable playback status carries the default rent meter');
+
+    stepOnce(controller); stepOnce(controller); stepOnce(controller); stepOnce(controller);
+    const ledger = controller.ledger;
+    assert.ok(ledger.billProgress > 0, 'the drained frames carried rent');
+
+    const body = await ctx.get('/api/status');
+    assert.equal(body.rateLamp.reliable, true, 'the drained steps left a stamped status behind');
+    assert.equal(body.rateLamp.billProgress, ledger.billProgress, 'the served bill progress is the ledger’s');
+    assert.equal(body.rateLamp.rentMeter.backstopLapCount, ledger.walletLapCount, 'the served lap count is the wallet clock’s');
+    assert.equal(body.rateLamp.rentMeter.cycleProgress, ledger.billProgress);
+    assert.equal(body.rateLamp.rentMeter.depthProgress, ledger.walletPhase);
+    assert.equal(body.rateLamp.rentMeter.depthActive, true);
   });
 });

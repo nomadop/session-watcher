@@ -1,7 +1,7 @@
 // test/chart-helpers.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeYMax, buildMissMarkers, buildProjectionData, computePreviewBr } from '../public/chart-helpers.js';
+import { computeYMax, buildMissMarkers, buildProjectionData } from '../public/chart-helpers.js';
 
 test('computeYMax uses only L (ignores Lthreshold), floored at 1', () => {
   const hist = [ { L: 50000, Lthreshold: 60000 }, { L: 80000, Lthreshold: 70000 } ];
@@ -87,31 +87,5 @@ test('buildProjectionData does not exceed ratchetY', () => {
   const points = [{ L: 180000, g: 50000 }];
   const result = buildProjectionData(points, 50000, 100, 200000);
   assert.equal(result[1].y, 200000, 'Y clamped to ratchetY');
-});
-
-
-// --- computePreviewBr (EOQ formula: br = mf*(u-1)^2/(2u)) ---
-
-test('computePreviewBr returns 0 at u=1 (cost minimum)', () => {
-  // At u=1 the EOQ formula yields (1-1)^2 = 0, so br = 0 regardless of mf
-  assert.equal(computePreviewBr(0.3, 1), 0, 'u=1 is the cost minimum → zero regret');
-  assert.equal(computePreviewBr(0.7, 1), 0, 'holds for any mf');
-});
-
-test('computePreviewBr returns correct value for u=2', () => {
-  // br = mf * (2-1)^2 / (2*2) = mf * 1 / 4 = mf/4
-  const mf = 0.4;
-  assert.equal(computePreviewBr(mf, 2), mf / 4, 'u=2: br = mf/4');
-});
-
-test('computePreviewBr returns correct value for u=0.5', () => {
-  // br = mf * (0.5-1)^2 / (2*0.5) = mf * 0.25 / 1 = mf*0.25
-  const mf = 0.4;
-  assert.equal(computePreviewBr(mf, 0.5), mf * 0.25, 'u=0.5: br = mf*0.25');
-});
-
-test('computePreviewBr returns 0 for u<=0 (degenerate guard)', () => {
-  assert.equal(computePreviewBr(0.3, 0), 0, 'u=0 returns 0 (division by zero guard)');
-  assert.equal(computePreviewBr(0.3, -1), 0, 'u<0 returns 0 (degenerate input guard)');
 });
 

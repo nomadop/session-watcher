@@ -226,7 +226,7 @@ test('finite fractional token values are accepted', () => {
   const [closed] = engine.closeCurrentSegment().closedSegments;
   assert.equal(closed.metrics.totalTokensRead, 0.5);
   assert.equal(closed.metrics.oAvg, 0.25);
-  assert.equal(closed.metrics.lFloor, 10.125);
+  assert.equal(closed.metrics.lFloor, 10.625);
 });
 
 test('extra record members are ignored', () => {
@@ -281,7 +281,7 @@ test('epoch and explicit close over equivalent Engine state produce the same det
 test('a closed segment freezes every specified metric with no missing member', () => {
   const engine = makeEngine();
   engine.ingest([
-    step('m1', { input: 5, output: 3, cacheRead: 0, cacheWrite: 1000 }, { timestamp: 1000 }),
+    step('m1', { input: 0, output: 3, cacheRead: 0, cacheWrite: 1000 }, { timestamp: 1000 }),
     step('m2', { input: 5, output: 7, cacheRead: 4000, cacheWrite: 0 }, { timestamp: 5000 }),
   ]);
   const [closed] = engine.closeCurrentSegment().closedSegments;
@@ -306,9 +306,12 @@ test('a closed segment freezes every specified metric with no missing member', (
 
 test('an early lPeak, brPeak, or ppPeak above its exit value remains frozen', () => {
   const engine = makeEngine();
+  // One settled interval of growth ahead of the spike, so the fold's rate is positive when the spike's own
+  // interval is priced and the spike lands as a stamped peak.
   engine.ingest([step('m1', { input: 1000, output: 1, cacheRead: 0, cacheWrite: 0 })]);
-  engine.ingest([step('m2', { input: 0, output: 1, cacheRead: 50_000, cacheWrite: 0 })]);
-  engine.ingest([step('m3', { input: 0, output: 1, cacheRead: 1200, cacheWrite: 0 })]);
+  engine.ingest([step('m2', { input: 0, output: 1, cacheRead: 1200, cacheWrite: 0 })]);
+  engine.ingest([step('m3', { input: 0, output: 1, cacheRead: 50_000, cacheWrite: 0 })]);
+  engine.ingest([step('m4', { input: 0, output: 1, cacheRead: 1300, cacheWrite: 0 })]);
   const [closed] = engine.closeCurrentSegment().closedSegments;
 
   assert.equal(closed.metrics.lPeak, 50_000);

@@ -42,15 +42,21 @@ const MEASUREMENT = {
   segment: 2,
   turnSeq: 14,
   epochModel: 'claude-opus-4-8',
-  measurement: { L: 90000, B: 60000, bDefault: 55000, g: 900, mf: 0.3, br: 0.12, x: 1.6, dhat: 0.2, cRatio: 12.5, dead: 42000, sessionFloor: 45000 },
+  measurement: { L: 90000, B: 60000, bDefault: 55000, g: 900, gBar: 700, mf: 0.3, br: 0.12, u: 3, pp: 0.31, x: 1.6, dhat: 0.2, cRatio: 12.5, dead: 42000, sessionFloor: 45000 },
   paths: [],
 };
 
+// The kept scenario's rate: the fake answers from the overrides it was handed, so a what-if that read the
+// default rate, or built the wrong scenario, is visible in the stored stat.
+let scenarioCalls = [];
+const scenarioRateFor = (overrides) => 1000 + 10 * Object.values(overrides).filter(v => v === 'exclude').length + Object.values(overrides).filter(v => v === 'include').length;
+
 function fakeEngine(measurement) {
   return {
+    readScenario: (overrides) => { scenarioCalls.push(overrides); return { reliable: true, gBar: scenarioRateFor(overrides) }; },
     ingest: () => ({ newCalls: 0, revisedCalls: 0, newResourceKeys: [], closedSegments: [], diagnostics: [] }),
     closeCurrentSegment: () => ({ closedSegments: [], diagnostics: [] }),
-    getStatus: () => ({ L: 90000, B: 60000, bDefault: 55000, g: 900, x: 1.6, dhat: 0.2, xSweet: 1.2, burnRate: 0.01, mf: 0.3, br: 0.12, model: 'claude-opus-4-8', latestMeasuredModel: 'claude-opus-4-8', cRatio: 12.5, segment: measurement.segment, apiCalls: 4, turnSeq: measurement.turnSeq, usage: null, rateLamp: { reliable: true, B_default: 55000 } }),
+    getStatus: () => ({ L: 90000, B: 60000, bDefault: 55000, g: 900, x: 1.6, dhat: 0.2, xSweet: 1.2, u: 3, pp: 0.31, mf: 0.3, br: 0.12, model: 'claude-opus-4-8', latestMeasuredModel: 'claude-opus-4-8', cRatio: 12.5, segment: measurement.segment, apiCalls: 4, turnSeq: measurement.turnSeq, usage: null, rateLamp: { reliable: true, B_default: 55000 } }),
     getHistory: () => [],
     getBucketData: () => ({ dead: 42000, paths: [], residual: [], totalB: 60000, totalL: 90000, bDefault: 55000, totalResidualRaw: 30000, totalResidual: 30000, currentTurnSeq: measurement.turnSeq, segment: measurement.segment }),
     getHandoffMeasurement: () => structuredClone(measurement),
@@ -157,8 +163,18 @@ describe('prepareHandoff', () => {
     assert.equal(previous.b_default, 55000);
     assert.equal(previous.dead, 42000);
     assert.equal(previous.session_floor, 45000);
+    // The STAMPED pp, not a re-derivation from x and dhat: this fixture's pp disagrees with what those two
+    // would yield, so a recomputing exit stat is visible here.
+    assert.equal(previous.pp_exit, MEASUREMENT.measurement.pp);
+    // The rate the fold runs on, not the smoothed g: the fixture carries both, so a stat reading the wrong
+    // one is visible here.
+    assert.equal(previous.g, 700);
     const prepared = JSON.parse(row.prepared_stats);
     assert.equal(prepared.b_kept, 400 + 45000);
+    // The what-if's rate is the KEPT scenario's: the kept file carried, every other file left out as excess.
+    assert.deepEqual(scenarioCalls.at(-1), { [join(project, 'src/a.js')]: 'include', [join(project, 'src/gone.js')]: 'exclude' });
+    assert.equal(prepared.g, scenarioRateFor(scenarioCalls.at(-1)));
+    assert.notEqual(prepared.g, previous.g, 'the exit stat keeps the default scenario\'s rate');
   });
 
   test('a stale observed segment is rejected without a write', () => {

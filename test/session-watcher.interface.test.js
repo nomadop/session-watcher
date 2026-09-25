@@ -46,7 +46,7 @@ function makeEngine(script = {}) {
     },
     getStatus() {
       return {
-        L: 100, B: 80, bDefault: 70, g: 5, x: 1.4, dhat: 0.2, xSweet: 1.2, burnRate: 0.01,
+        L: 100, B: 80, bDefault: 70, g: 5, x: 1.4, dhat: 0.2, xSweet: 1.2, u: 2, pp: 0.25,
         mf: 0.3, br: 0.11, model: 'epoch-model', latestMeasuredModel: 'latest-model', cRatio: 12.5,
         segment: 3, apiCalls: 2, turnSeq: 9, usage: null,
         rateLamp: { reliable: true, basis: 'fullCarry' },
@@ -55,7 +55,7 @@ function makeEngine(script = {}) {
     },
     getHistory() {
       return [{
-        ts: 1000, segment: 0, L: 10, B: 5, x: 2, g: 1, miss: false,
+        ts: 1000, segment: 0, L: 10, B: 5, x: 2, bDefault: 4, u: 2, pp: 0.25, g: 1, miss: false,
         cacheRead: 3, cacheWrite: 4, turnSeq: 1, foldedSeq: 1,
       }];
     },
@@ -63,7 +63,7 @@ function makeEngine(script = {}) {
     getHandoffMeasurement() {
       return script.handoffMeasurement ?? {
         segment: 3, turnSeq: 9, epochModel: 'epoch-model',
-        measurement: { L: 100, B: 80, bDefault: 70, g: 5, mf: 0.3, br: 0.11, x: 1.4, dhat: 0.2, cRatio: 12.5, dead: 40, sessionFloor: 45 },
+        measurement: { L: 100, B: 80, bDefault: 70, g: 5, mf: 0.3, br: 0.11, u: 2, pp: 0.25, x: 1.4, dhat: 0.2, cRatio: 12.5, dead: 40, sessionFloor: 45 },
         paths: [],
       };
     },
@@ -590,7 +590,7 @@ describe('named reads', () => {
     const status = build().getStatus();
     assert.equal(status.model, 'latest-model');
     assert.deepEqual(Object.keys(status), [
-      'L', 'B', 'bDefault', 'g', 'x', 'dhat', 'xSweet', 'burnRate', 'mf', 'br',
+      'L', 'B', 'bDefault', 'g', 'x', 'dhat', 'xSweet', 'u', 'pp', 'mf', 'br',
       'model', 'cRatio', 'segment', 'apiCalls', 'uptime', 'rateLamp', 'sourceLocator',
     ]);
   });
@@ -598,8 +598,12 @@ describe('named reads', () => {
   test('getHistory keeps the retained point shape', () => {
     const watcher = build();
     const points = watcher.getHistory();
+    // No `x`: the row's `L` is total stock while a stamped `x` is read against the belief on the cacheRead
+    // basis, so the two could never be divided into each other. The Engine's own row still carries both, and
+    // published nowhere it invites no division; what leaves is the served pair.
     assert.deepEqual(points, [{
-      ts: '1970-01-01T00:00:01.000Z', segment: 0, L: 10, B: 5, x: 2, g: 1, miss: false,
+      ts: '1970-01-01T00:00:01.000Z', segment: 0, L: 10, B: 5, g: 1, miss: false,
+      bDefault: 4, u: 2, pp: 0.25,
       cacheRead: 3, cacheCreation: 4, turnSeq: 1, foldedSeq: 1,
     }]);
   });
@@ -833,7 +837,7 @@ describe('named reads', () => {
     assert.deepEqual([...surface].sort(), [
       'applyHarnessFrame', 'closeCurrentSegment', 'deliverHandoff', 'getBucketData', 'getCurrentCtp',
       'getCurrentModel', 'getEpochModel', 'getHistory', 'getStatus', 'getTerminalSnapshot', 'getTurnSkeleton',
-      'prepareHandoff', 'readRateLampFrame', 'replaceUserOverrides', 'searchHandoffs',
+      'prepareHandoff', 'readRateLampFrame', 'readScenario', 'replaceUserOverrides', 'searchHandoffs',
       'setRatioOverride', 'submitTurnNotes',
     ]);
   });

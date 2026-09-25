@@ -1043,7 +1043,7 @@ describe('bash residual naming', () => {
     ['FOO=bar BAZ=1 curl https://api.example.com/v1', 'curl', 'api.example.com'],
     ['git -C /some/path log', 'git log', ''],
     ['bash scripts/deploy.sh', 'bash deploy.sh', ''],
-    ['python3 << "EOF"\nprint("hi")\nEOF', 'python3', '<<'],
+    ['python3 << "EOF"\nprint("hi")\nEOF', 'python3', ''],
     ['node -e "console.log(1)"', 'node', ''],
     ['sudo docker compose up', 'docker compose', 'up'],
     ['cat /home/alice/foo | grep bar', 'grep', '/home/alice/foo'],
@@ -1067,6 +1067,16 @@ describe('bash residual naming', () => {
     ["echo '=== hdr ===' && sed -n '1,5p' a.js; echo; sed -n '9,12p' a.js", 'sed', 'a.js;'],
     ['echo start; cd src && npm test', 'npm test', ''],
     ['echo -n hdr && npm test', 'echo', 'hdr'],
+    ['f=a.md && cat $f', 'cat', ''],
+    ['f=a.md ; wc -l $f', 'wc', ''],
+    ['f=a.md && g=b.md && echo hdr && wc -l $f', 'wc', ''],
+    ['echo hdr && f=a.md && grep x $f', 'grep', 'x'],
+    ['f=a.md &&', '(bash)', ''],
+    ['f=a.md', '(script)', ''],
+    ['f=x ; TOK="Bearer ghp_zzz" ; curl -H "$TOK" https://api.io', 'curl', 'api.io'],
+    ['f="a b.md"; wc -l "$f"', 'wc', ''],
+    ['git status --short && git branch --show-current', 'git status', ''],
+    ['cat >> out.md', 'cat', ''],
   ];
   for (const [command, groupKey, detail] of CASES) {
     test(`names ${JSON.stringify(command.slice(0, 44))} as ${groupKey}`, () => {

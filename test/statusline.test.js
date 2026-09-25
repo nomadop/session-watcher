@@ -95,13 +95,17 @@ test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta',
 // The old `break-even ~N turns` / `bill NN%` format is retired.
 test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill format', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 2,
+  // The two clocks are given different phases on purpose: an equal pair cannot tell which one the meter
+  // reads, and the bill clock is not what this line shows.
+  const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.68, billCycleCount: 2,
     inDeepWater: true, br: 0.15, x_display: 2.5, dhat: 0.4,
     lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 5 });
+    targetL: 200000, kAvg: 3000, currentTurnSeq: 5,
+    rentMeter: { depthActive: true, depthProgress: 0.37 } });
   const out = formatLine(s);
   assert.ok(out.includes('▮') || out.includes('░'), 'v3 meter bar renders');
-  assert.ok(out.includes('37%'), 'meter shows billProgress as floor percentage');
+  assert.ok(out.includes('37%'), 'meter shows the wallet phase as floor percentage');
+  assert.ok(!out.includes('68%'), 'the bill clock phase is not what the meter shows');
   assert.ok(out.includes('🟡'), 'amber lamp from br >= 0.10');
   assert.ok(out.includes('L137k'), 'L value renders fixed-width');
   assert.ok(out.includes('b55k'), 'baseline value renders tight-coupled');
@@ -112,15 +116,16 @@ test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill fo
 // Review A7#15 → v3: hBreak Infinity (burnRate=0, below the floor) — br renders b---% (no br data), never Infinity.
 test('A2 A7#15: hBreak Infinity (burnRate=0) renders br b---%, not Infinity', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: Infinity, billProgress: 0, billCycleCount: 0,
+  const s = reliableBase({ reliable: true, hBreak: Infinity, billProgress: 0.63, billCycleCount: 0,
     inDeepWater: false, x_display: 1.2, dhat: 0.4,
     lBase: 55000, L_read: 137000, L_cap: 960000,
-    currentTurnSeq: 3 });
+    currentTurnSeq: 3, rentMeter: { depthActive: true, depthProgress: 0 } });
   // No br → renderBr(undefined) renders b---%
   const out = formatLine(s);
   assert.ok(out.includes('b---%'), 'missing br renders b---% placeholder');
   assert.ok(!out.includes('Infinity'), 'never leaks the literal Infinity');
-  assert.ok(out.includes('0%'), 'billProgress 0 rendered in meter');
+  assert.ok(out.includes('0%'), 'wallet phase 0 rendered in meter');
+  assert.ok(!out.includes('63%'), 'the bill clock is mid-cycle and the meter still reads the wallet clock');
 });
 
 // v2.2 H-B + I-pt2: the neutral bill pulse (rent +Nx / idle / ctx growing) is RETIRED. The meter's ×N
@@ -165,14 +170,16 @@ test('A2/I-pt2: neutral bill pulse retired — cache_unstable lastBillEvent sile
 // TTL: with neutral pulse retired, lastBillEvent has no rendering effect at all (stale or not).
 test('A2/I-pt2: stale lastBillEvent also renders nothing (neutral pulse retired)', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
+  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.24, billCycleCount: 2,
     inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
     band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
     targetL: 200000, kAvg: 3000, currentTurnSeq: 12,
-    lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 11 } });
+    lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 11 },
+    rentMeter: { depthActive: true, depthProgress: 0.5 } });
   const out = formatLine(s);
   assert.ok(!/rent \+/.test(out), 'stale or current bill event — no pulse either way');
-  assert.ok(out.includes('50%'), 'meter still renders');
+  assert.ok(out.includes('50%'), 'meter still renders the wallet phase');
+  assert.ok(!out.includes('24%'), 'and not the bill phase');
 });
 
 // Single merged-presentation stack (STRICT priority, never both): stop_hook alert wins the turn.
@@ -207,13 +214,15 @@ test('B3 priority: with only a stop event this turn, the stop message renders', 
 // The neutral bill pulse is retired.
 test('A2: a reliable frame with bill events but no stop event renders no alert line (neutral pulse retired)', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 15, billProgress: 0.6, billCycleCount: 3,
+  const s = reliableBase({ reliable: true, hBreak: 15, billProgress: 0.19, billCycleCount: 3,
     inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
     band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
     targetL: 200000, kAvg: 3000, currentTurnSeq: 30,
-    lastBillEvent: { kind: 'non_idle_burn', billCount: 3, delivery: 'statusline_pulse', turnSeq: 30 } });
+    lastBillEvent: { kind: 'non_idle_burn', billCount: 3, delivery: 'statusline_pulse', turnSeq: 30 },
+    rentMeter: { depthActive: true, depthProgress: 0.6 } });
   const out = formatLine(s);
-  assert.ok(out.includes('60%'), 'meter renders billProgress');
+  assert.ok(out.includes('60%'), 'meter renders the wallet phase');
+  assert.ok(!out.includes('19%'), 'the bill phase is not the meter\'s clock');
   assert.ok(!out.includes('\n'), 'no second line without a current-turn stop event');
 });
 
@@ -414,7 +423,7 @@ test('u=2.0 at the exact point where lamp turns yellow (kStable alignment)', () 
   const xExit = 1 + 2 * dhat;
   const L_at_exit = lBase * xExit;
   const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.5, billCycleCount: 3,
-    inDeepWater: true, br: 0.15, x_display: xExit, dhat,
+    inDeepWater: true, br: 0.15, x_display: xExit, dhat, u: 2.0, mf: 0.3,
     kStable, lBase, L_read: L_at_exit, L_cap: 960000,
     targetL: 960000, kAvg: 1382, currentTurnSeq: 10 });
   s.kAvg = 1382;

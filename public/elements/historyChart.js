@@ -4,8 +4,8 @@
 
 import { computeYMax, buildMissMarkers, buildProjectionData, computeYRatchet, RATCHET_Y_INIT } from '../chart-helpers.js';
 import { computeCrosshairLabel, computeLabelOffset } from '../lib/crosshairHelpers.js';
+import { projectedX } from '../lib/xScale.js';
 import { HOVER_LINE_COLOR, MAX_TOUCH_MARKERS } from '../lib/uiConstants.js';
-import { computePreviewLandmarks } from './heroDiptych.js';
 
 /** Resolve a CSS custom property to its computed value, with fallback. */
 function cssVar(el, name, fallback) {
@@ -19,6 +19,9 @@ const RATCHET_X_INIT = 100;
 function nextXRatchet(current) {
   return current * 2;
 }
+
+// The live growth estimate's usable floor, in tokens per call.
+const G_LIVE_MIN = 1;
 
 /**
  * Group a flat history array into a Map<segmentIndex, points[]>
@@ -93,7 +96,7 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
       const val = typeof last === 'object' ? last.y : last;
       if (val == null || !Number.isFinite(val)) return;
       const yScale = chart.scales.y;
-      if (val > yScale.max) return;
+      if (val > yScale.max || val < yScale.min) return;
       const ca = chart.chartArea;
       const ctx = chart.ctx;
       ctx.save();
@@ -190,6 +193,22 @@ function buildChartConfig(points, ratchetX, ratchetY, thresholdLine, colors) {
   };
 }
 
+/** Threshold lines in L units from a landmark source (status.rateLamp or a scenario), its bDefault, and `anchorL`
+ *  — the L of the last plotted point, the number the curve itself draws. Every landmark is the reference's image of
+ *  a causal position (`landmarksOf` in `lib/measurement/position.js`), so the conversion goes back through the same
+ *  skeleton: the offset from the source's own projected x, priced at `dL/dx = bDefault` because `x = L / B_default`.
+ *  Anchoring there makes the offset `d·(u_lm − u_now)`, so the fit residual between the measured x and the projected
+ *  one cancels and `anchorL ≥ line` is the hero's `u_now ≥ u_lm` — both charts cross a landmark on the same frame
+ *  while this axis stays real token stock. Converting from zero instead folds that residual into the comparison.
+ *  Absent landmarks are null lines, and so is a null projection: `x − null` is finite, so leaving that unchecked
+ *  would silently restore the zero-anchored conversion. Every snapshot overwrites the previous set. */
+export function thresholdLinesOf(source, bDefault, anchorL) {
+  const here = projectedX(source?.reference, source?.u);
+  const toL = (x) => (Number.isFinite(x) && Number.isFinite(here) && bDefault > 0)
+    ? anchorL + bDefault * (x - here) : null;
+  return { entry: toL(source?.xBrAmberL), exit: toL(source?.xBrAmberR), red: toL(source?.xBrRedR) };
+}
+
 /**
  * mount(root, ctx) — history chart element
  */
@@ -202,23 +221,22 @@ export function mount(root, ctx) {
   let chart = null;
   let ratchetX = RATCHET_X_INIT;
   let ratchetY = RATCHET_Y_INIT;
-  let entryLineL = null;         // left-arm entry line (xBrAmberL * lBase, br=-10%)
-  let exitLineL = null;          // v2.1 deep-water line (L_exit_fullCarry from rateLamp, br=10%)
-  let redLineL = null;           // br=25% threshold line (xBrRedR * lBase)
-  // Saved copies: restored when navigating back to live segment (update() hasn't fired yet)
-  let _savedEntryLineL = null;
-  let _savedExitLineL = null;
-  let _savedRedLineL = null;
+  let defaultLandmarks = null;                                 // latest snapshot's rateLamp: the default landmark source
+  let previewScenario = null;                                  // fitted scenario while a preview is dirty
+  // The landmark source is retained rather than its converted lines, because the conversion needs the anchor the
+  // caller holds.
+  const activeLines = (anchorL) => previewScenario
+    ? thresholdLinesOf(previewScenario, previewScenario.bDefault, anchorL)
+    : thresholdLinesOf(defaultLandmarks, defaultLandmarks?.B_default, anchorL);
   let lastGEma = null;           // per-call EMA growth rate (gEma from rateLamp)
-  let lastCRatio = null;         // C_RATIO (cache cost ratio) from rateLamp
-  let lastLRead = null;          // current L_read from rateLamp
-  let lastLBase = null;          // current lBase from rateLamp
-  let previewB = null;           // non-null ⇔ bucket preview active
   let hoverTouchMap = null;      // Map<localSeq, 'r'|'w'> — active during path-bucket hover for L-line coloring
 
   // DOM structure. The empty `.sw-history-anchor` span in the header below is where
   // historyDrawer.js mounts its trigger; without it that module's mount returns its
   // no-op pair and the History drawer never appears.
+  // updateFootnote takes the call figure from the displayed page's point count, and L and B from that page's
+  // last point; the growth figure is the live estimate, falling back to that same point's own g when the live
+  // estimate is absent or below G_LIVE_MIN.
   root.innerHTML = `
     <h3 class="sw-history-header">
       <span>Usage history</span>
@@ -248,8 +266,8 @@ export function mount(root, ctx) {
     <div class="sw-history-footnote">
       <span>calls <b class="sw-fn-calls">—</b></span>
       <span>gₑ <b class="sw-fn-g">—</b></span>
-      <span>L <b class="sw-fn-l">—</b></span>
-      <span>B <b class="sw-fn-base">—</b></span>
+      <span>stock L <b class="sw-fn-l">—</b></span>
+      <span>position basis B <b class="sw-fn-base">—</b></span>
     </div>
   `;
 
@@ -522,51 +540,18 @@ export function mount(root, ctx) {
   // ─────────────────────────────────────────────────────────────────────────────
 
   // ── Bucket preview → threshold line update (§10.3) ───────────────────────────
-  /** Recompute threshold lines from stored previewB + latest g/R/L. */
-  function applyPreviewThresholds() {
-    if (!previewB || lastCRatio == null || lastGEma == null || lastLRead == null) return;
-    const prev = computePreviewLandmarks({
-      B_preview: previewB, R: lastCRatio, g: lastGEma, L: lastLRead, mf: null,
-    });
-    entryLineL = prev.xAmberL * previewB;
-    exitLineL = prev.xAmberR * previewB;
-    redLineL = prev.xRedR * previewB;
-  }
-
   function onBucketPreview(e) {
     const detail = e.detail ?? null;
-    const dirty = detail?.dirty;
-    const B_preview = detail?.B_preview;
-
-    // Preview thresholds only apply on the live segment — historical segments have no threshold lines.
-    if (!follow) return;
-
-    if (dirty && B_preview > 0 && lastCRatio != null && lastGEma != null && lastLRead != null) {
-      previewB = B_preview;
-      applyPreviewThresholds();
-    } else if (!dirty && previewB) {
-      previewB = null;
-      // Revert: recompute from actual state
-      if (lastLBase > 0 && lastCRatio != null && lastGEma != null && lastLRead != null) {
-        const actual = computePreviewLandmarks({
-          B_preview: lastLBase, R: lastCRatio, g: lastGEma, L: lastLRead, mf: null,
-        });
-        entryLineL = actual.xAmberL * lastLBase;
-        exitLineL = actual.xAmberR * lastLBase;
-        redLineL = actual.xRedR * lastLBase;
-      }
-    } else {
-      return; // no change needed
-    }
-
-    // Redraw threshold line immediately
-    if (!chart) return;
+    // A preview replaces the default only once its own fit landed: every threshold line derives from the
+    // reference, so a reliable scenario whose fit was refused carries all-null landmarks and would blank the line
+    // while `shownGroupOf` in `heroDiptych.js` and `markerModel` in `depthAux.js` keep the default group's.
+    previewScenario = (detail?.dirty && detail.scenario?.reliable === true && detail.scenario.reference)
+      ? detail.scenario : null;
+    if (!chart || !follow) return;
     const currentL = currentPoints.length > 0 ? currentPoints[currentPoints.length - 1]?.L ?? 0 : 0;
-    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
-    const thresholdData = tLine
-      ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }]
-      : [];
-    chart.data.datasets[1].data = thresholdData;
+    const lines = activeLines(currentL);
+    const tLine = pickThresholdLine(currentL, lines.entry, lines.exit, lines.red, colors);
+    chart.data.datasets[1].data = tLine ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }] : [];
     chart.data.datasets[1].borderColor = tLine?.color ?? colors.amber;
     chart._thresholdLabel = tLine?.label ?? '';
     chart.update('none');
@@ -597,11 +582,11 @@ export function mount(root, ctx) {
       return;
     }
     const last = points[points.length - 1];
-    const gVal = (lastGEma >= 1) ? lastGEma : last?.g;
+    const gVal = (lastGEma >= G_LIVE_MIN) ? lastGEma : last?.g;
     fnG.textContent = gVal != null ? Math.round(gVal).toLocaleString() : '—';
     fnCalls.textContent = points.length;
-    fnL.textContent = lastLRead != null ? `${Math.round(lastLRead / 1000)}k` : '—';
-    fnBase.textContent = lastLBase != null ? `${Math.round(lastLBase / 1000)}k` : '—';
+    fnL.textContent = Number.isFinite(last?.L) ? `${Math.round(last.L / 1000)}k` : '—';
+    fnBase.textContent = Number.isFinite(last?.bDefault) ? `${Math.round(last.bDefault / 1000)}k` : '—';
   }
 
   function computeRatchet(points) {
@@ -622,23 +607,9 @@ export function mount(root, ctx) {
       chart = null;
     }
     hoverTouchMap = null; // clear stale L-line coloring from previous segment
-    // Reset ratchets on segment change; clear thresholds only when paging to a
-    // historical segment (follow=false) — on the live segment, update() has
-    // already set them from the current rateLamp before calling rebuildChart().
+    // Reset ratchets on segment change.
     ratchetX = RATCHET_X_INIT;
     ratchetY = RATCHET_Y_INIT;
-    if (!follow) {
-      entryLineL = null;
-      exitLineL = null;
-      redLineL = null;
-      previewB = null; // clear stale preview so update() won't re-apply thresholds
-    } else {
-      // Returning to live segment via navigation: restore thresholds from last snapshot
-      // (they were nulled when we paged away; update() hasn't fired yet to repopulate).
-      entryLineL = _savedEntryLineL;
-      exitLineL = _savedExitLineL;
-      redLineL = _savedRedLineL;
-    }
 
     const raw = segmentKeys.length > 0 ? (segments.get(segmentKeys[currentPage]) || []) : [];
     const points = fitColdStart(raw);
@@ -656,7 +627,8 @@ export function mount(root, ctx) {
 
     computeRatchet(points);
     const currentL = points[points.length - 1]?.L ?? 0;
-    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
+    const lines = follow ? activeLines(currentL) : { entry: null, exit: null, red: null };
+    const tLine = pickThresholdLine(currentL, lines.entry, lines.exit, lines.red, colors);
     const config = buildChartConfig(points, ratchetX, ratchetY, tLine, colors);
     chart = new Chart(canvas, config);
     chart._thresholdLabel = tLine?.label ?? '';
@@ -705,7 +677,8 @@ export function mount(root, ctx) {
     const lPointColor = points.map((_, i) => i === points.length - 1 ? colors.amber : 'transparent');
     // Single "next threshold" line
     const currentL = points[points.length - 1]?.L ?? 0;
-    const tLine = pickThresholdLine(currentL, entryLineL, exitLineL, redLineL, colors);
+    const lines = follow ? activeLines(currentL) : { entry: null, exit: null, red: null };
+    const tLine = pickThresholdLine(currentL, lines.entry, lines.exit, lines.red, colors);
     const thresholdData = tLine
       ? [{ x: 1, y: tLine.value }, { x: ratchetX, y: tLine.value }]
       : [];
@@ -748,37 +721,10 @@ export function mount(root, ctx) {
 
   function update(snapshot) {
     const rl = snapshot?.status?.rateLamp;
-    // Threshold lines: during preview, recompute from previewB + latest inputs;
-    // otherwise use server-provided landmarks directly.
-    if (previewB) {
-      applyPreviewThresholds();
-    } else {
-      // Always compute and cache threshold values from the latest rateLamp snapshot.
-      if (rl?.xBrAmberL != null && Number.isFinite(rl.xBrAmberL) && rl?.lBase > 0) {
-        _savedEntryLineL = rl.xBrAmberL * rl.lBase;
-      }
-      if (rl?.xBrAmberR != null && Number.isFinite(rl.xBrAmberR) && rl?.lBase > 0) {
-        _savedExitLineL = rl.xBrAmberR * rl.lBase;
-      } else if (rl?.L_exit_fullCarry != null && Number.isFinite(rl.L_exit_fullCarry)) {
-        _savedExitLineL = rl.L_exit_fullCarry;
-      }
-      if (rl?.xBrRedR != null && Number.isFinite(rl.xBrRedR) && rl?.lBase > 0) {
-        _savedRedLineL = rl.xBrRedR * rl.lBase;
-      }
-      // Only apply to the active render vars when on the live segment.
-      // Historical segments must not show live threshold lines.
-      if (follow) {
-        entryLineL = _savedEntryLineL;
-        exitLineL = _savedExitLineL;
-        redLineL = _savedRedLineL;
-      }
-    }
+    defaultLandmarks = rl ?? null;
     if (rl?.gEma != null && Number.isFinite(rl.gEma)) {
       lastGEma = rl.gEma;
     }
-    if (rl?.C_RATIO != null && Number.isFinite(rl.C_RATIO)) lastCRatio = rl.C_RATIO;
-    if (rl?.L_read != null && Number.isFinite(rl.L_read)) lastLRead = rl.L_read;
-    if (rl?.lBase != null && Number.isFinite(rl.lBase)) lastLBase = rl.lBase;
     const history = snapshot.history || [];
     const newSegments = groupBySegment(history);
     const newKeys = Array.from(newSegments.keys()).sort((a, b) => a - b);

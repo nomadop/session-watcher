@@ -768,6 +768,80 @@ test('a parallel-tool-call fork keeps the continuation, not the earlier result s
   assert.deepEqual(activePath, ['u1', 'a1', 'a2', 'tr2', 'a3']);
 });
 
+// Every result of a parallel batch but the last call's is a sibling leaf off the ancestor chain, because a
+// result is parented to its own call's row while the continuation hangs off whichever result landed last.
+// A result row is accepted with the row it hangs from; the chain itself is unchanged. This is the shape of
+// `fixtures/f6008161-20260921.jsonl`, results returned out of order.
+test('a result row under an accepted row is accepted off the ancestor chain', () => {
+  const rows = rowsFrom([
+    userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
+    assistantToolUse({ uuid: 'a1', parentUuid: 'u1', messageId: 'msg_1', toolUseId: 'tu_1',
+      name: 'Read', input: { file_path: '/a.md' }, timestamp: ts(2) }),
+    assistantToolUse({ uuid: 'a2', parentUuid: 'a1', messageId: 'msg_1', toolUseId: 'tu_2',
+      name: 'Read', input: { file_path: '/b.md' }, timestamp: ts(3) }),
+    assistantToolUse({ uuid: 'a3', parentUuid: 'a2', messageId: 'msg_1', toolUseId: 'tu_3',
+      name: 'Read', input: { file_path: '/c.md' }, timestamp: ts(4) }),
+    toolResult({ uuid: 'tr3', parentUuid: 'a3', toolUseId: 'tu_3', content: 'c', timestamp: ts(5) }),
+    assistantToolUse({ uuid: 'a4', parentUuid: 'tr3', messageId: 'msg_1', toolUseId: 'tu_4',
+      name: 'Skill', input: { skill: 's' }, timestamp: ts(6) }),
+    toolResult({ uuid: 'tr2', parentUuid: 'a2', toolUseId: 'tu_2', content: 'b', timestamp: ts(7) }),
+    toolResult({ uuid: 'tr1', parentUuid: 'a1', toolUseId: 'tu_1', content: 'a', timestamp: ts(8) }),
+    toolResult({ uuid: 'tr4', parentUuid: 'a4', toolUseId: 'tu_4', content: 'ok', timestamp: ts(9) }),
+    userMessage({ uuid: 'u2', parentUuid: 'tr4', text: 'next', timestamp: ts(10) }),
+  ]);
+  const { observations, activePath } = reduceClaudeCodeSnapshot(rows);
+
+  assert.deepEqual(activePath, ['u1', 'a1', 'a2', 'a3', 'tr3', 'a4', 'tr4', 'u2'], 'the chain is unchanged');
+  const results = observations.filter(o => o.type === 'tool-result');
+  assert.deepEqual(results.map(o => o.sourceEntryId), ['tr3', 'tr2', 'tr1', 'tr4'], 'results arrive in row order');
+  assert.deepEqual(new Set(results.map(o => o.toolUseId)), new Set(['tu_1', 'tu_2', 'tu_3', 'tu_4']));
+});
+
+// The shape of `fixtures/decf0f2c-20260703.jsonl`: results return in call order, and the first one is off
+// the chain all the same, because the continuation is parented to the last.
+test('an in-order parallel batch admits the first call\'s result', () => {
+  const rows = rowsFrom([
+    userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
+    assistantToolUse({ uuid: 'a1', parentUuid: 'u1', messageId: 'msg_1', toolUseId: 'tu_1',
+      name: 'Bash', input: { command: 'ls' }, timestamp: ts(2) }),
+    assistantToolUse({ uuid: 'a2', parentUuid: 'a1', messageId: 'msg_1', toolUseId: 'tu_2',
+      name: 'Bash', input: { command: 'pwd' }, timestamp: ts(3) }),
+    toolResult({ uuid: 'tr1', parentUuid: 'a1', toolUseId: 'tu_1', content: 'a', timestamp: ts(4) }),
+    toolResult({ uuid: 'tr2', parentUuid: 'a2', toolUseId: 'tu_2', content: 'b', timestamp: ts(5) }),
+    assistantUsage({ uuid: 'a3', parentUuid: 'tr2', messageId: 'msg_2', timestamp: ts(6),
+      usage: usageOf({ output: 3, cacheRead: 300 }) }),
+  ]);
+  const { observations } = reduceClaudeCodeSnapshot(rows);
+
+  const results = observations.filter(o => o.type === 'tool-result').map(o => o.toolUseId);
+  assert.deepEqual(results, ['tu_1', 'tu_2']);
+});
+
+// A rewound branch begins at a human row — the one the human replaced — so the row at its fork is never a
+// result, and every result deeper in it hangs from a row the chain does not reach. The shape of
+// `fixtures/f6008161-20260921.jsonl`: a Bash and a Read, an interrupt, then the human rewinds to before the
+// question and asks again.
+test('a rewound branch\'s results stay out with its branch', () => {
+  const rows = rowsFrom([
+    userMessage({ uuid: 'u0', text: 'earlier', timestamp: ts(1) }),
+    userMessage({ uuid: 'u1', parentUuid: 'u0', text: 'first ask', timestamp: ts(2) }),
+    assistantToolUse({ uuid: 'a1', parentUuid: 'u1', messageId: 'msg_1', toolUseId: 'tu_1',
+      name: 'Bash', input: { command: 'ls' }, timestamp: ts(3) }),
+    toolResult({ uuid: 'tr1', parentUuid: 'a1', toolUseId: 'tu_1', content: 'a', timestamp: ts(4) }),
+    assistantToolUse({ uuid: 'a2', parentUuid: 'tr1', messageId: 'msg_1', toolUseId: 'tu_2',
+      name: 'Read', input: { file_path: '/a.md' }, timestamp: ts(5) }),
+    toolResult({ uuid: 'tr2', parentUuid: 'a2', toolUseId: 'tu_2', content: 'b', timestamp: ts(6) }),
+    userMessage({ uuid: 'stop', parentUuid: 'tr2', text: '[Request interrupted by user]', timestamp: ts(7) }),
+    userMessage({ uuid: 'u2', parentUuid: 'u0', text: 'second ask', timestamp: ts(8) }),
+  ]);
+  const { observations, activePath } = reduceClaudeCodeSnapshot(rows);
+
+  assert.deepEqual(activePath, ['u0', 'u2']);
+  const abandoned = new Set(['u1', 'a1', 'tr1', 'a2', 'tr2', 'stop']);
+  assert.ok(observations.every(o => !abandoned.has(o.sourceEntryId)), 'nothing on the rewound branch is observed');
+  assert.equal(observations.filter(o => o.type === 'tool-result').length, 0);
+});
+
 // A reused uuid is the one shape that gives the newest write children of its own: `dup` is written under u1
 // with a child, then written again under a later sibling. Descending by last-added child would land on the
 // stale child, and walking up the now-cyclic parent edges would not terminate.

@@ -43,7 +43,19 @@ test('a zero-stock first step and its revisions leave the epoch unanchored', () 
   assert.equal(engine.getBucketData().dead, 0);
 
   engine.ingest([step('m2', { input: 5, cacheRead: 40, cacheWrite: 10 })]);
-  assert.equal(engine.getBucketData().dead, 40, 'dead anchors at max(input, cacheRead, cacheWrite)');
+  assert.equal(engine.getBucketData().dead, 55, 'dead anchors at the whole first-step stock: input + cacheRead + cacheWrite');
+});
+
+test('a step recorded before the settlement cursor exists carries no position, and the anchoring step is the first stamped', () => {
+  const engine = makeEngine();
+  engine.ingest([step('m1', { output: 5 }), stock('m2', 5000), stock('m3', 9000)]);
+  const history = engine.getHistory();
+  const [preAnchor, anchoring] = history;
+  assert.equal(preAnchor.u, null, 'a frame priced against a zero baseline is not stamped at all');
+  assert.equal(preAnchor.pp, null);
+  assert.equal(preAnchor.bDefault, null);
+  assert.ok(Number.isFinite(anchoring.u), 'the anchoring step is where the fold starts');
+  assert.ok(history.slice(1).every(p => Number.isFinite(p.u)));
 });
 
 test('the first positive-stock step establishes settlement cursors, clears pre-cursor resource growth, and performs no settlement', () => {
@@ -240,10 +252,10 @@ test('cold start and successful epoch or explicit close seed the next segment at
   assert.equal(engine.getStatus().g, G_FLOOR, 'successful explicit close');
 });
 
-test('getStatus().B is uncapped before a positive-stock settlement cursor exists and capped by the cursor stock afterwards', () => {
+test('bucket data reports the belief uncapped before a positive-stock settlement cursor exists, and getStatus().B is the last step capped by the cursor stock', () => {
   const engine = makeEngine();
   engine.ingest([effect([wholeContent('r1', 5000)], { spentTokens: 5000 })]);
-  assert.equal(engine.getStatus().B, 5000, 'no cursor yet: the belief is reported uncapped');
+  assert.equal(engine.getBucketData().totalB, 5000, 'no cursor yet: the belief is reported uncapped');
 
   engine.ingest([stock('m1', 1000)]);
   assert.equal(engine.getStatus().B, 1000, 'min(uncapped resident total, cursor total stock)');

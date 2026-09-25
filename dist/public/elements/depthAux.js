@@ -1,13 +1,21 @@
 // public/elements/depthAux.js — Full-domain [1, wallP] overview bar with viewport frame (spec §3)
-import { computeEoqViewport, computeLandmarkPositions, validateLandmarks } from '../lib/xScale.js';
-import { computePreviewLandmarks } from './heroDiptych.js';
-import { MIN_B_PREVIEW } from '../lib/uiConstants.js';
-import { computePreviewBr } from '../chart-helpers.js';
+import { computeEoqViewport, computeLandmarkPositions, projectedX } from '../lib/xScale.js';
 
 /** Resolve a CSS custom property to its computed value, with fallback. */
 function cssVar(el, name, fallback) {
   const v = getComputedStyle(el).getPropertyValue(name)?.trim();
   return v || fallback;
+}
+
+/** Marker positions and the active br: each marker where its reference places its causal position, as the hero
+ *  draws the dot, so the measured x_display reaches neither. Nothing else is recomputed here. */
+export function markerModel(rl, previewState, activeGroup) {
+  const x = projectedX(rl.reference, rl.u);
+  const scenario = previewState?.dirty && previewState.scenario?.reliable === true ? previewState.scenario : null;
+  const mintX = scenario ? projectedX(scenario.reference, scenario.u) : null;
+  const dirty = previewState?.dirty === true;
+  const useMint = activeGroup === 'mint' && mintX !== null;
+  return { x, mintX, dirty, activeX: useMint ? mintX : x, activeBr: useMint ? scenario.br : rl.br };
 }
 
 export function mount(root, _ctx) {
@@ -118,26 +126,12 @@ export function mount(root, _ctx) {
       mintMarkerEl.style.display = 'none';
       frameEl.style.display = 'none';
       ticksEl.innerHTML = '';
-      barWrap.style.display = '';
       syncToChartArea();
       return;
     }
 
-    barWrap.style.display = '';
-
-    const R = rl.C_RATIO;
-    const x = rl.lBase > 0 ? rl.L_read / rl.lBase : (rl.x_display ?? 1);
-    const xBrAmberL = rl.xBrAmberL;
-    const xSweet = rl.xSweet;
-    const xBrAmberR = rl.xBrAmberR;
-    const xBrRedR = rl.xBrRedR;
-    const wallP = rl.wallP ?? (1 + R);
-
-    const validation = validateLandmarks({ xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP });
-    if (!validation.ok) {
-      barWrap.style.display = 'none';
-      return;
-    }
+    const { xBrAmberL, xSweet, xBrAmberR, xBrRedR } = rl;
+    const wallP = rl.wallP ?? (1 + rl.C_RATIO);
 
     // Segment change resets ratchet — uses snapshot.status.segment (always in API response)
     const currentSegment = snapshot?.status?.segment ?? null;
@@ -146,19 +140,13 @@ export function mount(root, _ctx) {
       prevSegment = currentSegment;
     }
 
-    // Ghost-aware viewport expansion (syncs with heroDiptych)
-    let previewGroup = undefined;
-    let prevLandmarks = null;
-    if (previewState?.dirty && previewState?.B_preview) {
-      const g = rl.gEma ?? rl.g ?? 0;
-      const L = rl.L_read ?? 0;
-      prevLandmarks = computePreviewLandmarks({ B_preview: previewState.B_preview, R, g, L, mf: rl.mf });
-      previewGroup = { xRedR: prevLandmarks.xRedR, x: prevLandmarks.x };
-    }
+    const marker = markerModel(rl, previewState, activeGroup);
+    const hasMint = marker.mintX !== null;
+    const x = marker.x;
 
-    const viewport = computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent: x, previousDomainMax, previewGroup });
-    // Only actual data advances ratchet (ghost expansion is ephemeral).
-    // actualDomainMax is the pre-ghost domain max, so it's safe to use directly.
+    // The window the hero draws, framed on the same placed points; the preview's widens it for the frame without
+    // entering the ratchet.
+    const viewport = computeEoqViewport({ wallP, xCurrent: x, previousDomainMax, previewX: marker.mintX, origin: rl.reference?.a });
     previousDomainMax = viewport.actualDomainMax;
 
     // Overview always uses [1, wallP] domain for gradient + labels
@@ -190,17 +178,16 @@ export function mount(root, _ctx) {
       : 0;
 
     const amberPct = toPct(x);
-    const dirty = !!(previewGroup && prevLandmarks);
 
     // Amber marker — always visible
     amberMarkerEl.style.display = '';
     amberMarkerEl.style.left = `${amberPct.toFixed(1)}%`;
-    amberMarkerEl.style.opacity = (dirty && activeGroup === 'mint') ? '0.35' : '1';
-    amberMarkerEl.style.pointerEvents = dirty ? 'auto' : 'none';
+    amberMarkerEl.style.opacity = (hasMint && activeGroup === 'mint') ? '0.35' : '1';
+    amberMarkerEl.style.pointerEvents = hasMint ? 'auto' : 'none';
 
-    // Mint marker — only when preview dirty
-    if (dirty) {
-      const mintPct = toPct(prevLandmarks.x);
+    // Mint marker — only when a dirty preview's reliable scenario places a position on a reference
+    if (hasMint) {
+      const mintPct = toPct(marker.mintX);
       mintMarkerEl.style.display = '';
       mintMarkerEl.style.left = `${mintPct.toFixed(1)}%`;
       mintMarkerEl.style.opacity = activeGroup === 'amber' ? '0.35' : '1';
@@ -209,27 +196,15 @@ export function mount(root, _ctx) {
       mintMarkerEl.style.display = 'none';
     }
 
-    // Flag label — only on active marker
-    const activeX = (activeGroup === 'mint' && dirty) ? prevLandmarks.x : x;
-    const activeMarkerEl = (activeGroup === 'mint' && dirty) ? mintMarkerEl : amberMarkerEl;
-    const inactiveMarkerEl = (activeGroup === 'mint' && dirty) ? amberMarkerEl : mintMarkerEl;
+    // Flag label — only on the active marker. It names the fitted position x̂ the marker stands at; the wall is
+    // the hero verdict's to call, from the measured x.
+    const activeX = marker.activeX;
+    const activeMarkerEl = (activeGroup === 'mint' && hasMint) ? mintMarkerEl : amberMarkerEl;
+    const inactiveMarkerEl = (activeGroup === 'mint' && hasMint) ? amberMarkerEl : mintMarkerEl;
 
-    // Compute br for active group
-    let brVal = snapshot?.status?.rateLamp?.br;
-    if (activeGroup === 'mint' && prevLandmarks) {
-      const dhat = prevLandmarks.dhat;
-      if (dhat > 0 && prevLandmarks.x > 1) {
-        const mf = prevLandmarks.mf ?? rl.mf ?? 0.3;
-        const u = (prevLandmarks.x - 1) / dhat;
-        brVal = computePreviewBr(mf, u);
-      }
-    }
-
+    const brVal = marker.activeBr;
     const brSuffix = Number.isFinite(brVal) ? ` · b+${Math.floor(brVal * 100)}%` : '';
-    const flagText = activeX >= wallP
-      ? `x <b>${activeX.toFixed(2)}×</b> · past wall`
-      : `x <b>${activeX.toFixed(2)}×</b>${brSuffix}`;
-    activeMarkerEl.innerHTML = `<span class="sw-aux-flag">${flagText}</span>`;
+    activeMarkerEl.innerHTML = `<span class="sw-aux-flag">x̂ <b>${activeX.toFixed(2)}×</b>${brSuffix}</span>`;
     inactiveMarkerEl.innerHTML = '';
 
     syncToChartArea();

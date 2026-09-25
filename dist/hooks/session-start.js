@@ -34,6 +34,7 @@ var C_RATIO_TABLE = [
   // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
   // precedes the broader one whose pattern also matches its ids.
   { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
+  { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, "1h": 40 } },
   { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }

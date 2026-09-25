@@ -8,21 +8,27 @@ const KEY = stateKeyOf({ segmentId: 0, model: 'opus', cRatio: 10, baselineFinger
 
 test('C1-1: freshLedger carries all fields with sane defaults', () => {
   const s = freshLedger(KEY);
-  assert.equal(s.schemaVersion, 2);
+  assert.equal(s.schemaVersion, 3);
   assert.equal(s.ledgerRevision, 0);
   assert.deepEqual(s.recentStopEvents, []);
   assert.deepEqual(s.recentProcessedHookEventIds, []);
-  assert.equal(s.hasDeepWaterGateFired, false);
-  assert.equal(s.dwBillsSinceLastAlert, 0);
-  assert.equal(s.backstopLapCount, 0);
+  assert.equal(s.walletPhase, 0);
+  assert.equal(s.walletLapCount, 0);
   assert.equal(s.billProgress, 0);
   assert.equal(s.billCycleCount, 0);
 });
 
+// A disagreement between the side that stamps the ledger's version and the side that accepts it is silent:
+// every persisted ledger reads as foreign, the load degrades to fresh without an error, and the wallet clock
+// loses its phase and lap count. This reds on that disagreement however it arrives.
+test('a freshly minted ledger passes validateLedgerState — the stamping and accepting sides agree', () => {
+  assert.ok(validateLedgerState(freshLedger(KEY)), 'freshLedger stamps the version validateLedgerState accepts');
+});
+
 test('C1-1: a stale v1 disk ledger is REJECTED (schemaVersion mismatch → null → degrade to fresh) — no migration (H-C)', () => {
-  // No v1→v2 migration: validateLedgerState hard-gates schemaVersion===2. A v1-shaped ledger (schemaVersion:1,
-  // none of the 8 new fields) is judged foreign and returns null; loadRateLampState then yields null and the
-  // manager builds a freshLedger. This is the intentional under-report H-C accepts (transient session ledger).
+  // No migration: validateLedgerState accepts only the current SCHEMA_VERSION, so a ledger written under any
+  // other one is judged foreign and returns null; loadRateLampState then yields null and the manager builds a
+  // freshLedger. This is the intentional under-report H-C accepts (transient session ledger).
   const v1 = { schemaVersion: 1, stateKey: KEY, currentTurnSeq: 7, billProgress: 0.3, billCycleCount: 1,
     billAnchorLRead: 1000, billAnchorFoldedCallSeq: 2, billAnchorTurnSeq: 7, lastAppliedFoldedCallSeq: 2,
     lastAppliedLRead: 1000, kStableFrozen: 500 };

@@ -5,7 +5,7 @@ description: Use when the user runs /sw-handoff or wants to carry over context b
 
 # Session Watcher Handoff
 
-Prepare a handoff package so the next session can resume with minimal re-reading.
+Prepare a handoff package so the next session can resume without re-reading what its first task needs, and without carrying what that task will not open.
 
 ## Steps
 
@@ -28,11 +28,14 @@ Prepare a handoff package so the next session can resume with minimal re-reading
 
    If `metrics.br < 0.05` AND few turns: note "Context is still light — handoff may not be necessary yet, but proceeding as requested."
 
-5. **Select paths to keep** — for each path in the bucket summary:
-   - Decide keep or discard based on relevance to `next_task`
-   - If the path has `userOverride`, apply the user's decision (keep/discard)
-   - If the path has `activeSymbols`, select which symbols to keep (these are verified — no guessing needed)
-   - Pass kept symbol names in `paths_to_keep[].symbols`
+5. **Select paths to keep.** The kept set is what the next task must have in hand before it can act. Candidates are the bucket summary plus any path this segment used that the bucket lacks. For each candidate, name the act of `next_task` that opens it; a candidate with no such act is not kept, whatever this segment did with it.
+   - The repo outlives `/clear` and the conversation does not, so a file the next session can read on demand is kept only where that first act needs it in hand: the file the task edits, the test that guards it, the artifact under discussion.
+   - A blob under review is read by its reviewer, so what the next task needs is the review's return and the sources it cites.
+   - Read each candidate's `tokens` from the bucket summary and total them before prepare. Where one path carries more than half that total, state which act needs all of it, or keep its `symbols` alone.
+
+   Always: `userOverride` decides that path; a `keep:` list in the arguments is kept verbatim; symbols come from `activeSymbols` into `paths_to_keep[].symbols`; memories, `CONTEXT.md`, `CLAUDE.md` stay off the list.
+
+   Before prepare, tell the user the kept total, each kept path with the act that opens it, and every edited or repeatedly read bucket path left out.
 
 6. **Select skills** — `skills_to_keep`: only skills actively guiding the workflow or required by next_task. Skip one-shot completed skills. Never include `sw-load` — it drives the load flow itself and is always invoked automatically. If the user's `keep:` list includes skill names, use those directly.
 
@@ -42,7 +45,7 @@ Prepare a handoff package so the next session can resume with minimal re-reading
    - `paths_to_keep`: array from step 5
    - `skills_to_keep`: array from step 6
    - `summary`: from step 7
-   - `next_task`: what comes next. **Default:** if the user doesn't specify, infer from the current conversation — continue the work in progress (the task being actively worked on, not a generic description).
+   - `next_task`: the user's stated next step if the arguments give one; otherwise the line of work this segment was on, not a single step of it.
    - `observed_segment`: segment value from step 4
 
    Check `resolved_paths` in the response — if the server picked wrong, re-issue with the absolute path.

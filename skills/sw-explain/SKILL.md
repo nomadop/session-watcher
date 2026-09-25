@@ -13,11 +13,11 @@ When the user asks about a metric:
 
 ## Metric glossary
 
-- **br (bill regret)** — how much extra you pay vs optimal restart timing, as a fraction. 0.10 = amber, 0.25 = red. `br = mf × pp`.
-- **mf (movable fraction)** — the share of cost that timing can affect. Capped at √2−1 ≈ 41.4% by AM-GM — even worst-case timing can't cost more than that.
+- **br (bill premium)** — how far the bill sits above its cost at the sweet spot, as a fraction. `BR_AMBER` and `BR_RED` are the zone boundaries, and the dashboard shows where the session sits against them. `br = mf × pp`.
+- **mf (movable fraction)** — the share of cost that timing can affect. AM-GM caps it at `√2−1`, which is also why the reminder interval has a natural floor. Whatever sits above that share is cost no restart timing can reach.
 - **pp** — the timing-penalty shape term `(u−1)²/(2u)`; minimized at u=1 (the sweet spot).
-- **u** — normalized position `(x−1)/dhat`. u<1 = left arm (cost still falling, no action). u=1 = sweet. u>1 = past sweet.
+- **u** — normalized position, accumulated causally: each API call adds the fraction of a restart interval that the conditions in force for it imply, so u only moves forward and loading more files never walks it back. Short of a whole interval = left arm (cost still falling, so the lamp stays white or green); one whole interval = sweet; beyond it = past sweet. The lamp's colour is arm-gated this way; the carry-rent reminder is not, because it reads accumulated rent instead of the position. `uInst`, the `(x−1)/dhat` ratio, is reported beside the causal `u` as a diagnostic that nothing acts on.
 - **wall** — where continuing costs more per turn than a full restart.
-- **sweet / valley** — `xSweet = 1 + dhat`, the cost-curve minimum; the valley around it is flat (small timing penalty).
+- **sweet / valley** — the cost-curve minimum, reported as `xSweet` and read off the reference skeleton fitted across the session's own path; the valley around it is flat (small timing penalty).
 
-Frame reassuringly: e.g. "br=18% sounds high, but the ceiling is ~41.4%, so you're inside the flat valley — no urgency."
+Frame reassuringly where the numbers allow it: the movable fraction bounds how much of the bill timing can reach at all, and the valley around the sweet spot is flat, so a moderate `br` on the left arm carries no urgency. `br` itself has no ceiling — `pp` grows without bound on the late arm, which is why `renderBr` clamps what the statusline prints.

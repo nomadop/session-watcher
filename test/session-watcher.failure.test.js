@@ -38,7 +38,7 @@ function makeEngine(script = {}) {
       const answer = script.close ? script.close(engine) : null;
       return { closedSegments: [], diagnostics: [], ...(answer || {}) };
     },
-    getStatus: () => ({ L: 0, B: 0, bDefault: 0, g: 1, x: 1, dhat: null, xSweet: null, burnRate: null, mf: null, br: null, model: null, latestMeasuredModel: null, cRatio: null, segment: 0, apiCalls: 0, turnSeq: 0, usage: null, rateLamp: { reliable: false, unavailableReason: 'insufficient_data' } }),
+    getStatus: () => ({ L: 0, B: 0, bDefault: 0, g: 1, x: 1, dhat: null, xSweet: null, u: null, pp: null, mf: null, br: null, model: null, latestMeasuredModel: null, cRatio: null, segment: 0, apiCalls: 0, turnSeq: 0, usage: null, rateLamp: { reliable: false, unavailableReason: 'insufficient_data' } }),
     getHistory: () => [],
     getBucketData: () => ({ dead: 0, paths: [], residual: [], totalB: 0, totalL: 0, bDefault: 0, totalResidualRaw: 0, totalResidual: 0, currentTurnSeq: 0, segment: 0 }),
     getHandoffMeasurement: () => ({ segment: 0, turnSeq: 0, epochModel: null, measurement: {}, paths: [] }),

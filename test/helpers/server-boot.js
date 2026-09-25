@@ -43,7 +43,7 @@ export const WATCHER_OPERATIONS = [
   'getCurrentModel', 'getEpochModel', 'getCurrentCtp',
   'prepareHandoff', 'searchHandoffs', 'deliverHandoff',
   'getTurnSkeleton', 'submitTurnNotes',
-  'readRateLampFrame', 'replaceUserOverrides', 'setRatioOverride',
+  'readRateLampFrame', 'readScenario', 'replaceUserOverrides', 'setRatioOverride',
 ];
 
 /**
@@ -341,6 +341,10 @@ export async function bootTestServer(opts = {}) {
 
     // Drive one host poll tick, exactly the one bootstrap and the recurring timer use.
     pump: () => pumpTick(handle),
+
+    // The Transcript Playback controller the host's own replay route created, so a test drives its steps and
+    // reads the ledger the playback status branch merges.
+    replayController: () => handle.replayController(),
 
     get: (path, reqOpts) => _fetchJson(port, path, reqOpts),
     request: (path, reqOpts = {}) => _fetchJson(port, path, reqOpts),

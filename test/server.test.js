@@ -175,8 +175,6 @@ test('GET /api/status includes rentMeter on rateLamp (spec invariant 10)', async
     const rm = j.rateLamp.rentMeter;
     // Null-safe defaults: all required fields present with correct types.
     assert.ok('cycleProgress' in rm, 'rentMeter.cycleProgress present');
-    assert.ok('rentRate' in rm, 'rentMeter.rentRate present');
-    assert.ok('sweetRentRate' in rm, 'rentMeter.sweetRentRate present');
     assert.ok('depthActive' in rm, 'rentMeter.depthActive present');
     assert.ok('depthProgress' in rm, 'rentMeter.depthProgress present');
     assert.ok('backstopInterval' in rm, 'rentMeter.backstopInterval present');

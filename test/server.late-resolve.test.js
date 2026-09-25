@@ -281,13 +281,14 @@ test('[delta] initial Source installation runs changed postprocessing once', asy
     'the persisted snapshot equals the terminal snapshot at the installation tick — a coherent state of THIS tick');
   assert.equal(Number.isFinite(live.br_exit), false,
     'this fixture\'s br is non-finite before the baseline is valid, which is why br_exit stores as null');
-  // The Rate Lamp advanced on the same tick, so its anchor names the same instant the snapshot does. Two
-  // independent surfaces agreeing on one instant is what distinguishes "written at an earlier tick" from
+  // The Rate Lamp advanced on the same tick. It holds no position quantity to compare against the snapshot's
+  // L, so the instant the two surfaces agree on is the folded cursor: the installation frame's own tail.
+  // Two independent surfaces agreeing on one instant is what distinguishes "written at an earlier tick" from
   // "a later write was lost".
   const ledger = getLiveLedger(sessionId);
   assert.ok(ledger, 'the installation tick advanced the Rate Lamp too');
-  assert.equal(ledger.billAnchorLRead, live.l_peak,
-    'the Rate Lamp anchor L and the snapshot L name the same instant');
+  assert.ok(ledger.lastAppliedFoldedCallSeq >= 1,
+    'the Rate Lamp cursor sits at the installation frame\'s tail, the instant the snapshot names');
 });
 
 test('a deferred-install discovery rewrite failure keeps the installed driver and previous discovery', async (t) => {

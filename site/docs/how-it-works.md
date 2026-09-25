@@ -29,14 +29,14 @@ Claude Code session
 │  ├─ Position (L): effective context length    │
 │  ├─ Growth (g): smoothed residual rate        │
 │  ├─ Settlement: absorb cache-timing noise     │
-│  └─ Cost model: dhat, bp, mf from EOQ theory │
+│  └─ Position fold: u, pp, mf, bp per call     │
 └──────────────────────────────────────────────┘
     │
     ▼  assembled status snapshot
 ┌──────────────────────────────────────────────┐
 │  Rate lamp                                    │
-│  Integrate rentRate into billing ledger,      │
-│  evaluate gate and backstop triggers          │
+│  Integrate the stamped rent increment into    │
+│  two clocks; a wallet rollover reminds        │
 └──────────────────────────────────────────────┘
     │
     ▼  push to connected clients
@@ -52,10 +52,11 @@ Claude Code session
 - **Incremental read** ensures no data is missed or double-counted regardless of how fast the transcript grows.
 - **Idempotent folding** means streaming revisions of the same call never create duplicate entries — only the final snapshot survives.
 - **Segment scoping** resets metrics on each context boundary so stale history from a previous context never contaminates current measurements.
-- **Settlement** absorbs the timing gap between cache-creation and cache-read: B is credited ahead of L during the lag, and the deferred ledger prevents that gap from appearing as false growth. Any ledger balance un-retired at segment end is treated as estimation error and corrected out of the buckets.
-- **Growth smoothing (g)** uses Holt double-exponential tracking (level + trend) on the settled residual. This converges faster than a simple EMA when the growth regime shifts, and the floor prevents cold-start division-by-zero without suppressing alerts once the session advances past the floor-derived sweet spot.
-- **Cost chain** maps the session to an EOQ inventory cycle: the fixed restart cost is cRatio × baseline (analogous to the order cost per batch), the per-token cache-read price is the holding cost, growth rate g is the demand rate, and session length in calls is the order quantity. The nucleus (dhat) is the resulting optimal cycle scale; the sweet spot is where amortized restart cost equals accumulated holding cost. This mapping produces a single dimensionless premium (bp) that is comparable across models and session sizes.
-- **Rate lamp integration** converts instantaneous bp into a cumulative bill-cycle count, so alerts fire based on sustained cost accumulation rather than momentary spikes.
+- **Settlement** absorbs the timing gap between cache-creation and cache-read: B is credited ahead of L during the lag, and the deferred ledger holds that credit until L confirms it. Any ledger balance un-retired at segment end is treated as estimation error and corrected out of the buckets.
+- **Growth smoothing (g)** is a single-exponential level filter with a per-call step cap on the residual (total-stock growth net of the growth known file operations account for), floored so the cold-start diagnostic never divides by zero. It drives the growth readout and the projection slope. The position fold does not read it: each interval is priced at the realized mean growth so far of the context outside the scenario's baseline, which carries no smoothing constant and cannot lag behind what the segment has actually accumulated.
+- **Cost chain** maps the session to an EOQ inventory cycle: the fixed restart cost is cRatio × baseline (analogous to the order cost per batch), the per-token cache-read price is the holding cost, growth rate g is the demand rate, and session length in calls is the order quantity. The sweet spot is where amortized restart cost equals accumulated holding cost. This mapping produces a single dimensionless premium (bp) that is comparable across models and session sizes.
+- **Causal position** is what bp is read at, and it is accumulated rather than recomputed. Each call adds the fraction of a restart interval that the baseline in force and the realized mean growth outside that baseline imply for that call, so the position is a property of the path the session actually travelled. Re-pricing the whole history against today's baseline — which is what a ratio of current values would do — would let a session that loads a large file appear to have travelled backwards, and would move a reminder that was already earned. Because each interval is priced once, at the state that held while it was being traversed, later growth changes only how fast the position advances from then on. Landmarks on the position axis are placed by fitting a straight line across the travelled path, so they sit on the same evidence rather than on a formula applied to the latest reading.
+- **Rate lamp integration** accumulates the same per-call rent increment into two counters: a bill cycle for display, and a reminder interval whose rollover raises the reminder, each increment converted at the exchange fraction in force for its own interval. Reading accumulated rent rather than the momentary premium means reminders follow sustained cost, and nothing about a later position revision can retract one.
 
 ## Session Lifecycle
 
@@ -76,7 +77,7 @@ A timer drives the pipeline at regular intervals:
 1. **Late resolution** — if the transcript did not exist at startup, retry each tick.
 2. **Idle gate** — skip ticks when no clients are connected and nothing changed recently.
 3. **Poll** — run the full pipeline (read → fold → measure).
-4. **Rate-lamp advance** — integrate new samples into the billing ledger.
+4. **Rate-lamp advance** — integrate new samples into the rent ledger and raise any reminder they complete.
 5. **Broadcast** — notify connected browsers that fresh data is available.
 
 ### 4. Segmentation

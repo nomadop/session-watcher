@@ -2,8 +2,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BR_AMBER, BR_RED, computeMovableFrac, computeBr, xRightFromBr, xLeftFromBr,
-  computePp,
+  BR_AMBER, BR_RED, computeMovableFrac, computeBr,
+  computePp, uAtBr, uLeftAtBr, walletIntervalFor,
 } from '../lib/bill-regret.js';
 
 describe('bill-regret constants', () => {
@@ -89,49 +89,6 @@ describe('computeBr', () => {
   });
 });
 
-describe('xRightFromBr / xLeftFromBr', () => {
-  const R = 10, Lb = 80000, k = 684;
-  const dhat = Math.sqrt(2 * R * k / Lb);
-  const mf = 0.28;
-
-  test('round-trip right arm: computeBr(xRightFromBr(target)) ≈ target', () => {
-    const target = 0.10;
-    const xR = xRightFromBr(target, dhat, mf);
-    const br = computeBr(xR, dhat, mf);
-    assert.ok(Math.abs(br - target) < 1e-9, `round-trip failed: got ${br}`);
-  });
-
-  test('round-trip left arm: computeBr(xLeftFromBr(target)) ≈ target', () => {
-    const target = 0.10;
-    const xL = xLeftFromBr(target, dhat, mf);
-    const br = computeBr(xL, dhat, mf);
-    assert.ok(Math.abs(br - target) < 1e-9, `left round-trip failed: got ${br}`);
-  });
-
-  test('xRight > xSweet > xLeft (symmetric around sweet)', () => {
-    const xSweet = 1 + dhat;
-    const xR = xRightFromBr(0.10, dhat, mf);
-    const xL = xLeftFromBr(0.10, dhat, mf);
-    assert.ok(xR > xSweet, `xRight ${xR} should exceed xSweet ${xSweet}`);
-    assert.ok(xL < xSweet, `xLeft ${xL} should be below xSweet ${xSweet}`);
-  });
-
-  test('BR_AMBER right arm lands at u=2 for mf=0.25 (pp=25% exit)', () => {
-    // pp = BR_AMBER/mf = 0.10/0.25 = 0.40. Solve (u-1)²/(2u) = 0.40
-    // u² - 2.8u + 1 = 0 → u = (2.8 + √(7.84-4))/2 = (2.8 + 1.96)/2 = 2.38
-    const xR = xRightFromBr(BR_AMBER, dhat, 0.25);
-    const uR = (xR - 1) / dhat;
-    const expectedU = (1.4 + Math.sqrt(1.4*1.4 - 1));
-    assert.ok(Math.abs(uR - expectedU) < 1e-9);
-  });
-
-  test('invalid → NaN', () => {
-    assert.ok(Number.isNaN(xRightFromBr(0.10, 0, 0.28)));
-    assert.ok(Number.isNaN(xRightFromBr(0.10, dhat, 0)));
-    assert.ok(Number.isNaN(xLeftFromBr(-0.01, dhat, 0.28)));
-  });
-});
-
 describe('computePp', () => {
   test('computePp: returns pp_frac (u-1)^2/(2u) matching computeBr/mf decomposition', () => {
     // u = (x-1)/dhat. Pick x, dhat so u=2 → pp = (1)^2/(2*2) = 0.25
@@ -150,5 +107,38 @@ describe('computePp', () => {
     assert.equal(computePp(NaN, 1), null);
     assert.equal(computePp(2, 0), null);      // dhat ≤ 0
     assert.equal(computePp(2, -1), null);
+  });
+});
+
+const near = (a, b, eps = 0.01) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
+
+describe('wallet interval and its roots', () => {
+  test('uAtBr numerical correctness at BR_AMBER', () => {
+    near(uAtBr(0.20, BR_AMBER), 2.62);
+    near(uAtBr(0.30, BR_AMBER), 2.22);
+    near(uAtBr(0.40, BR_AMBER), 2.00);
+  });
+  test('walletIntervalFor = uAmber squared, never clamped, Infinity at mf=0', () => {
+    near(walletIntervalFor(0.20, BR_AMBER), 6.85);
+    near(walletIntervalFor(0.30, BR_AMBER), 4.91);
+    near(walletIntervalFor(0.40, BR_AMBER), 4.00);
+    // The AM-GM ceiling on mf is where the interval bottoms out, and it bottoms out on its own: a
+    // max(4, ·) floor would break the higher-mf-shorter-interval direction rather than protect it.
+    near(walletIntervalFor(0.414, BR_AMBER), 4.0, 0.1);
+    assert.ok(walletIntervalFor(0.20, BR_AMBER) > walletIntervalFor(0.40, BR_AMBER));
+    assert.equal(walletIntervalFor(0, BR_AMBER), Infinity);
+  });
+  test('uAtBr guards: mf<=0 or non-finite → Infinity; finite brTarget<=0 → 1; non-finite brTarget → Infinity', () => {
+    assert.equal(uAtBr(0, BR_AMBER), Infinity);
+    assert.equal(uAtBr(-1, BR_AMBER), Infinity);
+    assert.equal(uAtBr(NaN, BR_AMBER), Infinity);
+    assert.equal(uAtBr(0.3, 0), 1);
+    assert.equal(uAtBr(0.3, -0.5), 1);          // negative finite target: clamp to the degenerate root
+    assert.equal(uAtBr(0.3, NaN), Infinity);
+  });
+  test('uLeftAtBr is the reciprocal root, below the sweet spot', () => {
+    for (const mf of [0.2, 0.3, 0.4]) near(uLeftAtBr(mf, BR_AMBER) * uAtBr(mf, BR_AMBER), 1, 1e-9);
+    assert.ok(uLeftAtBr(0.3, BR_AMBER) < 1);
+    assert.equal(uLeftAtBr(0, BR_AMBER), 0);
   });
 });

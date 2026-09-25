@@ -109,8 +109,8 @@ async function startDemo() {
   // Load snapshots
   const res = await fetch('./snapshots.json');
   if (!res.ok) {
-    // No command is named here on purpose: the generator that produced snapshots.json is frozen, so
-    // telling a reader to run it would send them at something that cannot run.
+    // No command is named here: the generator that produced snapshots.json lives in the development tree
+    // only, so neither the package nor the Pages site carries anything a reader could run.
     document.body.innerHTML = '<p style="color:red;padding:2rem">Failed to load snapshots.json — the demo needs that asset beside it.</p>';
     return;
   }

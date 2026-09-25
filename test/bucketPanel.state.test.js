@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOverrides, deriveDirState, computeDirty, computeBPreview } from '../public/elements/bucketPanel.js';
+import { applyOverrides, deriveDirState, computeDirty, latestOnly } from '../public/elements/bucketPanel.js';
 // NOTE: deriveDirState is implemented in Task 5, imported here for integration testing with overrides.
 
 function mkTree() {
@@ -47,23 +47,10 @@ test('computeDirty: false at default, true after a toggle', () => {
   assert.equal(computeDirty(tree), true);
 });
 
-test('computeBPreview: uncheck kept path subtracts, add discarded bash adds', () => {
-  const tree = mkTree();
-  const Bdefault = 50000;
-  const empty = new Map();
-  applyOverrides(tree, empty);
-  assert.equal(computeBPreview(tree, Bdefault, empty), Bdefault, 'default → no delta');
-  const uncheckA = new Map([['lib/a.js', false]]);
-  applyOverrides(tree, uncheckA);
-  assert.equal(computeBPreview(tree, Bdefault, uncheckA), Bdefault - 3000, 'uncheck kept path');
-  const checkBash = new Map([['npm test', true]]);
-  applyOverrides(tree, checkBash);
-  assert.equal(computeBPreview(tree, Bdefault, checkBash), Bdefault + 12000, 'check discarded bash');
-});
-
-test('computeBPreview: floored at MIN_B_PREVIEW', () => {
-  const tree = mkTree();
-  const overrides = new Map([['skill:s', false], ['lib/a.js', false], ['lib/b.js', false]]);
-  applyOverrides(tree, overrides);
-  assert.ok(computeBPreview(tree, 1000, overrides) >= 1000, 'never below floor');
+test('latestOnly drops a response whose token is not the latest', () => {
+  const gate = latestOnly();
+  const first = gate.next();
+  const second = gate.next();
+  assert.equal(gate.isLatest(first), false);
+  assert.equal(gate.isLatest(second), true);
 });

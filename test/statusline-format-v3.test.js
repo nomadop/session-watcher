@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderLB, renderDelta, renderLamp, renderBackstopProgress } from '../lib/statusline-format.js';
+import { renderLB, renderDelta, renderLamp, renderBackstopProgress, renderU, renderMeterV3 } from '../lib/statusline-format.js';
+import { uLeftAtBr, BR_AMBER } from '../lib/bill-regret.js';
 
 test('renderLB uses B as denominator label', () => {
   assert.ok(renderLB(142000, 25300).includes('b25')); // L142k/b25.3k form
@@ -11,27 +12,24 @@ test('renderDelta shows g_ema, no kAvg fallback', () => {
   assert.equal(renderDelta(null), 'Δ----');
 });
 
-test('renderLamp: br thresholds without calibrating param', () => {
-  assert.equal(renderLamp(0.3, { x: 2, xSweet: 1.1 }), '🔴');
-  assert.equal(renderLamp(0.15, { x: 2, xSweet: 1.1 }), '🟡');
-  assert.equal(renderLamp(0.01, { x: 1.05, xSweet: 1.1 }), '⚪'); // left arm (x<xSweet) whitening
+test('renderLamp arms by u: left arm white below the amber-left root, green at or above it', () => {
+  const mf = 0.3, left = uLeftAtBr(mf, BR_AMBER);
+  assert.equal(renderLamp(0.15, { u: left - 0.05, mf }), '⚪');
+  assert.equal(renderLamp(0.05, { u: left + 0.05, mf }), '🟢');
+  assert.equal(renderLamp(0.3, { u: 2, mf }), '🔴');
+  assert.equal(renderLamp(0.15, { u: 2, mf }), '🟡');
+  assert.equal(renderLamp(0.01, { u: 1.2, mf }), '🟢');
+  assert.equal(renderLamp(null, { u: 0, mf: null }), '⚪', 'the first frame');
 });
 
-test('renderBackstopProgress shows -/- before gate fires', () => {
-  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: false, dwBillsSinceLastAlert: 0, mf: 0.4 }), '-/-');
+test('renderU prints the stamped u', () => {
+  assert.equal(renderU({ u: 1.234 }), 'u1.2');
+  assert.equal(renderU({ u: null }), 'u---');
+  assert.equal(renderU({ x_display: 2, dhat: 0.5 }), 'u---', 'nothing is derived from the instantaneous read');
 });
 
-test('renderBackstopProgress shows n/N after gate, capped below denom', () => {
-  // mf=0.4 → interval 4.0 → denom 4. numer = min(3, floor(3)) = 3.
-  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 3, mf: 0.4 }), '3/4');
-});
-
-test('renderBackstopProgress never shows N/N (numer capped at denom-1)', () => {
-  assert.equal(renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 4, mf: 0.4 }), '3/4');
-});
-
-test('renderBackstopProgress denom floors at 1 for degenerate mf', () => {
-  const s = renderBackstopProgress({ hasDeepWaterGateFired: true, dwBillsSinceLastAlert: 0, mf: 0 });
-  // mf=0 → interval Infinity → denom max(1, round(Inf)) → guard to -/- (no meaningful reminder).
-  assert.equal(s, '-/-');
+test('renderBackstopProgress renders the wallet phase as the bar, --% while inactive', () => {
+  assert.equal(renderBackstopProgress({ rentMeter: { depthActive: false, depthProgress: 0 } }), '░░░░░░░░░░--%');
+  assert.equal(renderBackstopProgress({ rentMeter: { depthActive: true, depthProgress: 0.37 } }), '▓▓▓░░░░░░░37%');
+  assert.equal(renderBackstopProgress({}), '░░░░░░░░░░--%');
 });

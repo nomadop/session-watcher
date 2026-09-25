@@ -45,7 +45,7 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
     port: 38017,
     rateLamp: {
       ...base.rateLamp,
-      billProgress: 0.42,
+      billProgress: 0.71,
       billCycleCount: 3,
       x_display: 2.1,
       dhat: 0.4167,
@@ -56,6 +56,8 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
       targetL: 200000,
       kAvg: 3000,
       currentTurnSeq: 5,
+      mf: 0.3,
+      rentMeter: { depthActive: true, depthProgress: 0.42 },
     },
     baseline: { total: 80000 },
   };
@@ -63,7 +65,8 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
   // v3 layout has no [tag] prefix; uses ▮ bars; has 4 groups separated by ·
   assert.ok(!out.includes("["), "no [tag] prefix in v3");
   assert.ok(out.includes("▮") || out.includes("░"), "meter bar rendered");
-  assert.ok(out.includes("42%"), "billProgress percentage");
+  assert.ok(out.includes("42%"), "wallet phase percentage");
+  assert.ok(!out.includes("71%"), "the sibling bill phase is not what the meter reads");
   assert.ok(out.includes("opus"), "model tag present");
   assert.ok(!out.includes(":38017"), "port not in formatLine (server appends URL)");
   assert.ok(out.includes(" · "), "groups separated by ·");
@@ -191,12 +194,14 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
     baseline: { total: 80000 },
     rateLamp: {
       reliable: true,
-      billProgress: 0.42,
+      billProgress: 0.71,
       billCycleCount: 2,
       hBreak: 8,
       x_display: 2.1,
       dhat: 0.4167,
       br: 0.05,
+      u: 2.1,
+      mf: 0.3,
       lBase: 80000,
       L_read: 168000,
       L_cap: 960000,
@@ -204,13 +209,15 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
       kAvg: 3000,
       currentTurnSeq: 1,
       lastStopEvent: null,
+      rentMeter: { depthActive: true, depthProgress: 0.42 },
     },
   };
   const out = formatLine(s);
   // v3 layout: 灯 bar %% ×N · ~Nt u · Δ L/b · model :port
   assert.ok(!out.includes("["), "no [tag] prefix");
   assert.ok(out.includes("🟢"), "sweet zone lamp");
-  assert.ok(out.includes("42%"), "billProgress");
+  assert.ok(out.includes("42%"), "wallet phase percentage");
+  assert.ok(!out.includes("71%"), "the sibling bill phase is not what the meter reads");
   assert.ok(out.includes("opus"), "model tag");
   assert.ok(!out.includes(":38017"), "port not in formatLine");
   assert.ok(out.includes("L168k"), "L value");
@@ -230,25 +237,59 @@ test("A2: deep band shows 🟡 in v3 layout", () => {
     baseline: { total: 55000 },
     rateLamp: {
       reliable: true,
-      billProgress: 0.88,
+      billProgress: 0.31,
       billCycleCount: 5,
       hBreak: 2,
       x_display: 9.3,
       dhat: 0.4,
       br: 0.15,
+      u: 9.3,
+      mf: 0.3,
       lBase: 55000,
       L_read: 512000,
       L_cap: 960000,
       inDeepWater: true,
       kAvg: 5000,
       currentTurnSeq: 1,
+      rentMeter: { depthActive: true, depthProgress: 0.88 },
     },
   };
   const out = formatLine(s);
   assert.ok(out.includes("🟡"), "deep water lamp");
-  assert.ok(out.includes("88%"), "billProgress");
+  assert.ok(out.includes("88%"), "wallet phase percentage");
+  assert.ok(!out.includes("31%"), "the sibling bill phase is not what the meter reads");
   assert.ok(out.includes("L512k"), "L value");
   assert.ok(out.includes("b55k"), "baseline value");
+});
+
+// An inactive rentMeter is the degraded frame: the merge found no matching ledger, so the wallet clock has
+// no phase to show. The bill clock still has one, and the line holds the bar empty and blanks the percent
+// slot rather than standing that sibling in.
+test("A2: an inactive rentMeter blanks the percent slot instead of showing the bill clock", () => {
+  _resetRenderState();
+  const s = {
+    model: "claude-opus-4-8",
+    L: 168000,
+    bDefault: 80000,
+    rateLamp: {
+      reliable: true,
+      br: 0.05,
+      u: 2.1,
+      mf: 0.3,
+      billProgress: 0.71,
+      rentMeter: {
+        cycleProgress: 0.71,
+        depthActive: false,
+        depthProgress: 0,
+        backstopInterval: null,
+        backstopLapCount: 0,
+        depthHot: false,
+      },
+    },
+  };
+  const out = formatLine(s);
+  assert.ok(out.includes("░░░░░░░░░░--%"), "the bar is held empty and the percent slot blanked");
+  assert.ok(!out.includes("71%"), "the bill phase never stands in for the absent wallet phase");
 });
 
 test("A2: alert on the hook turn renders on second line (no verdict word)", () => {

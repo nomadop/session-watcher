@@ -4,15 +4,13 @@ import assert from 'node:assert/strict';
 import CONSTANTS, {
   C_RATIO_TABLE, DEFAULT_CACHE_TTL,
   CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, ASCII_EXTS, ALPHA_EMA, G_DELTA_CAP, G_FLOOR,
-  MISS_B_FRACTION, MISS_TOTAL_KEEP, SEGMENT_DROP_EPSILON, NOTIFY_DWELL,
-  BR_HYST,
+  MISS_B_FRACTION, MISS_TOTAL_KEEP, SEGMENT_DROP_EPSILON,
   CHURN_ELEVATED_THRESHOLD, CHURN_STRUGGLING_THRESHOLD,
   CHURN_STRUGGLING_REREADS, WASTE_FLOOR,
 } from '../lib/constants.js';
 
 test('constants match spec values exactly', () => {
   assert.equal(CONSTANTS.EFFICIENCY_MULT, 2);
-  assert.equal(CONSTANTS.DW_TURN_BACKSTOP, 2);
   assert.equal(CONSTANTS.MISS_TOTAL_KEEP, 0.7);
   assert.equal(CONSTANTS.MISS_B_FRACTION, 0.8);
 });
@@ -70,7 +68,5 @@ test('v3: measurement/notify constants', () => {
   assert.equal(MISS_B_FRACTION, 0.8);
   assert.equal(MISS_TOTAL_KEEP, 0.7);
   assert.equal(SEGMENT_DROP_EPSILON, 100);
-  assert.equal(NOTIFY_DWELL, 3);
-  assert.equal(BR_HYST, 0.02);
   assert.ok(ASCII_EXTS.includes('.js') && ASCII_EXTS.includes('.json'));
 });

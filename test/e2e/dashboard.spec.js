@@ -951,14 +951,14 @@ test('history chart Y-axis stays correct when bucket selection events interleave
       // Interleave bucket linkage BEFORE the next growth: a dirty preview (recomputes
       // threshold lines + chart.update('none')) and a hover (moves the linkage line).
       document.dispatchEvent(new CustomEvent('sw-bucket-preview', {
-        detail: { B_preview: 60000, dirty: true },
+        detail: { dirty: true, scenario: null },
       }));
       document.dispatchEvent(new CustomEvent('sw-bucket-hover', {
         detail: { lastCallSeq: step + 1, name: 'src/foo.js' },
       }));
       // Then a revert preview (dirty:false) to exercise the un-preview branch too.
       document.dispatchEvent(new CustomEvent('sw-bucket-preview', {
-        detail: { B_preview: 60000, dirty: false },
+        detail: { dirty: false },
       }));
       const chart = window.__SW_dashboard.charts.history;
       out.push({ peak, yMax: chart?.scales?.y?.max ?? null });

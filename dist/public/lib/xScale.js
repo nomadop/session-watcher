@@ -23,72 +23,43 @@ export function computeLandmarkPositions({ domain, xBrAmberL, xSweet, xBrAmberR,
   return { markerPct, brAmberLPct, sweetPct, brAmberRPct, brRedRPct, wallPct, gradientStops, clamped, overflow };
 }
 
-export function validateLandmarks({ xBrAmberL, xSweet, xBrAmberR, xBrRedR, wallP }) {
-  for (const v of [xSweet, xBrAmberR, wallP]) {
-    if (!Number.isFinite(v)) return { ok: false, reason: 'landmark contains NaN or Infinity' };
-  }
-  // xBrAmberL can be NaN when mf is very low (disc < 0); optional
-  if (!(xSweet <= xBrAmberR && xBrAmberR <= wallP))
-    return { ok: false, reason: 'landmarks not monotonic' };
-  if (Number.isFinite(xBrRedR) && xBrRedR < xBrAmberR)
-    return { ok: false, reason: 'xBrRedR < xBrAmberR' };
-  return { ok: true, reason: null };
+// A causal position's place on the reference skeleton `x ≈ a + d·u`: where the hero draws its dot and path, where
+// the aux bar sets its markers, and what both frame the window on. The measured x reaches the chart as the dot's
+// residual and the verdict's wall test alone.
+export function projectedX(reference, u) {
+  return reference && Number.isFinite(u) ? reference.a + reference.d * u : null;
 }
 
+// Where the point sits in the window it has widened: the span ahead of it is its own distance from the origin over
+// this fraction, less that distance.
+const LOCK_FRACTION = 0.75;
+
 /**
- * Unified EOQ viewport computation (spec §11).
- * Single source of truth for main chart domain, overview positions, viewport frame.
- *
- * When `previewGroup` is provided (ghost/dual-landmark mode), viewport expands
- * ephemerally to include preview landmarks + dot without touching the ratchet.
+ * The x window the hero chart and the aux bar share. It starts at `origin` — the reference's asymptote, where u = 0
+ * and the segment began, so the left arm hugs the axis; the baseline itself when there is no reference — and opens
+ * to √wallP. It widens once the point passes `LOCK_FRACTION` of it, to `origin + (x − origin) / LOCK_FRACTION` so the
+ * point sits at that fraction; `previousDomainMax` carries the window across frames, so a retreating point leaves it
+ * standing. √wallP floors the right edge rather than the span, so with an origin sitting right of it a point right of
+ * that origin opens a window no wider than its own distance from the origin divided by `LOCK_FRACTION`, until the
+ * ratchet carries a wider one. A `previewX` widens the visible window by the same rule for one frame without entering
+ * the ratchet. The signature takes no landmark: a landmark right of the window stays clipped until the point carries
+ * the window out to it.
  */
-export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent, previousDomainMax, previewGroup }) {
-  // NaN/undefined guard — all numeric inputs sanitized to safe defaults
+export function computeEoqViewport({ wallP, xCurrent, previousDomainMax, previewX, origin }) {
   const safeWall = Number.isFinite(wallP) && wallP > 1 ? wallP : 2;
-  const safeAmberR = Number.isFinite(xBrAmberR) ? xBrAmberR : 1;
-  const safeRedR = Number.isFinite(xBrRedR) ? xBrRedR : safeAmberR;
-  const safeCurrent = Number.isFinite(xCurrent) ? xCurrent : 1;
+  const min = Number.isFinite(origin) ? origin : 1;
+  const locked = (x) => (Number.isFinite(x) ? min + (x - min) / LOCK_FRACTION : -Infinity);
 
-  // Main domain: start from 1 so marker is always inside the viewport
-  let min = 1;
-  const rawMax = Math.max(safeRedR, safeCurrent) * 1.2;
-  let max = Math.min(safeWall, rawMax);
+  const carried = Number.isFinite(previousDomainMax) ? previousDomainMax : -Infinity;
+  let max = Math.min(Math.max(Math.sqrt(safeWall), carried, locked(xCurrent)), safeWall);
 
-  // Ratchet: only expand within same segment (actual data only, ghost never advances ratchet)
-  if (previousDomainMax != null && Number.isFinite(previousDomainMax)) {
-    max = Math.max(previousDomainMax, max);
-  }
-
-  // Clamp max to wallP (ratchet could exceed if previousDomainMax was set before wallP shrank)
-  max = Math.min(max, safeWall);
-
-  // Minimum span guard (spec §11.3) — also must not exceed wallP
-  if (max - min < 0.3) {
-    max = Math.min(min + 0.3, safeWall);
-    // If still too narrow (wall is very close to 1), widen min downward
-    if (max - min < 0.3) min = Math.max(1, max - 0.3);
-  }
-
-  // Ghost-aware ephemeral expansion (dual-landmarks spec §3.1):
-  // Expand visible domain to include preview landmarks + dot without touching ratchet.
   const actualDomainMax = max;
-  if (previewGroup) {
-    const VIEWPORT_EXPAND_FACTOR = 1.12;
-    const candidates = [
-      previewGroup.xRedR, previewGroup.x,
-      safeRedR, safeCurrent,
-    ].filter(Number.isFinite);
-    if (candidates.length) {
-      const ghostMax = Math.max(...candidates) * VIEWPORT_EXPAND_FACTOR;
-      max = Math.max(actualDomainMax, ghostMax);
-      max = Math.min(max, safeWall);  // ghost must not exceed wall
-    }
-  }
+  max = Math.min(Math.max(max, locked(previewX)), safeWall);
 
   const mainDomain = { min, max };
   const overviewDomain = { min: 1, max: safeWall };
 
-  // Linear mapping for viewport frame (spec §11.2) — clamped to [0, 100]
+  // Linear mapping for viewport frame — clamped to [0, 100]
   const range = safeWall - 1;
   const viewportPct = {
     left: Math.max(0, Math.min(100, ((mainDomain.min - 1) / range) * 100)),
@@ -96,8 +67,8 @@ export function computeEoqViewport({ xBrAmberR, xSweet, xBrRedR, wallP, xCurrent
   };
 
   // Marker position (clamped to [0, 100])
-  const rawMarkerPct = ((safeCurrent - 1) / range) * 100;
-  const markerPct = Math.max(0, Math.min(100, rawMarkerPct));
+  const safeCurrent = Number.isFinite(xCurrent) ? xCurrent : 1;
+  const markerPct = Math.max(0, Math.min(100, ((safeCurrent - 1) / range) * 100));
 
   const isPastWall = safeCurrent > safeWall;
 

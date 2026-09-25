@@ -3,13 +3,14 @@
 // label rendering, degradation on unavailable capabilities, and segment-change ratchet reset.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeEoqViewport, computeLandmarkPositions, validateLandmarks } from '../public/lib/xScale.js';
+import { computeEoqViewport, computeLandmarkPositions } from '../public/lib/xScale.js';
+import { markerModel } from '../public/elements/depthAux.js';
 
 // --- Test: viewport frame positioning via computeEoqViewport ---
 
 test('depthAux: viewport frame left/right from computeEoqViewport overview domain [1, wallP]', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.8, previousDomainMax: null,
+    wallP: 11, xCurrent: 1.8, previousDomainMax: null,
   });
   // overviewDomain is always [1, wallP]
   assert.deepEqual(r.overviewDomain, { min: 1, max: 11 });
@@ -20,7 +21,7 @@ test('depthAux: viewport frame left/right from computeEoqViewport overview domai
 
 test('depthAux: viewport frame width = right - left as percentage', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.8, previousDomainMax: null,
+    wallP: 11, xCurrent: 1.8, previousDomainMax: null,
   });
   const width = r.viewportPct.right - r.viewportPct.left;
   assert.ok(width > 0, `Viewport width should be > 0, got ${width}`);
@@ -31,7 +32,7 @@ test('depthAux: viewport frame width = right - left as percentage', () => {
 
 test('depthAux: markerPct maps xCurrent within [1, wallP] linearly', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 6, previousDomainMax: null,
+    wallP: 11, xCurrent: 6, previousDomainMax: null,
   });
   // markerPct = (6 - 1) / (11 - 1) * 100 = 50%
   assert.ok(Math.abs(r.markerPct - 50) < 0.01);
@@ -39,7 +40,7 @@ test('depthAux: markerPct maps xCurrent within [1, wallP] linearly', () => {
 
 test('depthAux: markerPct clamps to 100 when xCurrent > wallP', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 15, previousDomainMax: null,
+    wallP: 11, xCurrent: 15, previousDomainMax: null,
   });
   assert.equal(r.markerPct, 100);
   assert.equal(r.isPastWall, true);
@@ -47,7 +48,7 @@ test('depthAux: markerPct clamps to 100 when xCurrent > wallP', () => {
 
 test('depthAux: markerPct at 0 when xCurrent = 1', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1, previousDomainMax: null,
+    wallP: 11, xCurrent: 1, previousDomainMax: null,
   });
   assert.equal(r.markerPct, 0);
 });
@@ -71,53 +72,30 @@ test('depthAux: computeLandmarkPositions with overviewDomain [1, wallP] produces
   assert.ok(Math.abs(r.wallPct - 100) < 0.1);
 });
 
-// --- Test: validateLandmarks gate ---
-
-test('depthAux: validateLandmarks rejects NaN xSweet → bar hidden', () => {
-  const v = validateLandmarks({ xBrAmberL: 1.3, xSweet: NaN, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 });
-  assert.equal(v.ok, false);
-});
-
-test('depthAux: validateLandmarks rejects non-monotonic → bar hidden', () => {
-  const v = validateLandmarks({ xBrAmberL: 1.3, xSweet: 3.0, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 });
-  assert.equal(v.ok, false);
-});
-
-test('depthAux: validateLandmarks passes valid monotonic landmarks', () => {
-  const v = validateLandmarks({ xBrAmberL: 1.3, xSweet: 1.6, xBrAmberR: 2.2, xBrRedR: 3.5, wallP: 11 });
-  assert.equal(v.ok, true);
-});
-
 // --- Test: segment-change ratchet reset logic ---
 
 test('depthAux: segment change resets previousDomainMax (ratchet)', () => {
-  // Simulate: segment A has high x, domain expands
-  const r1 = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 5.0, previousDomainMax: null,
-  });
-  // max(3.5, 5.0) * 1.2 = 6.0
-  assert.ok(Math.abs(r1.mainDomain.max - 6.0) < 0.001);
+  // Segment A: the point passed the lock point, so the window widened to hold it there
+  const r1 = computeEoqViewport({ wallP: 11, xCurrent: 4, previousDomainMax: null });
+  assert.ok(Math.abs(r1.mainDomain.max - 5.0) < 0.001);
 
-  // Segment changes → previousDomainMax resets to null
-  const r2 = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 1.5, previousDomainMax: null,
-  });
-  // max(3.5, 1.5) * 1.2 = 4.2 — NOT 6.0
-  assert.ok(Math.abs(r2.mainDomain.max - 4.2) < 0.001);
+  // Segment changes → previousDomainMax resets to null, so the window reopens at √wallP
+  const r2 = computeEoqViewport({ wallP: 11, xCurrent: 1.5, previousDomainMax: null });
+  assert.ok(Math.abs(r2.mainDomain.max - Math.sqrt(11)) < 0.001);
 });
 
 // --- Test: isPastWall flag for marker flag text ---
 
 test('depthAux: isPastWall flag enables "past wall" text', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 12, previousDomainMax: null,
+    wallP: 11, xCurrent: 12, previousDomainMax: null,
   });
   assert.equal(r.isPastWall, true);
 });
 
 test('depthAux: not past wall when xCurrent < wallP', () => {
   const r = computeEoqViewport({
-    xBrAmberR: 2.2, xSweet: 1.6, xBrRedR: 3.5, wallP: 11, xCurrent: 5, previousDomainMax: null,
+    wallP: 11, xCurrent: 5, previousDomainMax: null,
   });
   assert.equal(r.isPastWall, false);
 });
@@ -167,4 +145,18 @@ test('depthAux: null rateLamp hides bar even when capabilities say available', (
   const rl = snapshot?.status?.rateLamp;
   assert.equal(available, true);
   assert.equal(rl, undefined);
+});
+
+// --- Test: markerModel reads marker position and br from server/scenario facts ---
+
+test('markerModel takes the mint position and br from the scenario, never from a local formula', () => {
+  // Markers sit where each reference places its causal position, as the hero draws them; the measured
+  // x_display reaches neither.
+  const rl = { x_display: 1.5, u: 1.0, reference: { a: 0.75, d: 0.5 }, br: 0.02, wallP: 11 };
+  const scenario = { reliable: true, trajectory: [{ seq: 2, x: 1.3, u: 0.5, pp: 0.03 }], u: 0.5, reference: { a: 0.875, d: 0.5 }, br: 0.009 };
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'mint'), { x: 1.25, mintX: 1.125, dirty: true, activeX: 1.125, activeBr: 0.009 });
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'amber'), { x: 1.25, mintX: 1.125, dirty: true, activeX: 1.25, activeBr: 0.02 });
+  assert.deepEqual(markerModel(rl, { dirty: false }, 'mint'), { x: 1.25, mintX: null, dirty: false, activeX: 1.25, activeBr: 0.02 });
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario: { reliable: false } }, 'mint').mintX, null);
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario: { reliable: true, trajectory: [], reference: null } }, 'mint'), { x: 1.25, mintX: null, dirty: true, activeX: 1.25, activeBr: 0.02 });
 });

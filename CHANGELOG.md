@@ -1,6 +1,41 @@
 # Changelog
 
-## 0.7.1 (2026-09-21) — Harness projection decoupling and causal position
+## 0.8.0 (2026-09-25) — Causal position and the wallet clock
+
+### Measurement
+
+- **Position is read from the path the session travelled** — `u` accumulates each settled interval's share of a restart cycle at that interval's baseline and realized mean growth, so it only moves forward: loading more files changes how fast it advances from then on, not the distance already covered. `pp`, `mf` and bp are read at that position rather than from a snapshot of the current L and B.
+- **Landmarks come from a reference skeleton fitted over the path** — `rateLamp.reference` relates the position ratio to `u` across the segment's stamped points, and the sweet spot, both amber boundaries and the red boundary are read off it, so they move together as the fit sharpens. `xSweet` is that skeleton at `u = 1`; `dhat` stays as a diagnostic that nothing in the lamp, verdict or reminder reads.
+- **The arm is decided by `u`** — the lamp whitens on the left arm below the mirrored amber boundary and turns amber or red on the right arm only.
+
+### Reminder
+
+- **The restart reminder runs on the wallet clock** — the reminder bar fills with each call's rent increment over an interval set by that interval's exchange fraction, and the call that fills it raises a reminder stamped with the lap count reached. It reads accumulated rent alone, so no change of position, baseline or file selection can move or retract it. The threshold gate on bp, its dwell and the deep-water predicate are gone.
+
+### Dashboard and statusline
+
+- **Position preview** — `POST /api/preview` re-folds the session's history under a candidate include/exclude selection and returns the candidate path, landmarks and premium without applying anything; a transcript replay refuses it. The bucket panel previews a selection through it before applying.
+- **The statusline carries the reminder bar as its only meter**, a bar and a percentage, with a reminder on a second line; the `n/N` backstop count is gone. The lamp arms by `u`.
+- **The depth bar and the history chart** take their landmarks and threshold lines from the server and the same projection the hero draws on, and the hero names the premium axis on every frame, idle frames included.
+- **The demo replays a current session** — `public/snapshots.json` is baked through Transcript Playback from the same routes the dashboard reads, so the demo shows the status shape this release serves.
+
+### Attribution
+
+- **A parallel batch's results are accepted with their calls** — a tool result that is a sibling leaf of the chain is admitted because its call is on the chain, so the file it read reaches its bucket instead of the residual, and a result admitted this way opens no epoch.
+- **A Bash residual is named after its command**, not after the separator behind it.
+
+### Pricing
+
+- **Opus 5.5 has its own C ratio row.**
+
+### Removed
+
+- **`burnRate`** — absent from status together with the rent rate it carried; the rate wall `wallP` is now defined as the position where one more call's avoidable rent equals a complete rebuild.
+- **The deep-water gate state** — the ledger no longer carries the dwell counters, and a ledger written by an earlier version is rebuilt from the transcript.
+
+---
+
+## 0.7.1 (2026-09-21) — Harness projection decoupling and Bash read attribution
 
 ### Architecture
 

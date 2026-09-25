@@ -31,7 +31,7 @@ Given correct input, the measurement layer guarantees:
 
 **Token-at-Ingestion:** Per-path token estimates are computed once at write time using a model-specific conversion ratio. Values are never retroactively recomputed — changes in calibration or file content only affect future observations.
 
-**Settlement:** When B grows faster than L (cache-creation credited before cache-read materializes), the surplus is absorbed by a deferred ledger rather than appearing as false residual growth. When L catches up, the ledger retires. Any balance un-retired at segment end is treated as estimation error and corrected out of the path totals.
+**Settlement:** When B grows faster than L (cache-creation credited before cache-read materializes), the surplus is banked in a deferred ledger as credit L has yet to confirm, and retires as L catches up. Any balance un-retired at segment end is treated as estimation error and corrected out of the path totals.
 
 **Sidechain exclusion:** A row marked as sidechain is a self-contained sub-agent context and is dropped before interpretation, so it yields no evidence of any kind: it contributes to L, g, segmentation triggers, turn counting and path attribution alike not at all, and its identifiers never reach topology.
 
@@ -41,28 +41,28 @@ Given correct input, the measurement layer guarantees:
 
 The system publishes a status snapshot after each measurement cycle. Consumers can rely on:
 
-**Position constraint:** The public field `B` never exceeds `totalStock`. This cap is a transient display guard during cache-creation lag; it self-releases once the provider's cache catches up. Internal decision math uses B_default (the filtered subset), falling back to B_full when B_default is zero.
+**Position constraint:** The public field `B` never exceeds `totalStock`. This cap is a transient display guard during cache-creation lag; it self-releases once the provider's cache catches up. Internal decision math uses B_default (the filtered subset) as its position basis.
 
-**Baseline validity gate:** The system requires `B_full > 0 AND cRatio > 0` to produce meaningful cost metrics. When either condition fails:
+**Baseline validity gate:** The system requires a positive position basis (B_default) AND `cRatio > 0` to produce meaningful cost metrics. When either condition fails:
 
 - `x` = 1 (fallback, not null)
-- `dhat`, `xSweet`, `mf`, `bp`, `rentRate` = null
+- `u`, `pp`, `mf`, `br`, `dhat`, `xSweet` = null, and the reference skeleton is absent, which withdraws every position landmark with it
 - `g` returns at least the floor value (independent of baseline)
 - Lamp state reports `no_transcript` or `insufficient_data`
 
-Since the system overhead floor is set from the very first usage snapshot, B_full becomes positive on the first interaction — no file operations are required.
+Since the system overhead floor is set from the very first usage snapshot and is itself part of B_default, B_default becomes positive on the first interaction — no file operations are required.
 
-**Left-arm whitening:** When `x < xSweet`, bp for gating purposes is null. No gate consumer (deep-water detection, rate-lamp boundary, notification trigger) fires on the left arm. A session that has not reached the sweet spot is not "overstaying."
+**Left-arm silence:** Which arm the session is on is decided by normalized position, never by the position ratio against xSweet. Before the sweet spot the lamp shows white until the position reaches the mirror image of the amber boundary and green from there on; the warning and critical zones are right-arm states only, so a session that has not reached the sweet spot is never coloured as "overstaying."
 
-**Deep-water predicate:** The system reports deep-water state if and only if `x >= xSweet AND bp >= BP_AMBER`. Notifications require this state to be sustained, not merely instantaneous — the gate debounces transient spikes. The conjunction ensures that only right-arm positions with material premium trigger alerts.
+**Restart reminder:** The reminder is raised by the rent ledger and by nothing else. Each measured call adds its rent increment to a wallet phase scaled by the reminder interval, and a call whose increment carries that phase across a lap boundary raises a reminder stamped with the lap count reached and wraps the phase, so a call that crosses several boundaries is announced by that stamp rather than by a reminder per lap. Rent already accumulated is settled: a revaluation — by a baseline change, a change of selected files, or a price change — withdraws no reminder already raised and rewinds no phase already advanced.
 
-**Rate-lamp integration:** The billing ledger integrates rentRate over time via trapezoidal accumulation. Alerts fire on sustained cost (bill-cycle crossings), not on instantaneous bp spikes. The backstop interval adapts to mf — higher stakes shorten it; lower stakes lengthen it.
+**Rate-lamp integration:** One rent increment per measured call, formed by trapezoidal accumulation across the call's interval, feeds two counters: a bill cycle, which is display only and triggers nothing, and the wallet phase, whose lap boundary is what raises the reminder. Reminders therefore follow accumulated cost rather than an instantaneous bp spike. The reminder interval adapts to mf — higher stakes shorten it; lower stakes lengthen it.
 
 ---
 
 ## Persistence Boundary
 
-**Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, bp, mf, turns, duration) — enough to reconstruct cross-segment trends.
+**Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, br, mf, turns, duration) — enough to reconstruct cross-segment trends.
 
 **Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system reconstructs it by re-reading the transcript from byte zero — the same interpretation the live path applies, so the rebuilt series is the one live observation would have produced. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
 

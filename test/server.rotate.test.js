@@ -231,14 +231,15 @@ test('[delta] successful rotation reanchors the new session\'s Rate Lamp before 
       'keyed to the new session\'s own segment');
     assert.equal(ledger.billProgress, 0, 'the restored samples did not integrate');
     assert.equal(ledger.billCycleCount, 0);
-    assert.equal(ledger.lastBurnRate, null, 'the burn anchor is cleared, so the first later call anchors');
+    assert.equal(ledger.walletLapCount, 0, 'and neither clock turned over on the rotation');
     // The folded cursor sits at the frame TAIL, which is what skips the history rather than replaying it.
-    assert.equal(ledger.lastAppliedFoldedCallSeq, ledger.billAnchorFoldedCallSeq);
-    assert.ok(ledger.lastAppliedFoldedCallSeq >= 1, 'and the tail is the restored history\'s end, not zero');
+    const tail = ledger.lastAppliedFoldedCallSeq;
+    assert.equal(tail, 3, 'and the tail is the restored history\'s end, not zero');
 
-    // Discriminating on its own subject: the FIRST later call establishes the anchor and the SECOND performs
-    // one integration. A rotation that did not reanchor would integrate on the first. The later calls carry a
-    // large L so the trapezoid clears the ledger's 1e-6 progress quantum and the integration is observable.
+    // Discriminating on its own subject: every call AFTER the reanchored tail integrates its own stamped
+    // increment, and the restored history contributes none. A rotation that did not reanchor would have
+    // already integrated that history above. The later calls carry a large L so each increment is observable.
+    const spend = (l) => l.billCycleCount + l.billProgress;
     writeFileSync(pathNew, [
       ...measuredRows('ra1', 2000),
       ...measuredRows('ra2', 4000).map(row => ({ ...row, parentUuid: row.parentUuid ?? 'r-ra1' })),
@@ -246,8 +247,14 @@ test('[delta] successful rotation reanchors the new session\'s Rate Lamp before 
     ].map(r => JSON.stringify(r) + '\n').join(''));
     pump(ctx.handle);
     const afterFirst = getLiveLedger('sess-reanchor');
-    assert.equal(afterFirst.billProgress, 0, 'the first later call only anchors');
-    assert.ok(afterFirst.lastBurnRate > 0, 'and it IS the new anchor');
+    assert.equal(afterFirst.lastAppliedFoldedCallSeq, tail + 1, 'exactly one new call drained');
+    // The increment comes off a fresh read of the same frame the drain consumed, so the pin discriminates the
+    // reducer's own arithmetic without restating the pricing formula that stamped it. The spend is rebuilt
+    // through the settle loop's unit subtractions, hence a tolerance rather than equality.
+    const drained = ctx.watcher.readRateLampFrame(tail).samples;
+    assert.equal(drained.length, 1, 'and the frame past the tail holds only that call');
+    assert.ok(Math.abs(spend(afterFirst) - drained[0].deltaW) < 1e-9,
+      'the first contiguous call after the reanchored tail integrates its own stamped increment, and only it');
 
     writeFileSync(pathNew, [
       ...measuredRows('ra1', 2000),
@@ -256,7 +263,8 @@ test('[delta] successful rotation reanchors the new session\'s Rate Lamp before 
       ...measuredRows('ra4', 600000).map(row => ({ ...row, parentUuid: row.parentUuid ?? 'r-ra3' })),
     ].map(r => JSON.stringify(r) + '\n').join(''));
     pump(ctx.handle);
-    assert.ok(getLiveLedger('sess-reanchor').billProgress > 0, 'the second later call performs one integration');
+    assert.ok(spend(getLiveLedger('sess-reanchor')) > spend(afterFirst),
+      'and the next one integrates on top of it');
   });
 });
 

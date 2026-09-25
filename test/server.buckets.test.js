@@ -49,5 +49,7 @@ test('GET /api/buckets returns expected shape', async () => {
     assert.equal('ctpOvershootRatio' in data, false, 'the retired overshoot field is absent');
     assert.equal(typeof data.currentTurnSeq, 'number', 'currentTurnSeq is a number');
     assert.equal(typeof data.segment, 'number', 'segment is a number');
+    const status = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    assert.equal(data.metrics.pp, status.pp, 'metrics.pp is the stamped pp');
   });
 });

@@ -2,7 +2,7 @@
 // + compact-instruction generator. Replaces bucketTree.js placeholder.
 // Element contract: mount(root, ctx) → { update(snapshot), destroy() }
 
-import { OTHERS_DRIFT_WARN_PCT, DONUT_CIRCUMFERENCE, MIN_B_PREVIEW, COPY_FEEDBACK_MS } from '../lib/uiConstants.js';
+import { OTHERS_DRIFT_WARN_PCT, DONUT_CIRCUMFERENCE, COPY_FEEDBACK_MS } from '../lib/uiConstants.js';
 import { churnTier, maxChildTier } from '../lib/churnTier.js';
 import { redactCmd } from '../lib/redaction.js';
 export { redactCmd };
@@ -321,7 +321,7 @@ export function buildTree(bucketData) {
   const sumMcp = mcp.reduce((s, m) => s + (m.tokens ?? 0), 0);
   const sumAgent = agent.reduce((s, a) => s + (a.tokens ?? 0), 0);
 
-  // WHY: use totalResidualRaw (not clamped) so drift signal is never silently lost (review GPT#7)
+  // totalResidualRaw rather than the clamped total, so the drift signal survives to the warning below
   const totalRaw = bucketData.totalResidualRaw ?? bucketData.totalResidual ?? 0;
   const othersRaw = totalRaw - sumBash - sumMcp - sumAgent;
 
@@ -469,30 +469,6 @@ export function computeDirty(tree) {
 }
 
 /**
- * Compute the estimated context size after overrides are applied.
- * Only counts LOCAL ghost delta relative to committed state — B_default already includes
- * committed overrides. Result is floored at MIN_B_PREVIEW.
- * @param {BucketNode[]} tree
- * @param {number} B_default
- * @param {Map<string, boolean>} selectionOverrides
- * @returns {number}
- */
-export function computeBPreview(tree, B_default, selectionOverrides) {
-  if (!selectionOverrides || selectionOverrides.size === 0) return B_default;
-  let delta = 0;
-  for (const leaf of flattenLeaves(tree)) {
-    if (!leaf.selectable) continue;
-    if (!selectionOverrides.has(leaf.label)) continue; // only local ghost entries produce delta
-    // "committed" = effective state before this local toggle
-    const committed = leaf.userOverride === 'include' ? true
-                    : leaf.userOverride === 'exclude' ? false
-                    : leaf.defaultSelected;
-    delta += ((leaf.selected ? 1 : 0) - (committed ? 1 : 0)) * leaf.tokens;
-  }
-  return Math.max(MIN_B_PREVIEW, B_default + delta);
-}
-
-/**
  * Build the override payload for POST /api/user-overrides.
  * Includes all non-default states: local toggles + backend overrides the frontend has rendered.
  * F2 fix: preserves backend overrides for leaves without local toggles (prevents one-shot inference loss).
@@ -521,16 +497,17 @@ export function buildCompactInstruction(tree) {
   const clauses = [];
   const retain = [];
 
-  // 1/2. Recurse the PATHS group (review GPT#6: must handle nested sub-dirs, not just top-level).
+  // Recurse the PATHS group; nested sub-dirs are reached, not only the top level.
   //   - fully-selected dir  → retain <dir>            (do NOT descend — the whole subtree is kept)
   //   - fully-unselected dir → (nothing; its files are discarded implicitly)
   //   - half-selected dir   → summarize <dir> excluding <unchecked descendant leaf names>, THEN recurse
   //                            into child dirs so a deeper half-selected sub-dir gets its own clause
   //   - kept lone file      → retain <file>
   function walkPath(node) {
-    if (node.kind === 'file') { if (node.selected) retain.push(redactCmd(node.name)); return; }  // redact path (GPT#10: /home/alice → ~)
+    // redactCmd rewrites a home-anchored path to its `~` form before the instruction carries it.
+    if (node.kind === 'file') { if (node.selected) retain.push(redactCmd(node.name)); return; }
     if (node.kind !== 'dir') return;
-    const state = deriveDirState(node);              // descendant-leaf based (Task 5)
+    const state = deriveDirState(node);              // read off the descendant leaves, not the dir row
     if (state === 'checked') { retain.push(redactCmd(node.name)); return; }
     if (state === 'unchecked') return;
     // half: summarize this dir excluding its unchecked descendant LEAVES, then recurse into sub-dirs
@@ -551,8 +528,8 @@ export function buildCompactInstruction(tree) {
   if (discardedSkills.length) clauses.push(`discard skill context: ${discardedSkills.join(', ')}`);
 
   // 3. Unchecked bash/mcp → discard (redacted). Iterate leaves so a bash DIR's children are covered too.
-  //    leaf.name is already the SERVER-EXTRACTED feature (Task 0b); redactCmd is defense-in-depth (§8.3).
-  //    Include detail for disambiguation (GPT#10: two 'curl' calls otherwise indistinguishable).
+  //    leaf.name is already the SERVER-EXTRACTED feature; redactCmd is defense-in-depth. The detail comes
+  //    along because the feature alone leaves same-command invocations indistinguishable.
   const discards = [];
   for (const leaf of flattenLeaves(tree)) {
     if ((leaf.kind === 'bash' || leaf.kind === 'mcp' || leaf.kind === 'agent') && leaf.selectable && !leaf.selected) {
@@ -661,6 +638,68 @@ export function paintIndentGuides(row, indent) {
   row.style.backgroundRepeat = 'no-repeat';
 }
 
+/** Latest-wins gate for preview requests: a response is used only if its token is the newest issued. */
+export function latestOnly() {
+  let latest = 0;
+  return { next() { latest += 1; return latest; }, isLatest(token) { return token === latest; } };
+}
+
+// ─── Preview publisher ────────────────────────────────────────────────────────
+
+/**
+ * The preview request lifecycle: the latest-wins gate, the content key the live publication stands
+ * for, and the withdraw/publish steps around one `/api/preview` fold. Gate and key are per-instance,
+ * so `mount` builds one publisher per mount rather than sharing one.
+ * `hasSelection` and `overridesOf` stay separate because the clear path keys on the selection, so a
+ * selection whose payload folds to an empty map still takes the request path.
+ * The clear path publishes before its first suspension point, which is what lets `destroy` withdraw
+ * the ghost and drop the card without awaiting.
+ * @param {{fetchImpl: Function, emit: Function, hasSelection: Function, overridesOf: Function}} deps
+ * @returns {(forceFalse?: boolean) => Promise<void>} dispatchPreview
+ */
+export function createPreviewPublisher({ fetchImpl, emit, hasSelection, overridesOf }) {
+  const previewGate = latestOnly();
+  // The override map the current publication describes, compared by content: the tree is rebuilt in token
+  // order on every snapshot, so insertion order is not identity. Written only by `publish`, so a request
+  // that never publishes moves nothing.
+  let shownKey = null;
+  const keyOf = (overrides) => JSON.stringify(Object.keys(overrides).sort().map(k => [k, overrides[k]]));
+  function publish(detail, key) {
+    shownKey = key;
+    emit(detail);
+  }
+  return async function dispatchPreview(forceFalse) {
+    if (forceFalse || !hasSelection()) {
+      previewGate.next();
+      // Withdrawing what is already withdrawn says nothing, and the snapshot path dispatches on every tick, so
+      // the emit waits for a publication to retract. The gate token is burned either way, so a response still in
+      // flight is no longer latest when it lands.
+      if (shownKey !== null) publish({ dirty: false }, null);
+      return;
+    }
+    const token = previewGate.next();
+    const overrides = overridesOf();
+    const key = keyOf(overrides);
+    // A scenario stands only for the map it was folded for: a changed map withdraws the picture before the
+    // request goes out; the same map (a status-update re-post) keeps it until the response lands.
+    if (key !== shownKey) publish({ dirty: true, scenario: null }, key);
+    try {
+      const res = await fetchImpl('/api/preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overrides }),
+      });
+      if (!previewGate.isLatest(token)) return;
+      if (!res.ok) { publish({ dirty: true, scenario: null }, key); return; }
+      // The body parse is a second suspension point, so the gate is read again on the far side of it.
+      const { scenario } = await res.json();
+      if (!previewGate.isLatest(token)) return;
+      publish({ dirty: true, scenario }, key);
+    } catch (e) {
+      console.error('[preview]', e);
+      if (previewGate.isLatest(token)) publish({ dirty: true, scenario: null }, key);
+    }
+  };
+}
+
 export function mount(root, ctx) {
   // ── Closure state ──────────────────────────────────────────────────────────
   const state = {
@@ -670,7 +709,6 @@ export function mount(root, ctx) {
     sectionCollapsed: { system: false, paths: false, output: true }, // section-level fold
     prevSegment: null,
     lastGoodBucketData: null,        // last non-null bd — fallback for transient failures
-    B_default: 0,                    // from status.rateLamp.B_default ?? bd.bDefault ?? bd.totalB
     _bodyTips: [],                   // tooltip elements appended to document.body (for cleanup)
   };
 
@@ -815,15 +853,12 @@ export function mount(root, ctx) {
   }
 
   // ── Event dispatchers ──────────────────────────────────────────────────────
-  function dispatchPreview(forceFalse) {
-    if (forceFalse) {
-      document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail: { B_preview: state.B_default, dirty: false } }));
-      return;
-    }
-    const dirty = state.selectionOverrides.size > 0;
-    const B_preview = computeBPreview(state.tree, state.B_default, state.selectionOverrides);
-    document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail: { B_preview, dirty } }));
-  }
+  const dispatchPreview = createPreviewPublisher({
+    fetchImpl: (url, init) => fetch(url, init),
+    emit: (detail) => document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail })),
+    hasSelection: () => state.selectionOverrides.size > 0,
+    overridesOf: () => buildOverridePayload(state.tree),
+  });
 
   let _hoveredNodeId = null; // track currently hovered row across re-renders
 
@@ -1356,9 +1391,6 @@ export function mount(root, ctx) {
       dispatchPreview(true); // clear ghost
     }
 
-    // 3. B_default (SSOT: prefer rateLamp → bd.bDefault → bd.totalB fallback)
-    state.B_default = snapshot?.status?.rateLamp?.B_default ?? bd.bDefault ?? bd.totalB ?? 0;
-
     // 4. Build tree
     state.tree = buildTree(bd);
 
@@ -1411,8 +1443,10 @@ export function mount(root, ctx) {
     // 9b. Update sync state chip/sweep
     updateSyncState();
 
-    // 10. H4: only dispatch preview when user has local ghost — backend overrides are NOT dirty
-    if (state.selectionOverrides.size > 0) dispatchPreview();
+    // 10. H4: the ghost stands for the local override map — a backend override is NOT dirty. An empty map is a
+    // withdrawal, including when step 7's own collection emptied it, and the publisher is silent when there is
+    // nothing published to withdraw.
+    dispatchPreview();
   }
 
   // ── refreshDerived: update visuals after a selection change ──────────────
@@ -1608,7 +1642,9 @@ export function mount(root, ctx) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ overrides }),
         });
-        if (res.ok) state.selectionOverrides.clear(); // I2 fix: only clear on success
+        // The ghost clears only once the write has landed, so a refused Apply leaves the toggles for the
+        // warning below to find.
+        if (res.ok) { state.selectionOverrides.clear(); dispatchPreview(true); }
       } catch (e) {
         console.error('[handoff auto-apply]', e);
       }

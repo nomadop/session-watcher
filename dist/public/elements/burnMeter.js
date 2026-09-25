@@ -1,7 +1,6 @@
-// Dual-bar rent meter (spec §3.4). Renders from status.rateLamp.rentMeter — NO re-derivation of
-// notification/backstop logic (spec invariant 10). Cycle bar = micro timescale (billProgress); depth
-// bar = macro (deep-water backstop progress), disabled until gate fires.
-import { MAG_VISIBLE_TICKS } from '../lib/uiConstants.js';  // mirror of lib/constants MAG_VISIBLE_TICKS (5)
+// The dual-bar rent meter renders status.rateLamp.rentMeter as the server sends it — the cycle bar
+// is the rebuild-equivalent cycle, the reminder bar the wallet phase.
+import { MAG_VISIBLE_TICKS } from '../lib/uiConstants.js';
 
 export function mount(root, _ctx) {
   const container = document.createElement('div');
@@ -17,10 +16,9 @@ export function mount(root, _ctx) {
         <div class="bar-track"><div class="bar-fill cycle" style="width:0%"></div></div>
         <div class="bar-tail"><span class="bar-inline-value">—</span></div>
       </div>
-      <div class="bar-detail">rent <span class="hl">—</span>/turn (sweet: —)</div>
     </div>
     <div class="bar-group depth-group disabled">
-      <span class="bar-name">depth</span>
+      <span class="bar-name">reminder</span>
       <div class="bar-with-mag">
         <div class="bar-track">
           <div class="bar-fill depth" style="width:0%"></div>
@@ -28,14 +26,13 @@ export function mount(root, _ctx) {
         </div>
         <div class="mag-tail"><div class="mag-ticks"></div></div>
       </div>
-      <div class="bar-detail">awaiting gate · reminder inactive</div>
+      <div class="bar-detail">Awaiting measurement · reminder inactive</div>
     </div>
   `;
   root.appendChild(container);
 
   const cycleFill = container.querySelector('.bar-fill.cycle');
   const cycleValue = container.querySelector('.cycle-group .bar-inline-value');
-  const cycleDetail = container.querySelector('.cycle-group .bar-detail');
   const depthGroup = container.querySelector('.depth-group');
   const depthFill = container.querySelector('.bar-fill.depth');
   const depthTicks = container.querySelector('.bar-ticks');
@@ -78,16 +75,13 @@ export function mount(root, _ctx) {
 
   // Null-safe default so a missing rentMeter (server always sends one now, but be defensive) resets the
   // frame instead of leaving a stale bar (review fold, GPT #15).
-  const EMPTY_RM = { cycleProgress: 0, rentRate: null, sweetRentRate: null, depthActive: false, depthProgress: 0, backstopInterval: null, backstopLapCount: 0, depthHot: false };
+  const EMPTY_RM = { cycleProgress: 0, depthActive: false, depthProgress: 0, backstopInterval: null, backstopLapCount: 0, depthHot: false };
 
   function update(snapshot) {
     const rm = snapshot?.status?.rateLamp?.rentMeter || EMPTY_RM;
     const cyclePct = Math.round(Math.min(1, Math.max(0, rm.cycleProgress ?? 0)) * 100);
     cycleFill.style.width = `${cyclePct}%`;
     cycleValue.textContent = `${cyclePct}%`;
-    const rent = Number.isFinite(rm.rentRate) ? rm.rentRate.toFixed(2) : '—';
-    const sweet = Number.isFinite(rm.sweetRentRate) ? rm.sweetRentRate.toFixed(2) : '—';
-    cycleDetail.innerHTML = `rent <span class="hl">${rent}</span>/turn (sweet: ${sweet})`;
 
     if (rm.depthActive) {
       depthGroup.classList.remove('disabled');
@@ -96,16 +90,13 @@ export function mount(root, _ctx) {
       depthFill.style.width = `${depthPct}%`;
       renderTickSegments(rm.backstopInterval);
       renderMagazine(rm.backstopLapCount, rm.depthHot);
-      const denom = Number.isFinite(rm.backstopInterval) ? Math.max(1, Math.round(rm.backstopInterval)) : '—';
-      depthDetail.textContent = (rm.backstopLapCount > 0)
-        ? `${(rm.depthProgress ?? 0).toFixed(1)}× amber depth`
-        : `next reminder at ${denom} deep-water cycles`;
+      depthDetail.textContent = `Next reminder: ${depthPct}%`;
     } else {
       depthGroup.classList.add('disabled');
       depthFill.style.width = '0%';
       renderTickSegments(0);
       renderMagazine(0, false);
-      depthDetail.textContent = 'awaiting gate · reminder inactive';
+      depthDetail.textContent = 'Awaiting measurement · reminder inactive';
     }
   }
 

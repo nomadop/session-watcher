@@ -87,7 +87,7 @@ test('the Engine exposes exactly its named operations, and getCurrentCtp is not 
   const engine = makeEngine();
   assert.deepEqual(Object.keys(engine).sort(), [
     'closeCurrentSegment', 'getBucketData', 'getHandoffMeasurement', 'getHistory', 'getStatus',
-    'ingest', 'readRateLampFrame', 'refreshReadPolicies', 'replaceResourceOverrides',
+    'ingest', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceResourceOverrides',
   ]);
   assert.equal(engine.getCurrentCtp, undefined);
 });
@@ -120,7 +120,7 @@ test('a missing or invalid resource policy defaults to selected with no discard 
   const [row] = engine.getBucketData().paths;
   assert.equal(row.defaultSelected, true);
   assert.equal(row.defaultDiscardReason, null);
-  assert.equal(engine.getStatus().bDefault, 1400, 'a defaulted resource still counts toward the position basis');
+  assert.equal(engine.getBucketData().bDefault, 1400, 'a defaulted resource still counts toward the position basis');
 });
 
 test('resolver failure happens after the accepted core transition and never rolls measurement state back', () => {
@@ -149,12 +149,12 @@ test('a user override beats the resource policy default', () => {
   });
   engine.ingest([step('m1')]);
   engine.ingest([effect([whole('kept', 100), whole('ignored', 200)], { spentTokens: 300 })]);
-  assert.equal(engine.getStatus().bDefault, 1100, 'the ignored resource is outside the position basis');
+  assert.equal(engine.getBucketData().bDefault, 1100, 'the ignored resource is outside the position basis');
   assert.equal(engine.getBucketData().paths.find(p => p.path === 'ignored').defaultDiscardReason, 'gitignored');
 
   assert.deepEqual(engine.replaceResourceOverrides({ ignored: 'include', kept: 'exclude' }),
     { changed: true, warnings: [], diagnostics: [] });
-  assert.equal(engine.getStatus().bDefault, 1200);
+  assert.equal(engine.getBucketData().bDefault, 1200);
   assert.equal(engine.getBucketData().paths.find(p => p.path === 'ignored').userOverride, 'include');
   assert.equal(engine.getBucketData().paths.find(p => p.path === 'ignored').defaultDiscardReason, 'gitignored',
     'the override does not rewrite the policy default it beats');
@@ -186,18 +186,18 @@ test('manual and inferred overrides share one set that whole-set replacement rew
 
   engine.replaceResourceOverrides({ a: 'exclude' });                 // a manual decision
   engine.replaceResourceOverrides({ a: 'exclude', b: 'exclude' });   // inference merged in by the caller
-  assert.equal(engine.getStatus().bDefault, 1000);
+  assert.equal(engine.getBucketData().bDefault, 1000);
 
   engine.replaceResourceOverrides({ b: 'exclude' });                 // omitted entries are removed
   assert.equal(engine.getBucketData().paths.find(p => p.path === 'a').userOverride, null);
-  assert.equal(engine.getStatus().bDefault, 1100);
+  assert.equal(engine.getBucketData().bDefault, 1100);
 
   engine.ingest([{ type: 'epoch' }]);
   engine.ingest([step('m2')]);
   engine.ingest([effect([whole('b', 200)], { spentTokens: 200 })]);
   assert.equal(engine.getBucketData().paths.find(p => p.path === 'b').userOverride, null,
     'the override set is current-epoch state');
-  assert.equal(engine.getStatus().bDefault, 1200);
+  assert.equal(engine.getBucketData().bDefault, 1200);
 });
 
 test('refreshReadPolicies reports changed only when a named read changes', () => {
@@ -220,7 +220,7 @@ test('refreshReadPolicies reports changed only when a named read changes', () =>
   discardReason = 'outside_project';
   assert.equal(engine.refreshReadPolicies().changed, true);
   assert.equal(engine.getBucketData().paths[0].defaultDiscardReason, 'outside_project');
-  assert.equal(engine.getStatus().bDefault, 1000);
+  assert.equal(engine.getBucketData().bDefault, 1000);
   assert.equal(engine.refreshReadPolicies().changed, false);
 });
 
@@ -266,7 +266,9 @@ test('getHandoffMeasurement returns its complete detached shape from the same sn
     turnSeq: 1,
     epochModel: 'model-a',
     measurement: {
-      L: status.L, B: status.B, bDefault: status.bDefault, g: status.g, mf: status.mf, br: status.br,
+      // One measured step and no settled interval, so the fold's rate is still zero beside the smoothed g.
+      L: status.L, B: status.B, bDefault: status.bDefault, g: status.g, gBar: 0, mf: status.mf, br: status.br,
+      u: status.u, pp: status.pp,
       x: status.x, dhat: status.dhat, cRatio: status.cRatio, dead: 1000, sessionFloor: 1000,
     },
     paths: [
@@ -320,7 +322,8 @@ test('readRateLampFrame carries one coherent status, progress, and sample snapsh
     [1, 1, 10_000, true],
     [2, 2, 14_000, true],
   ]);
-  for (const sample of frame.samples) assert.ok(Number.isFinite(sample.burnRate));
+  assert.equal(frame.samples[0].deltaW, null, 'the first frame of the segment prices no interval');
+  assert.ok(Number.isFinite(frame.samples[1].deltaW) && Number.isFinite(frame.samples[1].mf));
 
   assert.deepEqual(engine.readRateLampFrame(1).samples.map(s => s.seq), [2]);
   assert.deepEqual(engine.readRateLampFrame(2).samples, []);
