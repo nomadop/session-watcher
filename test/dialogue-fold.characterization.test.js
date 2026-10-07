@@ -85,6 +85,25 @@ describe('degenerate identity does not drop a fold', () => {
     assert.equal(folds[0].timestamp, null);
   });
 
+  test('a tool use on a row with an empty id carries no identity, as its fold does', () => {
+    const lines = enumerateDialogueLines(foldsOf([
+      assistantToolUse({ uuid: '', messageId: 'm1', toolUseId: 't1', name: 'Bash',
+        input: { command: 'ls' }, text: 'listing', timestamp: ts(1) }),
+    ]));
+    assert.deepEqual(lines.map(line => [line.kind, line.sourceEntryId]),
+      [['visible', null], ['tool', null]]);
+  });
+
+  test('a tool result on a row with an empty id carries no identity, as its tool use does', () => {
+    const [pair] = foldsOf(chain([
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Bash',
+        input: { command: 'ls' }, timestamp: ts(1) }),
+      toolResult({ uuid: '', toolUseId: 't1', content: 'a.js' }),
+    ]))[0].toolPairs;
+    assert.equal(pair.result, 'a.js');
+    assert.equal(pair.resultSourceEntryId, null);
+  });
+
   test('the projection reports no warnings at all', () => {
     // The retired reader warned about anchors it could not use. Identity and time are now judged where
     // they are required — Turn Note capture — so the projection has no advisory channel of its own.

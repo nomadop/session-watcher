@@ -67,7 +67,7 @@ test('#1/#2: the crossing test runs on the unrounded running value — a remaind
   assert.equal(s.billProgress, 0.9999996, 'the crossing left the computed remainder, still below the unit');
 });
 
-// --- Review-added regression tests (multi-call poll, A2/A3) ---
+// --- Multi-call polls and unreliable or malformed samples ---
 
 test('four consecutive samples all integrate and pause nothing, the seq cursor reaching the last', () => {
   let s = freshLedger(KEY);
@@ -79,7 +79,7 @@ test('four consecutive samples all integrate and pause nothing, the seq cursor r
   assert.ok(Math.abs(s.billCycleCount + s.billProgress - 2.0) < 1e-9, 'integrated every call, dropped none');
 });
 
-test('REVIEW A2: unreliable sample ADVANCES seq so recovery is not a spurious gap', () => {
+test('unreliable sample ADVANCES seq so recovery is not a spurious gap', () => {
   let s = freshLedger(KEY);
   s = applyFoldedCallSample(s, rs(1, 0.2));
   s = applyFoldedCallSample(s, { seq: 2, reliable: false, unavailableReason: 'metrics_unreliable', turnSeq: 1 });
@@ -88,7 +88,7 @@ test('REVIEW A2: unreliable sample ADVANCES seq so recovery is not a spurious ga
   assert.equal(s.pausedReason, null, 'clean recovery, no folded_seq_gap');
 });
 
-test('REVIEW A2: an unreliable sample carries its unavailableReason through and the paused state re-validates', () => {
+test('an unreliable sample carries its unavailableReason through and the paused state re-validates', () => {
   let s = freshLedger(KEY);
   s = applyFoldedCallSample(s, rs(1, 0.5));
   s = applyFoldedCallSample(s, { seq: 2, reliable: false, unavailableReason: 'invalid_baseline', turnSeq: 1 });
@@ -96,7 +96,7 @@ test('REVIEW A2: an unreliable sample carries its unavailableReason through and 
   assert.ok(validateLedgerState(s), 'an unreliable-drain paused state still re-validates (schema PAUSE_REASONS covers invalid_baseline)');
 });
 
-test('R2-11: a malformed (cacheRead-named) sample → pause(invalid_sample), no integration', () => {
+test('a malformed (cacheRead-named) sample → pause(invalid_sample), no integration', () => {
   let s = freshLedger(KEY);
   s = applyFoldedCallSample(s, rs(1, 0.2));
   const bad = applyFoldedCallSample(s, { seq: 2, reliable: true, deltaW: 0.4, mf: 0.3, cacheRead: 2000, turnSeq: 1 });

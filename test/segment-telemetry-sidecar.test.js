@@ -130,7 +130,7 @@ function loadToolUse({ uuid, messageId, toolUseId, timestamp, token = null }) {
 }
 
 describe('Segment Telemetry sidecar', () => {
-  test('the full Skill flow is await-result then await-skill-payload then deleted', () => {
+  test('the full Skill flow is await-result then await-skill-payload then completed', () => {
     const driven = harness();
     const seen = driven.feed(chain([
       userMessage({ uuid: 'u1', text: 'run the skill', timestamp: ts(1) }),
@@ -143,13 +143,13 @@ describe('Segment Telemetry sidecar', () => {
     const payloadEffects = effectsOf(seen, 'skill-payload');
     assert.equal(resultEffects[0].length, 1, 'await-result completed into the initial effect');
     assert.equal(payloadEffects[0].length, 1, 'await-skill-payload completed into the replacement');
-    assert.deepEqual(payloadEffects[1], [], 'the entry is deleted, so a later payload finds nothing');
+    assert.deepEqual(payloadEffects[1], [], 'the call is completed, so a later payload finds nothing');
     const payload = driven.close().artifact.payload;
     assert.equal(payload.steps.length, 1);
     assert.equal(payload.steps[0].toolCalls, 1, 'the Skill tool use counted once');
   });
 
-  test('an empty skill-payload deletes the continuation and a later non-empty payload emits nothing', () => {
+  test('an empty skill-payload completes the call and a later non-empty payload emits nothing', () => {
     const driven = harness();
     const seen = driven.feed(chain([
       userMessage({ uuid: 'u1', text: 'run the skill', timestamp: ts(1) }),
@@ -441,17 +441,26 @@ describe('Segment Telemetry sidecar', () => {
   test('finishSegment with no epoch observation leaves no armed correlation', () => {
     // The rotate and terminal-close shape: the segment boundary arrives as a `finishSegment` call, with no
     // `epoch-boundary` observation anywhere in the source.
-    const driven = harness();
-    driven.feed(chain([
+    const rows = () => chain([
       userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
       readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) }),
-    ]));
-    driven.close();
-    const late = driven.projection.project({
+    ]);
+    const lateResult = {
       type: 'tool-result', toolUseId: 't1', content: READ_RESULT, isError: undefined,
       resultMeta: { annotation: undefined }, sourceOrdinal: 9, sourceEntryId: 'r9', timestamp: 9000,
       provenance: 'harness',
-    });
+    };
+    // Control: before the close the same observation completes the armed correlation, so the silence asserted
+    // below is the close's and not a shape the Projection no longer reads.
+    const open = harness();
+    open.feed(rows());
+    assert.ok(open.projection.project(lateResult).records.some(record => record.type === 'effect'),
+      'control: the literal completes an armed correlation');
+
+    const driven = harness();
+    driven.feed(rows());
+    driven.close();
+    const late = driven.projection.project(lateResult);
     assert.deepEqual(late.records, [], 'a result whose segment already closed completes nothing');
   });
 

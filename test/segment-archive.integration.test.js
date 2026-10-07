@@ -41,10 +41,12 @@ const NO_ENRICHMENT = {
 };
 
 let dbSeq = 0;
-// A fresh Projection, Engine, SessionWatcher and Store per call: nothing here is shared across tests.
-function compose({ sessionId = 'sid-archive', now = () => 9_000_000 } = {}) {
-  const store = openStore(join(dir, `store-${++dbSeq}.sqlite`));
-  stores.push(store);
+// A fresh Projection, Engine and SessionWatcher per call, over a fresh Store unless `store` hands one in: nothing here is shared across tests.
+function compose({ sessionId = 'sid-archive', now = () => 9_000_000, store = null } = {}) {
+  if (store === null) {
+    store = openStore(join(dir, `store-${++dbSeq}.sqlite`));
+    stores.push(store);
+  }
   const watcher = new SessionWatcher({
     sessionId,
     sourceLocator: '/t/session.jsonl',
@@ -56,7 +58,7 @@ function compose({ sessionId = 'sid-archive', now = () => 9_000_000 } = {}) {
     handoffComposition: {},
     loaderVersion: '1.0.0',
     store,
-    dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+    dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
     createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
@@ -268,10 +270,43 @@ describe('telemetry status', () => {
       userMessage({ uuid: 'u0', text: 'go', timestamp: ts(0) }),
       coldStep(),
     ]), { captureMode: 'replay' });
-    watcher.closeCurrentSegment({ captureMode: 'replay' });
+    watcher.closeCurrentSegment();
     const status = telemetryStatus(store, sessionId, 0);
     assert.equal(status.capture_source, 'cc-replay');
     assert.equal(store.getProfileSegments(sessionId)[0].archiveSource, 'replay');
+  });
+
+  test('a replay-only reconstruction closed over a segment an earlier watcher archived live leaves the live profile row, its paths and its completed telemetry unchanged', () => {
+    // One segment whose Read archives a path event, its calls priced from `cacheRead` up.
+    const session = cacheRead => chain([
+      userMessage({ uuid: 'u0', text: 'go', timestamp: ts(0) }),
+      coldStep(),
+      assistantObservation({
+        uuid: 'a-read', messageId: 'm-read', timestamp: ts(2), model: 'claude-opus-4-8',
+        usage: usage({ input: 200, output: 20, cacheRead, cacheWrite: 500 }),
+        blocks: [{ type: 'tool_use', id: 'tu-read', name: 'Read', input: { file_path: '/repo/src/a.js' } }],
+      }),
+      toolResult({ uuid: 'r-read', parentUuid: 'a-read', toolUseId: 'tu-read', content: numbered(18), timestamp: ts(3) }),
+      assistantObservation({ uuid: 'a-settle', messageId: 'm-settle', blocks: [], timestamp: ts(4), model: 'claude-opus-4-8', usage: usage({ input: 200, output: 10, cacheRead: cacheRead + 4000, cacheWrite: 500 }) }),
+    ]);
+    const { watcher: live, store, sessionId } = compose();
+    apply(live, session(21000));
+    live.closeCurrentSegment();
+    const persisted = () => ({
+      profile: { ...store._db.prepare('SELECT * FROM profile WHERE session_id=? AND segment=0').get(sessionId) },
+      paths: pathRows(store, sessionId, 0).map(row => ({ ...row })),
+      steps: stepRows(store, sessionId, 0).map(row => ({ ...row })),
+      events: eventRows(store, sessionId, 0).map(row => ({ ...row })),
+    });
+    const before = persisted();
+    assert.equal(before.profile.archive_source, 'live', 'precondition: the earlier watcher archived live');
+    assert.equal(before.profile.telemetry_status, 'complete', 'precondition: its telemetry completed');
+    assert.equal(before.profile.capture_source, 'cc-live');
+
+    const { watcher: reconstruction } = compose({ sessionId, store });
+    apply(reconstruction, session(30000), { captureMode: 'replay' });
+    reconstruction.closeCurrentSegment();
+    assert.deepEqual(persisted(), before);
   });
 });
 
@@ -303,7 +338,7 @@ describe('profile field coverage', () => {
       handoffComposition: {},
       loaderVersion: '1.0.0',
       store,
-      dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+      dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
       dialogueProjection: {},
       createEngine: () => ({
         ingest: () => ({ newCalls: 0, revisedCalls: 0, newResourceKeys: [], closedSegments: [], diagnostics: [] }),
@@ -332,6 +367,7 @@ describe('profile field coverage', () => {
       modelPolicyFor,
       now: () => 777_777,
     });
+    watcher.applyHarnessFrame({ transition: 'append', batches: [], sourceObserved: true, captureMode: 'live' });
     assert.deepEqual(watcher.closeCurrentSegment().diagnostics, []);
 
     const row = store._db.prepare('SELECT * FROM profile WHERE session_id=? AND segment=?').get('sid-sentinel', 4);
@@ -381,6 +417,7 @@ describe('multi-segment sessions', () => {
     // Exact, because the second segment's peak is the reseed: without it the peak carried over and this
     // segment would archive the first one's, which is higher than any L this segment ever read.
     const second = segments.find(row => row.segment === 1);
+    assert.ok(second, `the closed second segment is archived, got ${JSON.stringify(segments.map(s => s.segment))}`);
     assert.equal(second.lPeak, 20000, 'a fresh segment reseeds its own L peak');
     assert.equal(segments.length, 2, 'the still-open segment is not archived');
     assert.equal(sessionId, 'sid-multi');

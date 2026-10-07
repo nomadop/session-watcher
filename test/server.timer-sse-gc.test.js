@@ -1,14 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-
-// Isolate ledger/gate state writes to a temp directory.
-const TMP = mkdtempSync(join(tmpdir(), 'sw-timer-sse-gc-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch {} });
 
 import { createServer, _inspectSseClientsForTest, _setServerTestClock } from '../server.js';
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
@@ -20,6 +12,21 @@ import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-
 const composeFixture = (sessionId) => composeForTranscript({
   transcriptPath: writeMeasuredTranscript({ steps: 30 }), sessionId,
 });
+
+// The server drops a client on its request's or response's close event, which lands an unbounded time after
+// the abort, so a removal read polls the client count until it reaches the expected value or the deadline passes.
+// Each case discards its fetch Response, and collecting that Response cancels its body and closes the stream, so a
+// registration read holds only because the helper's first read runs in the same continuation as the `await fetch`,
+// with no `await` between them.
+const SSE_COUNT_DEADLINE_MS = 5000;
+async function sseClientCountReaching(srv, expected) {
+  const deadline = performance.now() + SSE_COUNT_DEADLINE_MS;
+  for (;;) {
+    const count = _inspectSseClientsForTest(srv);
+    if (count === expected || performance.now() >= deadline) return count;
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
 
 // === C5b-1: an SSE client that errors is removed from sseClients ===
 test('C5b-1: an SSE client that errors is removed from sseClients', async (t) => {
@@ -41,16 +48,12 @@ test('C5b-1: an SSE client that errors is removed from sseClients', async (t) =>
     const res = await resPromise;
     assert.equal(res.status, 200, 'SSE stream opened');
 
-    // Wait a moment for the server to register the client
-    await new Promise(r => setTimeout(r, 30));
-    assert.equal(_inspectSseClientsForTest(srv), 1, 'client is registered');
+    assert.equal(await sseClientCountReaching(srv, 1), 1, 'client is registered');
 
     // Force the response to emit an error by aborting from client side — this fires req 'close'/'aborted'
     controller.abort();
-    // Allow event loop to process the close/abort events
-    await new Promise(r => setTimeout(r, 50));
 
-    assert.equal(_inspectSseClientsForTest(srv), 0, 'client removed after error/abort');
+    assert.equal(await sseClientCountReaching(srv, 0), 0, 'client removed after error/abort');
   } finally {
     srv.stopTimers();
     await new Promise(r => srv.server.close(r));
@@ -74,13 +77,11 @@ test('C5b-1: a client-side REQUEST abort removes the SSE client — del is idemp
     // Open first SSE connection
     const ctrl1 = new AbortController();
     await fetch(`http://127.0.0.1:${port}/api/stream`, { signal: ctrl1.signal });
-    await new Promise(r => setTimeout(r, 30));
-    assert.equal(_inspectSseClientsForTest(srv), 1, 'one client registered');
+    assert.equal(await sseClientCountReaching(srv, 1), 1, 'one client registered');
 
     // Abort the REQUEST (client hangs up) — req 'close'/'aborted' should fire
     ctrl1.abort();
-    await new Promise(r => setTimeout(r, 50));
-    assert.equal(_inspectSseClientsForTest(srv), 0, 'client removed after request abort');
+    assert.equal(await sseClientCountReaching(srv, 0), 0, 'client removed after request abort');
 
     // Idempotency: the del function was bound to multiple events (req.close, req.aborted, res.close,
     // res.error). All of them may fire. Confirm size stays 0 with no throw (Set.delete is idempotent).
@@ -88,12 +89,10 @@ test('C5b-1: a client-side REQUEST abort removes the SSE client — del is idemp
     // the server would be in a bad state.
     const ctrl2 = new AbortController();
     await fetch(`http://127.0.0.1:${port}/api/stream`, { signal: ctrl2.signal });
-    await new Promise(r => setTimeout(r, 30));
-    assert.equal(_inspectSseClientsForTest(srv), 1, 'second client registered (server healthy)');
+    assert.equal(await sseClientCountReaching(srv, 1), 1, 'second client registered (server healthy)');
 
     ctrl2.abort();
-    await new Promise(r => setTimeout(r, 50));
-    assert.equal(_inspectSseClientsForTest(srv), 0, 'second client removed cleanly — no double-fire crash');
+    assert.equal(await sseClientCountReaching(srv, 0), 0, 'second client removed cleanly — no double-fire crash');
   } finally {
     srv.stopTimers();
     await new Promise(r => srv.server.close(r));

@@ -8,8 +8,8 @@ import {
   interpretClaudeCodeSkillPayload,
   interpretClaudeCodeTaskNotification,
   classifyToolPair,
-  redactCmd,
 } from '../lib/harness/claude-code/native-tools.js';
+import { redactCmd } from '../lib/bash-feature.js';
 import { redactCmd as redactCmdFrontend } from '../public/lib/redaction.js';
 import { charsToTokens } from '../lib/token-estimate.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
@@ -100,7 +100,7 @@ function assertWholeContent(impact, ...pricedText) {
   );
 }
 
-const READ_FULL = '1\tconst a = 1;\n2\tconst b = 2;\n3\tmodule.exports = { a, b };\n';
+const READ_FULL = '1\tconst a = 1;\n2\tconst b = 2;\n3\tmodule.exports = { a, b };\n4\t';
 const SERENA_OK = payload => JSON.stringify({ result: typeof payload === 'string' ? payload : JSON.stringify(payload) });
 const SERENA_ERROR = JSON.stringify({ result: 'Error executing tool: boom' });
 
@@ -122,7 +122,7 @@ describe('Read', () => {
     assert.ok(effect.spentTokens > 0);
     const impact = onlyImpact(effect);
     assert.equal(impact.resourceKey, '/repo/src/a.js');
-    assertWholeContent(impact, '1\tconst a = 1;', '2\tconst b = 2;', '3\tmodule.exports = { a, b };');
+    assertWholeContent(impact, '1\tconst a = 1;', '2\tconst b = 2;', '3\tmodule.exports = { a, b };', '4\t');
     assert.deepEqual(completed.residuals, []);
     assert.equal(completed.skillContinuation, null);
     assert.deepEqual(completed.telemetry.pathEvents, [
@@ -1142,7 +1142,7 @@ describe('MCP residual naming', () => {
     ['mcp__serena__list_memories', 'serena list_memories'],
     ['mcp__serena__initial_instructions', 'serena initial_instructions'],
     ['mcp__plugin_playwright_playwright__browser_evaluate', 'playwright browser_evaluate'],
-    ['mcp__plugin_session-watcher_session-watcher__start_watcher', 'session-watcher start_watcher'],
+    ['mcp__plugin_session-watcher_session-watcher__watcher_status', 'session-watcher watcher_status'],
   ];
   for (const [name, groupKey] of CASES) {
     test(`names ${name} as ${groupKey}`, () => {

@@ -8,6 +8,7 @@ import { initStore, closeStoreGlobal, openStore, closeStore } from '../lib/store
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL } from '../lib/constants.js';
 import { createWatcherComposition } from '../server.js';
+import { SessionWatcher } from '../lib/session-watcher.js';
 import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-driver.js';
 import { writeMeasuredTranscript } from './helpers/server-boot.js';
 
@@ -108,6 +109,32 @@ test('POST /api/pricing — valid → saves, effective=saved', async () => {
     assert.equal(body.effective.source, 'saved');
     assert.equal(body.effective.ratio, 10);
     assert.equal(body.saved.readPrice, 0.30);
+  });
+});
+
+test('POST /api/pricing — a policy diagnostic from the ratio refresh reaches the diagnostics sink', async (t) => {
+  // The owner reads the watcher through a facade bound at composition, so the refresh is wrapped beforehand.
+  const refresh = SessionWatcher.prototype.setRatioOverride;
+  let failing = false;
+  SessionWatcher.prototype.setRatioOverride = function (value) {
+    const refreshed = refresh.call(this, value);
+    if (!failing) return refreshed;
+    return { ...refreshed, diagnostics: [{ scope: 'measurement', code: 'model_policy_failed', message: 'fixture' }] };
+  };
+  t.after(() => { SessionWatcher.prototype.setRatioOverride = refresh; });
+  await withServer({ sid: 'p-diag' }, async (port) => {
+    failing = true;
+    const origError = console.error;
+    const lines = [];
+    t.after(() => { console.error = origError; });
+    console.error = (...args) => { lines.push(args.join(' ')); };
+    const res = await fetch(`http://127.0.0.1:${port}/api/pricing`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readPrice: 0.30, writePrice: 3.00 })
+    });
+    console.error = origError;
+    assert.equal(res.status, 200);
+    assert.ok(lines.some(line => line.includes('model_policy_failed')), `saw ${JSON.stringify(lines)}`);
   });
 });
 
@@ -262,4 +289,48 @@ test('POST then GET /api/pricing — the saved override is stored under the EPOC
       assert.equal(got.effective.readPrice, 3);
       assert.equal(got.modelDefault.model, 'claude-opus-4-8');
     });
+});
+
+// While a playback is active the status route reads the playback watcher, so the ratio pricing applies reaches
+// that watcher: at the playback's start, after a pricing write, and back on the owner once playback stops.
+async function playToEnd(port) {
+  const base = `http://127.0.0.1:${port}`;
+  const start = await fetch(`${base}/api/replay/start`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 100 }),
+  });
+  assert.equal(start.status, 200, 'playback started');
+  for (;;) {
+    if ((await (await fetch(`${base}/api/replay/status`)).json()).done) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+const statusOf = async port => (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+const savePrice = (port, prices) => fetch(`http://127.0.0.1:${port}/api/pricing`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prices),
+});
+
+test('a CLI ratio prices the playback the replay route starts', async () => {
+  await withServer({ sid: 'play-cli', ratioOverride: 7 }, async (port) => {
+    await playToEnd(port);
+    assert.equal((await statusOf(port)).cRatio, 7);
+  });
+});
+
+test('a price saved during a playback prices that playback', async () => {
+  await withServer({ sid: 'play-save' }, async (port) => {
+    await playToEnd(port);
+    const res = await savePrice(port, { readPrice: 1, writePrice: 12 });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).effective.ratio, 12);
+    assert.equal((await statusOf(port)).cRatio, 12);
+  });
+});
+
+test('the owner is priced again when its playback stops', async () => {
+  await withServer({ sid: 'play-stop' }, async (port, watcher) => {
+    await playToEnd(port);
+    assert.equal((await savePrice(port, { readPrice: 1, writePrice: 12 })).status, 200);
+    await fetch(`http://127.0.0.1:${port}/api/replay/stop`, { method: 'POST' });
+    assert.equal(watcher.getStatus().cRatio, 12);
+  });
 });

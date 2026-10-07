@@ -229,6 +229,11 @@ describe('the Claude Code Ask head rule', () => {
     assert.equal(r.text.split('…').length, 2);
   });
 
+  test('a raw fallback exactly at the bound passes whole, with no marker', () => {
+    const envelope = 'H'.repeat(200) + 'T'.repeat(200);
+    assert.deepEqual(askResult({ envelope }), { kind: 'HEAD', text: envelope });
+  });
+
   test('a readable structure that projects to nothing absorbs rather than resurrecting the envelope', () => {
     assert.deepEqual(askResult({ envelope: '这段信封原文不该出现在 u_text 里',
       toolUseResult: { answers: {} } }), ABSORB);

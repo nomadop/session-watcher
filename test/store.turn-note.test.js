@@ -283,8 +283,8 @@ test('turn_note_fts 完好库 reopen：base 表推不出的 posting 不被重建
   assert.equal(store.locateTurnNotes(['sess-A'], '"kept"').length, 1, '真实内容照旧可检索');
 });
 
-test('turn-FTS 可用性是独立标志，不复用 handoff-FTS 的', () => {
-  assert.equal(store.turnFtsAvailable(), true);
+test('turn-FTS 可用性是独立标志，不复用 handoff-FTS 的', (t) => {
+  if (!store.turnFtsAvailable()) { t.skip('FTS5 absent in this build'); return; }
   store._turnFtsAvailable = false;    // the state an FTS5-less open leaves behind
   assert.equal(store.turnFtsAvailable(), false);
   assert.equal(store.ftsAvailable, true, 'handoff FTS keeps its own flag');

@@ -134,12 +134,39 @@ test('an application failure terminates reconstruction without closing the incom
       const watcher = createWatcher(args);
       return {
         applyHarnessFrame: () => { throw new Error('projection invariant'); },
-        closeCurrentSegment: (...rest) => watcher.closeCurrentSegment(...rest),
+        closeCurrentSegment: () => watcher.closeCurrentSegment(),
       };
     };
     assert.throws(() => replaySessionTelemetry(sid, tx, { store, createWatcher: failing }),
       /projection invariant/, 'the error propagates into the Store per-session isolation');
     assert.equal(store.getProfileSegments(sid).length, 0, 'the incomplete segment was never closed');
+  });
+});
+
+test('reconstruction hands every application result’s diagnostics to onDiagnostics, the terminal close’s included', () => {
+  withStore((store) => {
+    const tx = writeSource(noTerminalEpoch(join(PROJECT, 'a.js')));
+    const tagged = (scope) => ({ scope, code: 'fixture_code', message: scope });
+    // The real composition, its two application results each carrying one diagnostic of its own origin.
+    const reporting = (args) => {
+      const watcher = createWatcher(args);
+      return {
+        applyHarnessFrame: (frame) => {
+          const result = watcher.applyHarnessFrame(frame);
+          return { ...result, diagnostics: [...result.diagnostics, tagged('frame')] };
+        },
+        closeCurrentSegment: () => {
+          const result = watcher.closeCurrentSegment();
+          return { ...result, diagnostics: [...result.diagnostics, tagged('close')] };
+        },
+      };
+    };
+    const received = [];
+    const outcome = replaySessionTelemetry('reporting-1', tx, {
+      store, createWatcher: reporting, onDiagnostics: (diagnostics) => received.push(...diagnostics),
+    });
+    assert.equal(outcome, true);
+    assert.deepEqual(received.map(entry => entry.scope), ['frame', 'close']);
   });
 });
 
@@ -152,7 +179,7 @@ test('a reconstruction failure leaves pending persistence eligible for retry', (
       const watcher = createWatcher(args);
       return {
         applyHarnessFrame: () => { throw new Error('transient'); },
-        closeCurrentSegment: (...rest) => watcher.closeCurrentSegment(...rest),
+        closeCurrentSegment: () => watcher.closeCurrentSegment(),
       };
     };
     assert.throws(() => replaySessionTelemetry(sid, tx, { store, createWatcher: failing }));

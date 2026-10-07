@@ -24,7 +24,7 @@ export function registerElement(mountFn, slotId) {
 }
 
 function bootstrap() {
-  const ctx = { transport, store };
+  const ctx = { transport, store, request: (url, init) => fetch(url, init), bus: document, charts: window.__SW_dashboard.charts, overlayRoot: document.body };
 
   // Mount all elements into their DOM slots
   for (const el of elements) {

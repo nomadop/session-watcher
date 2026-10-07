@@ -160,12 +160,12 @@ test('malformed complete rows advance the cursor and ordinal and later valid row
   assert.equal(frame.batches[0][0].sourceOrdinal, 3, 'ordinals count every physical row');
 });
 
-test('an absolute byteLimit ending at the first row LF commits only that row', () => {
+test('an absolute limit ending at the first row LF commits only that row', () => {
   const first = line(ORIGIN);
   const path = newSource([ORIGIN, FIRST_CALL]);
   const driver = createClaudeCodeSourceDriver({ sourceLocator: path });
 
-  const bounded = driver.advance({ byteLimit: first.length });
+  const bounded = driver.advance({ limit: first.length });
   assert.deepEqual(typesOf(bounded.batches), [['turn-boundary', 'text']]);
 
   const rest = driver.advance();

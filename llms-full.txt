@@ -1,10 +1,8 @@
 # Session Watcher
 
-> A local monitor that estimates when carrying an existing Claude Code
-> context becomes more expensive than rebuilding it.
+> A local monitor that estimates when carrying an existing agent context becomes more expensive than rebuilding it, for Claude Code and DeepSeek Harness (DSH).
 
-Session Watcher provides a dashboard, statusline, restart-cost metrics,
-and handoff tooling for long-running coding sessions.
+Session Watcher provides restart-cost metrics and handoff tooling for long-running coding sessions, and shows the readings in a dashboard and a statusline under Claude Code and in a tab and a composer dock under DSH. It installs as a Claude Code plugin or as a DSH plugin.
 
 Demo: `npx -y @nomadop/session-watcher demo`
 
@@ -28,7 +26,7 @@ Quantities that locate the session on the token-position number line.
 
 **Units.** tokens
 
-**Definition.** The authoritative size of the context the model is currently reading. Normally equals the cache-read token count from the latest API response. When a cache miss is detected (cache eviction mid-session), L is reconstructed as cache-read plus cache-creation so the metrics see a continuous value rather than a cliff.
+**Definition.** The authoritative size of the context the model is currently reading. Normally equals the cache-read token count from the latest API response. When a cache miss is detected (cache eviction mid-session), L is reconstructed as the whole context stock — input, cache-read and cache-creation — so the metrics see a continuous value rather than a cliff.
 
 **Validity.** Always non-negative. Zero before the first model interaction in a segment, or on a true cold-start where no cached context exists yet.
 
@@ -364,7 +362,7 @@ The growth rate g measures how fast new content arrives relative to the baseline
 The movable fraction has a theoretical ceiling of `1/(1+√2)` (the AM-GM bound). This is by construction: even in the worst case, timing optimization can affect at most this fraction of total bill. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
 
 **Scenario: Detected cache miss during the session.**
-When a cache miss is detected (cacheRead drops while total context stock is preserved), L is reconstructed as the whole context stock — it does not drop to near zero. The miss classifier recognizes this pattern and applies that reconstruction, so the metrics see a continuous L rather than a transient cliff. Segmentation is a separate question with a single answer: a topology change (a root UUID that is not the file's first, which is what /compact and /continue produce). A cache miss is not one, a falling token total is not one, and new files entering the B bucket are not one. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
+When a cache miss is detected (cacheRead falls below a fixed fraction of the previous step's L), L is reconstructed as the whole context stock — it does not drop to near zero. The miss classifier recognizes this pattern and applies that reconstruction, so the metrics see a continuous L rather than a transient cliff. Segmentation is a separate question with a single answer: a topology change (a root UUID that is not the file's first, which is what /compact and /continue produce). A cache miss is not one, a falling token total is not one, and new files entering the B bucket are not one. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.
 
 **Scenario: "Metric says amber but the session feels fine" / "Metric says green but output quality dropped."**
 Session Watcher measures cost geometry, not output quality. Amber/red means you are paying more than optimal timing would require — the model may still be performing well. Conversely, green means cost is efficient — but the model could be producing poor output due to task difficulty, prompt issues, or capability limits. Never use lamp state as a quality proxy.
@@ -507,7 +505,7 @@ When a session ends, the agent can package its working context for the next sess
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (symbol line ranges when present, full file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: one headline per session behind the handoff, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (line ranges when present, the lines each resolved symbol names next, the opening of the file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, path attribution adds them to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: one headline per session behind the handoff, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 
@@ -525,7 +523,7 @@ Stable externally-observable behavior of the measurement system. Implementation 
 
 ### Input Contract
 
-The measurement system requires a stream of structured events. The current implementation consumes Claude Code JSONL transcripts; the input schema below describes the logical contract that any future adapter would fulfill.
+The measurement system requires a stream of structured events. The implementation consumes Claude Code JSONL transcripts and DeepSeek Harness session event logs; the input schema below describes the logical contract both fulfill and any further adapter would.
 
 **Usage snapshot:** Each API interaction produces a snapshot containing:
 
@@ -603,19 +601,17 @@ The session-start hook fires on `startup`, `resume`, `clear`, and `compact`. Its
 
 ### MCP Tools
 
-Stable commands exposed to the agent:
+Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin register the same tools, except where the table says otherwise.
 
 | Tool | Purpose |
 |------|---------|
-| `start_watcher` | Ensure measurement is active; returns server endpoint |
-| `stop_watcher` | Request measurement shutdown (may be a no-op when lifecycle is process-bound) |
-| `watcher_status` | Query whether the measurement server is reachable |
-| `get_bucket_summary` | Per-path token breakdown (B composition) |
-| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
-| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
-| `prepare_handoff` | Package paths + summary for the next session |
-| `load_handoff` | Retrieve a handoff package by token or search |
-| `rotate_session` | Switch the server to a new session/transcript |
+| `watcher_status` | Report whether the watcher is running. The Claude Code reply also carries the dashboard URL; the DSH reply carries none, since DSH serves no dashboard |
+| `get_bucket_summary` | The handoff decision's view of the context buckets: each file or skill row with its token size, read and edit counts, default selection with its reason, the user's override and, for a default-selected file, its active symbols, beside the session id, the segment and `br`. No other metric is returned |
+| `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
+| `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
+| `prepare_handoff` | Persist the kept paths and a summary as a handoff package; returns a load token |
+| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. A delivered package carries the lineage headlines and the newest page of turns |
+| `rotate_session` | Claude Code only: switch the watcher to a new session and transcript |
 | `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
 | `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
 | `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |
@@ -635,3 +631,113 @@ The three history tools resolve their own lineage from the handoff delivered int
 **Interpretation fails outright:** An error the system cannot classify as an unreadable or malformed source is treated as a defect rather than absorbed: measurement stops, the owner reports the error, releases what it holds without archiving the open segment, and exits nonzero. The transcript is left untouched, so a fresh owner rebuilds from it.
 
 **Server unreachable during rotation:** The hook injects fallback context instructing the agent to call `rotate_session` manually.
+
+---
+
+## DSH Plugin
+
+`@nomadop/session-watcher-dsh` runs Session Watcher inside DeepSeek Harness (DSH). The plugin loads into the DSH host process, watches the sessions of that host, and shows the readings in a tab and a composer dock of the DSH Web UI. The measurement, the store, the handoff and the turn history are the ones the Claude Code plugin uses. What is specific to DSH is the harness layer that reads DSH's session event log and the host wiring around it.
+
+### Install
+
+Add the package to a DSH profile:
+
+```bash
+dsh plugin --profile <name> add @nomadop/session-watcher-dsh
+```
+
+`<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`.
+
+The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool.
+
+### What gets watched
+
+Each session the host lists, creates or appends to gets its own watcher, subagent sessions included. A session the plugin first meets is read in full from the host's session log, then followed event by event. While that first read is in progress, the tools wait for it, and the tab and the dock show that the session is being read.
+
+A session that is not running, because it has settled or has not run again since the host restarted, has no watcher until the tab or the dock first asks for it. The host then looks the session up among the sessions it has persisted and builds its watcher the same way, so an old session reads in the tab and the dock. A session the host has not persisted stays unobserved.
+
+If a session's watcher fails, it stops measuring that session and keeps the diagnostic that made it fail. The tab, the dock and the tools report that diagnostic, and other sessions are not affected.
+
+The plugin shares the store under `~/.session-watcher` with the Claude Code plugin: the archived segments, the Rate Lamp ledger, the handoffs and turn records, and the pricing overrides. A pricing override saved from the tab reprices at once every session of the host that runs that model.
+
+The host measures a model call under the `name` its `llm` model catalog gives the call's provider and model id, and under the id where the catalog has none. The model-keyed state follows that name: a pricing override is saved and looked up under it, so one saved under an id has to be saved again under the name, and a name that lacks the model family prices under the defaults.
+
+### The Session Watcher tab
+
+The tab sits in the conversation view strip, labelled **Session Watcher**, and shows the session open in that conversation. It mounts the dashboard's own elements:
+
+- the hero chart and its position verdict
+- the depth bar
+- the cycle and reminder bars
+- the history chart and the history drawer
+- the bucket panel, with the same keep/discard selection and position preview
+- the pricing chip
+
+The DSH Web UI provides the page chrome and the theme. The dashboard's chrome bar, theme chip and glossary are not mounted. The tab paints a light palette under a light host theme.
+
+#### Refresh
+
+The tab refreshes from a change signal. The host sends a signal naming a session on an event stream whenever that session's watcher goes live, applies new events, fails or is removed, and after a pricing write changes its readings or a user override applies to it. A page holds one stream while it is visible. A signal makes that session's tab and dock pull the session's readings over the plugin's `/session-watcher` RPC channel. A stream that closes reopens after a growing wait, and a reopened stream makes every open session pull once. A failed pull is not retried; the next signal pulls again.
+
+#### The badge
+
+The tab keeps its panel on screen under every state, with the elements at their idle paint while there is no reading. A badge in its top row names the state. The signal stream's state shows while it is not live; otherwise the badge shows the state of the last read.
+
+| Badge | When |
+|-------|------|
+| `live` | The stream is open and the last read returned a reading |
+| `connecting` | The page is opening the stream, or the browser is retrying one that dropped, which is how a stopped DSH host first shows |
+| `disconnected` | The stream closed and the page waits to reopen it; the panel keeps its last reading |
+| `reading` | The first read of the session has not finished |
+| `unobserved` | The host has no watcher for the session and has not persisted it |
+| `failed` | The session's watcher failed; the badge's hover text carries its diagnostic |
+| `unreachable` | A read failed while the stream is open: it timed out, or the RPC channel rejected the call or answered with an error; the badge's hover text carries the message |
+
+### The composer dock
+
+The dock is a pill below the composer.
+
+With a reading, the pill shows a lamp ring with the bill premium beside it. The ring's core is the lamp's zone and its arc the progress of the alert clock, the dock's label for the reminder bar's meter. An arrow names the arm the session is on, falling on the left arm, where the bill premium falls as the session goes on, and rising on the right arm, where it rises. A badge at the pill's corner counts the alert clock's laps once there is one. The bill premium printed on the pill is capped to keep the pill short; the pill's hover text and its accessible name carry the real figure, the arm, the clock and the lap count.
+
+Without a reading, the pill is a white ring and one word: `Calibrating` while the lamp has not enough data, otherwise the state of the read: reading, unobserved, failed or unreachable.
+
+Clicking the pill opens a popover above it. Its header names the lamp's zone. Below it, with a reading:
+
+- the bill premium and the normalized position
+- the position track, once there are landmarks to draw: the four zone bands lit up to where the session stands on the dashboard's axis, with the sweet spot marked
+- the context stock, split into the rebuild baseline and the effective context above it, with the growth per call
+- the alert clock, and under it the latest alert while the clock's laps have reached that alert's bill count
+
+Without a reading, the popover holds one line: the state of the read, or that there is not enough data yet. Escape or a click outside closes it.
+
+### Supported surface
+
+The tab and the dock are supported on `dsh web`. Whether a page's `EventSource` reaches the host's events route in the DSH Desktop shell has not been verified.
+
+### Tools
+
+The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
+
+### Skills
+
+The package ships the `sw-handoff`, `sw-load` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host.
+
+### Handoff across sessions
+
+When an agent starts or resumes, it receives a message listing the pending handoffs that other sessions prepared for its project. That message is the same text the Claude Code SessionStart hook shows. Subagents do not receive it. The message is not measured as a turn.
+
+Both hosts store handoffs in the same place. If a lineage crosses from one host to the other, each host reads the other host's sessions in it as unverified turn records: the summary, the lineage headlines and the turn notes are all there, but those turns have no `S{k}:{T}` address and `turn_search` and `turn_locate` find nothing in them.
+
+### Turn Notes
+
+`get_turn_skeleton` puts the skeleton and the notes file under `session-watcher/turn-notes` in the system temp directory, which DSH's `workspace-write` file policy admits, so the agent writes the notes file with its own file tool without an approval. The Claude Code plugin keeps its Turn Notes under `~/.session-watcher`.
+
+### Replaying a session log
+
+`session-watcher replay <path>` plays back a DSH session log on the dashboard it plays a Claude Code transcript on: the host's `session.v4.jsonl.zstd` or a plaintext `session.v4.jsonl`.
+
+```bash
+npx -y @nomadop/session-watcher replay <path>
+```
+
+The command decides from the file's first line whether it is a DSH session log, so the same command takes either kind of file. It reads the file itself and needs neither a running DSH host nor the plugin.

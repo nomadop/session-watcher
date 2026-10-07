@@ -1,6 +1,6 @@
 // test/depthAux.test.js — Unit tests for depthAux overview bar (spec §3)
 // Tests the logic paths in depthAux.js: viewport frame positioning, gradient zones,
-// label rendering, degradation on unavailable capabilities, and segment-change ratchet reset.
+// segment-change ratchet reset, and the marker model.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeEoqViewport, computeLandmarkPositions } from '../public/lib/xScale.js';
@@ -100,53 +100,6 @@ test('depthAux: not past wall when xCurrent < wallP', () => {
   assert.equal(r.isPastWall, false);
 });
 
-// --- Test: buildLabelsHTML logic (wide bar shows 4 labels, narrow hides internal) ---
-
-test('depthAux: buildLabelsHTML — wide bar (>=120px) includes sweet and deep labels', () => {
-  const barWidth = 200;
-  const labels = [];
-  labels.push('shallow');
-  labels.push('wall');
-  if (barWidth >= 120) {
-    labels.push('sweet');
-    labels.push('deep');
-  }
-  assert.equal(labels.length, 4);
-  assert.ok(labels.includes('sweet'));
-  assert.ok(labels.includes('deep'));
-});
-
-test('depthAux: buildLabelsHTML — narrow bar (<120px) only shows external labels', () => {
-  const barWidth = 80;
-  const labels = [];
-  labels.push('shallow');
-  labels.push('wall');
-  if (barWidth >= 120) {
-    labels.push('sweet');
-    labels.push('deep');
-  }
-  assert.equal(labels.length, 2);
-  assert.ok(!labels.includes('sweet'));
-});
-
-// --- Test: degradation when capabilities.eoqLandmarks.available is false ---
-
-test('depthAux: unavailable capabilities hide the bar (logic check)', () => {
-  const snapshot = { capabilities: { eoqLandmarks: { available: false } }, status: {} };
-  const available = snapshot?.capabilities?.eoqLandmarks?.available === true;
-  const rl = snapshot?.status?.rateLamp;
-  assert.equal(available, false);
-  assert.equal(rl, undefined);
-});
-
-test('depthAux: null rateLamp hides bar even when capabilities say available', () => {
-  const snapshot = { capabilities: { eoqLandmarks: { available: true } }, status: {} };
-  const available = snapshot?.capabilities?.eoqLandmarks?.available === true;
-  const rl = snapshot?.status?.rateLamp;
-  assert.equal(available, true);
-  assert.equal(rl, undefined);
-});
-
 // --- Test: markerModel reads marker position and br from server/scenario facts ---
 
 test('markerModel takes the mint position and br from the scenario, never from a local formula', () => {
@@ -154,9 +107,9 @@ test('markerModel takes the mint position and br from the scenario, never from a
   // x_display reaches neither.
   const rl = { x_display: 1.5, u: 1.0, reference: { a: 0.75, d: 0.5 }, br: 0.02, wallP: 11 };
   const scenario = { reliable: true, trajectory: [{ seq: 2, x: 1.3, u: 0.5, pp: 0.03 }], u: 0.5, reference: { a: 0.875, d: 0.5 }, br: 0.009 };
-  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'mint'), { x: 1.25, mintX: 1.125, dirty: true, activeX: 1.125, activeBr: 0.009 });
-  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'amber'), { x: 1.25, mintX: 1.125, dirty: true, activeX: 1.25, activeBr: 0.02 });
-  assert.deepEqual(markerModel(rl, { dirty: false }, 'mint'), { x: 1.25, mintX: null, dirty: false, activeX: 1.25, activeBr: 0.02 });
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'mint'), { x: 1.25, mintX: 1.125, activeX: 1.125, activeBr: 0.009 });
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario }, 'amber'), { x: 1.25, mintX: 1.125, activeX: 1.25, activeBr: 0.02 });
+  assert.deepEqual(markerModel(rl, { dirty: false }, 'mint'), { x: 1.25, mintX: null, activeX: 1.25, activeBr: 0.02 });
   assert.deepEqual(markerModel(rl, { dirty: true, scenario: { reliable: false } }, 'mint').mintX, null);
-  assert.deepEqual(markerModel(rl, { dirty: true, scenario: { reliable: true, trajectory: [], reference: null } }, 'mint'), { x: 1.25, mintX: null, dirty: true, activeX: 1.25, activeBr: 0.02 });
+  assert.deepEqual(markerModel(rl, { dirty: true, scenario: { reliable: true, trajectory: [], reference: null } }, 'mint'), { x: 1.25, mintX: null, activeX: 1.25, activeBr: 0.02 });
 });

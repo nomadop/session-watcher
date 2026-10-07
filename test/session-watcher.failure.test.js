@@ -117,7 +117,7 @@ function build(over = {}) {
     handoffComposition: {},
     loaderVersion: '1.0.0',
     store,
-    dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+    dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: () => { const e = makeEngine(over.engineScript ?? {}); engines.push(e); return e; },
     createMeasurementProjection: (locator) => { const p = makeProjection(locator, over.projectionScript ?? {}); projections.push(p); return p; },
@@ -215,6 +215,22 @@ describe('finalization failure', () => {
     assert.deepEqual(projections[0].liveSidecar(), ['fact'], 'the closing sidecar stays unconsumed');
     assert.deepEqual(store.profiles, []);
     assert.deepEqual(store.telemetry, []);
+  });
+
+  test('a blocking close failure keeps the live mark, so the retried close archives as live', () => {
+    let failed = false;
+    const { watcher, store } = build({
+      engineScript: {
+        close: () => {
+          if (!failed) { failed = true; throw new Error('engine finalization failed'); }
+          return { closedSegments: [closedSegment()] };
+        },
+      },
+    });
+    watcher.applyHarnessFrame(append([]));
+    assert.throws(() => watcher.closeCurrentSegment(), /engine finalization failed/);
+    watcher.closeCurrentSegment();
+    assert.deepEqual(store.profiles.map(p => p.snapshot.archiveSource), ['live']);
   });
 
   const emptyClose = { close: () => ({ closedSegments: [] }), ingest: (records) => (records[0].type === 'epoch' ? { closedSegments: [] } : {}) };

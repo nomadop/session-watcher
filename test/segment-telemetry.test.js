@@ -73,6 +73,15 @@ describe('the telemetry status gate', () => {
     } finally { teardown(); }
   });
 
+  test('an artifact without a capture label archives with a NULL capture_source', () => {
+    const { store, sessionId, teardown } = setupStore();
+    try {
+      const { captureSource: _, ...unlabelled } = ARTIFACT();
+      assert.equal(store.archiveSegmentTelemetry(sessionId, 0, unlabelled).status, 'complete');
+      assert.equal(store._db.prepare('SELECT capture_source FROM profile WHERE session_id=? AND segment=0').get(sessionId).capture_source, null);
+    } finally { teardown(); }
+  });
+
   test('re-archiving the same artifact converges instead of duplicating', () => {
     const { store, sessionId, teardown } = setupStore();
     try {

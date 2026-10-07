@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SEARCH_HIT_RECOVERY } from '../lib/harness/claude-code/turn-recovery.js';
+import { SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY } from '../lib/harness/claude-code/turn-recovery.js';
 import {
   NO_HANDOFF_LOADED,
   withPageRecovery, withSearchRecovery, withLocateRecovery, withLoadRecovery,
@@ -82,9 +82,14 @@ test('locate found:false states the corpus limit rather than inviting new words'
 // boundary record (lib/turn-page.js filters t < boundary.t), so it would exclude the located turn.
 test('located ranges hand their scope to turn_search and claim nothing about before', () => {
   const out = withLocateRecovery({ found: true,
-    ranges: [{ scope: 'S1:0', u: 'x', hit: true }, { scope: 'S1:1', u: 'y' }] });
+    ranges: [{ scope: 'S1:0', u: 'x', hit: true }, { scope: 'S1:1', u: 'y' }] }, { hitRecovery: LOCATE_HIT_RECOVERY });
   assert.match(out.recovery, /turn_search/);
   assert.ok(!/read around/.test(out.recovery));
+});
+
+test('a located hit carries exactly the harness sentence it was handed', () => {
+  const out = withLocateRecovery({ found: true, ranges: [{}] }, { hitRecovery: LOCATE_HIT_RECOVERY });
+  assert.equal(out.recovery, LOCATE_HIT_RECOVERY);
 });
 
 test('a delivery failure says the response carries no content', () => {

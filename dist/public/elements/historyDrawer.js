@@ -17,11 +17,11 @@ const SEARCH_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" c
 const BROWSE_URL = '/api/turn/browse';
 
 /**
- * mount(root, _ctx) — History drawer element.
+ * mount(root, ctx) — History drawer element.
  * root: the #sw-history slot, where historyChart has already placed .sw-history-anchor
- * _ctx: accepted for registry symmetry and deliberately not read
+ * ctx: `request` fetches the browse list; the scrim and the drawer mount in `overlayRoot`
  */
-export function mount(root, _ctx) {
+export function mount(root, ctx) {
   // ── State ──────────────────────────────────────────────────────────────────
   let isOpen = false;
   let sections = [];
@@ -68,7 +68,7 @@ export function mount(root, _ctx) {
   const scrim = document.createElement('div');
   scrim.className = 'sw-history-scrim';
   scrim.setAttribute('aria-hidden', 'true');
-  document.body.appendChild(scrim);
+  ctx.overlayRoot.appendChild(scrim);
 
   const drawer = document.createElement('aside');
   drawer.className = 'sw-history-drawer';
@@ -89,7 +89,7 @@ export function mount(root, _ctx) {
     </header>
     <div class="sw-history-list"></div>
   `;
-  document.body.appendChild(drawer);
+  ctx.overlayRoot.appendChild(drawer);
 
   const closeBtn = drawer.querySelector('.sw-history-close');
   const listEl = drawer.querySelector('.sw-history-list');
@@ -329,7 +329,7 @@ export function mount(root, _ctx) {
   // same unavailable state as a 500 does.
   async function fetchSections() {
     try {
-      const res = await fetch(BROWSE_URL);
+      const res = await ctx.request(BROWSE_URL);
       if (!res.ok) return null;
       const body = await res.json();
       return Array.isArray(body?.sections) ? body.sections : null;

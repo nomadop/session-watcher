@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTree, paintIndentGuides } from '../public/elements/bucketPanel.js';
+import { buildTree, buildCompactInstruction, paintIndentGuides } from '../public/elements/bucketPanel.js';
 
 const base = {
   dead: 8500, skills: [], paths: [], residual: { bash: [], mcp: [] },
@@ -133,6 +133,42 @@ test('buildTree: node ids follow the scheme and are unique', () => {
   assert.ok(all.find(n => n.id === 'bash:npm test'), 'bash id scheme');
   const ids = all.filter(n => n.selectable).map(n => n.id);
   assert.equal(new Set(ids).size, ids.length, 'ids unique');
+});
+
+test('buildTree: a residual.tool list folds into a selectable tool directory and leaves others', () => {
+  const tree = buildTree({ ...base,
+    residual: { bash: [], mcp: [], agent: [], tool: [
+      { name: 'glob', detail: '', tokens: 900, lastTurn: 3 },
+      { name: 'web_fetch', detail: '', tokens: 600, lastTurn: 4 },
+    ] },
+    totalResidual: 2000, totalResidualRaw: 2000, totalL: 10000,
+  });
+  const dir = tree.find(n => n.id === 'dir:output:tool');
+  assert.ok(dir && dir.selectable && dir.group === 'output', 'a selectable tool directory in the output group');
+  assert.deepEqual(dir.children.map(c => [c.id, c.kind, c.selectable, c.defaultSelected]),
+    [['tool:glob', 'tool', true, false], ['tool:web_fetch', 'tool', true, false]]);
+  assert.equal(flatten(tree).find(n => n.kind === 'others').tokens, 500, 'the tool tokens left others');
+});
+
+test('buildTree: others subtracts the tool family beside bash, mcp and agent', () => {
+  const tree = buildTree({ ...base,
+    residual: {
+      bash: [{ name: 'npm test', detail: '', tokens: 12000, lastTurn: 40 }],
+      mcp: [{ tool: 'serena find_symbol', tokens: 3000, lastTurn: 41 }],
+      agent: [{ name: 'subagent', detail: 'review', tokens: 2000, lastTurn: 41 }],
+      tool: [{ name: 'glob', detail: '', tokens: 4000, lastTurn: 42 }],
+    },
+    totalResidual: 50000, totalResidualRaw: 50000, totalL: 90000,
+  });
+  assert.equal(flatten(tree).find(n => n.kind === 'others').tokens, 50000 - 12000 - 3000 - 2000 - 4000);
+});
+
+test('buildTree: an unselected tool leaf makes the compact instruction discard its raw output', () => {
+  const tree = buildTree({ ...base,
+    residual: { bash: [], mcp: [], agent: [], tool: [{ name: 'glob', detail: '', tokens: 900, lastTurn: 3 }] },
+    totalResidual: 2000, totalResidualRaw: 2000, totalL: 10000,
+  });
+  assert.match(buildCompactInstruction(tree), /discard raw glob output/);
 });
 
 test('paintIndentGuides: 引导线只写 backgroundImage，留出 background-color 给 :hover', () => {

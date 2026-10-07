@@ -1,10 +1,8 @@
 # Session Watcher
 
-> A local monitor that estimates when carrying an existing Claude Code
-> context becomes more expensive than rebuilding it.
+> A local monitor that estimates when carrying an existing agent context becomes more expensive than rebuilding it, for Claude Code and DeepSeek Harness (DSH).
 
-Session Watcher provides a dashboard, statusline, restart-cost metrics,
-and handoff tooling for long-running coding sessions.
+Session Watcher provides restart-cost metrics and handoff tooling for long-running coding sessions, and shows the readings in a dashboard and a statusline under Claude Code and in a tab and a composer dock under DSH. It installs as a Claude Code plugin or as a DSH plugin.
 
 Demo: `npx -y @nomadop/session-watcher demo`
 
@@ -14,6 +12,7 @@ Demo: `npx -y @nomadop/session-watcher demo`
 - [Cookbook](https://nomadop.github.io/session-watcher/docs/cookbook.md): Operational guidance for interpreting lamps, restarting, and handoffs.
 - [How It Works](https://nomadop.github.io/session-watcher/docs/how-it-works.md): Logical pipeline, lifecycle, and why the design produces correct results.
 - [Guarantees](https://nomadop.github.io/session-watcher/docs/guarantees.md): Stable externally-observable behavior: folding, segmentation, baseline, and gate rules.
+- [DSH Plugin](https://nomadop.github.io/session-watcher/docs/dsh.md): Session Watcher inside DeepSeek Harness: install, what is watched, the tab and the composer dock, the supported surface, tools and skills, Turn Notes, handoff across hosts, and replaying a session log.
 
 ## Project
 

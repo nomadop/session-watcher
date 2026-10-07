@@ -3,6 +3,7 @@
 // activation toggle; the preview group is built from a scenario object the server folded, never locally.
 // Element contract: mount(root, ctx) → { update(snapshot), destroy() }
 
+import Chart from '../lib/chart.js';
 import { computeEoqViewport, projectedX } from '../lib/xScale.js';
 
 const SAMPLE_POINTS = 50;
@@ -30,6 +31,24 @@ const ORDER = {
 function cssVar(el, name, fallback) {
   const v = getComputedStyle(el).getPropertyValue(name)?.trim();
   return v || fallback;
+}
+
+/** The gutter label's colour by br tier, from the text-tier accents: the zone fills are too pale for text. `read(name)` returns a variable's trimmed value, or '' when unset. */
+export function brLabelColor(br, read) {
+  if (br >= 0.25) return read('--coral') || '#ff7566';
+  if (br >= 0.10) return read('--amber') || '#ffc24d';
+  return read('--mint') || '#4fe0b0';
+}
+
+/** The tooltip's surface, ink and edge: the light scheme's roles, else the dark tooltip with no border. */
+export function tooltipPaint(read) {
+  const edge = read('--sw-hairline');
+  return {
+    backgroundColor: read('--sw-overlay') || 'rgba(20, 26, 30, 0.9)',
+    bodyColor: read('--sw-highlight') || '#eef3f6',
+    borderColor: edge || 'rgba(0,0,0,0)',
+    borderWidth: edge ? 1 : 0,
+  };
 }
 
 function colorWithAlpha(color, alpha) {
@@ -119,6 +138,8 @@ export function groupModelFromStatus(rl, available) {
   const reference = available && rl.reference ? rl.reference : null;
   const x = rl.x_display;
   const dot = chartPoint({ u: rl.u, pp: rl.pp }, reference);
+  // `wallP` arrives only with an accepted ledger (`enrichStatusLandmarks`), and this unbundled module cannot
+  // import `wallPositionFor`, so a status without a ledger reads the wall from `C_RATIO` here.
   return {
     dot, wallP: rl.wallP ?? (1 + rl.C_RATIO), reference,
     landmarks: available ? fourLandmarks(rl) : null,
@@ -152,7 +173,7 @@ export function shownGroupOf(activeGroup, mint) {
   return activeGroup === 'mint' && mint?.dot ? 'mint' : 'amber';
 }
 
-export function mount(root, _ctx) {
+export function mount(root, ctx) {
   let previousActualDomainMax = null;
   let prevSegment = null;
   let activeGroup = 'amber'; // 'amber' | 'mint'
@@ -170,7 +191,6 @@ export function mount(root, _ctx) {
       <span class="eoq-u"><span class="sw-hero-group-pill" style="display:none;"></span>u = <b class="sw-hero-uval">—</b> · <span class="sw-hero-mf">movable —%</span></span>
     </div>
     <div class="sw-hero-chart-wrap">
-      <div class="sw-hero-placeholder hidden"></div>
       <canvas class="sw-hero-canvas"></canvas>
     </div>
   `;
@@ -208,7 +228,7 @@ export function mount(root, _ctx) {
       const yScale = chartInstance.scales.y, xScale = chartInstance.scales.x;
       ctx.save();
       ctx.font = '400 9px "JetBrains Mono", monospace';
-      ctx.fillStyle = getComputedStyle(chartInstance.canvas).getPropertyValue('--text-secondary')?.trim() || '#aaa';
+      ctx.fillStyle = getComputedStyle(chartInstance.canvas).getPropertyValue('--txt-dim')?.trim() || '#aaa';
       ctx.save();
       ctx.translate(xScale.left - 30, yScale.top + (yScale.bottom - yScale.top) / 2);
       ctx.rotate(-Math.PI / 2);
@@ -222,11 +242,7 @@ export function mount(root, _ctx) {
       ctx.font = '500 11px "JetBrains Mono", monospace';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      const color = opts.br >= 0.25
-        ? (getComputedStyle(chartInstance.canvas).getPropertyValue('--zone-red')?.trim() || '#ff5252')
-        : opts.br >= 0.10
-          ? (getComputedStyle(chartInstance.canvas).getPropertyValue('--amber')?.trim() || '#ffc24d')
-          : (getComputedStyle(chartInstance.canvas).getPropertyValue('--zone-sweet')?.trim() || '#4fe0b0');
+      const color = brLabelColor(opts.br, name => getComputedStyle(chartInstance.canvas).getPropertyValue(name).trim());
       ctx.fillStyle = color;
       ctx.fillText(`${Math.floor(opts.br * 100)}%`, xScale.left - 4, yPx);
       ctx.restore();
@@ -255,9 +271,8 @@ export function mount(root, _ctx) {
             title: () => '',
           },
           displayColors: false,
-          backgroundColor: 'rgba(20, 26, 30, 0.9)',
+          ...tooltipPaint(name => getComputedStyle(container).getPropertyValue(name).trim()),
           bodyFont: { family: '"JetBrains Mono", monospace', size: 11 },
-          bodyColor: '#eef3f6',
           padding: { x: 8, y: 5 },
           cornerRadius: 6,
         },
@@ -270,7 +285,7 @@ export function mount(root, _ctx) {
       onClick: handleChartClick,
     },
   });
-  if (window.__SW_dashboard) window.__SW_dashboard.charts.hero = chart;
+  ctx.charts.hero = chart;
 
   function vertical(groupId, key, x, yMax, color, dash, width, order, role) {
     return {
@@ -414,7 +429,7 @@ export function mount(root, _ctx) {
     if (!dotHit) return;
     const group = chart.data.datasets[dotHit.datasetIndex]._swGroup;
     activeGroup = dotsOverlap() ? (activeGroup === 'mint' ? 'amber' : 'mint') : group;
-    document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    ctx.bus.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
     render();
   }
 
@@ -424,10 +439,10 @@ export function mount(root, _ctx) {
     previewState = detail;
     if (detail?.dirty && !wasDirty) {
       activeGroup = 'mint';
-      document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+      ctx.bus.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
     } else if (!detail?.dirty && wasDirty) {
       activeGroup = 'amber';
-      document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+      ctx.bus.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
     }
     render();
   }
@@ -439,8 +454,8 @@ export function mount(root, _ctx) {
     render();
   }
 
-  document.addEventListener('sw-bucket-preview', onBucketPreview);
-  document.addEventListener('sw-active-group', onExternalActiveGroup);
+  ctx.bus.addEventListener('sw-bucket-preview', onBucketPreview);
+  ctx.bus.addEventListener('sw-active-group', onExternalActiveGroup);
 
   function update(snapshot) {
     const currentSegment = snapshot?.status?.segment ?? null;
@@ -450,8 +465,8 @@ export function mount(root, _ctx) {
   }
 
   function destroy() {
-    document.removeEventListener('sw-bucket-preview', onBucketPreview);
-    document.removeEventListener('sw-active-group', onExternalActiveGroup);
+    ctx.bus.removeEventListener('sw-bucket-preview', onBucketPreview);
+    ctx.bus.removeEventListener('sw-active-group', onExternalActiveGroup);
     chart.destroy();
     container.remove();
     verdictRow.remove();

@@ -9,23 +9,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-// v2.1 B3/Step-4: isolate the rate-lamp ledger checkpoint dir so the real-server fmt=line test never
-// writes into ~/.session-watcher (pathFor reads process.env lazily per call, so setting it here suffices).
-const RL_TMP = mkdtempSync(join(tmpdir(), 'sw-sl-rl-'));
-process.env.CLAUDE_PLUGIN_DATA = RL_TMP;
-process.on('exit', () => { try { rmSync(RL_TMP, { recursive: true, force: true }); } catch {} });
-
 import { formatLine, createServer } from '../server.js';
 import { _resetRenderState } from '../lib/statusline-format.js';
 import { composeForTranscript } from './helpers/server-boot.js';
 
 const execFileP = promisify(execFile);
 
-// A reliable base status (bar/eta path) so the B3 rate-lamp string is exercised on top of the live line.
+// The script's whole environment: nothing inherited from the developer's shell, so an exported SW_PROBE or
+// SW_STATE_DIR cannot make it write into the real install.
+const scriptEnv = (stateDir, extra = {}) => ({
+  PATH: process.env.PATH, HOME: stateDir, SW_STATE_DIR: stateDir, ...extra,
+});
+
+// A reliable base status so the B3 rate-lamp string is exercised on top of the live line.
 const reliableBase = (rateLamp) => ({
-  model: 'claude-opus-4-8', port: 38017, L: 137000, Lstar: 375000, Lthreshold: 375000, restart: false,
-  metricsReliable: true, calibratingReason: null, phi: 2.4, paybackP: 0.6, etaCalls: 40,
-  baseline: { total: 55000 }, B: 55000, kAvg: 3000, rateLamp,
+  model: 'claude-opus-4-8', port: 38017, L: 137000, B: 55000, rateLamp,
 });
 
 const SCRIPT = 'statusline.js';
@@ -39,9 +37,14 @@ const MOCK_STDIN = JSON.stringify({
 test('statusline exits 0 and prints a fallback line when server is down', () => {
   assert.ok(existsSync(SCRIPT), 'statusline.js must exist');
   chmodSync(SCRIPT, 0o755);
-  // Point state dir at an empty tmp so no server is found → fallback path.
-  const out = execFileSync('node', [SCRIPT], {
-    input: MOCK_STDIN, env: { ...process.env, SW_STATE_DIR: '/nonexistent-sw-dir' }, encoding: 'utf8' });
+  // An empty state dir holds no discovery record, so no server is found → fallback path.
+  const stateDir = mkdtempSync(join(tmpdir(), 'sw-state-'));
+  let out;
+  try {
+    out = execFileSync(process.execPath, [SCRIPT], { input: MOCK_STDIN, env: scriptEnv(stateDir), encoding: 'utf8' });
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
   assert.ok(out.trim().length > 0, 'non-empty output (never blocks CC)');
   assert.ok(/Opus|session-watcher/.test(out), 'shows model or off-marker');
   assert.ok(!/http:\/\//.test(out), 'no dashboard URL when server is down');
@@ -65,7 +68,7 @@ test('statusline appends full dashboard URL when server is up', async () => {
     writeFileSync(join(stateDir, 'test-sid.json'), JSON.stringify({ port }));
     // Async execFile (not execFileSync): the mock server shares this event loop, so a blocking
     // spawn would starve it and force curl into the fallback path.
-    const child = execFileP('node', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
+    const child = execFileP(process.execPath, [SCRIPT], { env: scriptEnv(stateDir) });
     child.child.stdin.end(MOCK_STDIN);
     const { stdout: out } = await child;
     assert.ok(out.includes('METRICS_LINE'), 'renders the server metrics line');
@@ -78,14 +81,12 @@ test('statusline appends full dashboard URL when server is up', async () => {
 
 // ── B3: formatLine rate-lamp contract ─────────────────────────────────────────────────────────────
 
-// Task 10 (ER-2) → v3: kFit eta is retired; countdown renders from targetL/kAvg.
+// Task 10 (ER-2) → v3: kFit eta is retired.
 // Validate that no kFit eta artifact leaks.
 test('Task 10 (ER-2) → A2: formatLine no longer renders the kFit `~N轮` eta', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.37, billCycleCount: 0,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: 2.5, dhat: 0.4,
-    band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 5 });
+  const s = reliableBase({ reliable: true, billProgress: 0.37, billCycleCount: 0,
+    x_display: 2.5, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 5 });
   const out = formatLine(s);
   assert.ok(!/~\d+轮/.test(out), 'no `~N轮` kFit eta rendered');
   assert.ok(!out.includes('已过线'), 'no `已过线` kFit-crossing eta rendered');
@@ -97,10 +98,8 @@ test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill fo
   _resetRenderState();
   // The two clocks are given different phases on purpose: an equal pair cannot tell which one the meter
   // reads, and the bill clock is not what this line shows.
-  const s = reliableBase({ reliable: true, hBreak: 12.4, billProgress: 0.68, billCycleCount: 2,
-    inDeepWater: true, br: 0.15, x_display: 2.5, dhat: 0.4,
-    lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 5,
+  const s = reliableBase({ reliable: true, billProgress: 0.68, billCycleCount: 2,
+    br: 0.15, x_display: 2.5, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 5,
     rentMeter: { depthActive: true, depthProgress: 0.37 } });
   const out = formatLine(s);
   assert.ok(out.includes('▮') || out.includes('░'), 'v3 meter bar renders');
@@ -113,112 +112,31 @@ test('A2: reliable rateLamp renders the new v3 layout, no old break-even/bill fo
   assert.ok(!/bill \d+%/.test(out), 'old bill format is gone');
 });
 
-// Review A7#15 → v3: hBreak Infinity (burnRate=0, below the floor) — br renders b---% (no br data), never Infinity.
-test('A2 A7#15: hBreak Infinity (burnRate=0) renders br b---%, not Infinity', () => {
+test('A2: a missing br renders the b---% placeholder', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: Infinity, billProgress: 0.63, billCycleCount: 0,
-    inDeepWater: false, x_display: 1.2, dhat: 0.4,
-    lBase: 55000, L_read: 137000, L_cap: 960000,
-    currentTurnSeq: 3, rentMeter: { depthActive: true, depthProgress: 0 } });
+  const s = reliableBase({ reliable: true, billProgress: 0.63, billCycleCount: 0,
+    x_display: 1.2, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 3, rentMeter: { depthActive: true, depthProgress: 0 } });
   // No br → renderBr(undefined) renders b---%
   const out = formatLine(s);
   assert.ok(out.includes('b---%'), 'missing br renders b---% placeholder');
-  assert.ok(!out.includes('Infinity'), 'never leaks the literal Infinity');
   assert.ok(out.includes('0%'), 'wallet phase 0 rendered in meter');
   assert.ok(!out.includes('63%'), 'the bill clock is mid-cycle and the meter still reads the wallet clock');
 });
 
-// v2.2 H-B + I-pt2: the neutral bill pulse (rent +Nx / idle / ctx growing) is RETIRED. The meter's ×N
-// shows the lifetime STOCK; per-turn increment is stop hook's job. These tests confirm the retirement.
-test('A2/I-pt2: neutral bill pulse retired — non_idle_burn lastBillEvent does NOT render rent/growing', () => {
-  _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 2,
-    inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
-    band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 7,
-    lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 7 } });
-  const out = formatLine(s);
-  assert.ok(!/rent \+/.test(out), 'no rent +Nx in new layout (neutral pulse retired)');
-  assert.ok(!/ctx growing|growing/.test(out), 'no ctx growing in new layout');
-});
-
-test('A2/I-pt2: neutral bill pulse retired — empty_burn lastBillEvent does NOT render rent/idle', () => {
-  _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
-    inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
-    band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 9,
-    lastBillEvent: { kind: 'empty_burn', billCount: 1, delivery: 'statusline_pulse', turnSeq: 9 } });
-  const out = formatLine(s);
-  assert.ok(!/rent \+/.test(out), 'no rent +Nx (neutral pulse retired)');
-  assert.ok(!/idle/.test(out), 'no idle suffix (retired)');
-});
-
-// v2.2 H-B + I-pt2: cache_unstable bill events also do not render (the neutral pulse is fully retired).
-test('A2/I-pt2: neutral bill pulse retired — cache_unstable lastBillEvent silent', () => {
-  _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.5, billCycleCount: 1,
-    inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
-    band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 11,
-    lastBillEvent: { kind: 'cache_unstable', billCount: 1, delivery: 'statusline_pulse', turnSeq: 11 } });
-  const out = formatLine(s);
-  assert.ok(!/unstable/i.test(out), 'no cache_unstable copy in new layout (pulse retired)');
-  assert.ok(!/ctx growing|growing/.test(out), 'no growing suffix');
-});
-
-// TTL: with neutral pulse retired, lastBillEvent has no rendering effect at all (stale or not).
-test('A2/I-pt2: stale lastBillEvent also renders nothing (neutral pulse retired)', () => {
-  _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 20, billProgress: 0.24, billCycleCount: 2,
-    inDeepWater: false, deepWaterDisplayLatched: false, x_display: 2.0, dhat: 0.4,
-    band: 'entry_to_sweet', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 12,
-    lastBillEvent: { kind: 'non_idle_burn', billCount: 2, delivery: 'statusline_pulse', turnSeq: 11 },
-    rentMeter: { depthActive: true, depthProgress: 0.5 } });
-  const out = formatLine(s);
-  assert.ok(!/rent \+/.test(out), 'stale or current bill event — no pulse either way');
-  assert.ok(out.includes('50%'), 'meter still renders the wallet phase');
-  assert.ok(!out.includes('24%'), 'and not the bill phase');
-});
-
-// Single merged-presentation stack (STRICT priority, never both): stop_hook alert wins the turn.
-// A deep-water empty_burn turn is BOTH a stop_hook alert AND leaves a bill pulse — render the prominent
-// alert and NOT a second bill-pulse line.
-test('B3 single-stack: a deep-water empty_burn turn renders the prominent stop alert, NOT a second bill pulse', () => {
-  _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 8, billProgress: 0.9, billCycleCount: 1,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: 3.0, dhat: 0.4,
-    band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 20,
-    lastStopEvent: { kind: 'empty_burn', delivery: 'stop_hook', message: '深水空烧：建议交接/重启', billCount: 1, turnSeq: 20 },
-    lastBillEvent: { kind: 'empty_burn', billCount: 1, delivery: 'stop_hook', turnSeq: 20 } });
-  const out = formatLine(s);
-  assert.ok(out.includes('深水空烧：建议交接/重启'), 'the stop_hook alert message wins the turn');
-  assert.ok(!/rent \+1x/.test(out), 'no second bill-pulse line — single merged presentation');
-});
-
 test('B3 priority: with only a stop event this turn, the stop message renders', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.95, billCycleCount: 1,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
-    band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 22,
+  const s = reliableBase({ reliable: true, billProgress: 0.95, billCycleCount: 1,
+    x_display: 5.0, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 22,
     lastStopEvent: { kind: 'wall', delivery: 'stop_hook', message: '接近速率墙', billCount: 0, turnSeq: 22 } });
   const out = formatLine(s);
   assert.ok(out.includes('接近速率墙'), 'stop alert rendered');
-  assert.ok(!/rent \+/.test(out), 'no bill pulse (none present)');
 });
 
 // v3: a reliable frame with no stop event renders the full layout without any alert second line.
-// The neutral bill pulse is retired.
-test('A2: a reliable frame with bill events but no stop event renders no alert line (neutral pulse retired)', () => {
+test('A2: a reliable frame with no stop event renders no alert line', () => {
   _resetRenderState();
-  const s = reliableBase({ reliable: true, hBreak: 15, billProgress: 0.19, billCycleCount: 3,
-    inDeepWater: true, deepWaterDisplayLatched: true, x_display: 5.0, dhat: 0.4,
-    band: 'above_exit', lBase: 55000, L_read: 137000, L_cap: 960000,
-    targetL: 200000, kAvg: 3000, currentTurnSeq: 30,
-    lastBillEvent: { kind: 'non_idle_burn', billCount: 3, delivery: 'statusline_pulse', turnSeq: 30 },
+  const s = reliableBase({ reliable: true, billProgress: 0.19, billCycleCount: 3,
+    x_display: 5.0, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 30,
     rentMeter: { depthActive: true, depthProgress: 0.6 } });
   const out = formatLine(s);
   assert.ok(out.includes('60%'), 'meter renders the wallet phase');
@@ -233,7 +151,7 @@ test('B3 fallback: an unreliable rateLamp renders measuring… (v3 neutral line)
   const out = formatLine(s);
   // v3: unreliable → single "⚪ measuring… · model" line
   assert.ok(out.length > 0, 'non-empty output');
-  assert.match(out, /measuring…/, 'measuring… line');
+  assert.match(out, /^⚪ measuring…/, 'white lamp leads the measuring… line');
   assert.ok(!out.includes('▮'.repeat(5)), 'no full v3 meter bar when unreliable');
   assert.ok(!/break-even|bill \d|rent \+/.test(out), 'no rate-lamp segment when unreliable');
 });
@@ -296,7 +214,7 @@ test('Step 4 regression → A2: fmt=line output contains the new v2.2 layout whe
     assert.ok(lineTxt.includes('%'), 'fmt=line includes the meter percentage');
     // And statusline.js passes the server line through unmodified (then appends the dashboard URL).
     writeFileSync(join(stateDir, `${sid}.json`), JSON.stringify({ port }));
-    const child = execFileP('node', [SCRIPT], { env: { ...process.env, SW_STATE_DIR: stateDir } });
+    const child = execFileP(process.execPath, [SCRIPT], { env: scriptEnv(stateDir) });
     child.child.stdin.end(JSON.stringify({ session_id: sid, model: { display_name: 'Opus', id: 'claude-opus-4-8' } }));
     const { stdout: out } = await child;
     assert.ok(out.includes('▓') || out.includes('░'), 'statusline.js passes the meter through');
@@ -352,8 +270,9 @@ async function runStatusline({ stdin, stateFile } = {}) {
   const { shimDir, countFile } = makeNodeShim();
   if (stateFile) writeFileSync(join(stateDir, stateFile.name), JSON.stringify(stateFile.json));
   chmodSync(SCRIPT, 0o755);
-  const env = { ...process.env, SW_STATE_DIR: stateDir, PATH: `${shimDir}:${process.env.PATH}`,
-    COUNT_FILE: countFile, REAL_NODE: process.execPath };
+  const env = scriptEnv(stateDir, {
+    PATH: `${shimDir}:${process.env.PATH}`, COUNT_FILE: countFile, REAL_NODE: process.execPath,
+  });
   try {
     const child = execFileP('node', [SCRIPT], { env });
     child.child.stdin.end(stdin ?? '');
@@ -414,20 +333,12 @@ test('D2: a SPACED model display_name stays whole (A5 IFS=TAB failure mode) — 
   assert.match(offOut, /^\[Claude Opus 4\] no port file$/, 'spaced model tag stays whole in the [model] tag, not split at the space');
 });
 
-// ── Task 3: u=2 at the exact lamp↔yellow transition (lamp/u alignment) ──────────────────────────────
-test('u=2.0 at the exact point where lamp turns yellow (kStable alignment)', () => {
+// ── Task 3: u on the right arm renders beside the br-driven lamp ────────────────────────────────────
+test('u=2.0 renders as u2.0 beside the amber lamp', () => {
   _resetRenderState();
-  // kStable drives both xExit and dhat → u=2 at lamp transition
-  const cRatio = 10, kStable = 1382, lBase = 55000;
-  const dhat = Math.sqrt(2 * cRatio * kStable / lBase);
-  const xExit = 1 + 2 * dhat;
-  const L_at_exit = lBase * xExit;
-  const s = reliableBase({ reliable: true, hBreak: 5, billProgress: 0.5, billCycleCount: 3,
-    inDeepWater: true, br: 0.15, x_display: xExit, dhat, u: 2.0, mf: 0.3,
-    kStable, lBase, L_read: L_at_exit, L_cap: 960000,
-    targetL: 960000, kAvg: 1382, currentTurnSeq: 10 });
-  s.kAvg = 1382;
+  const s = reliableBase({ reliable: true, billProgress: 0.5, billCycleCount: 3,
+    br: 0.15, u: 2.0, mf: 0.3, currentTurnSeq: 10 });
   const out = formatLine(s);
-  assert.ok(out.includes('🟡'), 'lamp is yellow at xExit');
-  assert.ok(out.includes('u2.0'), 'u reads exactly 2.0 at the yellow transition');
+  assert.ok(out.includes('🟡'), 'an amber br lights the yellow lamp');
+  assert.ok(out.includes('u2.0'), 'u renders as u2.0');
 });

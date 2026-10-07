@@ -5,6 +5,7 @@
 // and a rotate and leaves it alone on an append — so no test reads a watcher field to learn what happened.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { inspect } from 'node:util';
 import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ import {
 } from '../lib/rate-lamp-manager.js';
 import { createServer, createWatcherComposition, _setServerTestClock, SNAPSHOT_THROTTLE_MS } from '../server.js';
 import { strictWatcherFacade } from './helpers/server-boot.js';
+import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-driver.js';
 import { assistantToolUse, chain, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
 
 // One measured step plus its result, as its own chain root.
@@ -32,7 +34,7 @@ const writeRows = (dir, name, rows) => {
   return path;
 };
 
-function bootOwner({ sessionId, sourceLocator, projectsRoot, stateDir, dir }) {
+function bootOwner({ sessionId, sourceLocator, projectsRoot, stateDir, dir, createSourceDriver }) {
   const store = openStore(join(dir, `store-${sessionId}.sqlite`));
   const watcher = createWatcherComposition({
     sessionId, sourceLocator, projectId: null, projectRoot: dir, stateDir, store, isIgnored: null,
@@ -40,6 +42,7 @@ function bootOwner({ sessionId, sourceLocator, projectsRoot, stateDir, dir }) {
   const handle = createServer({
     watcher: strictWatcherFacade(watcher), pollIntervalMs: 0, sessionId, onIdleShutdown: null,
     sourceLocator, projectsRoot, projectRoot: dir, stateDir, store, disableTelemetrySweep: true,
+    ...(createSourceDriver ? { createSourceDriver } : {}),
   });
   return { store, watcher, handle };
 }
@@ -57,7 +60,7 @@ function pump(handle) {
   handle.runPollTick();
 }
 
-async function withOwner(fn, { seedDiscovery = true } = {}) {
+async function withOwner(fn, { seedDiscovery = true, createSourceDriver } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'sw-rotate-'));
   const stateDir = join(dir, 'state');
   mkdirSync(stateDir, { recursive: true });
@@ -66,7 +69,7 @@ async function withOwner(fn, { seedDiscovery = true } = {}) {
   mkdirSync(projRoot, { recursive: true });
   const pathOld = writeRows(projRoot, 'sess-old.jsonl', measuredRows('old', 1000));
 
-  const owner = bootOwner({ sessionId: 'sess-old', sourceLocator: pathOld, projectsRoot, stateDir, dir });
+  const owner = bootOwner({ sessionId: 'sess-old', sourceLocator: pathOld, projectsRoot, stateDir, dir, createSourceDriver });
   const { server, stopTimers } = owner.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
@@ -160,6 +163,45 @@ test('POST /api/rotate: an unresolved locator retains driver, application and di
     assert.equal(record.sessionId, 'sess-old');
     assert.equal(record.transcriptPath, ctx.pathOld);
   });
+});
+
+// A candidate Source whose first read throws leaves nothing installed — the throw precedes the frame — so the
+// route answers with the same JSON the terminal error boundary gives every other route, not Express's page.
+test('POST /api/rotate: a candidate read that throws answers 500 internal and keeps the old Source', async () => {
+  const createSourceDriver = (options) => {
+    const real = createClaudeCodeSourceDriver(options);
+    if (!options.sourceLocator.endsWith('sess-bad.jsonl')) return real;
+    return { ...real, advance: () => { throw new Error('candidate read failed'); } };
+  };
+  await withOwner(async (ctx) => {
+    const pathBad = writeRows(ctx.projRoot, 'sess-bad.jsonl', measuredRows('bad', 2000));
+    const before = revisionOf(ctx.watcher);
+    const origDebug = process.env.SW_DEBUG;
+    delete process.env.SW_DEBUG;
+    const origError = console.error;
+    const lines = [];
+    console.error = (...args) => { lines.push(args.map(a => (typeof a === 'string' ? a : inspect(a))).join(' ')); };
+    let res;
+    try {
+      res = await fetch(`http://127.0.0.1:${ctx.port}/api/rotate`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session_id: 'sess-bad', transcript_path: pathBad }),
+      });
+    } finally {
+      console.error = origError;
+      if (origDebug !== undefined) process.env.SW_DEBUG = origDebug;
+    }
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: 'internal' });
+    const hits = lines.filter(line => line.includes('[rotate]'));
+    assert.equal(hits.length, 1, `the cause is written without SW_DEBUG; saw ${JSON.stringify(lines)}`);
+    assert.match(hits[0], /candidate read failed/);
+    assert.match(hits[0], /\n\s+at /, 'the cause carries its stack');
+    assert.equal(revisionOf(ctx.watcher), before, 'no frame was produced');
+    const record = JSON.parse(readFileSync(join(ctx.stateDir, 'sess-old.json'), 'utf8'));
+    assert.equal(record.sessionId, 'sess-old');
+    assert.equal(record.transcriptPath, ctx.pathOld);
+  }, { createSourceDriver });
 });
 
 test('POST /api/rotate: a discovery rewrite failure keeps the installed candidate and returns the warning', async () => {

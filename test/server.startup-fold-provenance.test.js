@@ -1,8 +1,10 @@
 // The host's synchronous bootstrap applies the whole Source before any route or poll tick exists, so every
 // epoch that bootstrap crosses belongs to history that already happened — a Source Reconstruction, not a live
 // capture. The two archival provenance fields must say so: `archiveSource` 'replay' on the profile row and
-// `capture_source` 'cc-replay' on its telemetry, the same pair carry reconstruction produces. The provenance
-// travels on the FRAME's capture mode, so it is scoped to bootstrap alone: the ticks that follow are live.
+// `capture_source` 'cc-replay' on its telemetry, the same pair carry reconstruction produces. A segment an
+// epoch closes takes the closing FRAME's capture mode, so that provenance is scoped to bootstrap alone and the
+// ticks that follow are live; a segment the owner's terminal close archives takes the segment's live mark,
+// set once a live frame has applied to it.
 //
 // Epochs here are opened by explicit source topology — a compact summary is a null-parent root with a call
 // behind it.
@@ -98,5 +100,27 @@ test('an epoch crossed by a later poll tick on the same owner archives as live',
       'bootstrap must not leave replay capture set — live polling is observed, not reconstructed');
     assert.deepEqual(ctx.provenanceOf(0), { archiveSource: 'replay', captureSource: 'cc-replay' },
       'the bootstrap segment keeps its own provenance');
+  } finally { ctx.teardown(); }
+});
+
+test('the owner\'s terminal close archives the bootstrap segment as a replay when no live frame applied since the bootstrap', () => {
+  const ctx = bootOverTranscript(EPOCH_AT_STARTUP);
+  try {
+    ctx.srv.closeCurrentSegment();
+    assert.deepEqual(ctx.provenanceOf(1), { archiveSource: 'replay', captureSource: 'cc-replay' },
+      'a segment only the bootstrap reconstructed is not a live capture');
+    const { archived_at: archivedAt } = ctx.store._db
+      .prepare('SELECT archived_at FROM profile WHERE session_id = ? AND segment = 1').get(ctx.sessionId);
+    assert.equal(archivedAt, Date.parse(ts(1)), 'stamped with the segment\'s last step time');
+  } finally { ctx.teardown(); }
+});
+
+test('the owner\'s terminal close archives as live after a poll tick applied a live frame', () => {
+  const ctx = bootOverTranscript(EPOCH_AT_STARTUP);
+  try {
+    ctx.append(step({ id: 'm5', uuid: 'u5', parent: 'r-m4', cacheRead: 5000 }));
+    ctx.srv.runPollTick();
+    ctx.srv.closeCurrentSegment();
+    assert.deepEqual(ctx.provenanceOf(1), { archiveSource: 'live', captureSource: 'cc-live' });
   } finally { ctx.teardown(); }
 });

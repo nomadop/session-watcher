@@ -45,7 +45,7 @@ function compose({ projectRoot = null, isIgnored = null } = {}) {
     handoffComposition: {},
     loaderVersion: '1.0.0',
     store: INERT_STORE,
-    dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+    dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
     createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
@@ -120,6 +120,21 @@ describe('getBucketData', () => {
     assert.ok(bd.residual.bash.every(b => b.cmd === undefined), 'no raw command crosses the wire');
     assert.ok(bd.residual.bash[0].tokens > 0);
     assert.ok('lastTurn' in bd.residual.bash[0] && 'detail' in bd.residual.bash[0]);
+  });
+
+  test('residual.tool is an empty array on a Claude Code composition', () => {
+    const watcher = compose();
+    apply(watcher, [
+      userMessage({ uuid: 'u0', text: 'go', timestamp: ts(0) }),
+      step('a1', 'm1', { input: 10000, output: 5 }, [
+        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } },
+      ]),
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: 'FAIL '.repeat(200), timestamp: ts(2) }),
+      step('a2', 'm2', { cacheRead: 25000, output: 5 }),
+    ]);
+    const bd = watcher.getBucketData();
+    assert.ok(Array.isArray(bd.residual.tool), 'residual.tool is always an array');
+    assert.equal(bd.residual.tool.length, 0, 'Claude Code emits no tool-kind residual');
   });
 
   test('exposes segment, currentTurnSeq and the totals', () => {

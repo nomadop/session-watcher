@@ -61,7 +61,6 @@ test('plugin: version consistency across plugin.json and package.json', () => {
 
 test('plugin: dist/ contains bundled entry points', () => {
   assert.ok(existsSync(join(ROOT, 'dist', 'index.js')), 'dist/index.js exists');
-  assert.ok(existsSync(join(ROOT, 'dist', 'server.js')), 'dist/server.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start-entry.js')), 'dist/hooks/session-start-entry.js exists');
   assert.ok(existsSync(join(ROOT, 'dist', 'hooks', 'session-start.js')), 'dist/hooks/session-start.js exists');
   // warn.js retired (2026-07-18) — Stop hook removed
@@ -80,8 +79,8 @@ test('plugin: dist bundles are self-contained (no unbundled external imports)', 
   const tmp = mkdtempSync(join(tmpdir(), 'sw-bundle-'));
   try {
     cpSync(join(ROOT, 'dist'), join(tmp, 'dist'), { recursive: true });
-    // index.js and server.js reach their entrypoint guard here and build a real store and state
-    // file. Without a HOME and SW_STATE_DIR of their own they would land in the developer's live
+    // index.js reaches its entrypoint guard here and builds a real store and state
+    // file. Without a HOME and SW_STATE_DIR of its own it would land in the developer's live
     // ~/.session-watcher, and the SIGTERM below would run cleanup() and unlink the state file of
     // whichever session owns that id.
     const env = {
@@ -91,7 +90,7 @@ test('plugin: dist bundles are self-contained (no unbundled external imports)', 
       CLAUDE_CODE_SESSION_ID: 'bundle-probe',
       SW_NO_OPEN: '1',
     };
-    for (const rel of ['index.js', 'server.js', 'hooks/session-start.js']) {
+    for (const rel of ['index.js', 'hooks/session-start.js']) {
       const bundlePath = join(tmp, 'dist', rel);
       const result = spawnSync(process.execPath, [bundlePath], { timeout: 3000, encoding: 'utf8', env });
       // A spawn that never reached module load proves nothing, so an absent stderr must not pass by

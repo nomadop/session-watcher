@@ -7,8 +7,9 @@ import { probeMcp } from './lib/probe.js';
 import { PLUGIN_VERSION } from './lib/version.js';
 import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { TURN_ADDRESS_RE, TURN_PAGE_BOUNDARY_RE } from './lib/turn.js';
+import { bucketSummaryPayload } from './lib/wire.js';
 // Re-export launcher functions for backward compatibility (tests, manual usage)
-export { stateFileFor, resolveProjectDir, sessionIdOf, probeHealth, fetchHealth, readState, startWatcher, stopWatcher, watcherStatus, getBucketSummary, prepareHandoff, loadHandoff, rotateSession } from './lib/launcher.js';
+export { stateFileFor, sessionIdOf, probeHealth, readState, watcherStatus, getBucketSummary, prepareHandoff, loadHandoff, rotateSession } from './lib/launcher.js';
 
 // Turn history read surface. All three resolve their own lineage from the newest handoff delivered
 // into this session, so none takes a lineage identifier: a caller that never loaded a handoff gets
@@ -27,7 +28,7 @@ export function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) 
         + 'reply\'s lineage, which starts at that session\'s end. Omit for the newest page.'),
     },
     annotations: { readOnlyHint: true },
-  }, async (input) => reply(turnReadService.turnPage(input || {})));
+  }, async (input) => reply(await turnReadService.turnPage(input || {})));
 
   mcpServer.registerTool('turn_search', {
     description: 'Find a known literal in the transcripts behind the handoff loaded into this session: behaves as '
@@ -43,7 +44,7 @@ export function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) 
         + 'the whole lineage.'),
     },
     annotations: { readOnlyHint: true },
-  }, async (input) => reply(turnReadService.turnSearch(input || {})));
+  }, async (input) => reply(await turnReadService.turnSearch(input || {})));
 
   mcpServer.registerTool('turn_locate', {
     description: 'Find which turns of the loaded handoff mention a remembered term, when the source wording is '
@@ -54,7 +55,7 @@ export function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) 
         + 'split into bigrams, so a longer phrase narrows toward zero matches.'),
     },
     annotations: { readOnlyHint: true },
-  }, async (input) => reply(turnReadService.turnLocate(input || {})));
+  }, async (input) => reply(await turnReadService.turnLocate(input || {})));
 }
 
 // MCP wiring — only when run as the entrypoint (not when imported by tests).
@@ -152,7 +153,7 @@ if (__selfReal === __argvReal) {
       sseClients.clear();
       // 2. Terminal application finalization, when this trigger asks for it.
       if (finalizeCurrentSegment) {
-        try { closeCurrentSegment({ captureMode: 'live' }); }
+        try { closeCurrentSegment(); }
         catch (e) { if (process.env.SW_DEBUG) console.error('[cleanup finalize]', e?.message || e); }
       }
       // 3. Rate Lamp checkpoint, while the Store is still open: the coalesced write-behind may hold progress
@@ -227,26 +228,8 @@ if (__selfReal === __argvReal) {
       return res.json();
     };
 
-    mcpServer.registerTool('start_watcher', {
-      description: 'Start (or reuse) the Session Watcher dashboard server; returns its URL. Never returns metric values.',
-      inputSchema: { ...SessionIdSchema, transcript: z.string().optional().describe('Explicit transcript .jsonl path (overrides session ID lookup)') },
-      annotations: { readOnlyHint: true },
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall('start_watcher', { sessionId: _sid });
-      const port = server.address()?.port;
-      if (!port) return reply({ error: 'server_not_ready' });
-      return reply({ url: `http://127.0.0.1:${port}` });
-    });
-    mcpServer.registerTool('stop_watcher', {
-      description: 'Stop the managed Session Watcher server.',
-      inputSchema: SessionIdSchema,
-      annotations: { readOnlyHint: true },
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall('stop_watcher', { sessionId: _sid });
-      return reply({ noop: true, note: 'in-process mode — server lifecycle is tied to the CC session. Restart the session to reload code.' });
-    });
     mcpServer.registerTool('watcher_status', {
-      description: 'Report whether the Session Watcher server is running and its URL.',
+      description: 'Report whether the Session Watcher is running, and the dashboard URL where the host serves one.',
       inputSchema: SessionIdSchema,
       annotations: { readOnlyHint: true },
     }, async ({ sessionId: _sid } = {}) => {
@@ -256,21 +239,22 @@ if (__selfReal === __argvReal) {
       return reply({ running: true, url: `http://127.0.0.1:${port}` });
     });
     mcpServer.registerTool('get_bucket_summary', {
-      description: 'Return the current context bucket structure (files, skills, tools) plus a compact metrics snapshot, so the agent can decide what to carry over before /clear.',
+      description: "Return the current context bucket structure (files, skills) with each row's token size and the session's br, so the agent can decide what to carry over before the context reset the host offers.",
       inputSchema: SessionIdSchema,
       annotations: { readOnlyHint: true },
     }, async ({ sessionId: _sid } = {}) => {
       probeCall('get_bucket_summary', { sessionId: _sid });
-      return reply(await inprocFetch('/api/buckets?symbols=1'));
+      const body = await inprocFetch('/api/buckets?symbols=1');
+      return reply(body.error ? body : bucketSummaryPayload(body));
     });
     mcpServer.registerTool('prepare_handoff', {
-      description: 'Persist a keep/discard decision + structured summary before /clear; returns a human-readable token to restore context in the next segment.',
+      description: 'Persist a keep/discard decision + structured summary before the context reset the host offers; returns a human-readable token to restore context in the next segment.',
       inputSchema: {
         ...SessionIdSchema,
         paths_to_keep: z.array(z.object({
           path: z.string().describe('File path (project-relative)'),
           symbols: z.array(z.string()).optional().describe('Key symbols to focus on in this file (function/class names)'),
-        })).describe('Files to carry over with optional symbol hints; lines are auto-populated by the server from B_rebuild data'),
+        })).describe('Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data'),
         skills_to_keep: z.array(z.string()).optional().describe('Skill names to carry over (e.g. "systematic-debugging", "brainstorming")'),
         load_token: z.string().optional().describe('Existing token to revise; kept if undelivered, replaced by a new token if already delivered. Omit to create new'),
         summary: z.string().describe('Structured summary of current work state'),
@@ -290,14 +274,14 @@ if (__selfReal === __argvReal) {
       description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — '
         + 'by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries '
         + 'the lineage behind it as one headline per session, oldest to newest, beside the newest page of its '
-        + 'turns. Pure read.',
+        + 'turns.',
       inputSchema: {
         ...SessionIdSchema,
         load_token: z.string().optional().describe('Semantic token from prepare_handoff (exact match)'),
         query: z.string().optional().describe('Free-text search when the token is unknown; returns top matches'),
         query_mode: z.enum(['plain', 'advanced']).optional().describe('plain (default) escapes input; advanced passes raw FTS5 syntax'),
       },
-      annotations: { readOnlyHint: true },
+      annotations: { readOnlyHint: false },
     }, async ({ sessionId: _sid, ...input } = {}) => {
       probeCall('load_handoff', { sessionId: _sid });
       const qs = new URLSearchParams(Object.entries(input).filter(([, v]) => v != null)).toString();
@@ -312,13 +296,12 @@ if (__selfReal === __argvReal) {
     mcpServer.registerTool('get_turn_skeleton', {
       description: 'Write the current context epoch to a turn skeleton file and a notes file whose `## NOTE[T]` headings are the slot set, and return both paths, the snapshot id to submit against, and the protocol for filling them.',
       inputSchema: {},
-      // Not read-only: it creates a directory under the state dir and writes both files. A client that
-      // auto-approves read-only tools must not reach this without asking.
+      // Not read-only: it creates a directory under the state dir and writes both files.
       annotations: { readOnlyHint: false },
-    }, async () => reply(turnService.getTurnSkeleton()));
+    }, async () => reply(await turnService.getTurnSkeleton()));
 
     mcpServer.registerTool('submit_turn_notes', {
-      description: 'Commit the notes file the latest get_turn_skeleton wrote. The server locates that file itself, so no note text crosses the wire. All-or-nothing: every NOTE slot must be covered — by a section in the notes file or by a row the store already holds for that turn — and the snapshot must still be current.',
+      description: 'Commit the notes file the latest get_turn_skeleton wrote. Session Watcher locates that file itself, so no note text crosses the wire. All-or-nothing: every NOTE slot must be covered — by a section in the notes file or by a row the store already holds for that turn — and the snapshot must still be current.',
       inputSchema: {
         snapshot_id: z.string().describe('snapshot_id from get_turn_skeleton'),
       },

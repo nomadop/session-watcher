@@ -43,6 +43,13 @@ test('modelPolicyFor: every calibrated and fallback model prefix', () => {
   }
 });
 
+test('modelPolicyFor: a vendor-prefixed claude id resolves the calibrated CTP', () => {
+  const prefixed = withoutRatio('us.anthropic.claude-fable-5-1');
+  assert.deepEqual(prefixed.ctp, CLAUDE_CTP);
+  assert.deepEqual(prefixed, withoutRatio('claude-sonnet-4-6'));
+  assert.deepEqual(withoutRatio('us.openai.gpt-6-sol').ctp, FALLBACK_CTP);
+});
+
 test('modelPolicyFor: absent model identity resolves the fallback policy', () => {
   for (const modelId of ['', null, undefined]) {
     assert.deepEqual(withoutRatio(modelId), {

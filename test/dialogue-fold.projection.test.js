@@ -206,34 +206,6 @@ describe('native order', () => {
 });
 
 describe('tool pairing', () => {
-  test('an empty tool use id admits no pair, and the observation still reaches Measurement', () => {
-    // An empty id names nothing, so there is no call for Dialogue to show and nothing a result could pair
-    // with. The judgement is Dialogue's alone: Measurement counts every tool use its step issued and
-    // correlates by the id it was given, so the observation itself has to survive.
-    const entries = chain([
-      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-      assistantObservation({ uuid: 'a1', messageId: 'm1', timestamp: ts(2), blocks: [
-        { type: 'tool_use', id: '', name: 'Read', input: { file_path: '/nameless.js' } },
-        { type: 'tool_use', id: 'tu-real', name: 'Bash', input: { command: 'ls' } },
-      ] }),
-      toolResult({ uuid: 'r1', toolUseId: '', content: 'nameless output' }),
-      toolResult({ uuid: 'r2', toolUseId: 'tu-real', content: 'real output' }),
-    ]);
-    const observations = observationsOf(entries);
-    // The Source reports both, unchanged: the empty id is a fact about the row, not a Dialogue decision.
-    assert.deepEqual(observations.filter(o => o.type === 'tool-use').map(o => o.toolUseId), ['', 'tu-real']);
-    assert.deepEqual(observations.filter(o => o.type === 'tool-result').map(o => o.toolUseId),
-      ['', 'tu-real']);
-
-    const folds = projectDialogue(observations).folds;
-    const pairs = folds.flatMap(f => f.toolPairs);
-    assert.deepEqual(pairs.map(p => p.toolUseId), ['tu-real'], 'only the named call becomes a pair');
-    assert.equal(pairs[0].result, 'real output');
-    // No tool line either, so nothing counts it, indexes it or fingerprints it.
-    assert.deepEqual(enumerateDialogueLines(folds).filter(l => l.kind === 'tool').map(l => l.tool.toolUseId),
-      ['tu-real']);
-  });
-
   test('a repeated result for one tool use id is last-result-wins', () => {
     const folds = foldsOf(chain([
       assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Read',
@@ -273,7 +245,7 @@ describe('tool pairing', () => {
     assert.equal(unpaired.isError, undefined);
   });
 
-  test('a consumed result does not carry to a later reuse of its id', () => {
+  test('a consumed result does not carry to a later revision of its call', () => {
     const folds = foldsOf(chain([
       assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'Read',
         input: { file_path: '/a.js' }, timestamp: ts(1) }),

@@ -49,13 +49,13 @@ describe('turn read tools', () => {
   });
 
   test('turn_page equals curling the HTTP route with the resolved head', async () => {
-    const viaTool = ctx.turnReadService.turnPage({});
+    const viaTool = await ctx.turnReadService.turnPage({});
     const viaHttp = await ctx.request(`/api/turn/page?lineage_head=${handoffId}`, {});
     assert.deepEqual(viaTool, viaHttp);
   });
 
   test('turn_search equals the HTTP route plus exactly one recovery field', async () => {
-    const viaTool = ctx.turnReadService.turnSearch({ q: 'turn9data' });
+    const viaTool = await ctx.turnReadService.turnSearch({ q: 'turn9data' });
     const viaHttp = await ctx.request(`/api/turn/search?lineage_head=${handoffId}&q=turn9data`, {});
     const { recovery, ...rest } = viaTool;
     assert.deepEqual(rest, viaHttp);
@@ -68,7 +68,7 @@ describe('turn read tools', () => {
   });
 
   test('turn_locate equals the HTTP route plus exactly one recovery field', async () => {
-    const viaTool = ctx.turnReadService.turnLocate({ q: 'turn9data' });
+    const viaTool = await ctx.turnReadService.turnLocate({ q: 'turn9data' });
     const viaHttp = await ctx.request(`/api/turn/locate?lineage_head=${handoffId}&q=turn9data`, {});
     const { recovery, ...rest } = viaTool;
     assert.deepEqual(rest, viaHttp);
@@ -79,13 +79,13 @@ describe('turn read tools', () => {
 
   // Identity, not a phrase: an address the caller supplied is rethrown carrying exactly the sentence the
   // module exports for it, so rewording the sentence moves both sides at once and no phrase is pinned.
-  test('a fabricated before cursor throws the stale-cursor sentence, not a retry', () => {
-    assert.throws(() => ctx.turnReadService.turnPage({ before: 'S9:999999' }),
+  test('a fabricated before cursor throws the stale-cursor sentence, not a retry', async () => {
+    await assert.rejects(() => ctx.turnReadService.turnPage({ before: 'S9:999999' }),
       { message: STALE_CURSOR_MESSAGE });
   });
 
-  test('an absent scope throws the scope-absent sentence', () => {
-    assert.throws(() => ctx.turnReadService.turnSearch({ q: 'turn9data', scope: 'S9:999999' }),
+  test('an absent scope throws the scope-absent sentence', async () => {
+    await assert.rejects(() => ctx.turnReadService.turnSearch({ q: 'turn9data', scope: 'S9:999999' }),
       { message: SCOPE_ABSENT_MESSAGE });
   });
 
@@ -93,11 +93,11 @@ describe('turn read tools', () => {
     // The tool resolves its own head through this delivery lookup, so the HTTP side asks the lookup
     // too and both surfaces stay on one head however many loads this session has already performed.
     const head = ctx.store.findLatestDeliveryInSession(sessionId).handoffId;
-    const viaTool = ctx.turnReadService.turnPage({ before: 'S1' });
+    const viaTool = await ctx.turnReadService.turnPage({ before: 'S1' });
     const viaHttp = await ctx.request(`/api/turn/page?lineage_head=${head}&before=S1`, {});
     assert.deepEqual(viaTool, viaHttp);
     assert.ok(viaTool.turn_page.length > 0);
-    assert.throws(() => ctx.turnReadService.turnPage({ before: 'S9' }),
+    await assert.rejects(() => ctx.turnReadService.turnPage({ before: 'S9' }),
       { message: STALE_CURSOR_MESSAGE });
   });
 
@@ -111,7 +111,7 @@ describe('turn read tools', () => {
       sourceSessionId: 'session-read-tools-x', loadToken: crossToken, projectId: 'project-X' });
     await ctx.request(`/api/handoff/load?load_token=${crossToken}`, {});
 
-    const viaTool = ctx.turnReadService.turnPage({});
+    const viaTool = await ctx.turnReadService.turnPage({});
     const viaHttp = await ctx.request(`/api/turn/page?lineage_head=${crossId}`, {});
     assert.deepEqual(viaTool, viaHttp);
     assert.ok(viaTool.turn_page.includes('crossreadneedle'));
@@ -121,7 +121,7 @@ describe('turn read tools', () => {
     const fresh = await bootTestServer({ sessionId: 'sid-no-delivery' });
     try {
       for (const call of ['turnPage', 'turnSearch', 'turnLocate']) {
-        const out = fresh.turnReadService[call]({ q: 'anything' });
+        const out = await fresh.turnReadService[call]({ q: 'anything' });
         assert.equal(out.error, 'no_handoff_loaded', call);
         assert.match(out.recovery, /load_handoff/, call);
       }
@@ -130,7 +130,7 @@ describe('turn read tools', () => {
     }
   });
 
-  test('a lineage lookup exception maps to each fixed availability shape', () => {
+  test('a lineage lookup exception maps to each fixed availability shape', async () => {
     const hadOwn = Object.hasOwn(ctx.store, 'findLatestDeliveryInSession');
     const original = ctx.store.findLatestDeliveryInSession;
     ctx.store.findLatestDeliveryInSession = () => { throw new Error('store unavailable'); };
@@ -140,7 +140,7 @@ describe('turn read tools', () => {
         ['turnSearch', { q: 'anything' }, 'search_unavailable'],
         ['turnLocate', { q: 'anything' }, 'locate_unavailable'],
       ]) {
-        const out = ctx.turnReadService[call](args);
+        const out = await ctx.turnReadService[call](args);
         assert.equal(out.error, error, call);
         assert.equal(typeof out.recovery, 'string', call);
       }

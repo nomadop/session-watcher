@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   referenceY, sampleReference, yMaxOf, positionVerdict, groupModelFromStatus, groupModelFromScenario,
-  shownGroupOf,
+  shownGroupOf, brLabelColor, tooltipPaint,
 } from '../public/elements/heroDiptych.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
@@ -133,4 +133,21 @@ test('the shown group is the preview only once its scenario places a position', 
   assert.equal(shownGroupOf('mint', unfitted), 'amber');
   assert.equal(shownGroupOf('mint', null), 'amber');
   assert.equal(shownGroupOf('amber', placed), 'amber');
+});
+
+// The gutter label and the tooltip take their ink from the tab's colour variables, so a light scheme recolours them.
+const readFrom = vars => name => vars[name] ?? '';
+
+test('brLabelColor: the good tier reads the text-tier --mint (not the zone fill), amber and red read --amber and --coral', () => {
+  const vars = { '--mint': '#0b7f91', '--zone-sweet': '#27b5c9', '--amber': '#a46700', '--coral': '#d1304f' };
+  assert.equal(brLabelColor(0.02, readFrom(vars)), '#0b7f91');
+  assert.equal(brLabelColor(0.15, readFrom(vars)), '#a46700');
+  assert.equal(brLabelColor(0.3, readFrom(vars)), '#d1304f');
+  assert.deepEqual([0.02, 0.15, 0.3].map(br => brLabelColor(br, readFrom({}))), ['#4fe0b0', '#ffc24d', '#ff7566']);
+});
+
+test('tooltipPaint: light roles give surface, ink and a 1px hairline; without them the dark tooltip and no border', () => {
+  const light = tooltipPaint(readFrom({ '--sw-overlay': 'rgb(255, 255, 255)', '--sw-highlight': 'rgba(24, 32, 48, 0.82)', '--sw-hairline': 'rgba(38, 49, 72, 0.16)' }));
+  assert.deepEqual(light, { backgroundColor: 'rgb(255, 255, 255)', bodyColor: 'rgba(24, 32, 48, 0.82)', borderColor: 'rgba(38, 49, 72, 0.16)', borderWidth: 1 });
+  assert.deepEqual(tooltipPaint(readFrom({})), { backgroundColor: 'rgba(20, 26, 30, 0.9)', bodyColor: '#eef3f6', borderColor: 'rgba(0,0,0,0)', borderWidth: 0 });
 });

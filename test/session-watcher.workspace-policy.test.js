@@ -80,7 +80,7 @@ function compose({ isIgnored = null, manualOverrides = null } = {}) {
     handoffComposition: {},
     loaderVersion: '1.0.0',
     store: inertStore(),
-    dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+    dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
     createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({

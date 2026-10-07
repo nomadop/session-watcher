@@ -3,13 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { resolveProjectDir, probeHealth, stopWatcher, watcherStatus } from '../lib/launcher.js';
-
-test('resolveProjectDir prefers CLAUDE_PROJECT_DIR, falls back to projects root', () => {
-  assert.equal(resolveProjectDir({ CLAUDE_PROJECT_DIR: '/tmp/proj' }), '/tmp/proj');
-  const r = resolveProjectDir({ HOME: '/home/u' });
-  assert.ok(r.includes('.claude') && r.includes('projects'));
-});
+import { probeHealth, watcherStatus } from '../lib/launcher.js';
 
 test('probeHealth returns true for a live /api/health, false otherwise', async () => {
   const srv = createHttpServer((req, res) => {
@@ -24,7 +18,7 @@ test('probeHealth returns true for a live /api/health, false otherwise', async (
 });
 
 // A session id that cannot have a real state file on disk under ~/.session-watcher,
-// so stopWatcher/watcherStatus exercise their real return paths WITHOUT spawning a server.
+// so watcherStatus exercises its real return path WITHOUT spawning a server.
 const noServerEnv = () => ({ CLAUDE_CODE_SESSION_ID: `qf3-test-${randomUUID()}` });
 
 // Metric identifiers that MUST NEVER surface in an MCP tool reply / return shape.
@@ -34,20 +28,6 @@ const FORBIDDEN_METRIC_KEYS = [
   'timingWeight', 'regret', 'etaCalls', 'Lthreshold', 'metricsReliable',
   'baseline', 'sweetP', 'growth', 'apiCalls',
 ];
-
-// Fix ⑦ — stop_watcher liveness/no-live-server path.
-test('stopWatcher returns {stopped:false} when no state file exists (no live server)', async () => {
-  const res = await stopWatcher(noServerEnv());
-  assert.deepEqual(res, { stopped: false });
-});
-
-// Fix ⑥ / 9b — behavioral zero-pollution guard on the real return shapes.
-test('stopWatcher return shape: only {stopped}, no metric keys', async () => {
-  const res = await stopWatcher(noServerEnv());
-  const allowed = new Set(['stopped']);
-  for (const k of Object.keys(res)) assert.ok(allowed.has(k), `unexpected key in stopWatcher reply: ${k}`);
-  for (const k of FORBIDDEN_METRIC_KEYS) assert.ok(!(k in res), `forbidden metric key leaked from stopWatcher: ${k}`);
-});
 
 test('watcherStatus return shape: only {running,url}, no metric keys', async () => {
   const res = await watcherStatus(noServerEnv());
@@ -69,12 +49,10 @@ test('handoff launcher helpers return {error:no_server} when no live server', as
 });
 
 // Zero pollution over the launcher's own surface: the dashboard shows metrics, a caller of these helpers
-// gets URLs and state. This is the CLI and legacy entry point, not the MCP one — every MCP handler in
-// index.js builds its reply inline and reaches none of these. startWatcher is absent: reaching its reply
-// spawns a server.
+// gets URLs and state. These are the launcher's own exports, re-exported from index.js — every MCP
+// handler in index.js builds its reply inline and reaches none of these.
 test('every no-server launcher reply is free of metric keys', async () => {
   const replies = await Promise.all([
-    stopWatcher(noServerEnv()),
     watcherStatus(noServerEnv()),
     getBucketSummary(noServerEnv()),
     loadHandoff(noServerEnv(), {}),

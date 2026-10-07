@@ -456,6 +456,27 @@ test('a meta row emits no text or turn-boundary and a string sourceToolUseID yie
   assert.deepEqual(typesOf(batches.at(-1)), ['skill-payload'], 'the meta row without an id emits no batch');
 });
 
+test('an empty tool call id is admitted nowhere, as a missing one is', () => {
+  const rows = rowsFrom([
+    userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
+    assistantUsage({
+      uuid: 'a1', parentUuid: 'u1', messageId: 'msg_1', timestamp: ts(2),
+      blocks: [{ type: 'tool_use', id: '', name: 'Read', input: { file_path: '/tmp/a.js' } }],
+      usage: usageOf({ output: 5, cacheRead: 100 }),
+    }),
+    { type: 'user', uuid: 'r1', parentUuid: 'a1', isSidechain: false, timestamp: ts(3),
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: '', content: 'x' }] } },
+    { type: 'user', uuid: 'm1', parentUuid: 'r1', isSidechain: false, isMeta: true, sourceToolUseID: '',
+      timestamp: ts(4), message: { role: 'user', content: [{ type: 'text', text: 'body' }] } },
+  ]);
+  const types = reduceClaudeCodeSnapshot(rows).observations.map(o => o.type);
+
+  assert.equal(types.includes('tool-use'), false);
+  assert.equal(types.includes('tool-result'), false);
+  assert.equal(types.includes('skill-payload'), false);
+  assert.equal(types.includes('usage'), true, 'the row still carries its usage');
+});
+
 // --- Topology, epochs, and canonical path ---
 
 test('[delta] only canonical topology roots emit epoch-boundary; stock drops do not', () => {

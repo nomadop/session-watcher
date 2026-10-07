@@ -14,7 +14,7 @@ describe('mergeLedgerIntoStatus — the ledger onto the wire', () => {
 
   test('wallP = 1 + cRatio', () => {
     const status = { rateLamp: { reliable: true, L_read: 40000, B_post: 20000, B_rebuild: 20000,
-      C_RATIO: 12.5, gEma: 500 } };
+      B_default: 20000, C_RATIO: 12.5, gEma: 500 } };
     const ledger = { stateKey: 'k', billProgress: 0.1, billCycleCount: 0, currentTurnSeq: 1 };
     mergeLedgerIntoStatus(status, ledger, 'k');
     assert.equal(status.rateLamp.wallP, 13.5);

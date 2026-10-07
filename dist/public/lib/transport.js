@@ -1,4 +1,6 @@
 // public/lib/transport.js — SSE + poll fallback + connection state + explicit start
+import { createBucketStateTracker } from './bucketState.js';
+
 export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/history', streamUrl = '/api/stream', bucketsUrl = '/api/buckets', pollMs = 2000 } = {}) {
   let state = 'connecting';
   const listeners = new Set();
@@ -15,33 +17,8 @@ export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/
 
   // Bucket-state signals for loading UX (States 2a/2b)
   const bucketStateListeners = new Set();
-  let consecutiveFailures = 0;
-  let lastSuccessAt = null;
-  let isFetching = false;
-  let fetchingTimer = null;  // debounce: only report isFetching=true after BUCKET_FETCH_DEBOUNCE_MS
-
-  const BUCKET_FETCH_DEBOUNCE_MS = 300;  // don't flash syncing for fast fetches
-
-  function notifyBucketState() {
-    const s = { isFetching, consecutiveFailures, lastSuccessAt };
-    for (const cb of bucketStateListeners) cb(s);
-  }
-
-  function setBucketFetching(val) {
-    if (val) {
-      // Start debounce timer — only set isFetching=true after delay
-      if (!fetchingTimer) {
-        fetchingTimer = setTimeout(() => {
-          isFetching = true;
-          notifyBucketState();
-        }, BUCKET_FETCH_DEBOUNCE_MS);
-      }
-    } else {
-      // Clear: cancel pending timer, set false immediately
-      if (fetchingTimer) { clearTimeout(fetchingTimer); fetchingTimer = null; }
-      if (isFetching) { isFetching = false; notifyBucketState(); }
-    }
-  }
+  const bucketTracker = createBucketStateTracker();
+  bucketTracker.subscribe((s) => { for (const cb of bucketStateListeners) cb(s); });
 
   function notify(status, history, capabilities, bucketData) { for (const cb of listeners) cb(status, history, capabilities, bucketData); }
   function notifyTick(uptime) { for (const cb of tickListeners) cb(uptime); }
@@ -49,29 +26,23 @@ export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/
   function setState(s) { if (state !== s) { state = s; notifyState(); } }
 
   async function fetchData() {
-    setBucketFetching(true);
+    bucketTracker.begin();
     try {
       const [sRes, hRes, bRes] = await Promise.all([
         fetch(statusUrl), fetch(historyUrl),
         fetch(bucketsUrl).catch(() => null),  // buckets failure must not sink status/history
       ]);
-      if (!sRes.ok || !hRes.ok) { setBucketFetching(false); setState('disconnected'); return; }
+      if (!sRes.ok || !hRes.ok) { bucketTracker.end(); setState('disconnected'); return; }
       const status = await sRes.json();
       const history = await hRes.json();
       let bucketData = null;
       if (bRes && bRes.ok) {
         try { bucketData = await bRes.json(); } catch { bucketData = null; }
       }
-      if (bucketData !== null) {
-        consecutiveFailures = 0; lastSuccessAt = Date.now();
-      } else {
-        consecutiveFailures++;  // covers both HTTP error (bRes.ok=false) and network error (bRes=null)
-      }
-      setBucketFetching(false);
-      notifyBucketState();
+      bucketTracker.end(bucketData !== null);  // a failure covers both HTTP error (bRes.ok=false) and network error (bRes=null)
       if (pollTimer) setState('polling');
       notify(status, history, null, bucketData);  // capabilities computed downstream in app.js
-    } catch { setBucketFetching(false); consecutiveFailures++; notifyBucketState(); setState('disconnected'); }
+    } catch { bucketTracker.end(false); setState('disconnected'); }
   }
 
   function startPolling() {
@@ -109,7 +80,7 @@ export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/
     onStateChange(cb) { stateListeners.add(cb); return () => stateListeners.delete(cb); },
     onBucketState(cb) { bucketStateListeners.add(cb); return () => bucketStateListeners.delete(cb); },
     get connectionState() { return state; },
-    get bucketState() { return { isFetching, consecutiveFailures, lastSuccessAt }; },
+    get bucketState() { return bucketTracker.state; },
     // Fix #5: refresh() also uses the inflight guard to prevent double-fetches
     refresh() { if (!inflight) { inflight = fetchData().finally(() => { inflight = null; }); } return inflight; },
     start() { fetchData(); connect(); },
@@ -117,7 +88,6 @@ export function createTransport({ statusUrl = '/api/status', historyUrl = '/api/
       destroyed = true;
       if (es) { es.close(); es = null; }
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      if (fetchingTimer) { clearTimeout(fetchingTimer); fetchingTimer = null; }
       listeners.clear(); stateListeners.clear(); tickListeners.clear(); bucketStateListeners.clear();
     }
   };

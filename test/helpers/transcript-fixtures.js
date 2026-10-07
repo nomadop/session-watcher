@@ -2,7 +2,7 @@
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createClaudeCodeDialogueSource } from '../../lib/harness/claude-code/dialogue-source.js';
+import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../../lib/harness/claude-code/transcript-observation.js';
 
 export function ts(second) {
   return `2026-07-01T00:00:${String(second).padStart(2, '0')}Z`;
@@ -109,12 +109,11 @@ export function transcriptBytes(entries) {
   return Buffer.from(entries.map(e => JSON.stringify(e) + '\n').join(''));
 }
 
-// One complete canonical observation snapshot of a set of fixture entries, read through the Claude Code
-// DialogueSource so a shared Dialogue test consumes exactly what production hands it. Nothing is written
-// to disk: the Adapter's read capability is supplied directly.
+// One complete canonical observation snapshot of a set of fixture entries: the sealed reduction the Claude
+// Code DialogueSource performs once it holds the bytes, so a shared Dialogue test consumes exactly what
+// production hands it. Nothing is written to disk and nothing is awaited.
 export function observationsOf(entries) {
-  const source = createClaudeCodeDialogueSource({ readFile: () => transcriptBytes(entries) });
-  return source.read('fixture-locator').observations;
+  return reduceClaudeCodeSnapshot(readClaudeCodeRows(transcriptBytes(entries), { atEof: true }).rows).observations;
 }
 
 export function writeTranscript(dir, entries) {

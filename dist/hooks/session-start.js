@@ -6,7 +6,6 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { dirname as dirname2, join as join3 } from "node:path";
 import { realpathSync, readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // lib/project-key.js
 import { resolve } from "node:path";
@@ -25,6 +24,7 @@ import { performance } from "node:perf_hooks";
 
 // lib/constants.js
 var DEFAULT_CACHE_TTL = "5m";
+var LONG_CACHE_TTL = "1h";
 var C_RATIO_TABLE = [
   // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
   // not express invariance, a scalar row does, and a provider whose price does not move with the lifetime
@@ -33,9 +33,9 @@ var C_RATIO_TABLE = [
   // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
   // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
   // precedes the broader one whose pattern also matches its ids.
-  { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
-  { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, "1h": 40 } },
-  { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
+  { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
+  { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
+  { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }
 ];
@@ -112,8 +112,8 @@ function probeHandoffDiscovery({ dbPath, projectId, sessionId, rowCount, error }
   });
 }
 
-// hooks/session-start.js
-var __dirname = dirname2(fileURLToPath(import.meta.url));
+// lib/handoff-discovery.js
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 function discoverHandoffs(dbPath, projectId, sessionId, { ttlDays, queryLimit }) {
   if (!projectId || !sessionId) return [];
   let db;
@@ -183,6 +183,9 @@ Task: ${truncTask(r.next_task)}` : "";
   const footer = hasMore ? "(older handoffs available \u2014 use load_handoff with a query to search)" : "";
   return [header, ...lines, footer].join("\n");
 }
+
+// hooks/session-start.js
+var __dirname = dirname2(fileURLToPath(import.meta.url));
 function buildServerContext(serverUrl) {
   if (!serverUrl) return null;
   return `[Session Watcher] Server: ${serverUrl}`;
@@ -346,9 +349,7 @@ if (isMainModule(import.meta.url, process.argv[1])) {
 export {
   buildRotationFallbackContext,
   buildServerContext,
-  discoverHandoffs,
   discoverServerByClientPid,
-  formatHandoffContext,
   isMainModule,
   readStdin
 };

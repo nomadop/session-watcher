@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyOverrides, deriveDirState, computeDirty, latestOnly } from '../public/elements/bucketPanel.js';
+import { applyOverrides, deriveDirState, latestOnly } from '../public/elements/bucketPanel.js';
 // NOTE: deriveDirState is implemented in Task 5, imported here for integration testing with overrides.
 
 function mkTree() {
@@ -37,14 +37,6 @@ test('deriveDirState + applyOverrides integration: override flips dir from check
   assert.equal(deriveDirState(tree[1]), 'half', 'one child unchecked → half');
   applyOverrides(tree, new Map([['lib/a.js', false], ['lib/b.js', false]]));
   assert.equal(deriveDirState(tree[1]), 'unchecked', 'all children unchecked → unchecked');
-});
-
-test('computeDirty: false at default, true after a toggle', () => {
-  const tree = mkTree();
-  applyOverrides(tree, new Map());
-  assert.equal(computeDirty(tree), false, 'default = not dirty');
-  applyOverrides(tree, new Map([['lib/a.js', false]]));
-  assert.equal(computeDirty(tree), true);
 });
 
 test('latestOnly drops a response whose token is not the latest', () => {

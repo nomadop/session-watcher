@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.8.0",
+      version: "0.9.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -109,11 +109,14 @@ var init_package = __esm({
       },
       devDependencies: {
         "@playwright/test": "^1.45.0",
+        "chart.js": "^4.5.1",
         esbuild: "^0.28.1",
         "github-slugger": "^2.0.0",
         katex: "^0.17.0",
         marked: "^18.0.7",
         "marked-katex-extension": "^5.1.10",
+        react: "^18.3.1",
+        "react-dom": "^18.3.1",
         "tree-sitter-javascript": "^0.25.0",
         "tree-sitter-python": "^0.25.0",
         "tree-sitter-typescript": "^0.23.2"
@@ -239,7 +242,7 @@ function absorbToolUse(group, observation) {
     input: observation.input,
     cwd: observation.cwd ?? null,
     sourceOrdinal: observation.sourceOrdinal,
-    sourceEntryId: observation.sourceEntryId ?? null,
+    sourceEntryId: observation.sourceEntryId || null,
     timestamp: observation.timestamp ?? null
   });
 }
@@ -279,7 +282,6 @@ function projectDialogue(observations) {
     }
     if (observation.type === "tool-use") {
       openHumanGroup = null;
-      if (!observation.toolUseId) continue;
       let group = assistantGroups.get(observation.messageId);
       if (!group) {
         group = createGroup("assistant", observation);
@@ -291,7 +293,6 @@ function projectDialogue(observations) {
     }
     if (observation.type === "tool-result") {
       openHumanGroup = null;
-      if (!observation.toolUseId) continue;
       pendingResults.set(observation.toolUseId, observation);
     }
   }
@@ -330,7 +331,7 @@ function pairFor(toolUseId, use, pendingResults) {
     isError: result === void 0 ? void 0 : result.isError,
     resultMeta: result === void 0 ? null : result.resultMeta,
     resultSourceOrdinal: result === void 0 ? null : result.sourceOrdinal,
-    resultSourceEntryId: result === void 0 ? null : result.sourceEntryId ?? null,
+    resultSourceEntryId: result === void 0 ? null : result.sourceEntryId || null,
     resultTimestamp: result === void 0 ? null : result.timestamp ?? null
   };
 }
@@ -369,13 +370,80 @@ var init_dialogue_fold = __esm({
   }
 });
 
+// lib/landmarks.js
+function nucleus(cRatio, g, bDefault) {
+  if (cRatio <= 0 || g <= 0 || bDefault <= 0) return 0;
+  return Math.sqrt(2 * cRatio * g / bDefault);
+}
+var init_landmarks = __esm({
+  "lib/landmarks.js"() {
+  }
+});
+
+// lib/bill-regret.js
+function computeMovableFrac(cRatio, lBase, kStable) {
+  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
+  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
+  return arm / (arm + lBase + cRatio * kStable);
+}
+function computeBr(x, dhat, mf) {
+  const d = x - 1;
+  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
+  const u = d / dhat;
+  const ppFrac = (u - 1) * (u - 1) / (2 * u);
+  return mf * ppFrac;
+}
+function computePp(x, dhat) {
+  if (!Number.isFinite(x) || !Number.isFinite(dhat) || dhat <= 0) return null;
+  const u = (x - 1) / dhat;
+  if (!Number.isFinite(u) || u <= 0) return null;
+  return (u - 1) * (u - 1) / (2 * u);
+}
+function uAtBr(mf, brTarget) {
+  if (!Number.isFinite(mf) || mf <= 0) return Infinity;
+  if (!Number.isFinite(brTarget)) return Infinity;
+  if (brTarget <= 0) return 1;
+  const a = mf;
+  const b = -(2 * mf + 2 * brTarget);
+  const c = mf;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  return (-b + Math.sqrt(disc)) / (2 * a);
+}
+function walletIntervalFor(mf, brTarget) {
+  const u = uAtBr(mf, brTarget);
+  if (!Number.isFinite(u)) return Infinity;
+  return u * u;
+}
+function uLeftAtBr(mf, brTarget) {
+  return 1 / uAtBr(mf, brTarget);
+}
+function lampZone(br, { u, mf }) {
+  if (!Number.isFinite(br)) return "white";
+  if (u < 1) return u >= uLeftAtBr(mf, BR_AMBER) ? "green" : "white";
+  if (br >= BR_RED) return "red";
+  if (br >= BR_AMBER) return "amber";
+  return "green";
+}
+function wallPositionFor(cRatio) {
+  return 1 + cRatio;
+}
+var BR_AMBER, BR_RED;
+var init_bill_regret = __esm({
+  "lib/bill-regret.js"() {
+    BR_AMBER = 0.1;
+    BR_RED = 0.25;
+  }
+});
+
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, SEGMENT_DROP_EPSILON, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES;
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES;
 var init_constants = __esm({
   "lib/constants.js"() {
     RECENT_STOP_EVENTS_LIMIT = 32;
     RECENT_PROCESSED_HOOK_IDS_LIMIT = 128;
     DEFAULT_CACHE_TTL = "5m";
+    LONG_CACHE_TTL = "1h";
     C_RATIO_TABLE = [
       // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
       // not express invariance, a scalar row does, and a provider whose price does not move with the lifetime
@@ -384,9 +452,9 @@ var init_constants = __esm({
       // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
       // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
       // precedes the broader one whose pattern also matches its ids.
-      { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
-      { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, "1h": 40 } },
-      { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
+      { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
+      { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
+      { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
     ];
@@ -437,12 +505,12 @@ var init_constants = __esm({
     CTX_SAFETY_MARGIN = 8e3;
     COALESCED_PERSIST_MS = 2e3;
     IDLE_HEARTBEAT_MS = 5e3;
-    CTP_TABLE = {
-      claude: { ascii: 2.45, cjk: 0.59 },
+    CTP_TABLE = [
+      { match: /claude/i, ascii: 2.45, cjk: 0.59 },
       // Anthropic tokenizer (n=5881)
-      deepseek: { ascii: 3.24, cjk: 0.94 }
+      { match: /deepseek/i, ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    };
+    ];
     DEFAULT_CTP = { ascii: 3, cjk: 1 };
     TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 };
     DEPTH_HOT_LAP_COUNT = 3;
@@ -450,7 +518,6 @@ var init_constants = __esm({
     G_DELTA_CAP = 250;
     G_FLOOR = 100;
     MISS_CR_DROP = 0.95;
-    SEGMENT_DROP_EPSILON = 100;
     GC_BATCH_LIMIT = 3;
     GC_REPLAY_MAX_FILE_BYTES = 5e7;
     GC_HANDOFF_MAX_AGE_DAYS = 90;
@@ -464,66 +531,6 @@ var init_constants = __esm({
     NOTE_TOKEN_LIMIT = 800;
     NOTE_PREVIEW_TOKENS = 100;
     HANDOFF_TOKEN_MAX_RETRIES = 5;
-  }
-});
-
-// lib/landmarks.js
-function nucleus(cRatio, kAvg, lBase) {
-  if (cRatio <= 0 || kAvg <= 0 || lBase <= 0) return 0;
-  return Math.sqrt(2 * cRatio * kAvg / lBase);
-}
-var init_landmarks = __esm({
-  "lib/landmarks.js"() {
-    init_constants();
-  }
-});
-
-// lib/bill-regret.js
-function computeMovableFrac(cRatio, lBase, kStable) {
-  if (!(cRatio > 0) || !(lBase > 0) || !(kStable > 0)) return NaN;
-  const arm = Math.sqrt(2 * cRatio * lBase * kStable);
-  return arm / (arm + lBase + cRatio * kStable);
-}
-function computeBr(x, dhat, mf) {
-  const d = x - 1;
-  if (!(d > 0) || !(dhat > 0) || !(mf >= 0)) return NaN;
-  const u = d / dhat;
-  const ppFrac = (u - 1) * (u - 1) / (2 * u);
-  return mf * ppFrac;
-}
-function computePp(x, dhat) {
-  if (!Number.isFinite(x) || !Number.isFinite(dhat) || dhat <= 0) return null;
-  const u = (x - 1) / dhat;
-  if (!Number.isFinite(u) || u <= 0) return null;
-  return (u - 1) * (u - 1) / (2 * u);
-}
-function uAtBr(mf, brTarget) {
-  if (!Number.isFinite(mf) || mf <= 0) return Infinity;
-  if (!Number.isFinite(brTarget)) return Infinity;
-  if (brTarget <= 0) return 1;
-  const a = mf;
-  const b = -(2 * mf + 2 * brTarget);
-  const c = mf;
-  const disc = b * b - 4 * a * c;
-  if (disc < 0) return Infinity;
-  return (-b + Math.sqrt(disc)) / (2 * a);
-}
-function walletIntervalFor(mf, brTarget) {
-  const u = uAtBr(mf, brTarget);
-  if (!Number.isFinite(u)) return Infinity;
-  return u * u;
-}
-function uLeftAtBr(mf, brTarget) {
-  return 1 / uAtBr(mf, brTarget);
-}
-function wallPositionFor(cRatio) {
-  return 1 + cRatio;
-}
-var BR_AMBER, BR_RED;
-var init_bill_regret = __esm({
-  "lib/bill-regret.js"() {
-    BR_AMBER = 0.1;
-    BR_RED = 0.25;
   }
 });
 
@@ -871,7 +878,7 @@ function createHandoffComposition({
       yield generateLoadToken(tokenSeed.summary, tokenSeed.nextTask, randomInt);
     }
   }
-  const instructionFor = (loadToken) => `Handoff prepared. Token: ${loadToken}. Please /clear when ready.`;
+  const instructionFor = (loadToken) => `Handoff prepared. Token: ${loadToken}. Please use the context reset the host offers when ready.`;
   const searchExpression = (query, queryMode) => buildFtsMatch(String(query ?? ""), queryMode === "advanced" ? "advanced" : "plain");
   function searchResponse(results) {
     if (!results.length) return { found: false };
@@ -1437,8 +1444,8 @@ function parseTurnPageBoundary(raw) {
 function labelHistorySources(lineage) {
   return lineage.map((entry, index) => ({ ...entry, label: `S${index + 1}`, index }));
 }
-function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
-  const read = dialogueSource.read(sourceLocator);
+async function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
+  const read = await dialogueSource.read(sourceLocator);
   if (read.status !== "ok") return { readable: false, folds: [], turns: [] };
   const { folds } = dialogueProjection.project(read.observations);
   return { readable: true, folds, turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)) };
@@ -1499,7 +1506,7 @@ function buildSkeleton(turns, sessionId) {
       }
       if (line.message.role !== "human" && !shown.has(i2)) return [];
       const role = line.message.role === "human" ? "U  " : "A  ";
-      const normalized = String(line.message.text).replace(/\r\n?/g, "\n");
+      const normalized = line.message.text.replace(/\r\n?/g, "\n");
       const text = line.message.role === "human" ? headCut(normalized, U_HEAD_CHARS) : i2 === headCutAt ? headCut(normalized, A_CUT_CHARS) : tailCut(normalized, A_CUT_CHARS);
       return text.split("\n").map((part) => `T ${t} | ${role} : ${part}`);
     });
@@ -1611,6 +1618,1995 @@ var init_turn = __esm({
     tailCut = (s, n) => s.length > n ? "\u2026" + safeSuffix(s, n) : s;
     NOTE_SECTION_RE = /^## NOTE\[(\d+)\]\s*$/;
     TURN_NOTE_PROTOCOL = "Read skeleton_path, then write one note into each `## NOTE[T]` section of notes_path. The headings are already written; put each note under its own heading and leave the heading lines exactly as they are. On a first pass one Write of the whole file is enough. After a re-fetch, Edit the empty sections instead \u2014 a whole-file Write would replace notes that file already holds. Then call submit_turn_notes with snapshot_id alone: it reads notes_path itself and accepts no note text.";
+  }
+});
+
+// lib/store.js
+var store_exports = {};
+__export(store_exports, {
+  closeStore: () => closeStore,
+  closeStoreGlobal: () => closeStoreGlobal,
+  defaultDbPath: () => defaultDbPath,
+  getStore: () => getStore,
+  initStore: () => initStore,
+  openStore: () => openStore
+});
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync as mkdirSync2, statSync as statSync2 } from "node:fs";
+import { join as join3, dirname } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { performance as performance2 } from "node:perf_hooks";
+function migrateProfileToSegment(db) {
+  db.exec("ALTER TABLE profile RENAME TO profile_v1");
+  db.exec(`CREATE TABLE profile (
+    session_id TEXT NOT NULL, segment INTEGER NOT NULL, archived_at INTEGER NOT NULL,
+    model TEXT, project_id TEXT, l_floor REAL, b_total REAL, l_peak REAL, g_final REAL,
+    o_avg REAL, c_ratio REAL, turns INTEGER, duration_ms INTEGER, total_tokens_read REAL,
+    mf REAL, pp_exit REAL, br_exit REAL, br_peak REAL, pp_peak REAL, p0 REAL, b_axis REAL,
+    x_axis REAL, g_min REAL, turn_at_br_amber INTEGER, archive_source TEXT,
+    archive_priority INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (session_id, segment)) WITHOUT ROWID`);
+  db.exec(`INSERT INTO profile (
+    session_id, segment, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
+    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
+    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, archive_source, archive_priority)
+    SELECT session_id, 0, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
+    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
+    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, 'snapshot', 1 FROM profile_v1`);
+  db.exec("DROP TABLE profile_v1");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_project_archived ON profile(project_id, archived_at DESC)");
+}
+function migrateProfilePaths(db) {
+  db.exec("ALTER TABLE profile_paths RENAME TO profile_paths_v1");
+  db.exec(`CREATE TABLE profile_paths (
+    session_id TEXT NOT NULL, segment INTEGER NOT NULL, path TEXT NOT NULL, tokens REAL NOT NULL,
+    PRIMARY KEY (session_id, segment, path)) WITHOUT ROWID`);
+  db.exec("INSERT INTO profile_paths (session_id, segment, path, tokens) SELECT session_id, 0, path, tokens FROM profile_paths_v1");
+  db.exec("DROP TABLE profile_paths_v1");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_paths_path ON profile_paths(path, session_id, segment)");
+}
+function createHandoffTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS handoff (
+    handoff_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, segment INTEGER NOT NULL,
+    load_token TEXT NOT NULL, created_at INTEGER NOT NULL, paths_to_keep TEXT NOT NULL,
+    summary TEXT NOT NULL, next_task TEXT, summary_tokens INTEGER NOT NULL,
+    kept_tokens REAL, discarded_tokens REAL, prepared_at_turn INTEGER,
+    previous_stats TEXT, prepared_stats TEXT, search_terms TEXT, project_id TEXT,
+    delivered_at INTEGER, delivered_segment INTEGER)`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_session ON handoff(session_id, created_at DESC)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_token ON handoff(load_token)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_created_at ON handoff(created_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_project ON handoff(project_id, created_at DESC)");
+}
+function createHandoffLoadTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS handoff_load (
+    handoff_id         INTEGER NOT NULL,
+    session_id         TEXT NOT NULL,
+    loaded_at          INTEGER NOT NULL,
+    loader_version     TEXT,
+    claim_result       TEXT NOT NULL CHECK (claim_result IN ('primary','duplicate','legacy_unattributed')),
+    primary_session_id TEXT,
+    consumer_segment   INTEGER,
+    PRIMARY KEY (handoff_id, session_id, loaded_at)
+  ) WITHOUT ROWID`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_load_session ON handoff_load(session_id)");
+}
+function createTelemetryTables(db) {
+  const has = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+  const wasMissing = [];
+  if (!has("profile_path_event")) wasMissing.push("profile_path_event");
+  if (!has("profile_step_usage")) wasMissing.push("profile_step_usage");
+  db.exec(`CREATE TABLE IF NOT EXISTS profile_path_event (
+    session_id    TEXT NOT NULL,
+    segment       INTEGER NOT NULL,
+    folded_seq    INTEGER NOT NULL,
+    event_ordinal INTEGER NOT NULL,
+    path          TEXT NOT NULL,
+    raw_path      TEXT,
+    tool_type     TEXT NOT NULL,
+    is_full_read  INTEGER CHECK (is_full_read IN (0,1) OR is_full_read IS NULL),
+    PRIMARY KEY (session_id, segment, folded_seq, event_ordinal)
+  ) WITHOUT ROWID`);
+  db.exec(`CREATE TABLE IF NOT EXISTS profile_step_usage (
+    session_id     TEXT NOT NULL,
+    segment        INTEGER NOT NULL,
+    folded_seq     INTEGER NOT NULL,
+    ts             INTEGER,
+    cache_read     REAL,
+    cache_creation REAL,
+    input          REAL,
+    output         REAL,
+    tool_calls     INTEGER,
+    load_token     TEXT,
+    PRIMARY KEY (session_id, segment, folded_seq)
+  ) WITHOUT ROWID`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_step_usage_load_token ON profile_step_usage(load_token)");
+  return wasMissing;
+}
+function ensureV5Shape(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS turn_note (
+    turn_note_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_session_id TEXT    NOT NULL,
+    anchor_uuid       TEXT    NOT NULL,
+    u_text            TEXT    NOT NULL,
+    u_original_chars  INTEGER NOT NULL,
+    note              TEXT,
+    search_terms      TEXT    NOT NULL DEFAULT '',
+    source_timestamp  INTEGER NOT NULL,
+    created_at        INTEGER NOT NULL,
+    UNIQUE (source_session_id, anchor_uuid)
+  )`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_note_session
+    ON turn_note(source_session_id, source_timestamp)`);
+}
+function addColumnIfMissing(db, table, name2, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(name2)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name2} ${type}`);
+}
+function ensureV3Shape(db) {
+  for (const [name2, type] of V3_HANDOFF_COLUMNS) addColumnIfMissing(db, "handoff", name2, type);
+  addColumnIfMissing(db, "profile", "telemetry_status", "TEXT");
+  addColumnIfMissing(db, "profile", "capture_source", "TEXT");
+  createHandoffLoadTable(db);
+  const recreated = createTelemetryTables(db);
+  if (recreated.length) {
+    db.prepare("UPDATE profile SET telemetry_status='pending' WHERE telemetry_status IN ('complete','complete_empty')").run();
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_delivered_session ON handoff(delivered_session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_telemetry ON profile(telemetry_status, archived_at)");
+}
+function ftsObjectsPresent(db, names) {
+  const holes = names.map(() => "?").join(",");
+  const row = db.prepare(`SELECT COUNT(*) AS present FROM sqlite_master WHERE name IN (${holes})`).get(...names);
+  return row.present === names.length;
+}
+function createHandoffFts(db) {
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS handoff_fts USING fts5(
+    summary, next_task, load_token, search_terms,
+    content='handoff', content_rowid='handoff_id')`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_insert AFTER INSERT ON handoff BEGIN
+    INSERT INTO handoff_fts(rowid, summary, next_task, load_token, search_terms)
+    VALUES (new.handoff_id, new.summary, new.next_task, new.load_token, new.search_terms);
+  END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_delete AFTER DELETE ON handoff BEGIN
+    INSERT INTO handoff_fts(handoff_fts, rowid, summary, next_task, load_token, search_terms)
+    VALUES ('delete', old.handoff_id, old.summary, old.next_task, old.load_token, old.search_terms);
+  END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_update AFTER UPDATE ON handoff
+    WHEN old.summary IS NOT new.summary OR old.next_task IS NOT new.next_task
+      OR old.load_token IS NOT new.load_token OR old.search_terms IS NOT new.search_terms
+    BEGIN
+    INSERT INTO handoff_fts(handoff_fts, rowid, summary, next_task, load_token, search_terms)
+    VALUES ('delete', old.handoff_id, old.summary, old.next_task, old.load_token, old.search_terms);
+    INSERT INTO handoff_fts(rowid, summary, next_task, load_token, search_terms)
+    VALUES (new.handoff_id, new.summary, new.next_task, new.load_token, new.search_terms);
+  END`);
+}
+function createTurnNoteFts(db) {
+  const wasIncomplete = !ftsObjectsPresent(db, TURN_NOTE_FTS_OBJECTS);
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS turn_note_fts USING fts5(
+    u_text, note, search_terms, content='turn_note', content_rowid='turn_note_id')`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_insert AFTER INSERT ON turn_note BEGIN
+    INSERT INTO turn_note_fts(rowid, u_text, note, search_terms)
+    VALUES (new.turn_note_id, new.u_text, new.note, new.search_terms);
+  END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_delete AFTER DELETE ON turn_note BEGIN
+    INSERT INTO turn_note_fts(turn_note_fts, rowid, u_text, note, search_terms)
+    VALUES ('delete', old.turn_note_id, old.u_text, old.note, old.search_terms);
+  END`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_update AFTER UPDATE ON turn_note BEGIN
+    INSERT INTO turn_note_fts(turn_note_fts, rowid, u_text, note, search_terms)
+    VALUES ('delete', old.turn_note_id, old.u_text, old.note, old.search_terms);
+    INSERT INTO turn_note_fts(rowid, u_text, note, search_terms)
+    VALUES (new.turn_note_id, new.u_text, new.note, new.search_terms);
+  END`);
+  if (wasIncomplete) db.exec(`INSERT INTO turn_note_fts(turn_note_fts) VALUES('rebuild')`);
+}
+function ensureV2Shape(db) {
+  const hasHandoff = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff'").get();
+  const profileCols = db.prepare("PRAGMA table_info(profile)").all().map((c) => c.name);
+  const profileOk = profileCols.includes("segment") && profileCols.includes("archive_priority");
+  if (!hasHandoff || !profileOk) {
+    if (!profileOk && profileCols.includes("session_id") && !profileCols.includes("segment")) {
+      migrateProfileToSegment(db);
+      migrateProfilePaths(db);
+    }
+    if (!hasHandoff) createHandoffTable(db);
+  }
+}
+function migrate(db) {
+  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    const version2 = row ? parseInt(row.value) : 0;
+    if (version2 < 1) {
+      db.exec(SCHEMA_V1_SQL);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    if (version2 < 2) {
+      db.exec(`CREATE TABLE IF NOT EXISTS profile_paths (
+        session_id TEXT NOT NULL,
+        path       TEXT NOT NULL,
+        tokens     REAL NOT NULL,
+        PRIMARY KEY (session_id, path)
+      ) WITHOUT ROWID`);
+      migrateProfileToSegment(db);
+      migrateProfilePaths(db);
+      createHandoffTable(db);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    if (version2 < 3) {
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    if (version2 < 4) {
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    ensureV2Shape(db);
+    ensureV3Shape(db);
+    ensureV5Shape(db);
+    if (version2 < 5) {
+      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    }
+    db.exec("COMMIT");
+  } catch (err2) {
+    db.exec("ROLLBACK");
+    throw err2;
+  }
+  let handoffFtsAvailable = false;
+  let turnFtsAvailable = false;
+  try {
+    const wasIncomplete = !ftsObjectsPresent(db, HANDOFF_FTS_OBJECTS);
+    createHandoffFts(db);
+    if (wasIncomplete) db.exec("INSERT INTO handoff_fts(handoff_fts) VALUES('rebuild')");
+    handoffFtsAvailable = true;
+  } catch (ftsErr) {
+    console.warn("[store] FTS5 unavailable, handoff search disabled:", ftsErr.message);
+  }
+  try {
+    createTurnNoteFts(db);
+    turnFtsAvailable = true;
+  } catch (ftsErr) {
+    console.warn("[store] FTS5 unavailable, turn-note locate disabled:", ftsErr.message);
+  }
+  return { handoffFtsAvailable, turnFtsAvailable };
+}
+function openStore(dbPath) {
+  mkdirSync2(dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath, { timeout: 3e3 });
+  try {
+    const walResult = db.prepare("PRAGMA journal_mode=WAL").get();
+    const actualMode = String(walResult.journal_mode ?? "").toLowerCase();
+    if (actualMode !== "wal" && dbPath !== ":memory:") {
+      console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`);
+    }
+    db.exec("PRAGMA synchronous=NORMAL");
+    db.exec("PRAGMA auto_vacuum=INCREMENTAL");
+    const fts = migrate(db);
+    const store = new Store(db);
+    store.ftsAvailable = fts.handoffFtsAvailable;
+    store._turnFtsAvailable = fts.turnFtsAvailable;
+    return store;
+  } catch (err2) {
+    try {
+      db.close();
+    } catch {
+    }
+    throw err2;
+  }
+}
+function closeStore(store) {
+  if (store._closed) return;
+  store._closed = true;
+  store._db.close();
+}
+function defaultDbPath() {
+  return join3(homedir3(), ".session-watcher", "store.sqlite");
+}
+function initStore(dbPath) {
+  if (_instance) closeStore(_instance);
+  _instance = openStore(dbPath || defaultDbPath());
+  return _instance;
+}
+function getStore() {
+  if (!_instance) throw new Error("Store not initialized");
+  return _instance;
+}
+function closeStoreGlobal() {
+  if (_instance) {
+    closeStore(_instance);
+    _instance = null;
+  }
+}
+var yieldTick, ARCHIVE_PRIORITY, SCHEMA_V1_SQL, V3_HANDOFF_COLUMNS, HANDOFF_FTS_OBJECTS, TURN_NOTE_FTS_OBJECTS, Store, _instance;
+var init_store = __esm({
+  "lib/store.js"() {
+    init_constants();
+    yieldTick = () => new Promise((r) => setImmediate(r));
+    ARCHIVE_PRIORITY = { snapshot: 1, replay: 2, live: 3 };
+    SCHEMA_V1_SQL = `
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id  TEXT PRIMARY KEY,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  model       TEXT,
+  project_id  TEXT
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS state (
+  session_id TEXT    NOT NULL,
+  key        TEXT    NOT NULL,
+  value      TEXT    NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS config (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS lines (
+  session_id TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  line_num   INTEGER NOT NULL,
+  chars      INTEGER NOT NULL,
+  PRIMARY KEY (session_id, path, line_num)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS paths (
+  session_id TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  edit_delta  INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, path)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS profile (
+  session_id   TEXT PRIMARY KEY,
+  archived_at  INTEGER NOT NULL,
+  model        TEXT,
+  project_id   TEXT,
+  l_floor      REAL,
+  b_total      REAL,
+  l_peak       REAL,
+  g_final      REAL,
+  o_avg        REAL,
+  c_ratio      REAL,
+  turns        INTEGER,
+  duration_ms  INTEGER,
+  total_tokens_read REAL,
+  mf           REAL,
+  pp_exit      REAL,
+  br_exit      REAL,
+  br_peak      REAL,
+  pp_peak      REAL,
+  p0           REAL,
+  b_axis       REAL,
+  x_axis       REAL,
+  g_min        REAL,
+  turn_at_br_amber INTEGER
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS profile_paths (
+  session_id TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  tokens     REAL NOT NULL,
+  PRIMARY KEY (session_id, path)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
+CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC);
+CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
+`;
+    V3_HANDOFF_COLUMNS = [
+      ["delivered_session_id", "TEXT"],
+      ["loader_version", "TEXT"],
+      ["bucket_snapshot", "TEXT"],
+      ["transcript_path", "TEXT"]
+    ];
+    HANDOFF_FTS_OBJECTS = [
+      "handoff_fts",
+      "handoff_fts_insert",
+      "handoff_fts_delete",
+      "handoff_fts_update"
+    ];
+    TURN_NOTE_FTS_OBJECTS = [
+      "turn_note_fts",
+      "turn_note_fts_insert",
+      "turn_note_fts_delete",
+      "turn_note_fts_update"
+    ];
+    Store = class _Store {
+      constructor(db) {
+        this._db = db;
+        this._closed = false;
+        this._stmts = {
+          touchSession: db.prepare(`INSERT INTO sessions (session_id, created_at, updated_at, model, project_id) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at, model = COALESCE(excluded.model, sessions.model), project_id = COALESCE(excluded.project_id, sessions.project_id)`),
+          load: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
+          save: db.prepare(`INSERT INTO state (session_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+          delete: db.prepare("DELETE FROM state WHERE session_id = ? AND key = ?"),
+          loadAll: db.prepare("SELECT key, value FROM state WHERE session_id = ?"),
+          deleteSessionState: db.prepare("DELETE FROM state WHERE session_id = ?"),
+          deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
+          deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
+          deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
+          // Config CRUD
+          loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
+          saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`),
+          deleteConfig: db.prepare("DELETE FROM config WHERE key = ?"),
+          // Profile archival — v2 composite PK (session_id, segment)
+          loadProfile: db.prepare("SELECT * FROM profile WHERE session_id = ? AND segment = 0"),
+          loadAllProfiles: db.prepare("SELECT * FROM profile WHERE segment = 0 ORDER BY archived_at DESC"),
+          archiveSegment: db.prepare(`INSERT INTO profile (session_id, segment, archived_at, model, project_id,
+        l_floor, b_total, l_peak, g_final, o_avg, c_ratio, turns, duration_ms, total_tokens_read,
+        mf, pp_exit, br_exit, br_peak, pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber,
+        archive_source, archive_priority)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(session_id, segment) DO UPDATE SET
+          archived_at=excluded.archived_at, model=excluded.model, project_id=excluded.project_id,
+          l_floor=excluded.l_floor, b_total=excluded.b_total, l_peak=excluded.l_peak,
+          g_final=excluded.g_final, o_avg=excluded.o_avg, c_ratio=excluded.c_ratio,
+          turns=excluded.turns, duration_ms=excluded.duration_ms, total_tokens_read=excluded.total_tokens_read,
+          mf=excluded.mf, pp_exit=excluded.pp_exit, br_exit=excluded.br_exit, br_peak=excluded.br_peak,
+          pp_peak=excluded.pp_peak, p0=excluded.p0, b_axis=excluded.b_axis, x_axis=excluded.x_axis,
+          g_min=excluded.g_min, turn_at_br_amber=excluded.turn_at_br_amber,
+          archive_source=excluded.archive_source, archive_priority=excluded.archive_priority
+        WHERE excluded.archive_priority >= profile.archive_priority`),
+          deleteSegmentPaths: db.prepare("DELETE FROM profile_paths WHERE session_id = ? AND segment = ?"),
+          insertSegmentPath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?,?,?,?)"),
+          loadProfileSegments: db.prepare("SELECT * FROM profile WHERE session_id = ? ORDER BY segment ASC"),
+          // --- Segment telemetry (TXN2): profile_step_usage / profile_path_event + telemetry_status ---
+          deleteSegmentStepUsage: db.prepare("DELETE FROM profile_step_usage WHERE session_id = ? AND segment = ?"),
+          deleteSegmentPathEvents: db.prepare("DELETE FROM profile_path_event WHERE session_id = ? AND segment = ?"),
+          // plain INSERT (not INSERT OR REPLACE) — after the per-segment DELETE the table is clear for
+          //   this segment, so a duplicate (session,segment,folded_seq) can ONLY come from a real fold/replay
+          //   bug; let it THROW → the txn rolls back → failed_retryable (observable), not silent overwrite.
+          insertStepUsage: db.prepare(`INSERT INTO profile_step_usage
+        (session_id, segment, folded_seq, ts, cache_read, cache_creation, input, output, tool_calls, load_token)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`),
+          insertPathEvent: db.prepare(`INSERT INTO profile_path_event
+        (session_id, segment, folded_seq, event_ordinal, path, raw_path, tool_type, is_full_read)
+        VALUES (?,?,?,?,?,?,?,?)`),
+          // capture_source stamped WITH the status so provenance and status move together.
+          setTelemetryStatus: db.prepare("UPDATE profile SET telemetry_status = ?, capture_source = ? WHERE session_id = ? AND segment = ?"),
+          // Task 8 TXN1 handshake: a just-(re)written profile is needs-telemetry until TXN2 flips it. Clear
+          // capture_source too so a re-written pending row never shows the PRIOR capture's provenance
+          // (a crash between TXN1 and TXN2 would otherwise leave pending + a stale cc-live/cc-replay source).
+          markTelemetryPending: db.prepare("UPDATE profile SET telemetry_status = 'pending', capture_source = NULL WHERE session_id = ? AND segment = ?"),
+          setTelemetryStatusOnly: db.prepare("UPDATE profile SET telemetry_status = ? WHERE session_id = ? AND segment = ?"),
+          getTelemetryStatusRow: db.prepare("SELECT telemetry_status FROM profile WHERE session_id=? AND segment=?"),
+          // Task 10 startup sweep: DISTINCT sessions with ANY pending/failed_retryable/NULL segment,
+          // newest-first, capped by a SQL LIMIT. The (? IS NULL OR session_id <> ?) clause pushes the common
+          // single-live-id exclusion into SQL so the excluded session's rows do NOT consume the LIMIT (a
+          // multi-id Set is JS-filtered after). Session granularity — the production replay archives every
+          // occurred segment of a session in one pass, so the sweep issues ONE replay per DISTINCT session.
+          pendingTelemetrySessions: db.prepare(`SELECT DISTINCT session_id FROM profile
+        WHERE (telemetry_status IS NULL OR telemetry_status IN ('pending','failed_retryable'))
+          AND (? IS NULL OR session_id <> ?)
+        ORDER BY MAX(archived_at) OVER (PARTITION BY session_id) DESC
+        LIMIT ?`),
+          // Handoff CRUD
+          insertHandoff: db.prepare(`INSERT INTO handoff
+        (session_id, segment, load_token, created_at, paths_to_keep, summary, next_task,
+         summary_tokens, kept_tokens, discarded_tokens, prepared_at_turn, previous_stats, prepared_stats, search_terms, project_id, bucket_snapshot, transcript_path)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
+          // Step 3d: `AND delivered_at IS NULL` makes a DELIVERED handoff's telemetry immutable — a
+          // re-prepare with an already-consumed token gets changes===0 and the caller mints a fresh token
+          // via the insert path (never rewrites bucket_snapshot/hp at a different instant than delivery).
+          updateHandoff: db.prepare(`UPDATE handoff SET paths_to_keep = ?, summary = ?, next_task = ?,
+         summary_tokens = ?, kept_tokens = ?, discarded_tokens = ?, prepared_at_turn = ?,
+         previous_stats = ?, prepared_stats = ?, search_terms = ?, bucket_snapshot = ?, transcript_path = ?
+         WHERE load_token = ? AND delivered_at IS NULL`),
+          // Stamp ONLY paths_to_keep (per-entry telemetry back-fill: hp at prepare / hl at load). Keyed by
+          // handoff_id so a load-side stamp does not need the token in scope.
+          stampPathsToKeep: db.prepare("UPDATE handoff SET paths_to_keep = ? WHERE handoff_id = ?"),
+          loadHandoffToken: db.prepare("SELECT * FROM handoff WHERE load_token = ?"),
+          handoffExists: db.prepare("SELECT 1 FROM handoff WHERE load_token = ?"),
+          loadHandoffSession: db.prepare("SELECT * FROM handoff WHERE session_id = ? AND (project_id = ? OR ? IS NULL) ORDER BY created_at DESC LIMIT 1"),
+          loadHandoffByProject: db.prepare(`SELECT * FROM handoff
+        WHERE project_id = ? AND delivered_at IS NULL AND session_id <> ? AND created_at > ?
+        ORDER BY created_at DESC LIMIT 5`),
+          // Two stamps. markDelivered is the CAS for a never-delivered row. markDeliveredLegacy binds the
+          //   consumer of a v2 row that already has delivered_at but NULL consumer, WITHOUT touching the
+          //   historical delivered_at (guarded on delivered_session_id IS NULL so it fires at most once).
+          markDelivered: db.prepare("UPDATE handoff SET delivered_at = ?, delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NULL"),
+          markDeliveredLegacy: db.prepare("UPDATE handoff SET delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NOT NULL AND delivered_session_id IS NULL"),
+          insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
+        (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
+        VALUES (?,?,?,?,?,?,?)`),
+          // Lineage: the parent edge is the delivery a session consumed before it prepared its own
+          // handoff. LIMIT 1 is replacement semantics, not a query optimization — when one child
+          // session loaded several handoffs, only the newest qualifying delivery is its parent, and
+          // the earlier ones' ancestor chains are NOT merged in. Same millisecond breaks by handoff_id.
+          findParentDelivery: db.prepare(`SELECT h.* FROM handoff_load AS hl
+        JOIN handoff AS h ON h.handoff_id = hl.handoff_id
+       WHERE hl.session_id = ? AND hl.loaded_at <= ? AND h.project_id = ?
+       ORDER BY hl.loaded_at DESC, hl.handoff_id DESC LIMIT 1`),
+          findLatestDeliveryHandoff: db.prepare(`SELECT h.* FROM handoff_load AS hl
+        JOIN handoff AS h ON h.handoff_id = hl.handoff_id
+       WHERE hl.session_id = ? AND h.project_id = ?
+       ORDER BY hl.loaded_at DESC, hl.handoff_id DESC LIMIT 1`),
+          // A read tool resolves the head it should read from the running session's delivery facts alone.
+          // No project predicate: the handoff a session actually loaded is the one it may read, and parent
+          // traversal below still scopes itself by that head row's own project. Filtering here by the
+          // watcher's project would answer "nothing loaded" about a cross-project handoff just delivered.
+          // Select the delivery fact before joining its target: if GC removed that newest handoff, return
+          // no head rather than letting the inner join silently fall back to an older delivery contract.
+          findLatestDeliveryInSession: db.prepare(`SELECT h.* FROM (
+        SELECT handoff_id FROM handoff_load
+         WHERE session_id = ?
+         ORDER BY loaded_at DESC, handoff_id DESC LIMIT 1
+      ) AS latest JOIN handoff AS h ON h.handoff_id = latest.handoff_id`),
+          getHandoff: db.prepare("SELECT * FROM handoff WHERE handoff_id = ?"),
+          // Turn note CRUD
+          // created_at is written on insert only and deliberately absent from the SET list: the first
+          // write's timestamp is the row's own age, while a later submission only revises its content.
+          upsertTurnNote: db.prepare(`INSERT INTO turn_note
+        (source_session_id, anchor_uuid, u_text, u_original_chars, note, search_terms, source_timestamp, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_session_id, anchor_uuid) DO UPDATE SET
+          u_text = excluded.u_text, u_original_chars = excluded.u_original_chars,
+          note = excluded.note, search_terms = excluded.search_terms,
+          source_timestamp = excluded.source_timestamp`),
+          // No ORDER BY: the page orders by the runtime T it resolves after active-path projection,
+          // so a DB order here would only look authoritative.
+          listTurnNotes: db.prepare("SELECT * FROM turn_note WHERE source_session_id = ?"),
+          // Sweep (GC)
+          expiredSessions: db.prepare("SELECT session_id FROM sessions WHERE updated_at < ? ORDER BY updated_at ASC"),
+          deleteOldHandoffs: db.prepare("DELETE FROM handoff WHERE created_at < ?"),
+          // The sessions the age delete is about to take handoffs from — read before it runs, because once
+          // those rows are gone nothing tells a session that just lost its last handoff apart from one that
+          // never had a handoff to lose.
+          sessionsWithExpiringHandoffs: db.prepare("SELECT DISTINCT session_id FROM handoff WHERE created_at < ?"),
+          // Retirement granularity is the SOURCE SESSION, not the handoff: a note outlives any single
+          // handoff and dies only when its session has none left. source_timestamp never decides this.
+          // The NOT EXISTS is the rule, not a precaution: session scanning ages on the sweep's own window
+          // while handoff retention ages on GC_HANDOFF_MAX_AGE_DAYS, so an ungated cascade would take notes
+          // a handoff still loads (`store.turn-note.test.js` — `仍有存活 handoff 引用该会话时保留 turn_note`).
+          deleteTurnNotesIfNoHandoff: db.prepare(`DELETE FROM turn_note
+        WHERE source_session_id = ?
+          AND NOT EXISTS (SELECT 1 FROM handoff AS h WHERE h.session_id = turn_note.source_session_id)`),
+          loadSessionMeta: db.prepare("SELECT model, project_id FROM sessions WHERE session_id = ?"),
+          insertProfilePath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?, 0, ?, ?)"),
+          loadState: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
+          // Line-level operations (paths + lines tables)
+          clearLines: db.prepare("DELETE FROM lines WHERE session_id = ? AND path = ?"),
+          insertLine: db.prepare(`INSERT INTO lines (session_id, path, line_num, chars) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path, line_num) DO UPDATE SET chars = excluded.chars`),
+          upsertPath: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, 0, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET updated_at = excluded.updated_at`),
+          setDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = excluded.edit_delta, updated_at = excluded.updated_at`),
+          addDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = edit_delta + excluded.edit_delta, updated_at = excluded.updated_at`),
+          pathTotal: db.prepare(`SELECT COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
+        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
+        WHERE p.session_id = ? AND p.path = ?`),
+          allTotals: db.prepare(`SELECT p.path, COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
+        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
+        WHERE p.session_id = ? GROUP BY p.path`),
+          clearPathMeta: db.prepare("DELETE FROM paths WHERE session_id = ? AND path = ?"),
+          clearAllLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
+          clearAllPathsMeta: db.prepare("DELETE FROM paths WHERE session_id = ?")
+        };
+      }
+      load(sessionId, key) {
+        const row = this._stmts.load.get(sessionId, key);
+        if (!row) return null;
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return null;
+        }
+      }
+      save(sessionId, key, value, { model, projectId } = {}) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
+          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      saveBatch(sessionId, entries, { model, projectId } = {}) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          for (const [key, value] of entries) {
+            this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      delete(sessionId, key) {
+        this._stmts.delete.run(sessionId, key);
+      }
+      loadSession(sessionId) {
+        const rows = this._stmts.loadAll.all(sessionId);
+        const map = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          try {
+            map.set(row.key, JSON.parse(row.value));
+          } catch {
+          }
+        }
+        return map;
+      }
+      deleteSession(sessionId) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.deleteSessionState.run(sessionId);
+          this._stmts.deleteSessionPaths.run(sessionId);
+          this._stmts.deleteSessionLines.run(sessionId);
+          this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId);
+          this._stmts.deleteSessionRecord.run(sessionId);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // --- Config CRUD ---
+      loadConfig(key) {
+        const row = this._stmts.loadConfig.get(key);
+        if (!row) return null;
+        try {
+          return JSON.parse(row.value);
+        } catch {
+          return null;
+        }
+      }
+      saveConfig(key, value) {
+        this._stmts.saveConfig.run(key, JSON.stringify(value));
+      }
+      deleteConfig(key) {
+        this._stmts.deleteConfig.run(key);
+      }
+      // --- Profile archival ---
+      archiveSession(sessionId, snapshot) {
+        const snap = { ...snapshot, archivedAt: Date.now(), archiveSource: snapshot.archiveSource || "snapshot" };
+        this._db.exec("SAVEPOINT archive_session");
+        try {
+          this._archiveSegmentProfileInner(sessionId, 0, snap, []);
+          this._db.exec("RELEASE archive_session");
+        } catch (e) {
+          this._db.exec("ROLLBACK TO archive_session");
+          throw e;
+        }
+      }
+      _segmentArgs(sessionId, segment, s) {
+        const priority = ARCHIVE_PRIORITY[s.archiveSource] ?? 1;
+        return [
+          sessionId,
+          segment,
+          s.archivedAt ?? Date.now(),
+          s.model ?? null,
+          s.projectId ?? null,
+          s.lFloor ?? null,
+          s.bTotal ?? null,
+          s.lPeak ?? null,
+          s.gFinal ?? null,
+          s.oAvg ?? null,
+          s.cRatio ?? null,
+          s.turns ?? null,
+          s.durationMs ?? null,
+          s.totalTokensRead ?? null,
+          s.mf ?? null,
+          s.ppExit ?? null,
+          s.brExit ?? null,
+          s.brPeak ?? null,
+          s.ppPeak ?? null,
+          s.p0 ?? null,
+          s.bAxis ?? null,
+          s.xAxis ?? null,
+          s.gMin ?? null,
+          s.turnAtBrAmber ?? null,
+          s.archiveSource ?? null,
+          priority
+        ];
+      }
+      // R1-B: Single priority-guarded upsert. No `replace` flag — priority enforces in SQL.
+      // A lower-priority writer can NEVER clobber a higher one. Paths are rewritten (DELETE+INSERT)
+      // iff res.changes > 0 (a fresh insert or a qualifying higher-priority update).
+      // Returns { status: 'archived' | 'already_archived', source } per R1-D.
+      _archiveSegmentProfileInner(sessionId, segment, snapshot, paths) {
+        const args2 = this._segmentArgs(sessionId, segment, snapshot);
+        const res = this._stmts.archiveSegment.run(...args2);
+        if (res.changes > 0) {
+          this._stmts.deleteSegmentPaths.run(sessionId, segment);
+          for (const p of paths) this._stmts.insertSegmentPath.run(sessionId, segment, p.path, p.tokens);
+          this._stmts.markTelemetryPending.run(sessionId, segment);
+          return { status: "archived", source: snapshot.archiveSource };
+        }
+        return { status: "already_archived", source: snapshot.archiveSource };
+      }
+      archiveSegmentProfile(sessionId, segment, snapshot, paths = []) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          const result = this._archiveSegmentProfileInner(sessionId, segment, snapshot, paths);
+          this._db.exec("COMMIT");
+          return result;
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // One telemetry artifact, exactly as its producer detached it: `{ captureSource, payload }`. The Adapter
+      // decomposes it and owns the row mapping, so a producer never spells a column name. `captureSource` is the
+      // Projection's own capture label, recorded WITH the terminal status so provenance and status stay
+      // consistent.
+      archiveSegmentTelemetry(sessionId, segment, artifact) {
+        const captureSource = artifact?.captureSource ?? null;
+        const steps = artifact?.payload?.steps || [];
+        const events = artifact?.payload?.events || [];
+        let txnOpen = false;
+        try {
+          this._db.exec("BEGIN IMMEDIATE");
+          txnOpen = true;
+          const cur = this._stmts.getTelemetryStatusRow.get(sessionId, segment);
+          if (cur && (cur.telemetry_status === "complete" || cur.telemetry_status === "complete_empty")) {
+            this._db.exec("ROLLBACK");
+            txnOpen = false;
+            return { status: "skipped_stale" };
+          }
+          this._stmts.deleteSegmentStepUsage.run(sessionId, segment);
+          this._stmts.deleteSegmentPathEvents.run(sessionId, segment);
+          for (const s of steps) {
+            this._stmts.insertStepUsage.run(
+              sessionId,
+              segment,
+              s.foldedSeq,
+              s.ts ?? null,
+              s.cacheRead ?? null,
+              s.cacheCreation ?? null,
+              s.input ?? null,
+              s.output ?? null,
+              s.toolCalls ?? null,
+              s.loadToken ?? null
+            );
+          }
+          for (const e of events) {
+            this._stmts.insertPathEvent.run(
+              sessionId,
+              segment,
+              e.foldedSeq,
+              e.eventOrdinal,
+              e.path,
+              e.rawPath ?? e.path ?? null,
+              e.toolType,
+              e.isFullRead ?? null
+            );
+          }
+          const status = events.length === 0 ? "complete_empty" : "complete";
+          this._stmts.setTelemetryStatus.run(status, captureSource, sessionId, segment);
+          this._db.exec("COMMIT");
+          txnOpen = false;
+          return { status };
+        } catch (e) {
+          if (txnOpen) {
+            try {
+              this._db.exec("ROLLBACK");
+            } catch {
+            }
+          }
+          try {
+            this._stmts.setTelemetryStatusOnly.run("failed_retryable", sessionId, segment);
+          } catch (e2) {
+            if (process.env.SW_DEBUG) console.error("[telemetry-status]", e2.message);
+          }
+          if (process.env.SW_DEBUG) console.error("[archiveSegmentTelemetry]", e.message);
+          return { status: "failed_retryable" };
+        }
+      }
+      // Startup compensating sweep (spec §Startup compensating sweep). Runs AFTER open; MUST NOT be called
+      // inside the migration transaction. Selects DISTINCT sessions with any pending/failed/NULL segment and
+      // calls the injected replaySession ONCE per session — the PRODUCTION replay (carry-sweep) re-reads the
+      // transcript and archives every occurred segment through the application's own boundary path and TXN2.
+      // A never-occurred segment never boundaries → stays pending (no observed flag). The in-txn guard makes
+      // re-archiving an already-complete segment a no-op. Budgets on REAL wall-clock (performance.now());
+      // yields between sessions (setImmediate) so it is genuinely chunked. Injected replaySession keeps
+      // store.js free of any measurement-runtime import. Returns a work summary. ASYNC.
+      async backfillPendingTelemetry({
+        resolveTranscript,
+        replaySession,
+        excludeSessionIds = null,
+        limit = 200,
+        budgetMs = 1500,
+        yieldBetweenSessions = true
+      } = {}) {
+        const empty = { examined: 0, replayed: 0, missing: 0, aborted: false };
+        if (typeof resolveTranscript !== "function" || typeof replaySession !== "function") return empty;
+        const excluded = excludeSessionIds == null ? /* @__PURE__ */ new Set() : excludeSessionIds instanceof Set ? excludeSessionIds : /* @__PURE__ */ new Set([excludeSessionIds]);
+        const sqlExclude = excluded.size === 1 ? [...excluded][0] : null;
+        const sessions = this._stmts.pendingTelemetrySessions.all(sqlExclude, sqlExclude, limit).map((r) => r.session_id).filter((sid) => !excluded.has(sid));
+        const summary = { examined: 0, replayed: 0, missing: 0, aborted: false };
+        const deadline = performance2.now() + budgetMs;
+        for (const session_id of sessions) {
+          if (performance2.now() >= deadline) {
+            summary.aborted = true;
+            break;
+          }
+          summary.examined += 1;
+          try {
+            let txPath;
+            try {
+              txPath = resolveTranscript(session_id);
+            } catch {
+              txPath = null;
+            }
+            if (!txPath) {
+              summary.missing += 1;
+              continue;
+            }
+            const res = replaySession(session_id, txPath);
+            if (res == null) {
+              summary.missing += 1;
+              continue;
+            }
+            summary.replayed += 1;
+          } catch (e) {
+            summary.missing += 1;
+            if (process.env.SW_DEBUG) console.error("[telemetry-sweep session]", session_id, e.message);
+          }
+          if (yieldBetweenSessions) await yieldTick();
+        }
+        return summary;
+      }
+      getProfileSegments(sessionId) {
+        return this._stmts.loadProfileSegments.all(sessionId).map(_Store._camelizeProfile);
+      }
+      // #21: camelize profile rows from DB (snake_case columns -> camelCase JS API)
+      static _camelizeProfile(row) {
+        if (!row) return null;
+        return {
+          sessionId: row.session_id,
+          segment: row.segment,
+          archivedAt: row.archived_at,
+          model: row.model,
+          projectId: row.project_id,
+          lFloor: row.l_floor,
+          bTotal: row.b_total,
+          lPeak: row.l_peak,
+          gFinal: row.g_final,
+          oAvg: row.o_avg,
+          cRatio: row.c_ratio,
+          turns: row.turns,
+          durationMs: row.duration_ms,
+          totalTokensRead: row.total_tokens_read,
+          mf: row.mf,
+          ppExit: row.pp_exit,
+          brExit: row.br_exit,
+          brPeak: row.br_peak,
+          ppPeak: row.pp_peak,
+          p0: row.p0,
+          bAxis: row.b_axis,
+          xAxis: row.x_axis,
+          gMin: row.g_min,
+          turnAtBrAmber: row.turn_at_br_amber,
+          archiveSource: row.archive_source,
+          archivePriority: row.archive_priority
+        };
+      }
+      getProfile(sessionId) {
+        return _Store._camelizeProfile(this._stmts.loadProfile.get(sessionId));
+      }
+      getAllProfiles() {
+        return this._stmts.loadAllProfiles.all().map(_Store._camelizeProfile);
+      }
+      // --- Sweep (GC): replay-first archive-then-delete expired sessions ---
+      sweep(maxAgeMs, {
+        now = Date.now(),
+        isLiveSession,
+        resolveTranscriptPath,
+        replaySession,
+        limit = GC_BATCH_LIMIT
+      } = {}) {
+        try {
+          const handoffCutoff = now - GC_HANDOFF_MAX_AGE_DAYS * 24 * 3600 * 1e3;
+          this._db.exec("BEGIN IMMEDIATE");
+          const candidates = this._stmts.sessionsWithExpiringHandoffs.all(handoffCutoff);
+          this._stmts.deleteOldHandoffs.run(handoffCutoff);
+          for (const { session_id } of candidates) this._stmts.deleteTurnNotesIfNoHandoff.run(session_id);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          try {
+            this._db.exec("ROLLBACK");
+          } catch {
+          }
+          if (process.env.SW_DEBUG) console.error("[sweep] handoff GC", e.message);
+        }
+        const cutoff = now - maxAgeMs;
+        const expired = this._stmts.expiredSessions.all(cutoff);
+        let count = 0;
+        for (const { session_id } of expired) {
+          if (count >= limit) break;
+          if (isLiveSession && isLiveSession(session_id)) continue;
+          const transcriptPath = resolveTranscriptPath ? resolveTranscriptPath(session_id) : null;
+          const canReplay = transcriptPath && replaySession && this._canReplay(transcriptPath);
+          let archiveOk = false;
+          try {
+            if (canReplay) {
+              replaySession(session_id, transcriptPath);
+              archiveOk = true;
+            } else {
+              archiveOk = this._gcFromSnapshot(session_id);
+            }
+          } catch (e) {
+            if (process.env.SW_DEBUG) console.error("[sweep] archive", session_id, e.message);
+          }
+          if (archiveOk) {
+            this._cascadeDelete(session_id);
+            count++;
+          }
+        }
+        if (count > 0) {
+          try {
+            this._db.exec("PRAGMA incremental_vacuum");
+          } catch {
+          }
+        }
+        return count;
+      }
+      _canReplay(transcriptPath) {
+        try {
+          const st = statSync2(transcriptPath);
+          return st.isFile() && st.size <= GC_REPLAY_MAX_FILE_BYTES;
+        } catch {
+          return false;
+        }
+      }
+      _gcFromSnapshot(sessionId) {
+        const snapRow = this._stmts.loadState.get(sessionId, "profile_snapshot");
+        const sessRow = this._stmts.loadSessionMeta.get(sessionId);
+        if (!snapRow && !sessRow) return true;
+        const snap = snapRow ? JSON.parse(snapRow.value) : {};
+        this.archiveSegmentProfile(sessionId, snap.segment ?? 0, {
+          archiveSource: "snapshot",
+          model: snap.model || sessRow?.model || null,
+          projectId: sessRow?.project_id || null,
+          bTotal: snap.b_total,
+          gFinal: snap.g_final,
+          lPeak: snap.l_peak,
+          cRatio: snap.c_ratio,
+          turns: snap.turns,
+          mf: snap.mf,
+          brExit: snap.br_exit
+        }, snap.paths || []);
+        return true;
+      }
+      _cascadeDelete(sessionId) {
+        this.deleteSession(sessionId);
+      }
+      // --- Line-level operations (paths + lines tables) ---
+      setLines(sessionId, path3, entries) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.setDelta.run(sessionId, path3, 0, now);
+          this._stmts.clearLines.run(sessionId, path3);
+          for (const [lineNum, chars] of entries) {
+            this._stmts.insertLine.run(sessionId, path3, lineNum, chars);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      updateLines(sessionId, path3, entries) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.upsertPath.run(sessionId, path3, now);
+          for (const [lineNum, chars] of entries) {
+            this._stmts.insertLine.run(sessionId, path3, lineNum, chars);
+          }
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      addEditDelta(sessionId, path3, delta) {
+        const now = Date.now();
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.addDelta.run(sessionId, path3, delta, now);
+          this._stmts.touchSession.run(sessionId, now, now, null, null);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      getPathTotal(sessionId, path3) {
+        const row = this._stmts.pathTotal.get(sessionId, path3);
+        return row ? row.total : 0;
+      }
+      getAllPathTotals(sessionId) {
+        const rows = this._stmts.allTotals.all(sessionId);
+        const map = /* @__PURE__ */ new Map();
+        for (const row of rows) map.set(row.path, row.total);
+        return map;
+      }
+      clearPath(sessionId, path3) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.clearLines.run(sessionId, path3);
+          this._stmts.clearPathMeta.run(sessionId, path3);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      clearAllPaths(sessionId) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          this._stmts.clearAllLines.run(sessionId);
+          this._stmts.clearAllPathsMeta.run(sessionId);
+          this._db.exec("COMMIT");
+        } catch (e) {
+          this._db.exec("ROLLBACK");
+          throw e;
+        }
+      }
+      // --- Handoff CRUD ---
+      static _camelizeHandoff(r) {
+        if (!r) return null;
+        return {
+          handoffId: r.handoff_id,
+          sessionId: r.session_id,
+          segment: r.segment,
+          loadToken: r.load_token,
+          createdAt: r.created_at,
+          pathsToKeep: r.paths_to_keep,
+          summary: r.summary,
+          nextTask: r.next_task,
+          summaryTokens: r.summary_tokens,
+          keptTokens: r.kept_tokens,
+          discardedTokens: r.discarded_tokens,
+          preparedAtTurn: r.prepared_at_turn,
+          previousStats: r.previous_stats,
+          preparedStats: r.prepared_stats,
+          searchTerms: r.search_terms,
+          projectId: r.project_id,
+          deliveredAt: r.delivered_at,
+          deliveredSegment: r.delivered_segment,
+          deliveredSessionId: r.delivered_session_id,
+          loaderVersion: r.loader_version,
+          bucketSnapshot: r.bucket_snapshot,
+          transcriptPath: r.transcript_path
+        };
+      }
+      insertHandoff(row) {
+        const res = this._stmts.insertHandoff.run(
+          row.sessionId,
+          row.segment,
+          row.loadToken,
+          row.createdAt,
+          row.pathsToKeep,
+          row.summary,
+          row.nextTask ?? null,
+          row.summaryTokens,
+          row.keptTokens ?? null,
+          row.discardedTokens ?? null,
+          row.preparedAtTurn ?? null,
+          row.previousStats ?? null,
+          row.preparedStats ?? null,
+          row.searchTerms ?? null,
+          row.projectId ?? null,
+          row.bucketSnapshot ?? null,
+          row.transcriptPath ?? null
+        );
+        return { handoffId: Number(res.lastInsertRowid) };
+      }
+      // Overwrite paths_to_keep with per-entry telemetry (content_hash_load stamping). Fire-and-forget:
+      // the caller has already committed the claim; this is a post-txn back-fill of hl on the stored row.
+      stampContentHashLoad(handoffId, pathsToKeepJson) {
+        this._stmts.stampPathsToKeep.run(pathsToKeepJson, handoffId);
+      }
+      insertHandoffLoad({ handoffId, sessionId, loadedAt, loaderVersion, claimResult, primarySessionId, consumerSegment }) {
+        this._stmts.insertHandoffLoad.run(
+          handoffId,
+          sessionId,
+          loadedAt,
+          loaderVersion ?? null,
+          claimResult,
+          primarySessionId ?? null,
+          consumerSegment ?? null
+        );
+      }
+      updateHandoff(token, row) {
+        const res = this._stmts.updateHandoff.run(
+          row.pathsToKeep,
+          row.summary,
+          row.nextTask ?? null,
+          row.summaryTokens,
+          row.keptTokens ?? null,
+          row.discardedTokens ?? null,
+          row.preparedAtTurn ?? null,
+          row.previousStats ?? null,
+          row.preparedStats ?? null,
+          row.searchTerms ?? null,
+          row.bucketSnapshot ?? null,
+          row.transcriptPath ?? null,
+          token
+        );
+        return res.changes > 0;
+      }
+      // PURE classifier: given the committed handoff row + this caller's session, what is the claim
+      // relationship? Used by the txn body AND the catch path so both agree on committed state.
+      static _classifyClaim(row, sessionId) {
+        if (row.delivered_session_id != null && row.delivered_session_id !== sessionId) {
+          return { claimResult: "duplicate", primarySessionId: row.delivered_session_id };
+        }
+        return { claimResult: "primary", primarySessionId: null };
+      }
+      // Delivery: read the handoff row, write the first primary binding when absent, write one `handoff_load`
+      // attempt, and return the detached row — all in one transaction. Response composition is the caller's and
+      // starts after commit, so a same-session retry recomposes rather than re-binds. Only the failure carries
+      // `ok` (`ok: false`); a delivered row has no `ok` field and an unknown token returns null, so a caller
+      // tells failure by `ok === false`.
+      deliverHandoffByToken(token, opts = {}) {
+        const row = this._stmts.loadHandoffToken.get(token);
+        if (!row) return null;
+        const { sessionId = null, loaderVersion = null, consumerSegment = null } = opts;
+        if (sessionId == null) {
+          const out3 = _Store._camelizeHandoff(row);
+          out3.claimResult = "primary";
+          out3.claimedNow = false;
+          return out3;
+        }
+        const now = Date.now();
+        let claimResult = "primary";
+        let primarySessionId = null;
+        let claimedNow = false;
+        let legacyBind = false;
+        try {
+          this._db.exec("BEGIN IMMEDIATE");
+          if (row.delivered_at == null) {
+            const { changes } = this._stmts.markDelivered.run(now, sessionId, consumerSegment, loaderVersion, row.handoff_id);
+            if (changes > 0) {
+              claimedNow = true;
+              row.delivered_at = now;
+              row.delivered_session_id = sessionId;
+              row.delivered_segment = consumerSegment;
+              row.loader_version = loaderVersion;
+            } else {
+              Object.assign(row, this._stmts.loadHandoffToken.get(token));
+            }
+          } else if (row.delivered_session_id == null) {
+            const { changes } = this._stmts.markDeliveredLegacy.run(sessionId, consumerSegment, loaderVersion, row.handoff_id);
+            if (changes > 0) {
+              legacyBind = true;
+              claimedNow = true;
+              row.delivered_session_id = sessionId;
+              row.delivered_segment = consumerSegment;
+              row.loader_version = loaderVersion;
+            } else {
+              Object.assign(row, this._stmts.loadHandoffToken.get(token));
+            }
+          }
+          ({ claimResult, primarySessionId } = _Store._classifyClaim(row, sessionId));
+          if (legacyBind) claimResult = "legacy_unattributed";
+          this._stmts.insertHandoffLoad.run(
+            row.handoff_id,
+            sessionId,
+            now,
+            loaderVersion ?? null,
+            claimResult,
+            primarySessionId ?? null,
+            consumerSegment ?? null
+          );
+          this._db.exec("COMMIT");
+        } catch (e) {
+          try {
+            this._db.exec("ROLLBACK");
+          } catch {
+          }
+          if (process.env.SW_DEBUG) console.error("[handoff_load]", e.message);
+          return { ok: false, error: "handoff_delivery_unavailable", retryable: true };
+        }
+        const out2 = _Store._camelizeHandoff(row);
+        out2.claimResult = claimResult;
+        out2.claimedNow = claimedNow;
+        return out2;
+      }
+      hasHandoff(token) {
+        return !!this._stmts.handoffExists.get(token);
+      }
+      // R1-H: project-scoped — filters by project_id when provided (NULL = any project).
+      loadHandoffBySession(sid, { projectId = null } = {}) {
+        return _Store._camelizeHandoff(this._stmts.loadHandoffSession.get(sid, projectId, projectId));
+      }
+      // The undelivered handoffs of one project this session may auto-match, as one of three answers. It is
+      // READ-ONLY: nothing may be stamped while more than one candidate matches, so the decision and the write
+      // are separate operations.
+      findPendingHandoffsByProject(projectId, sessionId, { ttlMs = 7 * 864e5 } = {}) {
+        if (!projectId) return { status: "none" };
+        const cutoff = Date.now() - ttlMs;
+        const rows = this._stmts.loadHandoffByProject.all(projectId, sessionId, cutoff).map(_Store._camelizeHandoff);
+        if (rows.length === 0) return { status: "none" };
+        if (rows.length > 1) return { status: "ambiguous", rows };
+        return { status: "unique", row: rows[0] };
+      }
+      // R1-H: project-scoped FTS search. Statement prepared LAZILY (handoff_fts may not exist).
+      searchHandoff(matchExpr, { projectId = null, limit = 3 } = {}) {
+        if (!this.ftsAvailable) return [];
+        if (!this._searchStmt) {
+          this._searchStmt = this._db.prepare(`SELECT h.load_token, h.created_at, h.next_task,
+        substr(h.summary, 1, 200) AS summary_preview
+        FROM handoff_fts JOIN handoff h ON h.handoff_id = handoff_fts.rowid
+        WHERE handoff_fts MATCH ? AND (h.project_id = ? OR ? IS NULL)
+        ORDER BY rank LIMIT ?`);
+        }
+        return this._searchStmt.all(matchExpr, projectId, projectId, limit).map((r) => ({
+          loadToken: r.load_token,
+          createdAt: r.created_at,
+          nextTask: r.next_task,
+          summaryPreview: r.summary_preview
+        }));
+      }
+      // The handoff whose delivery into `sessionId` happened no later than `createdAt` — i.e. the
+      // parent of the handoff that `sessionId` went on to prepare at `createdAt`.
+      findParentDelivery(projectId, sessionId, createdAt) {
+        return _Store._camelizeHandoff(this._stmts.findParentDelivery.get(sessionId, createdAt, projectId));
+      }
+      // The latest handoff delivered into `sessionId` with no cutoff — the head for a running session.
+      findLatestDeliveryHandoff(projectId, sessionId) {
+        return _Store._camelizeHandoff(this._stmts.findLatestDeliveryHandoff.get(sessionId, projectId));
+      }
+      // The newest handoff this session actually loaded, across every project — the head the turn read
+      // tools resolve without being handed one.
+      findLatestDeliveryInSession(sessionId) {
+        return _Store._camelizeHandoff(this._stmts.findLatestDeliveryInSession.get(sessionId));
+      }
+      // An explicit handoff_id already names one row, so no caller project filter is applied; the
+      // returned row's projectId is the scope the lineage walk then uses.
+      getHandoff(handoffId) {
+        return _Store._camelizeHandoff(this._stmts.getHandoff.get(handoffId));
+      }
+      // --- Turn note CRUD ---
+      static _camelizeTurnNote(r) {
+        if (!r) return null;
+        return {
+          turnNoteId: r.turn_note_id,
+          sourceSessionId: r.source_session_id,
+          anchorUuid: r.anchor_uuid,
+          uText: r.u_text,
+          uOriginalChars: r.u_original_chars,
+          note: r.note,
+          searchTerms: r.search_terms,
+          sourceTimestamp: r.source_timestamp,
+          createdAt: r.created_at
+        };
+      }
+      // Whole-batch atomicity: one bad row rolls the entire submission back, so a caller never has to
+      // reason about a half-written turn queue. exec, not prepare — prepare('BEGIN IMMEDIATE') only
+      // compiles the statement and would silently leave every write outside a transaction.
+      upsertTurnNotes(rows) {
+        this._db.exec("BEGIN IMMEDIATE");
+        try {
+          for (const r of rows) this._stmts.upsertTurnNote.run(
+            r.sourceSessionId,
+            r.anchorUuid,
+            r.uText,
+            r.uOriginalChars,
+            r.note ?? null,
+            r.searchTerms,
+            r.sourceTimestamp,
+            Date.now()
+          );
+          this._db.exec("COMMIT");
+        } catch (err2) {
+          try {
+            this._db.exec("ROLLBACK");
+          } catch {
+          }
+          throw err2;
+        }
+      }
+      listTurnNotes(sessionId) {
+        return this._stmts.listTurnNotes.all(sessionId).map(_Store._camelizeTurnNote);
+      }
+      // FTS locate across a lineage's sessions. The IN list is variable-length (lineage depth), so the
+      // statement is built and prepared per call — the set is tiny. No LIMIT: the top rows are taken
+      // after the caller validates each anchor against the active path, which can drop matches.
+      locateTurnNotes(sessionIds, matchExpr) {
+        if (!sessionIds || sessionIds.length === 0) return [];
+        const holes = sessionIds.map(() => "?").join(",");
+        const sql = `SELECT tn.* FROM turn_note_fts
+      JOIN turn_note AS tn ON tn.turn_note_id = turn_note_fts.rowid
+     WHERE turn_note_fts MATCH ? AND tn.source_session_id IN (${holes})
+     ORDER BY bm25(turn_note_fts) ASC, tn.source_timestamp DESC, tn.source_session_id, tn.anchor_uuid`;
+        return this._db.prepare(sql).all(matchExpr, ...sessionIds).map(_Store._camelizeTurnNote);
+      }
+      turnFtsAvailable() {
+        return this._turnFtsAvailable === true;
+      }
+      resetForTesting() {
+        closeStoreGlobal();
+      }
+    };
+    _instance = null;
+  }
+});
+
+// lib/ledger-schema.js
+function validateLedgerState(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  if (obj.schemaVersion !== SCHEMA_VERSION) return null;
+  if (typeof obj.stateKey !== "string") return null;
+  if (obj.billingBasis !== "fullCarry") return null;
+  if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
+  if (obj.recentStopEvents === void 0) obj.recentStopEvents = [];
+  if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
+  if (!(typeof obj.billProgress === "number" && obj.billProgress >= 0 && obj.billProgress < 1)) return null;
+  if (!(typeof obj.walletPhase === "number" && obj.walletPhase >= 0 && obj.walletPhase < 1)) return null;
+  for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
+  if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
+  if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
+  if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
+  for (const e of obj.recentStopEvents) {
+    if (!e || typeof e !== "object") return null;
+    if (typeof e.kind !== "string") return null;
+  }
+  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
+  for (const id of obj.recentProcessedHookEventIds) if (typeof id !== "string") return null;
+  return obj;
+}
+function validateRateLampSample(obj) {
+  if (!obj || typeof obj !== "object") return false;
+  if (typeof obj.reliable !== "boolean") return false;
+  if (!Number.isInteger(obj.seq) || obj.seq < 0) return false;
+  if (!Number.isInteger(obj.turnSeq) || obj.turnSeq < 0) return false;
+  if (obj.reliable) {
+    if (!(Number.isFinite(obj.L_read) && obj.L_read >= 0)) return false;
+    if (obj.deltaW !== null && !(Number.isFinite(obj.deltaW) && obj.deltaW >= 0)) return false;
+    if (obj.mf !== null && !Number.isFinite(obj.mf)) return false;
+  }
+  return true;
+}
+var SCHEMA_VERSION, intFields, PAUSE_REASONS;
+var init_ledger_schema = __esm({
+  "lib/ledger-schema.js"() {
+    init_constants();
+    SCHEMA_VERSION = 3;
+    intFields = [
+      "billCycleCount",
+      "walletLapCount",
+      "lastAppliedFoldedCallSeq",
+      "currentTurnSeq",
+      "cacheExpiryCount",
+      "ledgerRevision"
+    ];
+    PAUSE_REASONS = /* @__PURE__ */ new Set([
+      null,
+      "folded_seq_gap",
+      "metrics_unreliable",
+      "invalid_baseline",
+      "insufficient_data",
+      "cache_unstable",
+      "seq_history_mismatch",
+      "invalid_sample"
+    ]);
+  }
+});
+
+// lib/rate-lamp-store.js
+function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion }) {
+  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
+}
+function stateKeyForStatus(status) {
+  return stateKeyOf({
+    segmentId: status.segment,
+    model: null,
+    cRatio: null,
+    baselineFingerprint: null,
+    contextCap: null,
+    schemaVersion: 1
+  });
+}
+function freshLedger(stateKey) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    stateKey,
+    billingBasis: "fullCarry",
+    billProgress: 0,
+    billCycleCount: 0,
+    walletPhase: 0,
+    walletLapCount: 0,
+    lastAppliedFoldedCallSeq: 0,
+    currentTurnSeq: 0,
+    pausedReason: null,
+    cacheExpiryCount: 0,
+    lastStopEvent: null,
+    // condition-cleared: visible until the next human turn boundary
+    ledgerRevision: 0,
+    recentStopEvents: [],
+    recentProcessedHookEventIds: []
+  };
+}
+function invalidPausedLedger(prev) {
+  const stateKey = prev && typeof prev === "object" && typeof prev.stateKey === "string" ? prev.stateKey : "__invalid__";
+  const s = freshLedger(stateKey);
+  s.pausedReason = "invalid_sample";
+  return s;
+}
+function pushStopEventRing(ledgerOrDraft, evt) {
+  if (!ledgerOrDraft.recentStopEvents) ledgerOrDraft.recentStopEvents = [];
+  ledgerOrDraft.recentStopEvents.push(evt);
+  if (ledgerOrDraft.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) {
+    ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - RECENT_STOP_EVENTS_LIMIT);
+  }
+}
+function applyFoldedCallSample(prev, sample) {
+  if (!validateLedgerState(prev)) return invalidPausedLedger(prev);
+  const s = { ...prev };
+  if (!validateRateLampSample(sample)) {
+    s.pausedReason = "invalid_sample";
+    return s;
+  }
+  if (sample.seq <= s.lastAppliedFoldedCallSeq) return s;
+  if (s.lastAppliedFoldedCallSeq !== 0 && sample.seq !== s.lastAppliedFoldedCallSeq + 1) {
+    s.pausedReason = "folded_seq_gap";
+    s.lastAppliedFoldedCallSeq = sample.seq;
+    return s;
+  }
+  s.lastAppliedFoldedCallSeq = sample.seq;
+  if (!sample.reliable) {
+    s.pausedReason = sample.unavailableReason || "insufficient_data";
+    return s;
+  }
+  if (sample.deltaW === null) return s;
+  s.pausedReason = null;
+  let bill = s.billProgress + sample.deltaW;
+  while (bill >= 1) {
+    bill -= 1;
+    s.billCycleCount += 1;
+  }
+  s.billProgress = bill;
+  const interval = walletIntervalFor(sample.mf, BR_AMBER);
+  let phase = s.walletPhase + sample.deltaW / interval;
+  while (phase >= 1) {
+    phase -= 1;
+    s.walletLapCount += 1;
+  }
+  s.walletPhase = phase;
+  return s;
+}
+function drainFrame(ledger, frame) {
+  const preExisting = ledger.lastStopEvent;
+  for (const sample of frame.samples) {
+    if (!(sample.seq > ledger.lastAppliedFoldedCallSeq)) continue;
+    if (sample.turnSeq > ledger.currentTurnSeq && ledger.lastStopEvent && ledger.lastStopEvent === preExisting) {
+      ledger.lastStopEvent = null;
+    }
+    const lapsBefore = ledger.walletLapCount;
+    Object.assign(ledger, applyFoldedCallSample(ledger, sample));
+    if (ledger.walletLapCount > lapsBefore) {
+      const event = {
+        kind: "backstop",
+        delivery: "reader_path",
+        message: `Carry rent reminder ${ledger.walletLapCount}: accumulated rent reached the reminder point. Consider restart/compact at the next natural boundary.`,
+        billCount: ledger.walletLapCount,
+        seq: sample.seq
+      };
+      ledger.lastStopEvent = event;
+      pushStopEventRing(ledger, event);
+    }
+  }
+  ledger.currentTurnSeq = frame.turnSeq;
+}
+function loadRateLampState(sessionId) {
+  try {
+    return validateLedgerState(getStore().load(sessionId, "ledger"));
+  } catch {
+    return null;
+  }
+}
+function saveRateLampState(sessionId, state) {
+  getStore().save(sessionId, "ledger", state);
+}
+var init_rate_lamp_store = __esm({
+  "lib/rate-lamp-store.js"() {
+    init_store();
+    init_ledger_schema();
+    init_constants();
+    init_bill_regret();
+  }
+});
+
+// lib/rate-lamp-manager.js
+var rate_lamp_manager_exports = {};
+__export(rate_lamp_manager_exports, {
+  _resetRateLampManagerForTest: () => _resetRateLampManagerForTest,
+  _setRateLampManagerTestHooks: () => _setRateLampManagerTestHooks,
+  advanceRateLampToCurrent: () => advanceRateLampToCurrent,
+  enrichStatusLandmarks: () => enrichStatusLandmarks,
+  flushAll: () => flushAll,
+  flushPendingPersistsSync: () => flushPendingPersistsSync,
+  getDebugCounters: () => getDebugCounters,
+  getLiveLedger: () => getLiveLedger,
+  isEnospcPaused: () => isEnospcPaused,
+  mergeLedgerIntoStatus: () => mergeLedgerIntoStatus,
+  mutateLedger: () => mutateLedger,
+  persistLedger: () => persistLedger,
+  releaseSession: () => releaseSession,
+  schedulePersist: () => schedulePersist,
+  setLiveLedger: () => setLiveLedger
+});
+function _startCoalescedTimer() {
+  if (_coalescedTimer) return;
+  const schedulerFn = _testScheduler || setInterval;
+  _coalescedTimer = schedulerFn(_flushCoalescedPersist, COALESCED_PERSIST_MS);
+  if (_coalescedTimer && typeof _coalescedTimer.unref === "function") _coalescedTimer.unref();
+}
+function _flushCoalescedPersist() {
+  for (const sid of _pendingPersistSids) {
+    if (_enospcPaused.has(sid)) continue;
+    try {
+      const ledger = _ledgers.get(sid);
+      if (!ledger) {
+        _pendingPersistSids.delete(sid);
+        continue;
+      }
+      persistLedger(sid, ledger);
+    } catch (e) {
+      _enospcPaused.add(sid);
+      _counters.enospcEngagements++;
+      if (process.env.SW_DEBUG) console.error(`[rate-lamp] ENOSPC pause engaged for ${sid}:`, e.message);
+    }
+  }
+  _pendingPersistSids.clear();
+  for (const sid of _enospcPaused) {
+    try {
+      const ledger = _ledgers.get(sid);
+      if (!ledger) {
+        _enospcPaused.delete(sid);
+        continue;
+      }
+      persistLedger(sid, ledger, { force: true });
+      clearEnospcPause(sid);
+    } catch {
+    }
+  }
+}
+function flushPendingPersistsSync() {
+  _flushCoalescedPersist();
+}
+function schedulePersist(sessionId) {
+  if (_enospcPaused.has(sessionId)) return;
+  if (_pendingPersistSids.has(sessionId)) {
+    _counters.coalesceHits++;
+  } else {
+    _counters.coalesceMisses++;
+    _pendingPersistSids.add(sessionId);
+  }
+  _startCoalescedTimer();
+}
+function isEnospcPaused(sessionId) {
+  return _enospcPaused.has(sessionId);
+}
+function clearEnospcPause(sessionId) {
+  _enospcPaused.delete(sessionId);
+  _counters.enospcRecoveries++;
+}
+function persistLedger(sessionId, ledger, { force = false } = {}) {
+  const ledgerRev = ledger.ledgerRevision ?? 0;
+  const lastPersistedRev = _lastPersistedRevision.get(sessionId) ?? 0;
+  if (!force && ledgerRev < lastPersistedRev) {
+    _counters.revisionGateBlocks++;
+    if (process.env.SW_DEBUG) console.error(`[rate-lamp] revision gate: refusing rev ${ledgerRev} <= last-persisted ${lastPersistedRev} for ${sessionId}`);
+    return;
+  }
+  if (ledgerRev === lastPersistedRev && !force) {
+    const savedContent = _lastSaved.get(sessionId);
+    if (savedContent !== void 0) {
+      if (JSON.stringify(ledger) !== savedContent) {
+        _counters.revisionGateBlocks++;
+        console.error(`[rate-lamp] DEAD-LETTER: escaped mutation for ${sessionId} \u2014 content differs at same revision ${ledgerRev}. mutateLedger was bypassed (invariant breach).`);
+      }
+      return;
+    }
+  }
+  const serialized = JSON.stringify(ledger);
+  if (!force && _lastSaved.get(sessionId) === serialized) return;
+  if (_testWriter) {
+    _testWriter(sessionId, ledger);
+  } else {
+    saveRateLampState(sessionId, ledger);
+  }
+  _lastSaved.set(sessionId, serialized);
+  _lastPersistedRevision.set(sessionId, ledgerRev);
+  _counters.diskWrites++;
+}
+function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq }) {
+  const matches = persisted && persisted.stateKey === currentKey;
+  const base = matches ? { ...persisted } : freshLedger(currentKey);
+  return {
+    ...base,
+    stateKey: currentKey,
+    // PRESERVED on a match: billProgress, billCycleCount, walletPhase, walletLapCount.
+    // The folded cursor moves to the frame TAIL, which is what skips this frame's samples.
+    lastAppliedFoldedCallSeq: frameTailSeq,
+    pausedReason: null,
+    // A pulse is an in-process single-turn signal. Carrying `lastStopEvent` across a discontinuity would
+    // re-render an alert for context this stream no longer contains.
+    lastStopEvent: null,
+    currentTurnSeq: frameTurnSeq
+  };
+}
+function mergeLedgerIntoStatus(status, ledger, currentKey) {
+  status.rateLamp = status.rateLamp || {};
+  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
+  if (!status.rateLamp?.reliable || !ledger || ledger.stateKey !== currentKey) {
+    status.rateLamp.dhat = status.rateLamp.dhat ?? null;
+    return status;
+  }
+  const rl = status.rateLamp;
+  rl.billProgress = ledger.billProgress;
+  rl.billingCycle = { progress: ledger.billProgress };
+  rl.billCycleCount = ledger.billCycleCount ?? 0;
+  rl.currentTurnSeq = ledger.currentTurnSeq;
+  if (ledger.lastStopEvent) rl.lastStopEvent = ledger.lastStopEvent;
+  const interval = walletIntervalFor(rl.mfLocal, BR_AMBER);
+  rl.rentMeter = {
+    cycleProgress: ledger.billProgress,
+    depthActive: true,
+    depthProgress: ledger.walletPhase,
+    backstopInterval: Number.isFinite(interval) ? interval : null,
+    backstopLapCount: ledger.walletLapCount,
+    depthHot: ledger.walletLapCount >= DEPTH_HOT_LAP_COUNT
+  };
+  enrichStatusLandmarks(status);
+  return status;
+}
+function enrichStatusLandmarks(status) {
+  status.rateLamp = status.rateLamp || {};
+  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
+  const rl = status.rateLamp;
+  if (!(rl.B_default > 0 && rl.C_RATIO > 0)) return status;
+  rl.wallP = wallPositionFor(rl.C_RATIO);
+  return status;
+}
+function mutateLedger(ledger, reason, fn) {
+  const before = JSON.stringify(ledger);
+  const draft = structuredClone(ledger);
+  fn(draft);
+  const after = JSON.stringify(draft);
+  if (after === before) return ledger;
+  draft.ledgerRevision = (ledger.ledgerRevision ?? 0) + 1;
+  return draft;
+}
+function hydrateLedger(sessionId) {
+  const live = _ledgers.get(sessionId);
+  if (live) return live;
+  const disk = loadRateLampState(sessionId);
+  if (!disk) return null;
+  const cleaned = { ...disk, lastStopEvent: null };
+  _lastPersistedRevision.set(sessionId, cleaned.ledgerRevision ?? 0);
+  _ledgers.set(sessionId, cleaned);
+  return cleaned;
+}
+function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}) {
+  void forcePoll;
+  let ledger = hydrateLedger(sessionId);
+  const frame = watcher.readRateLampFrame(ledger ? ledger.lastAppliedFoldedCallSeq : 0);
+  const reliable = frame.status?.reliable === true;
+  if (!reliable) {
+    if (!ledger) return { ledger: null, status: frame.status, bill: null };
+    ledger = mutateLedger(ledger, "unreliable-frame", (l) => {
+      l.pausedReason = frame.status?.unavailableReason || "insufficient_data";
+      l.lastAppliedFoldedCallSeq = frame.foldedCallSeq;
+      l.currentTurnSeq = frame.turnSeq;
+    });
+    _ledgers.set(sessionId, ledger);
+    schedulePersist(sessionId);
+    return { ledger, status: frame.status, bill: null };
+  }
+  const currentKey = stateKeyForStatus({ segment: frame.progress.segment });
+  const seenRevision = _lastSeenRevision.get(sessionId);
+  const revisionChanged = seenRevision !== frame.streamRevision;
+  const sequenceGap = ledger != null && frame.foldedCallSeq < ledger.lastAppliedFoldedCallSeq;
+  if (sequenceGap && process.env.SW_DEBUG) {
+    console.error("[rate-lamp] seq mismatch \u2192 re-anchored, cycleCount preserved");
+  }
+  let drained = frame;
+  if (revisionChanged || sequenceGap || !ledger || ledger.stateKey !== currentKey) {
+    ledger = reanchorLedger(ledger, { currentKey, frameTailSeq: frame.foldedCallSeq, frameTurnSeq: frame.turnSeq });
+    drained = { ...frame, samples: [] };
+    _lastSeenRevision.set(sessionId, frame.streamRevision);
+  }
+  ledger = mutateLedger(ledger, "advance-events", (l) => drainFrame(l, drained));
+  _ledgers.set(sessionId, ledger);
+  schedulePersist(sessionId);
+  return { ledger, status: frame.status, bill: null };
+}
+function getLiveLedger(sessionId) {
+  return _ledgers.get(sessionId) ?? null;
+}
+function setLiveLedger(sessionId, ledger) {
+  _ledgers.set(sessionId, ledger);
+  persistLedger(sessionId, ledger, { force: true });
+  if (_enospcPaused.has(sessionId)) {
+    clearEnospcPause(sessionId);
+  }
+}
+function _setRateLampManagerTestHooks({ writer, scheduler } = {}) {
+  if (writer !== void 0) _testWriter = writer;
+  if (scheduler !== void 0) _testScheduler = scheduler;
+}
+function _resetRateLampManagerForTest() {
+  _ledgers.clear();
+  _lastSaved.clear();
+  _lastPersistedRevision.clear();
+  _lastSeenRevision.clear();
+  _pendingPersistSids.clear();
+  _enospcPaused.clear();
+  if (_coalescedTimer && !_testScheduler) {
+    clearInterval(_coalescedTimer);
+  }
+  _coalescedTimer = null;
+  _testWriter = null;
+  _testScheduler = null;
+  _counters.diskWrites = 0;
+  _counters.coalesceHits = 0;
+  _counters.coalesceMisses = 0;
+  _counters.revisionGateBlocks = 0;
+  _counters.enospcEngagements = 0;
+  _counters.enospcRecoveries = 0;
+}
+function getDebugCounters() {
+  return { ..._counters };
+}
+function flushAll() {
+  for (const [sid, l] of _ledgers) {
+    try {
+      saveRateLampState(sid, l);
+    } catch {
+    }
+  }
+}
+function releaseSession(sessionId) {
+  const ledger = _ledgers.get(sessionId);
+  if (ledger) {
+    try {
+      persistLedger(sessionId, ledger, { force: true });
+    } catch {
+    }
+  }
+  _ledgers.delete(sessionId);
+  _lastSaved.delete(sessionId);
+  _lastPersistedRevision.delete(sessionId);
+  _lastSeenRevision.delete(sessionId);
+  _pendingPersistSids.delete(sessionId);
+  _enospcPaused.delete(sessionId);
+}
+var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
+var init_rate_lamp_manager = __esm({
+  "lib/rate-lamp-manager.js"() {
+    init_rate_lamp_store();
+    init_bill_regret();
+    init_constants();
+    RENT_METER_DEFAULT = () => ({
+      cycleProgress: 0,
+      depthActive: false,
+      depthProgress: 0,
+      backstopInterval: null,
+      backstopLapCount: 0,
+      depthHot: false
+    });
+    _ledgers = /* @__PURE__ */ new Map();
+    _lastSaved = /* @__PURE__ */ new Map();
+    _lastPersistedRevision = /* @__PURE__ */ new Map();
+    _lastSeenRevision = /* @__PURE__ */ new Map();
+    _pendingPersistSids = /* @__PURE__ */ new Set();
+    _enospcPaused = /* @__PURE__ */ new Set();
+    _counters = {
+      diskWrites: 0,
+      coalesceHits: 0,
+      // schedulePersist calls that joined an existing pending
+      coalesceMisses: 0,
+      // schedulePersist calls that added a new pending
+      revisionGateBlocks: 0,
+      // writes refused by the revision gate
+      enospcEngagements: 0,
+      enospcRecoveries: 0
+    };
+    _testWriter = null;
+    _testScheduler = null;
+    _coalescedTimer = null;
+  }
+});
+
+// lib/lineage.js
+function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
+  const chain = [];
+  let node = headHandoff;
+  while (node && !seen.has(node.sessionId)) {
+    seen.add(node.sessionId);
+    chain.push({
+      sessionId: node.sessionId,
+      sourceLocator: node.transcriptPath || null,
+      sourceLabel: node.transcriptPath || null,
+      handoffId: node.handoffId
+    });
+    node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
+  }
+  return chain.reverse();
+}
+function fromHandoff({ store, handoffId }) {
+  const head = store.getHandoff(handoffId);
+  if (!head) return [];
+  return walk(store, head.projectId, head);
+}
+function forLoadedHandoff({ store, sessionId }) {
+  const head = store.findLatestDeliveryInSession(sessionId);
+  return head ? fromHandoff({ store, handoffId: head.handoffId }) : [];
+}
+var init_lineage = __esm({
+  "lib/lineage.js"() {
+  }
+});
+
+// lib/turn-browse.js
+function rootHeadline(rows) {
+  const opening = [];
+  for (const row of rows) {
+    opening.push(row.uText);
+    if ((row.note ?? "") !== "") break;
+  }
+  return opening.join(ROOT_HEADLINE_JOIN);
+}
+function buildTurnBrowse({ store, lineage }) {
+  const sources = labelHistorySources(lineage);
+  const sections = [];
+  sources.forEach((entry, i2) => {
+    const rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
+    if (rows.length === 0) return;
+    const entries = rows.map((row) => {
+      const out2 = { u_text: row.uText };
+      if (row.note != null) out2.note = row.note;
+      return out2;
+    });
+    const headline = i2 === 0 ? rootHeadline(rows) : store.getHandoff(sources[i2 - 1].handoffId)?.nextTask ?? "";
+    sections.push({ label: entry.label, headline, entries });
+  });
+  return { sections };
+}
+function lineageHeadlines({ store, lineage }) {
+  return buildTurnBrowse({ store, lineage }).sections.map(({ label, headline }) => ({ label, headline }));
+}
+var ROOT_HEADLINE_JOIN;
+var init_turn_browse = __esm({
+  "lib/turn-browse.js"() {
+    init_turn();
+    ROOT_HEADLINE_JOIN = " \xB7 ";
+  }
+});
+
+// lib/wire.js
+function statusWire(status) {
+  const { sourceLocator, ...rest } = status;
+  const rateLamp = status.rateLamp;
+  const lamp = rateLamp?.reliable ? lampZone(rateLamp.br, { u: rateLamp.u, mf: rateLamp.mf }) : null;
+  return { ...rest, transcriptPath: sourceLocator ?? null, lamp };
+}
+function statusWireWithLedger(status, ledger) {
+  const payload = statusWire(status);
+  const currentKey = payload.rateLamp?.reliable ? stateKeyForStatus(payload) : null;
+  mergeLedgerIntoStatus(payload, ledger, currentKey);
+  return payload;
+}
+function bucketsPayload({ bucketData, status, sessionId, now }) {
+  const paths = bucketData.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
+  return {
+    ...bucketData,
+    paths,
+    session_id: sessionId,
+    segment: bucketData.segment,
+    current_turn: bucketData.currentTurnSeq,
+    generated_at: now,
+    metrics: { br: status.br, mf: status.mf, pp: status.pp, g: status.g, b_total: status.B, c_ratio: status.cRatio }
+  };
+}
+function bucketSummaryPayload(payload) {
+  const row = ({ tokens, readCount, editCount, defaultSelected, defaultDiscardReason, userOverride, activeSymbols }) => ({
+    tokens: Math.round(tokens),
+    readCount,
+    editCount,
+    defaultSelected,
+    ...defaultDiscardReason ? { defaultDiscardReason } : {},
+    userOverride,
+    ...activeSymbols ? { activeSymbols } : {}
+  });
+  return {
+    skills: payload.skills.map((s) => ({ name: s.name, ...row(s) })),
+    paths: payload.paths.map((p) => ({ path: p.path, ...row(p) })),
+    session_id: payload.session_id,
+    segment: payload.segment,
+    metrics: { br: payload.metrics.br }
+  };
+}
+function overrideWarnings(warnings) {
+  return (warnings ?? []).map((w) => w.code === "unknown_resource" ? `ignored: path "${w.resourceKey}" not in current bRebuild` : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`);
+}
+function isOverrideMap(overrides) {
+  return Boolean(overrides) && typeof overrides === "object" && !Array.isArray(overrides);
+}
+function pricingResponse({ model, saved, policy, cliRatio }) {
+  const modelRatio = policy.cRatio;
+  const presets = policy.pricing.presets;
+  let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
+  if (saved) {
+    effectiveRatio = saved.ratio;
+    source = "saved";
+    effectiveRead = saved.readPrice;
+    effectiveWrite = saved.writePrice;
+    if (saved.presetId) {
+      const preset = presets.find((p) => p.id === saved.presetId);
+      if (preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice) {
+        source = "preset";
+      }
+    }
+  } else if (cliRatio != null) {
+    effectiveRatio = cliRatio;
+    source = "cli";
+  } else {
+    effectiveRatio = modelRatio;
+    source = "model_default";
+  }
+  return {
+    effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
+    saved: saved || null,
+    modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
+    presets
+  };
+}
+function turnPageWire({ turnPage, nextBefore }) {
+  return {
+    turn_page: turnPage,
+    ...nextBefore ? { next_before: nextBefore } : {}
+  };
+}
+async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSource, dialogueProjection, notice }) {
+  try {
+    const sessions = fromHandoff({ store, handoffId: core.handoff_id });
+    return {
+      ...core,
+      lineage: lineageHeadlines({ store, lineage: sessions }),
+      ...turnPageWire(await turnPageBuilder({ store, lineage: sessions, dialogueSource, dialogueProjection, notice }))
+    };
+  } catch (err2) {
+    if (process.env.SW_DEBUG) console.error("[turn_page_load]", err2);
+    return { ...core, turn_page_error: "turn_page_unavailable" };
+  }
+}
+var INVALID_OVERRIDES_MESSAGE;
+var init_wire = __esm({
+  "lib/wire.js"() {
+    init_rate_lamp_manager();
+    init_bill_regret();
+    init_rate_lamp_store();
+    init_lineage();
+    init_turn_browse();
+    INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
   }
 });
 
@@ -7706,7 +9702,7 @@ var init_schemas = __esm({
         return (payload, ctx) => fn(shape, payload, ctx);
       };
       let fastpass;
-      const isObject2 = isObject;
+      const isObject3 = isObject;
       const jit = !globalConfig.jitless;
       const allowsEval2 = allowsEval;
       const fastEnabled = jit && allowsEval2.value;
@@ -7715,7 +9711,7 @@ var init_schemas = __esm({
       inst._zod.parse = (payload, ctx) => {
         value ?? (value = _normalized.value);
         const input = payload.value;
-        if (!isObject2(input)) {
+        if (!isObject3(input)) {
           payload.issues.push({
             expected: "object",
             code: "invalid_type",
@@ -14370,7 +16366,7 @@ var init_protocol = __esm({
               return;
             }
             const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-            await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
+            await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
             options?.signal?.throwIfAborted();
           }
         } catch (error2) {
@@ -14387,7 +16383,7 @@ var init_protocol = __esm({
        */
       request(request, resultSchema, options) {
         const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           const earlyReject = (error2) => {
             reject(error2);
           };
@@ -14465,7 +16461,7 @@ var init_protocol = __esm({
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
-                resolve4(parseResult.data);
+                resolve5(parseResult.data);
               }
             } catch (error2) {
               reject(error2);
@@ -14726,12 +16722,12 @@ var init_protocol = __esm({
           }
         } catch {
         }
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           if (signal.aborted) {
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
             return;
           }
-          const timeoutId = setTimeout(resolve4, interval);
+          const timeoutId = setTimeout(resolve5, interval);
           signal.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -17009,8 +19005,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize3) {
-      if (normalize3 !== false)
+    function getFullPath(resolver, id = "", normalize4) {
+      if (normalize4 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -17758,7 +19754,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve4.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -17785,7 +19781,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve4(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -18406,7 +20402,7 @@ var require_fast_uri = __commonJS({
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
-    function normalize3(uri, options) {
+    function normalize4(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -18416,7 +20412,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve4(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -18673,8 +20669,8 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize: normalize3,
-      resolve: resolve4,
+      normalize: normalize4,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize,
@@ -23141,7 +25137,7 @@ var init_mcp = __esm({
         let task = createTaskResult.task;
         const pollInterval = task.pollInterval ?? 5e3;
         while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-          await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
+          await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
           const updatedTask = await extra.taskStore.getTask(taskId);
           if (!updatedTask) {
             throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -23763,12 +25759,12 @@ var init_stdio2 = __esm({
         this.onclose?.();
       }
       send(message) {
-        return new Promise((resolve4) => {
+        return new Promise((resolve5) => {
           const json = serializeMessage(message);
           if (this._stdout.write(json)) {
-            resolve4();
+            resolve5();
           } else {
-            this._stdout.once("drain", resolve4);
+            this._stdout.once("drain", resolve5);
           }
         });
       }
@@ -23798,7 +25794,7 @@ function withSearchRecovery(result, { hitRecovery } = {}) {
     return { ...result, recovery: PAGE_IS_THE_FALLBACK };
   }
   if (result?.found === false) {
-    return { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment, or call turn_locate with a remembered term for candidate turns and the wording actually used." };
+    return { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment or a token seen verbatim \u2014 an id, a path, a commit hash \u2014 or call turn_locate with a remembered term for candidate turns and the wording actually used." };
   }
   if (result?.truncated === true) {
     return { ...result, recovery: "Older matches were dropped to fit the budget, and the cut falls on a match, so the oldest entry may be incomplete. Narrow and search again: a longer literal, the scope of an entry near what you are after, or turn_locate for a candidate." };
@@ -23808,7 +25804,7 @@ function withSearchRecovery(result, { hitRecovery } = {}) {
   }
   return result;
 }
-function withLocateRecovery(result) {
+function withLocateRecovery(result, { hitRecovery } = {}) {
   if (result?.error === "locate_unavailable") {
     return { ...result, recovery: PAGE_IS_THE_FALLBACK };
   }
@@ -23816,7 +25812,7 @@ function withLocateRecovery(result) {
     return { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." };
   }
   if (result?.found === true) {
-    return { ...result, recovery: "A hit's transcript_path holds its turn at row T of its scope, as grep -n numbers rows; the other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it." };
+    return { ...result, recovery: hitRecovery };
   }
   return result;
 }
@@ -28755,10 +30751,10 @@ var require_raw_body = __commonJS({
       if (done) {
         return readStream(stream, encoding, length, limit, wrap(done));
       }
-      return new Promise(function executor(resolve4, reject) {
+      return new Promise(function executor(resolve5, reject) {
         readStream(stream, encoding, length, limit, function onRead(err2, buf) {
           if (err2) return reject(err2);
-          resolve4(buf);
+          resolve5(buf);
         });
       });
     }
@@ -37934,7 +39930,7 @@ var require_type_is = __commonJS({
     module2.exports = typeofrequest;
     module2.exports.is = typeis;
     module2.exports.hasBody = hasbody;
-    module2.exports.normalize = normalize3;
+    module2.exports.normalize = normalize4;
     module2.exports.match = mimeMatch;
     function typeis(value, types_) {
       var i2;
@@ -37954,7 +39950,7 @@ var require_type_is = __commonJS({
       }
       var type;
       for (i2 = 0; i2 < types.length; i2++) {
-        if (mimeMatch(normalize3(type = types[i2]), val)) {
+        if (mimeMatch(normalize4(type = types[i2]), val)) {
           return type[0] === "+" || type.indexOf("*") !== -1 ? val : type;
         }
       }
@@ -37977,7 +39973,7 @@ var require_type_is = __commonJS({
       var value = req.headers["content-type"];
       return typeis(value, types);
     }
-    function normalize3(type) {
+    function normalize4(type) {
       if (typeof type !== "string") {
         return false;
       }
@@ -42290,11 +44286,11 @@ var require_view = __commonJS({
     var debug = require_src()("express:view");
     var path3 = __require("path");
     var fs3 = __require("fs");
-    var dirname5 = path3.dirname;
+    var dirname4 = path3.dirname;
     var basename3 = path3.basename;
     var extname3 = path3.extname;
-    var join13 = path3.join;
-    var resolve4 = path3.resolve;
+    var join14 = path3.join;
+    var resolve5 = path3.resolve;
     module2.exports = View;
     function View(name2, options) {
       var opts = options || {};
@@ -42328,8 +44324,8 @@ var require_view = __commonJS({
       debug('lookup "%s"', name2);
       for (var i2 = 0; i2 < roots.length && !path4; i2++) {
         var root = roots[i2];
-        var loc = resolve4(root, name2);
-        var dir = dirname5(loc);
+        var loc = resolve5(root, name2);
+        var dir = dirname4(loc);
         var file = basename3(loc);
         path4 = this.resolve(dir, file);
       }
@@ -42339,14 +44335,14 @@ var require_view = __commonJS({
       debug('render "%s"', this.path);
       this.engine(this.path, options, callback);
     };
-    View.prototype.resolve = function resolve5(dir, file) {
+    View.prototype.resolve = function resolve6(dir, file) {
       var ext = this.ext;
-      var path4 = join13(dir, file);
+      var path4 = join14(dir, file);
       var stat = tryStat(path4);
       if (stat && stat.isFile()) {
         return path4;
       }
-      path4 = join13(dir, basename3(file, ext), "index" + ext);
+      path4 = join14(dir, basename3(file, ext), "index" + ext);
       stat = tryStat(path4);
       if (stat && stat.isFile()) {
         return path4;
@@ -42979,9 +44975,9 @@ var require_send = __commonJS({
     var Stream = __require("stream");
     var util2 = __require("util");
     var extname3 = path3.extname;
-    var join13 = path3.join;
-    var normalize3 = path3.normalize;
-    var resolve4 = path3.resolve;
+    var join14 = path3.join;
+    var normalize4 = path3.normalize;
+    var resolve5 = path3.resolve;
     var sep = path3.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
@@ -43018,7 +45014,7 @@ var require_send = __commonJS({
       this._maxage = opts.maxAge || opts.maxage;
       this._maxage = typeof this._maxage === "string" ? ms(this._maxage) : Number(this._maxage);
       this._maxage = !isNaN(this._maxage) ? Math.min(Math.max(0, this._maxage), MAX_MAXAGE) : 0;
-      this._root = opts.root ? resolve4(opts.root) : null;
+      this._root = opts.root ? resolve5(opts.root) : null;
       if (!this._root && opts.from) {
         this.from(opts.from);
       }
@@ -43042,7 +45038,7 @@ var require_send = __commonJS({
       return this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function root(path4) {
-      this._root = resolve4(String(path4));
+      this._root = resolve5(String(path4));
       debug("root %s", this._root);
       return this;
     };
@@ -43190,7 +45186,7 @@ var require_send = __commonJS({
       var parts2;
       if (root !== null) {
         if (path4) {
-          path4 = normalize3("." + sep + path4);
+          path4 = normalize4("." + sep + path4);
         }
         if (UP_PATH_REGEXP.test(path4)) {
           debug('malicious path "%s"', path4);
@@ -43198,15 +45194,15 @@ var require_send = __commonJS({
           return res;
         }
         parts2 = path4.split(sep);
-        path4 = normalize3(join13(root, path4));
+        path4 = normalize4(join14(root, path4));
       } else {
         if (UP_PATH_REGEXP.test(path4)) {
           debug('malicious path "%s"', path4);
           this.error(403);
           return res;
         }
-        parts2 = normalize3(path4).split(sep);
-        path4 = resolve4(path4);
+        parts2 = normalize4(path4).split(sep);
+        path4 = resolve5(path4);
       }
       if (containsDotFile(parts2)) {
         var access = this._dotfiles;
@@ -43333,7 +45329,7 @@ var require_send = __commonJS({
           if (err2) return self.onStatError(err2);
           return self.error(404);
         }
-        var p = join13(path4, self._index[i2]);
+        var p = join14(path4, self._index[i2]);
         debug('stat "%s"', p);
         fs3.stat(p, function(err3, stat) {
           if (err3) return next(err3);
@@ -44486,7 +46482,7 @@ var require_application = __commonJS({
     var deprecate = require_depd()("express");
     var flatten = require_array_flatten();
     var merge2 = require_utils_merge();
-    var resolve4 = __require("path").resolve;
+    var resolve5 = __require("path").resolve;
     var setPrototypeOf = require_setprototypeof();
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     var slice = Array.prototype.slice;
@@ -44525,7 +46521,7 @@ var require_application = __commonJS({
       this.mountpath = "/";
       this.locals.settings = this.settings;
       this.set("view", View);
-      this.set("views", resolve4("views"));
+      this.set("views", resolve5("views"));
       this.set("jsonp callback name", "callback");
       if (env === "production") {
         this.enable("view cache");
@@ -45757,7 +47753,7 @@ var require_response = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var http = __require("http");
-    var isAbsolute5 = require_utils3().isAbsolute;
+    var isAbsolute6 = require_utils3().isAbsolute;
     var onFinished = require_on_finished();
     var path3 = __require("path");
     var statuses = require_statuses();
@@ -45770,7 +47766,7 @@ var require_response = __commonJS({
     var send = require_send();
     var extname3 = path3.extname;
     var mime = send.mime;
-    var resolve4 = path3.resolve;
+    var resolve5 = path3.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module2.exports = res;
@@ -45963,7 +47959,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute5(path4)) {
+      if (!opts.root && !isAbsolute6(path4)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
       var pathname = encodeURI(path4);
@@ -46029,7 +48025,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve4(path4) : path4;
+      var fullPath = !opts.root ? resolve5(path4) : path4;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -46295,7 +48291,7 @@ var require_serve_static = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var parseUrl = require_parseurl();
-    var resolve4 = __require("path").resolve;
+    var resolve5 = __require("path").resolve;
     var send = require_send();
     var url = __require("url");
     module2.exports = serveStatic;
@@ -46315,7 +48311,7 @@ var require_serve_static = __commonJS({
         throw new TypeError("option setHeaders must be function");
       }
       opts.maxage = opts.maxage || opts.maxAge || 0;
-      opts.root = resolve4(root);
+      opts.root = resolve5(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function serveStatic2(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -46489,7 +48485,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     if (relative && ignoreMatcher && ignoreMatcher(relative)) return "gitignore";
     return null;
   }
-  function resolve4(resourceKey) {
+  function resolve5(resourceKey) {
     const defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -46529,7 +48525,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve4, infer };
+  return { resolve: resolve5, infer };
 }
 var SKILL_RESOURCE_PREFIX;
 var init_resource_policy = __esm({
@@ -46597,8 +48593,8 @@ var init_turn_note = __esm({
 });
 
 // lib/session-watcher.js
-import { join as join4 } from "node:path";
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync2, rmSync } from "node:fs";
+import { join as join5 } from "node:path";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync2, rmSync } from "node:fs";
 function invariant(ok, message) {
   if (!ok) throw new Error(`session watcher invariant: ${message}`);
 }
@@ -46640,7 +48636,7 @@ var init_session_watcher = __esm({
     init_turn();
     init_constants();
     DIAGNOSTIC_SCOPE = "session-watcher";
-    RESIDUAL_FAMILIES = /* @__PURE__ */ new Set(["bash", "mcp", "agent"]);
+    RESIDUAL_FAMILIES = /* @__PURE__ */ new Set(["bash", "mcp", "agent", "tool"]);
     SessionWatcher = class {
       constructor({
         sessionId = null,
@@ -46656,7 +48652,7 @@ var init_session_watcher = __esm({
         dialogueSource,
         dialogueProjection,
         createEngine,
-        createMeasurementProjection,
+        createMeasurementProjection: createMeasurementProjection2,
         modelPolicyFor: modelPolicyFor2,
         now = () => Date.now()
       } = {}) {
@@ -46675,7 +48671,7 @@ var init_session_watcher = __esm({
         invariant(typeof loaderVersion === "string" && loaderVersion.length > 0, "loaderVersion is required");
         invariant(typeof turnNotesRoot === "string" && turnNotesRoot.length > 0, "turnNotesRoot is required and has no fallback");
         invariant(typeof createEngine === "function", "createEngine must be a function");
-        invariant(typeof createMeasurementProjection === "function", "createMeasurementProjection must be a function");
+        invariant(typeof createMeasurementProjection2 === "function", "createMeasurementProjection must be a function");
         invariant(typeof modelPolicyFor2 === "function", "modelPolicyFor must be a function");
         invariant(typeof now === "function", "now must be a function");
         this._projectId = projectId;
@@ -46689,7 +48685,7 @@ var init_session_watcher = __esm({
         this._enrichment = resourceEnrichment;
         this._handoff = handoffComposition;
         this._createEngine = createEngine;
-        this._createProjection = createMeasurementProjection;
+        this._createProjection = createMeasurementProjection2;
         this._modelPolicyFor = modelPolicyFor2;
         this._now = now;
         this._startMs = now();
@@ -46700,6 +48696,7 @@ var init_session_watcher = __esm({
         this._streamRevision = 0;
         this._pendingNewResourceKeys = /* @__PURE__ */ new Set();
         this._applying = false;
+        this._liveMark = false;
         this._resolveModelPolicy = (modelId) => {
           let policy = readPolicy(this._modelPolicyFor, modelId);
           if (policy === null) policy = readPolicy(this._modelPolicyFor, null) ?? this._modelPolicyFor(null);
@@ -46762,6 +48759,7 @@ var init_session_watcher = __esm({
             }
           }
           this._flushResourcePolicy(diagnostics);
+          if (captureMode === "live") this._liveMark = true;
           return { changed: newCalls > 0 || revisedCalls > 0 || runtimeReplaced, diagnostics };
         } finally {
           this._applying = false;
@@ -46769,12 +48767,13 @@ var init_session_watcher = __esm({
       }
       /**
        * Close the current segment as a terminal application operation. It is not a Source transition and
-       * synthesizes no epoch record.
+       * synthesizes no epoch record. The segment archives as `live` when a live frame has completed since the
+       * segment opened, where a `replace` counts as opening a segment, and as `replay` otherwise.
        *
-       * @param {{ captureMode?: 'live'|'replay' }} [options]
        * @returns {{ diagnostics: object[] }}
        */
-      closeCurrentSegment({ captureMode = "live" } = {}) {
+      closeCurrentSegment() {
+        const captureMode = this._liveMark ? "live" : "replay";
         const diagnostics = [];
         this._flushResourcePolicy(diagnostics);
         const result = this._engine.closeCurrentSegment();
@@ -46784,6 +48783,7 @@ var init_session_watcher = __esm({
       }
       _installFreshRuntime(sourceLocator) {
         this._pendingNewResourceKeys = /* @__PURE__ */ new Set();
+        this._liveMark = false;
         this._sourceLocator = sourceLocator ?? null;
         this._engine = this._createEngine({
           resolveModelPolicy: this._resolveModelPolicy,
@@ -46806,6 +48806,7 @@ var init_session_watcher = __esm({
       }
       // The one closed-segment consumer behind a successful epoch, a rotate and an explicit close.
       _consumeClosedSegment(result, captureMode, diagnostics) {
+        this._liveMark = false;
         const closedSegment = result.closedSegments[0] ?? null;
         const finished = this._projection.finishSegment(closedSegment, { captureMode });
         for (const entry of finished.diagnostics) diagnostics.push(entry);
@@ -46950,7 +48951,7 @@ var init_session_watcher = __esm({
           }
           paths.push(entry);
         }
-        const residual = { bash: [], mcp: [], agent: [] };
+        const residual = { bash: [], mcp: [], agent: [], tool: [] };
         for (const group of bucket.residual) {
           const family = group.meta?.kind;
           if (!RESIDUAL_FAMILIES.has(family)) continue;
@@ -47023,13 +49024,17 @@ var init_session_watcher = __esm({
       readScenario(overrides) {
         return this._engine.readScenario(overrides);
       }
-      // The only runtime ratio mutation. It moves the policy signature, so the Engine re-stamps every step of the
+      // The runtime ratio override. It moves the policy signature, so the Engine re-stamps every step of the
       // open segment under the new price. It recomputes no closed segment's extremum, leaves the Rate Lamp
       // ledger's integral as it stands and does not move `streamRevision`, so the ledger keeps what it already
       // integrated and the re-stamped increments reach it with the frames drained after the change. The Engine
       // finalizer freezes the effective close-time ratio in the closed segment.
       setRatioOverride(value) {
         this._ratioOverride = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+        return this._engine.refreshReadPolicies();
+      }
+      // The resolver's inputs changed outside the watcher, so the Engine re-reads them; no override value moves.
+      refreshReadPolicies() {
         return this._engine.refreshReadPolicies();
       }
       // ── Handoff operations ─────────────────────────────────────────────────────
@@ -47168,8 +49173,8 @@ var init_session_watcher = __esm({
       // One capture behind both entry points, so the skeleton and the submission can never see different Turns.
       // The read status travels with it: an unavailable Source has an empty capture, which is otherwise
       // indistinguishable from a genuinely empty epoch whose submission would commit nothing.
-      _captureTurns() {
-        const read = this._dialogueSource.read(this._sourceLocator);
+      async _captureTurns() {
+        const read = await this._dialogueSource.read(this._sourceLocator);
         if (read.status !== "ok") return { status: read.status, turns: [] };
         return { status: "ok", ...captureCurrentEpochTurns({ observations: read.observations, dialogueProjection: this._dialogueProjection }) };
       }
@@ -47177,11 +49182,11 @@ var init_session_watcher = __esm({
       // plus the epoch's first anchor — so a re-fetch after the epoch grew still finds the notes already
       // written, where a content fingerprint would rename the file on every new Turn.
       _turnNotePaths(turns) {
-        const dir = join4(
+        const dir = join5(
           this._turnNotesRoot,
           `${safeSegment(this._sessionId)}-${safeSegment(turns[0]?.sourceEntryId ?? "empty")}`
         );
-        return { dir, skeletonPath: join4(dir, "skeleton.txt"), notesPath: join4(dir, "notes.md") };
+        return { dir, skeletonPath: join5(dir, "skeleton.txt"), notesPath: join5(dir, "notes.md") };
       }
       // This session's Turn Records by anchor. The Store is the durable copy of a committed epoch's notes: the
       // notes file is retired the moment those rows land, while the next handoff in the same session keeps the
@@ -47189,14 +49194,14 @@ var init_session_watcher = __esm({
       _storedNotes() {
         return new Map(this._store.listTurnNotes(this._sessionId).map((row) => [row.anchorUuid, row.note]));
       }
-      getTurnSkeleton() {
-        const { status, turns } = this._captureTurns();
+      async getTurnSkeleton() {
+        const { status, turns } = await this._captureTurns();
         if (status !== "ok") throw new Error("transcript is not readable; no turn skeleton can be captured");
         if (!captureIsPersistable(turns)) {
           throw new Error("captured turn heads carry no persistable identity; no turn skeleton can be captured");
         }
         const { dir, skeletonPath, notesPath } = this._turnNotePaths(turns);
-        mkdirSync2(dir, { recursive: true });
+        mkdirSync3(dir, { recursive: true });
         let existing = null;
         try {
           existing = readFileSync4(notesPath, "utf8");
@@ -47221,8 +49226,8 @@ ${renderNoteSections(missing, prefill)}`);
           protocol: TURN_NOTE_PROTOCOL
         };
       }
-      submitTurnNotes({ snapshot_id: snapshotId } = {}) {
-        const { status, turns } = this._captureTurns();
+      async submitTurnNotes({ snapshot_id: snapshotId } = {}) {
+        const { status, turns } = await this._captureTurns();
         if (status !== "ok") return { committed: false, error: "invalid_snapshot" };
         if (snapshotDigest(turns) !== snapshotId) return { committed: false, error: "stale_snapshot" };
         if (!captureIsPersistable(turns)) return { committed: false, error: "invalid_snapshot" };
@@ -47469,13 +49474,13 @@ async function Module2(moduleArg = {}) {
       }
       readAsync = /* @__PURE__ */ __name(async (url) => {
         if (isFileURI(url)) {
-          return new Promise((resolve4, reject) => {
+          return new Promise((resolve5, reject) => {
             var xhr = new XMLHttpRequest();
             xhr.open("GET", url, true);
             xhr.responseType = "arraybuffer";
             xhr.onload = () => {
               if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                resolve4(xhr.response);
+                resolve5(xhr.response);
                 return;
               }
               reject(xhr.status);
@@ -47671,9 +49676,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module["instantiateWasm"]) {
-      return new Promise((resolve4, reject) => {
+      return new Promise((resolve5, reject) => {
         Module["instantiateWasm"](info2, (mod, inst) => {
-          resolve4(receiveInstance(mod, inst));
+          resolve5(receiveInstance(mod, inst));
         });
       });
     }
@@ -49004,8 +51009,8 @@ async function Module2(moduleArg = {}) {
   if (runtimeInitialized) {
     moduleRtn = Module;
   } else {
-    moduleRtn = new Promise((resolve4, reject) => {
-      readyPromiseResolve = resolve4;
+    moduleRtn = new Promise((resolve5, reject) => {
+      readyPromiseResolve = resolve5;
       readyPromiseReject = reject;
     });
   }
@@ -51234,8 +53239,8 @@ ${JSON.stringify(symbolNames, null, 2)}`);
 });
 
 // lib/symbol-outline.js
-import { join as join5, dirname as dirname2 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { join as join6, dirname as dirname2 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readFileSync as readFileSync5 } from "node:fs";
 function isGrammarLoaded(ext) {
   return grammars.has(EXT_TO_GRAMMAR[ext]);
@@ -51249,7 +53254,7 @@ function initParser({ wasmDir } = {}) {
   if (parserReady) return Promise.resolve();
   if (initPromise) return initPromise;
   if (wasmDir) _wasmDir = wasmDir;
-  initPromise = Parser.init({ locateFile: (file) => join5(_wasmDir, file) }).then(() => {
+  initPromise = Parser.init({ locateFile: (file) => join6(_wasmDir, file) }).then(() => {
     parser = new Parser();
     parserReady = true;
   }).catch((err2) => {
@@ -51265,7 +53270,7 @@ function loadGrammar(ext, { wasmDir } = {}) {
   if (grammarPromises.has(file)) return grammarPromises.get(file);
   if ((grammarAttempts.get(file) || 0) >= MAX_GRAMMAR_ATTEMPTS) return Promise.resolve();
   const dir = wasmDir || _wasmDir;
-  const promise = initParser().then(() => Language.load(join5(dir, file))).then((lang) => {
+  const promise = initParser().then(() => Language.load(join6(dir, file))).then((lang) => {
     grammars.set(file, lang);
   }).catch((err2) => {
     grammarPromises.delete(file);
@@ -51665,11 +53670,11 @@ function resolveSymbolLines(code, ext, symbolRanges) {
   }
   return { resolved, stale };
 }
-var __dirname2, MAX_SYMBOL_FILE_BYTES, EXT_TO_GRAMMAR, EXT_TO_LANG, ORPHAN_EXCLUDE, parser, parserReady, initPromise, grammarPromises, grammars, grammarAttempts, MAX_GRAMMAR_ATTEMPTS, REGEX_EXTS, _wasmDir, JS_LEVEL0_TYPES, JS_LEVEL0_VAR_TYPES, TS_EXTRA_LEVEL0, MD_HEADING_RE, MD_FENCE_OPEN_RE, MD_FENCE_CLOSE_RE;
+var __dirname, MAX_SYMBOL_FILE_BYTES, EXT_TO_GRAMMAR, EXT_TO_LANG, ORPHAN_EXCLUDE, parser, parserReady, initPromise, grammarPromises, grammars, grammarAttempts, MAX_GRAMMAR_ATTEMPTS, REGEX_EXTS, _wasmDir, JS_LEVEL0_TYPES, JS_LEVEL0_VAR_TYPES, TS_EXTRA_LEVEL0, MD_HEADING_RE, MD_FENCE_OPEN_RE, MD_FENCE_CLOSE_RE;
 var init_symbol_outline = __esm({
   "lib/symbol-outline.js"() {
     init_web_tree_sitter();
-    __dirname2 = dirname2(fileURLToPath2(import.meta.url));
+    __dirname = dirname2(fileURLToPath(import.meta.url));
     MAX_SYMBOL_FILE_BYTES = 512 * 1024;
     EXT_TO_GRAMMAR = {
       ".js": "tree-sitter-javascript.wasm",
@@ -51704,7 +53709,7 @@ var init_symbol_outline = __esm({
     grammarAttempts = /* @__PURE__ */ new Map();
     MAX_GRAMMAR_ATTEMPTS = 3;
     REGEX_EXTS = /* @__PURE__ */ new Set([".md"]);
-    _wasmDir = __dirname2;
+    _wasmDir = __dirname;
     JS_LEVEL0_TYPES = /* @__PURE__ */ new Set([
       "function_declaration",
       "generator_function_declaration",
@@ -51719,7 +53724,7 @@ var init_symbol_outline = __esm({
 });
 
 // lib/resource-enrichment.js
-import { extname, isAbsolute as isAbsolute2, join as join6 } from "node:path";
+import { extname, isAbsolute as isAbsolute2, join as join7 } from "node:path";
 import { readFileSync as readFileSync6 } from "node:fs";
 function createResourceEnrichment({
   readFile = (absPath) => readFileSync6(absPath, "utf8"),
@@ -51783,7 +53788,7 @@ function createResourceEnrichment({
     } catch {
     }
     if (!canExtract2(ext)) return { parsed: false, readable: false, resolved: [], stale: staleAll };
-    const absolute = isAbsolute2(path3) ? path3 : projectDir ? join6(projectDir, path3) : path3;
+    const absolute = isAbsolute2(path3) ? path3 : projectDir ? join7(projectDir, path3) : path3;
     const code = readCode(absolute);
     if (code == null) return { parsed: true, readable: false, resolved: [], stale: staleAll };
     const { resolved, stale } = resolveSymbolLines(code, ext, stored);
@@ -51798,11 +53803,9 @@ var init_resource_enrichment = __esm({
 });
 
 // lib/l-measure.js
-function classifyMiss({ cacheRead, totalStock, prevL, prevTotalStock }) {
+function classifyMiss({ cacheRead, prevL }) {
   if (!(prevL > 0)) return false;
-  const crDropped = cacheRead < prevL * MISS_CR_DROP;
-  const stockPreserved = totalStock >= prevTotalStock - SEGMENT_DROP_EPSILON;
-  return crDropped && stockPreserved;
+  return cacheRead < prevL * MISS_CR_DROP;
 }
 var init_l_measure = __esm({
   "lib/l-measure.js"() {
@@ -52502,12 +54505,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     }
     const totals = ledger.residentTotals();
     const residentTotal = residentTotalOf(totals);
-    const miss = settlementCursor !== null && classifyMiss({
-      cacheRead: usage.cacheRead,
-      totalStock,
-      prevL: settlementCursor.L,
-      prevTotalStock: settlementCursor.totalStock
-    });
+    const miss = settlementCursor !== null && classifyMiss({ cacheRead: usage.cacheRead, prevL: settlementCursor.L });
     const L = miss ? totalStock : usage.cacheRead;
     let growth = null;
     if (settlementCursor !== null) {
@@ -53155,6 +55153,9 @@ function messageIdFor(row) {
   const nativeId = row.entry.message?.id;
   return typeof nativeId === "string" && nativeId.length > 0 ? NATIVE_MESSAGE_NAMESPACE + nativeId : ROW_MESSAGE_NAMESPACE + row.sourceOrdinal;
 }
+function isToolCallId(value) {
+  return typeof value === "string" && value !== "";
+}
 function nativeModelOf(entry) {
   const model = entry.message?.model;
   return typeof model === "string" ? model : null;
@@ -53163,7 +55164,7 @@ function contentObservations(row, base, messageId) {
   const entry = row.entry;
   if (entry.isCompactSummary === true) return [];
   if (entry.isMeta === true) {
-    if (typeof entry.sourceToolUseID !== "string") return [];
+    if (!isToolCallId(entry.sourceToolUseID)) return [];
     return [{
       type: "skill-payload",
       toolUseId: entry.sourceToolUseID,
@@ -53188,7 +55189,7 @@ function contentObservations(row, base, messageId) {
     if (block.type === "text" && typeof block.text === "string") {
       if (block.text === "") continue;
       observations.push({ type: "text", role, text: block.text, messageId, ...base, provenance: role });
-    } else if (block.type === "tool_use" && typeof block.id === "string") {
+    } else if (block.type === "tool_use" && isToolCallId(block.id)) {
       observations.push({
         type: "tool-use",
         messageId,
@@ -53200,7 +55201,7 @@ function contentObservations(row, base, messageId) {
         ...base,
         provenance: "assistant"
       });
-    } else if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
+    } else if (block.type === "tool_result" && isToolCallId(block.tool_use_id)) {
       observations.push({
         type: "tool-result",
         toolUseId: block.tool_use_id,
@@ -53349,7 +55350,7 @@ function createClaudeCodeSourceDriver({
     const bytes = read(fd, buffer, 0, length, from);
     return buffer.subarray(0, bytes);
   }
-  function advance({ captureMode = "live", byteLimit = Infinity } = {}) {
+  function advance({ captureMode = "live", limit = Infinity } = {}) {
     if (closeFailure) throw closeFailure;
     let fd;
     try {
@@ -53365,7 +55366,7 @@ function createClaudeCodeSourceDriver({
         return null;
       }
       if (status.size < offset || inode != null && status.ino !== inode) rebuild();
-      const until = Math.min(status.size, byteLimit);
+      const until = Math.min(status.size, limit);
       let chunk;
       try {
         chunk = readSpan(fd, offset, until);
@@ -53414,15 +55415,7 @@ var init_source_driver = __esm({
   }
 });
 
-// lib/harness/claude-code/measurement-projection.js
-import nodePath from "node:path";
-import { homedir as homedir4 } from "node:os";
-function invariant4(ok, message) {
-  if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
-}
-function diagnostic3(code, message) {
-  return { scope: DIAGNOSTIC_SCOPE2, code, message };
-}
+// lib/measurement-projection.js
 function emptyFacts() {
   return { toolUseIds: /* @__PURE__ */ new Set(), loadToken: null, pathEvents: [] };
 }
@@ -53459,25 +55452,22 @@ function joinFacts(factsByStepId, closedSegment) {
   }
   return { steps, events };
 }
-function createClaudeCodeMeasurementProjection({
-  cwd = null,
-  projectRoot = null,
-  sourceLocator = null,
-  resolveModelPolicy,
+function createMeasurementProjection({
+  scope,
+  context,
+  captureSources,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload,
-  interpretTaskNotification
-} = {}) {
-  invariant4(typeof resolveModelPolicy === "function", "resolveModelPolicy must be a function");
-  invariant4(typeof interpretToolUse === "function", "interpretToolUse must be a function");
-  invariant4(typeof completeToolResult === "function", "completeToolResult must be a function");
-  invariant4(typeof interpretSkillPayload === "function", "interpretSkillPayload must be a function");
-  invariant4(typeof interpretTaskNotification === "function", "interpretTaskNotification must be a function");
-  const sessionCwd = cwd || projectRoot || null;
-  const transcriptDir = typeof sourceLocator === "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null;
-  const context = { path: nodePath, homedir: homedir4, sessionCwd, transcriptDir, resolveModelPolicy };
-  let correlationByToolUseId = /* @__PURE__ */ new Map();
+  interpretSkillPayload
+}) {
+  const invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
+  function invariant7(ok, message) {
+    if (!ok) throw new Error(`${invariantPrefix}: ${message}`);
+  }
+  function diagnostic3(code, message) {
+    return { scope, code, message };
+  }
+  let callByToolUseId = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
@@ -53509,32 +55499,40 @@ function createClaudeCodeMeasurementProjection({
     for (const residual of interpreted.residuals) records.push({ type: "residual", ...residual });
   }
   function projectToolUse(observation, records, diagnostics) {
+    const id = observation.toolUseId;
+    const entry = callByToolUseId.get(id);
+    if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
     const interpreted = interpretToolUse(observation, context);
     mergeTelemetry(interpreted.telemetry, diagnostics);
-    if (interpreted.pending) {
-      correlationByToolUseId.set(observation.toolUseId, { phase: "await-result", pending: interpreted.pending });
-    }
+    callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" });
     pushRecords(interpreted, records);
+    if (entry && entry.phase === "held") projectToolResult(entry.result, records, diagnostics);
   }
   function projectToolResult(observation, records, diagnostics) {
-    const entry = correlationByToolUseId.get(observation.toolUseId);
-    if (!entry || entry.phase !== "await-result") return;
-    correlationByToolUseId.delete(observation.toolUseId);
+    const id = observation.toolUseId;
+    const entry = callByToolUseId.get(id);
+    if (!entry) {
+      callByToolUseId.set(id, { phase: "held", result: observation });
+      return;
+    }
+    if (entry.phase === "issued") {
+      callByToolUseId.set(id, { phase: "completed" });
+      return;
+    }
+    if (entry.phase !== "await-result") return;
     const completed = completeToolResult(entry.pending, observation, context);
     mergeTelemetry(completed.telemetry, diagnostics);
-    if (completed.skillContinuation) {
-      correlationByToolUseId.set(observation.toolUseId, {
-        phase: "await-skill-payload",
-        resourceKey: completed.skillContinuation.resourceKey,
-        issuingPolicy: completed.skillContinuation.issuingPolicy
-      });
-    }
+    callByToolUseId.set(id, completed.skillContinuation ? {
+      phase: "await-skill-payload",
+      resourceKey: completed.skillContinuation.resourceKey,
+      issuingPolicy: completed.skillContinuation.issuingPolicy
+    } : { phase: "completed" });
     pushRecords(completed, records);
   }
   function projectSkillPayload(observation, records, diagnostics) {
-    const entry = correlationByToolUseId.get(observation.toolUseId);
+    const entry = callByToolUseId.get(observation.toolUseId);
     if (!entry || entry.phase !== "await-skill-payload") return;
-    correlationByToolUseId.delete(observation.toolUseId);
+    callByToolUseId.set(observation.toolUseId, { phase: "completed" });
     const interpreted = interpretSkillPayload(
       { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
       observation
@@ -53543,12 +55541,12 @@ function createClaudeCodeMeasurementProjection({
     pushRecords(interpreted, records);
   }
   function project(observation) {
-    invariant4(observation !== null && typeof observation === "object", "observation must be an object");
+    invariant7(observation !== null && typeof observation === "object", "observation must be an object");
     const records = [];
     const diagnostics = [];
     switch (observation.type) {
       case "epoch-boundary":
-        correlationByToolUseId = /* @__PURE__ */ new Map();
+        callByToolUseId = /* @__PURE__ */ new Map();
         records.push({ type: "epoch" });
         break;
       case "turn-boundary":
@@ -53577,20 +55575,17 @@ function createClaudeCodeMeasurementProjection({
       case "skill-payload":
         projectSkillPayload(observation, records, diagnostics);
         break;
-      case "task-notification":
-        pushRecords(interpretTaskNotification(observation), records);
-        break;
       case "text":
         break;
       default:
-        invariant4(false, `unsupported observation type: ${String(observation.type)}`);
+        invariant7(false, `unsupported observation type: ${String(observation.type)}`);
     }
     return { records, diagnostics };
   }
   function finishSegment(closedSegment, { captureMode = "live" } = {}) {
     const closing = sidecarByStepId;
     sidecarByStepId = /* @__PURE__ */ new Map();
-    correlationByToolUseId = /* @__PURE__ */ new Map();
+    callByToolUseId = /* @__PURE__ */ new Map();
     const diagnostics = [];
     if (closedSegment == null) return { artifact: null, diagnostics };
     let payload;
@@ -53601,16 +55596,70 @@ function createClaudeCodeMeasurementProjection({
       return { artifact: null, diagnostics };
     }
     return {
-      artifact: { captureSource: captureMode === "replay" ? "cc-replay" : "cc-live", payload },
+      artifact: {
+        captureSource: captureMode === "replay" ? captureSources.replay : captureSources.live,
+        payload
+      },
       diagnostics
     };
   }
   return { project, finishSegment };
 }
-var DIAGNOSTIC_SCOPE2;
 var init_measurement_projection = __esm({
+  "lib/measurement-projection.js"() {
+  }
+});
+
+// lib/harness/claude-code/measurement-projection.js
+import nodePath from "node:path";
+import { homedir as homedir5 } from "node:os";
+function invariant4(ok, message) {
+  if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
+}
+function createClaudeCodeMeasurementProjection({
+  cwd = null,
+  projectRoot = null,
+  sourceLocator = null,
+  resolveModelPolicy,
+  interpretToolUse,
+  completeToolResult,
+  interpretSkillPayload,
+  interpretTaskNotification
+} = {}) {
+  invariant4(typeof resolveModelPolicy === "function", "resolveModelPolicy must be a function");
+  invariant4(typeof interpretToolUse === "function", "interpretToolUse must be a function");
+  invariant4(typeof completeToolResult === "function", "completeToolResult must be a function");
+  invariant4(typeof interpretSkillPayload === "function", "interpretSkillPayload must be a function");
+  invariant4(typeof interpretTaskNotification === "function", "interpretTaskNotification must be a function");
+  const sessionCwd = cwd || projectRoot || null;
+  const transcriptDir = typeof sourceLocator === "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null;
+  const context = { path: nodePath, homedir: homedir5, sessionCwd, transcriptDir, resolveModelPolicy };
+  const shared = createMeasurementProjection({
+    scope: "claude-code-measurement-projection",
+    context,
+    captureSources: { live: "cc-live", replay: "cc-replay" },
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload
+  });
+  function project(observation) {
+    if (observation?.type === "task-notification") {
+      const interpreted = interpretTaskNotification(observation);
+      return {
+        records: [
+          ...interpreted.effects.map((effect) => ({ type: "effect", ...effect })),
+          ...interpreted.residuals.map((residual) => ({ type: "residual", ...residual }))
+        ],
+        diagnostics: []
+      };
+    }
+    return shared.project(observation);
+  }
+  return { project, finishSegment: shared.finishSegment };
+}
+var init_measurement_projection2 = __esm({
   "lib/harness/claude-code/measurement-projection.js"() {
-    DIAGNOSTIC_SCOPE2 = "claude-code-measurement-projection";
+    init_measurement_projection();
   }
 });
 
@@ -53701,30 +55750,7 @@ var init_serena_parse = __esm({
   }
 });
 
-// lib/harness/claude-code/native-tools.js
-function canonicalizerFor(context) {
-  const ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  const homedir9 = context.homedir;
-  return (raw, base) => {
-    let value = raw;
-    if (value === "~" || value.startsWith("~/")) value = ops.join(homedir9(), value.slice(1));
-    const abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor(observation, context) {
-  if (typeof observation.cwd === "string" && observation.cwd.length > 0) return observation.cwd;
-  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
-  return context.transcriptDir ?? null;
-}
-function resultTextOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n");
-  }
-  return "";
-}
+// lib/bash-feature.js
 function stripShellPreamble(command) {
   let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim();
   let effectiveCwd = null;
@@ -53749,6 +55775,265 @@ function stripShellPreamble(command) {
     }
     return { rest, effectiveCwd, headerLines };
   }
+}
+function splitByPipe(s) {
+  const stages = [];
+  let current = "";
+  let i2 = 0;
+  while (i2 < s.length) {
+    if (s[i2] === '"') {
+      current += s[i2++];
+      while (i2 < s.length && s[i2] !== '"') {
+        if (s[i2] === "\\") {
+          current += s[i2++];
+          if (i2 < s.length) current += s[i2++];
+          continue;
+        }
+        current += s[i2++];
+      }
+      if (i2 < s.length) current += s[i2++];
+    } else if (s[i2] === "'") {
+      current += s[i2++];
+      while (i2 < s.length && s[i2] !== "'") current += s[i2++];
+      if (i2 < s.length) current += s[i2++];
+    } else if (s[i2] === "\\" && i2 + 1 < s.length && s[i2 + 1] === "|") {
+      let trailingBS = 0;
+      for (let k = current.length - 1; k >= 0 && current[k] === "\\"; k--) trailingBS++;
+      if (trailingBS % 2 === 1) {
+        i2++;
+        const trimmed2 = current.trim();
+        if (trimmed2) stages.push(trimmed2);
+        current = "";
+        i2++;
+      } else {
+        current += s[i2++];
+        current += s[i2++];
+      }
+    } else if (s[i2] === "|" && i2 + 1 < s.length && s[i2 + 1] === "|") {
+      return null;
+    } else if (s[i2] === "|") {
+      const trimmed2 = current.trim();
+      if (trimmed2) stages.push(trimmed2);
+      current = "";
+      i2++;
+    } else {
+      current += s[i2++];
+    }
+  }
+  const trimmed = current.trim();
+  if (trimmed) stages.push(trimmed);
+  return stages;
+}
+function classifyPipe(firstCmd, baseType) {
+  const allStages = splitByPipe(firstCmd);
+  if (allStages === null) return null;
+  if (allStages.length < 2) return baseType;
+  const pipeStages = allStages.slice(1);
+  const pipeTools = pipeStages.map((s) => s.trim().split(/\s+/)[0]);
+  const keepsLines = (stage) => {
+    const trimmed = stage.trim();
+    return trimmed.split(/\s+/)[0] === "head" || SED_LINE_DROP_RE.test(trimmed);
+  };
+  if (baseType === "cat") {
+    if (pipeTools[0] === "head" && pipeTools.slice(1).every((t) => t === "head")) return "head";
+    if ((pipeTools[0] === "grep" || pipeTools[0] === "rg") && /(?:^|\s)-[A-Za-z]*n/.test(pipeStages[0]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(pipeStages[0]) && pipeStages.slice(1).every(keepsLines)) return "grep-n";
+    return null;
+  }
+  if (baseType === "head") return pipeTools.every((t) => t === "head") ? "head" : null;
+  if (baseType === "grep-n") return pipeStages.every(keepsLines) ? "grep-n" : null;
+  return baseType;
+}
+function redactCmd(cmd) {
+  return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
+}
+function pipeActorDisplay(cmd) {
+  const stripped = stripShellPreamble(cmd).rest;
+  const firstLine = stripped.split("\n")[0].split(";")[0];
+  const catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
+  const headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
+  const sourceMatch = catMatch || headMatch;
+  if (!sourceMatch) return null;
+  const allStages = splitByPipe(firstLine);
+  if (allStages === null || allStages.length < 2) return null;
+  if (classifyPipe(firstLine, catMatch ? "cat" : "head") !== null) return null;
+  const filePath = sourceMatch[1];
+  const actorTool = allStages[1].trim().split(/\s+/)[0];
+  return {
+    name: actorTool.length > DISPLAY_CHARS ? actorTool.slice(0, DISPLAY_CHARS) : actorTool,
+    detail: filePath.length > DISPLAY_CHARS ? filePath.slice(-DISPLAY_CHARS) : filePath
+  };
+}
+function bashFeature(command) {
+  if (!command || !String(command).trim()) return { name: "(bash)", detail: "" };
+  let cmd = String(command).trim();
+  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
+  if (!cmd) return { name: "(bash)", detail: "" };
+  const pipeActorResult = pipeActorDisplay(cmd);
+  if (pipeActorResult) return pipeActorResult;
+  cmd = cmd.split("|")[0].trim();
+  cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
+  cmd = stripShellPreamble(cmd).rest;
+  while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
+  for (; ; ) {
+    const before = cmd;
+    cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, "");
+    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest;
+    if (cmd === before) break;
+  }
+  const firstLine = cmd.split("\n")[0];
+  const tokens = firstLine.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  if (tokens.length === 0) return { name: "(bash)", detail: "" };
+  const tool = tokens[0];
+  if (tool.includes("/") || tool.includes("=")) return { name: "(script)", detail: "" };
+  let name2;
+  let argsStart;
+  if (tool === "git") {
+    let i2 = 1;
+    while (i2 < tokens.length && tokens[i2].startsWith("-")) {
+      if (tokens[i2] === "-C" || tokens[i2] === "-c") i2 += 2;
+      else break;
+    }
+    const sub = i2 < tokens.length ? tokens[i2] : "";
+    name2 = sub ? `git ${sub}` : "git";
+    argsStart = i2 + 1;
+  } else if (tool === "bash" || tool === "sh") {
+    const script = tokens[1] || "";
+    const basename3 = script.includes("/") ? script.split("/").pop() : script;
+    name2 = basename3 ? `${tool} ${basename3}` : tool;
+    argsStart = 2;
+  } else if ((tool === "npm" || tool === "pnpm" || tool === "yarn") && tokens.length > 1) {
+    const sub = tokens[1] || "";
+    if (sub.startsWith("-")) {
+      name2 = tool;
+      argsStart = 1;
+    } else {
+      name2 = `${tool} ${sub}`;
+      argsStart = 2;
+    }
+  } else if (tool === "docker" && tokens.length > 1 && !tokens[1].startsWith("-")) {
+    name2 = `${tool} ${tokens[1]}`;
+    argsStart = 2;
+  } else {
+    name2 = tool;
+    argsStart = 1;
+  }
+  if (name2.length > DISPLAY_CHARS) name2 = name2.slice(0, DISPLAY_CHARS);
+  let detail = "";
+  for (const arg of tokens.slice(argsStart)) {
+    if (/^(?:&&|;|>>?|<<?|&)$/.test(arg)) break;
+    if (arg.startsWith("-")) continue;
+    const urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
+    if (urlMatch) {
+      detail = urlMatch[1];
+      break;
+    }
+    if (!arg.startsWith("$") && !arg.startsWith('"') && !arg.startsWith("'")) {
+      detail = arg;
+      break;
+    }
+  }
+  detail = redactCmd(detail);
+  if (detail.length > DISPLAY_CHARS) detail = detail.slice(0, DISPLAY_CHARS);
+  return { name: name2, detail };
+}
+var LEADING_COMMENT_RE, DISPLAY_CHARS, CD_PREAMBLE_RE, ECHO_PREAMBLE_RE, FN_PREAMBLE_RE, SED_LINE_DROP_RE;
+var init_bash_feature = __esm({
+  "lib/bash-feature.js"() {
+    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/;
+    DISPLAY_CHARS = 40;
+    CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/;
+    ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/;
+    FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
+    SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
+  }
+});
+
+// lib/tool-effects.js
+function lineFragments(lines) {
+  const byLine = /* @__PURE__ */ new Map();
+  for (const [line, tokens] of lines) byLine.set(line, tokens);
+  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
+}
+function effectFor(update, resourceKey) {
+  const spentTokens = update.spent > 0 ? update.spent : 0;
+  if (update.type === "grepMultiFile") {
+    return {
+      access: "read",
+      overheadTokens: update.overhead,
+      spentTokens,
+      impacts: Object.entries(update.files).map(([key, entries]) => ({
+        resourceKey: key,
+        mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
+      }))
+    };
+  }
+  if (update.type === "fullSet") {
+    return {
+      access: "read",
+      overheadTokens: update.overhead,
+      spentTokens,
+      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
+    };
+  }
+  if (update.type === "write") {
+    return {
+      access: "write",
+      overheadTokens: update.overhead,
+      spentTokens,
+      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
+    };
+  }
+  if (update.type === "lineUpdate") {
+    return {
+      access: "read",
+      overheadTokens: update.overhead,
+      spentTokens,
+      impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
+    };
+  }
+  return {
+    access: "write",
+    overheadTokens: 0,
+    spentTokens,
+    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
+  };
+}
+function pathEventsFor(update, resourceKey, rawPath, toolType) {
+  if (update.type === "grepMultiFile") {
+    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
+  }
+  if (resourceKey == null) return [];
+  const isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
+  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
+}
+var init_tool_effects = __esm({
+  "lib/tool-effects.js"() {
+  }
+});
+
+// lib/harness/claude-code/native-tools.js
+function canonicalizerFor(context) {
+  const ops = context && context.path;
+  if (!ops) return (raw) => String(raw);
+  const homedir9 = context.homedir;
+  return (raw, base) => {
+    let value = raw;
+    if (value === "~" || value.startsWith("~/")) value = ops.join(homedir9(), value.slice(1));
+    const abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
+    return ops.normalize(abs).split("\\").join("/");
+  };
+}
+function baseDirFor(observation, context) {
+  if (typeof observation.cwd === "string" && observation.cwd.length > 0) return observation.cwd;
+  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
+  return context.transcriptDir ?? null;
+}
+function resultTextOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n");
+  }
+  return "";
 }
 function hasTrailingSegment(cmd) {
   if (cmd.includes("\n")) return true;
@@ -54029,73 +56314,6 @@ function compoundFor(input, base, canon, adapter) {
   if (!blocks.some((block) => block.target !== null)) return null;
   return { anchors: plan.anchors, blocks };
 }
-function splitByPipe(s) {
-  const stages = [];
-  let current = "";
-  let i2 = 0;
-  while (i2 < s.length) {
-    if (s[i2] === '"') {
-      current += s[i2++];
-      while (i2 < s.length && s[i2] !== '"') {
-        if (s[i2] === "\\") {
-          current += s[i2++];
-          if (i2 < s.length) current += s[i2++];
-          continue;
-        }
-        current += s[i2++];
-      }
-      if (i2 < s.length) current += s[i2++];
-    } else if (s[i2] === "'") {
-      current += s[i2++];
-      while (i2 < s.length && s[i2] !== "'") current += s[i2++];
-      if (i2 < s.length) current += s[i2++];
-    } else if (s[i2] === "\\" && i2 + 1 < s.length && s[i2 + 1] === "|") {
-      let trailingBS = 0;
-      for (let k = current.length - 1; k >= 0 && current[k] === "\\"; k--) trailingBS++;
-      if (trailingBS % 2 === 1) {
-        i2++;
-        const trimmed2 = current.trim();
-        if (trimmed2) stages.push(trimmed2);
-        current = "";
-        i2++;
-      } else {
-        current += s[i2++];
-        current += s[i2++];
-      }
-    } else if (s[i2] === "|" && i2 + 1 < s.length && s[i2 + 1] === "|") {
-      return null;
-    } else if (s[i2] === "|") {
-      const trimmed2 = current.trim();
-      if (trimmed2) stages.push(trimmed2);
-      current = "";
-      i2++;
-    } else {
-      current += s[i2++];
-    }
-  }
-  const trimmed = current.trim();
-  if (trimmed) stages.push(trimmed);
-  return stages;
-}
-function classifyPipe(firstCmd, baseType) {
-  const allStages = splitByPipe(firstCmd);
-  if (allStages === null) return null;
-  if (allStages.length < 2) return baseType;
-  const pipeStages = allStages.slice(1);
-  const pipeTools = pipeStages.map((s) => s.trim().split(/\s+/)[0]);
-  const keepsLines = (stage) => {
-    const trimmed = stage.trim();
-    return trimmed.split(/\s+/)[0] === "head" || SED_LINE_DROP_RE.test(trimmed);
-  };
-  if (baseType === "cat") {
-    if (pipeTools[0] === "head" && pipeTools.slice(1).every((t) => t === "head")) return "head";
-    if ((pipeTools[0] === "grep" || pipeTools[0] === "rg") && /(?:^|\s)-[A-Za-z]*n/.test(pipeStages[0]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(pipeStages[0]) && pipeStages.slice(1).every(keepsLines)) return "grep-n";
-    return null;
-  }
-  if (baseType === "head") return pipeTools.every((t) => t === "head") ? "head" : null;
-  if (baseType === "grep-n") return pipeStages.every(keepsLines) ? "grep-n" : null;
-  return baseType;
-}
 function stripQuotedStrings(s) {
   let result = "";
   let i2 = 0;
@@ -54162,9 +56380,6 @@ function isEffectiveUpdate(update, target) {
   if (update.type === "write" || update.type === "editDelta") return target != null;
   return false;
 }
-function redactCmd(cmd) {
-  return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
-}
 function mcpDisplay(toolName) {
   if (!toolName || !toolName.startsWith("mcp__")) return toolName;
   let name2 = toolName.slice(5).replace(/^plugin_/, "");
@@ -54181,153 +56396,6 @@ function mcpDisplay(toolName) {
     }
   }
   return segments.join(" ");
-}
-function pipeActorDisplay(cmd) {
-  const stripped = stripShellPreamble(cmd).rest;
-  const firstLine = stripped.split("\n")[0].split(";")[0];
-  const catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
-  const headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
-  const sourceMatch = catMatch || headMatch;
-  if (!sourceMatch) return null;
-  const allStages = splitByPipe(firstLine);
-  if (allStages === null || allStages.length < 2) return null;
-  if (classifyPipe(firstLine, catMatch ? "cat" : "head") !== null) return null;
-  const filePath = sourceMatch[1];
-  const actorTool = allStages[1].trim().split(/\s+/)[0];
-  return {
-    name: actorTool.length > DISPLAY_CHARS ? actorTool.slice(0, DISPLAY_CHARS) : actorTool,
-    detail: filePath.length > DISPLAY_CHARS ? filePath.slice(-DISPLAY_CHARS) : filePath
-  };
-}
-function bashFeature(command) {
-  if (!command || !String(command).trim()) return { name: "(bash)", detail: "" };
-  let cmd = String(command).trim();
-  cmd = cmd.replace(LEADING_COMMENT_RE, "").trim();
-  if (!cmd) return { name: "(bash)", detail: "" };
-  const pipeActorResult = pipeActorDisplay(cmd);
-  if (pipeActorResult) return pipeActorResult;
-  cmd = cmd.split("|")[0].trim();
-  cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
-  cmd = stripShellPreamble(cmd).rest;
-  while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
-  for (; ; ) {
-    const before = cmd;
-    cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, "");
-    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest;
-    if (cmd === before) break;
-  }
-  const firstLine = cmd.split("\n")[0];
-  const tokens = firstLine.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-  if (tokens.length === 0) return { name: "(bash)", detail: "" };
-  const tool = tokens[0];
-  if (tool.includes("/") || tool.includes("=")) return { name: "(script)", detail: "" };
-  let name2;
-  let argsStart;
-  if (tool === "git") {
-    let i2 = 1;
-    while (i2 < tokens.length && tokens[i2].startsWith("-")) {
-      if (tokens[i2] === "-C" || tokens[i2] === "-c") i2 += 2;
-      else break;
-    }
-    const sub = i2 < tokens.length ? tokens[i2] : "";
-    name2 = sub ? `git ${sub}` : "git";
-    argsStart = i2 + 1;
-  } else if (tool === "bash" || tool === "sh") {
-    const script = tokens[1] || "";
-    const basename3 = script.includes("/") ? script.split("/").pop() : script;
-    name2 = basename3 ? `${tool} ${basename3}` : tool;
-    argsStart = 2;
-  } else if ((tool === "npm" || tool === "pnpm" || tool === "yarn") && tokens.length > 1) {
-    const sub = tokens[1] || "";
-    if (sub.startsWith("-")) {
-      name2 = tool;
-      argsStart = 1;
-    } else {
-      name2 = `${tool} ${sub}`;
-      argsStart = 2;
-    }
-  } else if (tool === "docker" && tokens.length > 1 && !tokens[1].startsWith("-")) {
-    name2 = `${tool} ${tokens[1]}`;
-    argsStart = 2;
-  } else {
-    name2 = tool;
-    argsStart = 1;
-  }
-  if (name2.length > DISPLAY_CHARS) name2 = name2.slice(0, DISPLAY_CHARS);
-  let detail = "";
-  for (const arg of tokens.slice(argsStart)) {
-    if (/^(?:&&|;|>>?|<<?|&)$/.test(arg)) break;
-    if (arg.startsWith("-")) continue;
-    const urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
-    if (urlMatch) {
-      detail = urlMatch[1];
-      break;
-    }
-    if (!arg.startsWith("$") && !arg.startsWith('"') && !arg.startsWith("'")) {
-      detail = arg;
-      break;
-    }
-  }
-  detail = redactCmd(detail);
-  if (detail.length > DISPLAY_CHARS) detail = detail.slice(0, DISPLAY_CHARS);
-  return { name: name2, detail };
-}
-function lineFragments(lines) {
-  const byLine = /* @__PURE__ */ new Map();
-  for (const [line, tokens] of lines) byLine.set(line, tokens);
-  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
-}
-function effectFor(update, resourceKey) {
-  const spentTokens = update.spent > 0 ? update.spent : 0;
-  if (update.type === "grepMultiFile") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: Object.entries(update.files).map(([key, entries]) => ({
-        resourceKey: key,
-        mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
-      }))
-    };
-  }
-  if (update.type === "fullSet") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "write") {
-    return {
-      access: "write",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "lineUpdate") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  return {
-    access: "write",
-    overheadTokens: 0,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
-  };
-}
-function pathEventsFor(update, resourceKey, rawPath, toolType) {
-  if (update.type === "grepMultiFile") {
-    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
-  }
-  if (resourceKey == null) return [];
-  const isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
-  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
 }
 function residualIdentityFor(toolName, input) {
   const isBash = toolName === "Bash";
@@ -54499,11 +56567,11 @@ function completeClaudeCodeToolResult(awaitResult, observation, context) {
     loadToken: correlation.awaitLoadToken ? resolvedLoadToken(resultText) : null,
     pathEvents: []
   };
-  const nothing = { effects: [], residuals: [], telemetry, skillContinuation: null };
+  const nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
   if (correlation.kind === "residual") return residualCompletion(correlation.residual, resultText, observation, telemetry);
   if (correlation.kind === "compound") return completeCompound(correlation, observation, resultText, context, telemetry);
-  if (correlation.kind !== "effect") return nothing;
-  const declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing;
+  if (correlation.kind !== "effect") return nothing2;
+  const declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing2;
   if (observation.isError === true) return declined();
   const adapter = correlation.adapter;
   let update;
@@ -54590,27 +56658,23 @@ function classifyToolPair(pair, ctp) {
   if (!isEffectiveUpdate(update, pair.resourceKey ?? null)) return "residual";
   return adapter.name === "Skill" ? "skill" : "path";
 }
-var LEADING_COMMENT_RE, TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, DISPLAY_CHARS, CD_PREAMBLE_RE, ECHO_PREAMBLE_RE, FN_PREAMBLE_RE, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, SED_LINE_DROP_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS;
+var TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS;
 var init_native_tools = __esm({
   "lib/harness/claude-code/native-tools.js"() {
     init_constants();
     init_token_estimate();
     init_serena_parse();
-    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/;
+    init_bash_feature();
+    init_tool_effects();
     TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/;
     TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/;
     AGENT_FINISHED_RE = /^Agent "(.+)" finished$/;
     TASK_ID_PREFIX_CHARS = 8;
-    DISPLAY_CHARS = 40;
-    CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/;
-    ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/;
-    FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
     SED_READ_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s+([^\s|;><&'"]+)\s*(\|\s*cat\s+-n\s*)?$/;
     SED_SPEC_PREFIX_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s/;
     SED_SEGMENT_RE = /^(\d+)(?:,(\d+|\$))?p$/;
     SED_CAT_PIPE_RE = /^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)['"]?\s*\|\s*sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\2\s*$/;
     STDERR_DISCARD_RE = /\s+2>\s*\/dev\/null$/;
-    SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
     HEREDOC_RE = /<<-?\s*['"]?\w/;
     CD_SEGMENT_RE = /^cd\s+(\S+)$/;
     BLANK_ECHO_RE = /^echo(?:\s+(?:""|''))?$/;
@@ -54891,1813 +56955,6 @@ var init_cache_ttl = __esm({
   }
 });
 
-// lib/store.js
-var store_exports = {};
-__export(store_exports, {
-  closeStore: () => closeStore,
-  closeStoreGlobal: () => closeStoreGlobal,
-  defaultDbPath: () => defaultDbPath,
-  getStore: () => getStore,
-  initStore: () => initStore,
-  openStore: () => openStore
-});
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync as mkdirSync3, statSync as statSync2 } from "node:fs";
-import { join as join7, dirname as dirname3 } from "node:path";
-import { homedir as homedir5 } from "node:os";
-import { performance as performance2 } from "node:perf_hooks";
-function migrateProfileToSegment(db) {
-  db.exec("ALTER TABLE profile RENAME TO profile_v1");
-  db.exec(`CREATE TABLE profile (
-    session_id TEXT NOT NULL, segment INTEGER NOT NULL, archived_at INTEGER NOT NULL,
-    model TEXT, project_id TEXT, l_floor REAL, b_total REAL, l_peak REAL, g_final REAL,
-    o_avg REAL, c_ratio REAL, turns INTEGER, duration_ms INTEGER, total_tokens_read REAL,
-    mf REAL, pp_exit REAL, br_exit REAL, br_peak REAL, pp_peak REAL, p0 REAL, b_axis REAL,
-    x_axis REAL, g_min REAL, turn_at_br_amber INTEGER, archive_source TEXT,
-    archive_priority INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (session_id, segment)) WITHOUT ROWID`);
-  db.exec(`INSERT INTO profile (
-    session_id, segment, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
-    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
-    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, archive_source, archive_priority)
-    SELECT session_id, 0, archived_at, model, project_id, l_floor, b_total, l_peak, g_final,
-    o_avg, c_ratio, turns, duration_ms, total_tokens_read, mf, pp_exit, br_exit, br_peak,
-    pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber, 'snapshot', 1 FROM profile_v1`);
-  db.exec("DROP TABLE profile_v1");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_project_archived ON profile(project_id, archived_at DESC)");
-}
-function migrateProfilePaths(db) {
-  db.exec("ALTER TABLE profile_paths RENAME TO profile_paths_v1");
-  db.exec(`CREATE TABLE profile_paths (
-    session_id TEXT NOT NULL, segment INTEGER NOT NULL, path TEXT NOT NULL, tokens REAL NOT NULL,
-    PRIMARY KEY (session_id, segment, path)) WITHOUT ROWID`);
-  db.exec("INSERT INTO profile_paths (session_id, segment, path, tokens) SELECT session_id, 0, path, tokens FROM profile_paths_v1");
-  db.exec("DROP TABLE profile_paths_v1");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_paths_path ON profile_paths(path, session_id, segment)");
-}
-function createHandoffTable(db) {
-  db.exec(`CREATE TABLE IF NOT EXISTS handoff (
-    handoff_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, segment INTEGER NOT NULL,
-    load_token TEXT NOT NULL, created_at INTEGER NOT NULL, paths_to_keep TEXT NOT NULL,
-    summary TEXT NOT NULL, next_task TEXT, summary_tokens INTEGER NOT NULL,
-    kept_tokens REAL, discarded_tokens REAL, prepared_at_turn INTEGER,
-    previous_stats TEXT, prepared_stats TEXT, search_terms TEXT, project_id TEXT,
-    delivered_at INTEGER, delivered_segment INTEGER)`);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_session ON handoff(session_id, created_at DESC)");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_handoff_token ON handoff(load_token)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_created_at ON handoff(created_at)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_project ON handoff(project_id, created_at DESC)");
-}
-function createHandoffLoadTable(db) {
-  db.exec(`CREATE TABLE IF NOT EXISTS handoff_load (
-    handoff_id         INTEGER NOT NULL,
-    session_id         TEXT NOT NULL,
-    loaded_at          INTEGER NOT NULL,
-    loader_version     TEXT,
-    claim_result       TEXT NOT NULL CHECK (claim_result IN ('primary','duplicate','legacy_unattributed')),
-    primary_session_id TEXT,
-    consumer_segment   INTEGER,
-    PRIMARY KEY (handoff_id, session_id, loaded_at)
-  ) WITHOUT ROWID`);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_load_session ON handoff_load(session_id)");
-}
-function createTelemetryTables(db) {
-  const has = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
-  const wasMissing = [];
-  if (!has("profile_path_event")) wasMissing.push("profile_path_event");
-  if (!has("profile_step_usage")) wasMissing.push("profile_step_usage");
-  db.exec(`CREATE TABLE IF NOT EXISTS profile_path_event (
-    session_id    TEXT NOT NULL,
-    segment       INTEGER NOT NULL,
-    folded_seq    INTEGER NOT NULL,
-    event_ordinal INTEGER NOT NULL,
-    path          TEXT NOT NULL,
-    raw_path      TEXT,
-    tool_type     TEXT NOT NULL,
-    is_full_read  INTEGER CHECK (is_full_read IN (0,1) OR is_full_read IS NULL),
-    PRIMARY KEY (session_id, segment, folded_seq, event_ordinal)
-  ) WITHOUT ROWID`);
-  db.exec(`CREATE TABLE IF NOT EXISTS profile_step_usage (
-    session_id     TEXT NOT NULL,
-    segment        INTEGER NOT NULL,
-    folded_seq     INTEGER NOT NULL,
-    ts             INTEGER,
-    cache_read     REAL,
-    cache_creation REAL,
-    input          REAL,
-    output         REAL,
-    tool_calls     INTEGER,
-    load_token     TEXT,
-    PRIMARY KEY (session_id, segment, folded_seq)
-  ) WITHOUT ROWID`);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_step_usage_load_token ON profile_step_usage(load_token)");
-  return wasMissing;
-}
-function ensureV5Shape(db) {
-  db.exec(`CREATE TABLE IF NOT EXISTS turn_note (
-    turn_note_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_session_id TEXT    NOT NULL,
-    anchor_uuid       TEXT    NOT NULL,
-    u_text            TEXT    NOT NULL,
-    u_original_chars  INTEGER NOT NULL,
-    note              TEXT,
-    search_terms      TEXT    NOT NULL DEFAULT '',
-    source_timestamp  INTEGER NOT NULL,
-    created_at        INTEGER NOT NULL,
-    UNIQUE (source_session_id, anchor_uuid)
-  )`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_note_session
-    ON turn_note(source_session_id, source_timestamp)`);
-}
-function addColumnIfMissing(db, table, name2, type) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!cols.includes(name2)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name2} ${type}`);
-}
-function ensureV3Shape(db) {
-  for (const [name2, type] of V3_HANDOFF_COLUMNS) addColumnIfMissing(db, "handoff", name2, type);
-  addColumnIfMissing(db, "profile", "telemetry_status", "TEXT");
-  addColumnIfMissing(db, "profile", "capture_source", "TEXT");
-  createHandoffLoadTable(db);
-  const recreated = createTelemetryTables(db);
-  if (recreated.length) {
-    db.prepare("UPDATE profile SET telemetry_status='pending' WHERE telemetry_status IN ('complete','complete_empty')").run();
-  }
-  db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_delivered_session ON handoff(delivered_session_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_telemetry ON profile(telemetry_status, archived_at)");
-}
-function ftsObjectsPresent(db, names) {
-  const holes = names.map(() => "?").join(",");
-  const row = db.prepare(`SELECT COUNT(*) AS present FROM sqlite_master WHERE name IN (${holes})`).get(...names);
-  return row.present === names.length;
-}
-function createHandoffFts(db) {
-  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS handoff_fts USING fts5(
-    summary, next_task, load_token, search_terms,
-    content='handoff', content_rowid='handoff_id')`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_insert AFTER INSERT ON handoff BEGIN
-    INSERT INTO handoff_fts(rowid, summary, next_task, load_token, search_terms)
-    VALUES (new.handoff_id, new.summary, new.next_task, new.load_token, new.search_terms);
-  END`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_delete AFTER DELETE ON handoff BEGIN
-    INSERT INTO handoff_fts(handoff_fts, rowid, summary, next_task, load_token, search_terms)
-    VALUES ('delete', old.handoff_id, old.summary, old.next_task, old.load_token, old.search_terms);
-  END`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS handoff_fts_update AFTER UPDATE ON handoff
-    WHEN old.summary IS NOT new.summary OR old.next_task IS NOT new.next_task
-      OR old.load_token IS NOT new.load_token OR old.search_terms IS NOT new.search_terms
-    BEGIN
-    INSERT INTO handoff_fts(handoff_fts, rowid, summary, next_task, load_token, search_terms)
-    VALUES ('delete', old.handoff_id, old.summary, old.next_task, old.load_token, old.search_terms);
-    INSERT INTO handoff_fts(rowid, summary, next_task, load_token, search_terms)
-    VALUES (new.handoff_id, new.summary, new.next_task, new.load_token, new.search_terms);
-  END`);
-}
-function createTurnNoteFts(db) {
-  const wasIncomplete = !ftsObjectsPresent(db, TURN_NOTE_FTS_OBJECTS);
-  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS turn_note_fts USING fts5(
-    u_text, note, search_terms, content='turn_note', content_rowid='turn_note_id')`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_insert AFTER INSERT ON turn_note BEGIN
-    INSERT INTO turn_note_fts(rowid, u_text, note, search_terms)
-    VALUES (new.turn_note_id, new.u_text, new.note, new.search_terms);
-  END`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_delete AFTER DELETE ON turn_note BEGIN
-    INSERT INTO turn_note_fts(turn_note_fts, rowid, u_text, note, search_terms)
-    VALUES ('delete', old.turn_note_id, old.u_text, old.note, old.search_terms);
-  END`);
-  db.exec(`CREATE TRIGGER IF NOT EXISTS turn_note_fts_update AFTER UPDATE ON turn_note BEGIN
-    INSERT INTO turn_note_fts(turn_note_fts, rowid, u_text, note, search_terms)
-    VALUES ('delete', old.turn_note_id, old.u_text, old.note, old.search_terms);
-    INSERT INTO turn_note_fts(rowid, u_text, note, search_terms)
-    VALUES (new.turn_note_id, new.u_text, new.note, new.search_terms);
-  END`);
-  if (wasIncomplete) db.exec(`INSERT INTO turn_note_fts(turn_note_fts) VALUES('rebuild')`);
-}
-function ensureV2Shape(db) {
-  const hasHandoff = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff'").get();
-  const profileCols = db.prepare("PRAGMA table_info(profile)").all().map((c) => c.name);
-  const profileOk = profileCols.includes("segment") && profileCols.includes("archive_priority");
-  if (!hasHandoff || !profileOk) {
-    if (!profileOk && profileCols.includes("session_id") && !profileCols.includes("segment")) {
-      migrateProfileToSegment(db);
-      migrateProfilePaths(db);
-    }
-    if (!hasHandoff) createHandoffTable(db);
-  }
-}
-function migrate(db) {
-  db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    const version2 = row ? parseInt(row.value) : 0;
-    if (version2 < 1) {
-      db.exec(SCHEMA_V1_SQL);
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    if (version2 < 2) {
-      db.exec(`CREATE TABLE IF NOT EXISTS profile_paths (
-        session_id TEXT NOT NULL,
-        path       TEXT NOT NULL,
-        tokens     REAL NOT NULL,
-        PRIMARY KEY (session_id, path)
-      ) WITHOUT ROWID`);
-      migrateProfileToSegment(db);
-      migrateProfilePaths(db);
-      createHandoffTable(db);
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    if (version2 < 3) {
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    if (version2 < 4) {
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    ensureV2Shape(db);
-    ensureV3Shape(db);
-    ensureV5Shape(db);
-    if (version2 < 5) {
-      db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
-    }
-    db.exec("COMMIT");
-  } catch (err2) {
-    db.exec("ROLLBACK");
-    throw err2;
-  }
-  let handoffFtsAvailable = false;
-  let turnFtsAvailable = false;
-  try {
-    const wasIncomplete = !ftsObjectsPresent(db, HANDOFF_FTS_OBJECTS);
-    createHandoffFts(db);
-    if (wasIncomplete) db.exec("INSERT INTO handoff_fts(handoff_fts) VALUES('rebuild')");
-    handoffFtsAvailable = true;
-  } catch (ftsErr) {
-    console.warn("[store] FTS5 unavailable, handoff search disabled:", ftsErr.message);
-  }
-  try {
-    createTurnNoteFts(db);
-    turnFtsAvailable = true;
-  } catch (ftsErr) {
-    console.warn("[store] FTS5 unavailable, turn-note locate disabled:", ftsErr.message);
-  }
-  return { handoffFtsAvailable, turnFtsAvailable };
-}
-function openStore(dbPath) {
-  mkdirSync3(dirname3(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath, { timeout: 3e3 });
-  try {
-    const walResult = db.prepare("PRAGMA journal_mode=WAL").get();
-    const actualMode = String(walResult.journal_mode ?? "").toLowerCase();
-    if (actualMode !== "wal" && dbPath !== ":memory:") {
-      console.error(`[store] WAL unavailable (got ${actualMode}). Check local filesystem.`);
-    }
-    db.exec("PRAGMA synchronous=NORMAL");
-    db.exec("PRAGMA auto_vacuum=INCREMENTAL");
-    const fts = migrate(db);
-    const store = new Store(db);
-    store.ftsAvailable = fts.handoffFtsAvailable;
-    store._turnFtsAvailable = fts.turnFtsAvailable;
-    return store;
-  } catch (err2) {
-    try {
-      db.close();
-    } catch {
-    }
-    throw err2;
-  }
-}
-function closeStore(store) {
-  if (store._closed) return;
-  store._closed = true;
-  store._db.close();
-}
-function defaultDbPath() {
-  return join7(homedir5(), ".session-watcher", "store.sqlite");
-}
-function initStore(dbPath) {
-  if (_instance) closeStore(_instance);
-  _instance = openStore(dbPath || defaultDbPath());
-  return _instance;
-}
-function getStore() {
-  if (!_instance) throw new Error("Store not initialized");
-  return _instance;
-}
-function closeStoreGlobal() {
-  if (_instance) {
-    closeStore(_instance);
-    _instance = null;
-  }
-}
-var yieldTick, ARCHIVE_PRIORITY, SCHEMA_V1_SQL, V3_HANDOFF_COLUMNS, HANDOFF_FTS_OBJECTS, TURN_NOTE_FTS_OBJECTS, Store, _instance;
-var init_store = __esm({
-  "lib/store.js"() {
-    init_constants();
-    yieldTick = () => new Promise((r) => setImmediate(r));
-    ARCHIVE_PRIORITY = { snapshot: 1, replay: 2, live: 3 };
-    SCHEMA_V1_SQL = `
-CREATE TABLE IF NOT EXISTS sessions (
-  session_id  TEXT PRIMARY KEY,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  model       TEXT,
-  project_id  TEXT
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS state (
-  session_id TEXT    NOT NULL,
-  key        TEXT    NOT NULL,
-  value      TEXT    NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_id, key)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS config (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS lines (
-  session_id TEXT    NOT NULL,
-  path       TEXT    NOT NULL,
-  line_num   INTEGER NOT NULL,
-  chars      INTEGER NOT NULL,
-  PRIMARY KEY (session_id, path, line_num)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS paths (
-  session_id TEXT    NOT NULL,
-  path       TEXT    NOT NULL,
-  edit_delta  INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (session_id, path)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS profile (
-  session_id   TEXT PRIMARY KEY,
-  archived_at  INTEGER NOT NULL,
-  model        TEXT,
-  project_id   TEXT,
-  l_floor      REAL,
-  b_total      REAL,
-  l_peak       REAL,
-  g_final      REAL,
-  o_avg        REAL,
-  c_ratio      REAL,
-  turns        INTEGER,
-  duration_ms  INTEGER,
-  total_tokens_read REAL,
-  mf           REAL,
-  pp_exit      REAL,
-  br_exit      REAL,
-  br_peak      REAL,
-  pp_peak      REAL,
-  p0           REAL,
-  b_axis       REAL,
-  x_axis       REAL,
-  g_min        REAL,
-  turn_at_br_amber INTEGER
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS profile_paths (
-  session_id TEXT NOT NULL,
-  path       TEXT NOT NULL,
-  tokens     REAL NOT NULL,
-  PRIMARY KEY (session_id, path)
-) WITHOUT ROWID;
-
-CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
-CREATE INDEX IF NOT EXISTS idx_profile_archived_at ON profile(archived_at DESC);
-CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
-`;
-    V3_HANDOFF_COLUMNS = [
-      ["delivered_session_id", "TEXT"],
-      ["loader_version", "TEXT"],
-      ["bucket_snapshot", "TEXT"],
-      ["transcript_path", "TEXT"]
-    ];
-    HANDOFF_FTS_OBJECTS = [
-      "handoff_fts",
-      "handoff_fts_insert",
-      "handoff_fts_delete",
-      "handoff_fts_update"
-    ];
-    TURN_NOTE_FTS_OBJECTS = [
-      "turn_note_fts",
-      "turn_note_fts_insert",
-      "turn_note_fts_delete",
-      "turn_note_fts_update"
-    ];
-    Store = class _Store {
-      constructor(db) {
-        this._db = db;
-        this._closed = false;
-        this._stmts = {
-          touchSession: db.prepare(`INSERT INTO sessions (session_id, created_at, updated_at, model, project_id) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at, model = COALESCE(excluded.model, sessions.model), project_id = COALESCE(excluded.project_id, sessions.project_id)`),
-          load: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
-          save: db.prepare(`INSERT INTO state (session_id, key, value, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
-          delete: db.prepare("DELETE FROM state WHERE session_id = ? AND key = ?"),
-          loadAll: db.prepare("SELECT key, value FROM state WHERE session_id = ?"),
-          deleteSessionState: db.prepare("DELETE FROM state WHERE session_id = ?"),
-          deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
-          deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
-          deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
-          // Config CRUD
-          loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
-          saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value`),
-          deleteConfig: db.prepare("DELETE FROM config WHERE key = ?"),
-          // Profile archival — v2 composite PK (session_id, segment)
-          loadProfile: db.prepare("SELECT * FROM profile WHERE session_id = ? AND segment = 0"),
-          loadAllProfiles: db.prepare("SELECT * FROM profile WHERE segment = 0 ORDER BY archived_at DESC"),
-          archiveSegment: db.prepare(`INSERT INTO profile (session_id, segment, archived_at, model, project_id,
-        l_floor, b_total, l_peak, g_final, o_avg, c_ratio, turns, duration_ms, total_tokens_read,
-        mf, pp_exit, br_exit, br_peak, pp_peak, p0, b_axis, x_axis, g_min, turn_at_br_amber,
-        archive_source, archive_priority)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(session_id, segment) DO UPDATE SET
-          archived_at=excluded.archived_at, model=excluded.model, project_id=excluded.project_id,
-          l_floor=excluded.l_floor, b_total=excluded.b_total, l_peak=excluded.l_peak,
-          g_final=excluded.g_final, o_avg=excluded.o_avg, c_ratio=excluded.c_ratio,
-          turns=excluded.turns, duration_ms=excluded.duration_ms, total_tokens_read=excluded.total_tokens_read,
-          mf=excluded.mf, pp_exit=excluded.pp_exit, br_exit=excluded.br_exit, br_peak=excluded.br_peak,
-          pp_peak=excluded.pp_peak, p0=excluded.p0, b_axis=excluded.b_axis, x_axis=excluded.x_axis,
-          g_min=excluded.g_min, turn_at_br_amber=excluded.turn_at_br_amber,
-          archive_source=excluded.archive_source, archive_priority=excluded.archive_priority
-        WHERE excluded.archive_priority >= profile.archive_priority`),
-          deleteSegmentPaths: db.prepare("DELETE FROM profile_paths WHERE session_id = ? AND segment = ?"),
-          insertSegmentPath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?,?,?,?)"),
-          loadProfileSegments: db.prepare("SELECT * FROM profile WHERE session_id = ? ORDER BY segment ASC"),
-          // --- Segment telemetry (TXN2): profile_step_usage / profile_path_event + telemetry_status ---
-          deleteSegmentStepUsage: db.prepare("DELETE FROM profile_step_usage WHERE session_id = ? AND segment = ?"),
-          deleteSegmentPathEvents: db.prepare("DELETE FROM profile_path_event WHERE session_id = ? AND segment = ?"),
-          // plain INSERT (not INSERT OR REPLACE) — after the per-segment DELETE the table is clear for
-          //   this segment, so a duplicate (session,segment,folded_seq) can ONLY come from a real fold/replay
-          //   bug; let it THROW → the txn rolls back → failed_retryable (observable), not silent overwrite.
-          insertStepUsage: db.prepare(`INSERT INTO profile_step_usage
-        (session_id, segment, folded_seq, ts, cache_read, cache_creation, input, output, tool_calls, load_token)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`),
-          insertPathEvent: db.prepare(`INSERT INTO profile_path_event
-        (session_id, segment, folded_seq, event_ordinal, path, raw_path, tool_type, is_full_read)
-        VALUES (?,?,?,?,?,?,?,?)`),
-          // capture_source stamped WITH the status so provenance and status move together.
-          setTelemetryStatus: db.prepare("UPDATE profile SET telemetry_status = ?, capture_source = ? WHERE session_id = ? AND segment = ?"),
-          // Task 8 TXN1 handshake: a just-(re)written profile is needs-telemetry until TXN2 flips it. Clear
-          // capture_source too so a re-written pending row never shows the PRIOR capture's provenance
-          // (a crash between TXN1 and TXN2 would otherwise leave pending + a stale cc-live/cc-replay source).
-          markTelemetryPending: db.prepare("UPDATE profile SET telemetry_status = 'pending', capture_source = NULL WHERE session_id = ? AND segment = ?"),
-          setTelemetryStatusOnly: db.prepare("UPDATE profile SET telemetry_status = ? WHERE session_id = ? AND segment = ?"),
-          getTelemetryStatusRow: db.prepare("SELECT telemetry_status FROM profile WHERE session_id=? AND segment=?"),
-          // Task 10 startup sweep: DISTINCT sessions with ANY pending/failed_retryable/NULL segment,
-          // newest-first, capped by a SQL LIMIT. The (? IS NULL OR session_id <> ?) clause pushes the common
-          // single-live-id exclusion into SQL so the excluded session's rows do NOT consume the LIMIT (a
-          // multi-id Set is JS-filtered after). Session granularity — the production replay archives every
-          // occurred segment of a session in one pass, so the sweep issues ONE replay per DISTINCT session.
-          pendingTelemetrySessions: db.prepare(`SELECT DISTINCT session_id FROM profile
-        WHERE (telemetry_status IS NULL OR telemetry_status IN ('pending','failed_retryable'))
-          AND (? IS NULL OR session_id <> ?)
-        ORDER BY MAX(archived_at) OVER (PARTITION BY session_id) DESC
-        LIMIT ?`),
-          // Handoff CRUD
-          insertHandoff: db.prepare(`INSERT INTO handoff
-        (session_id, segment, load_token, created_at, paths_to_keep, summary, next_task,
-         summary_tokens, kept_tokens, discarded_tokens, prepared_at_turn, previous_stats, prepared_stats, search_terms, project_id, bucket_snapshot, transcript_path)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-          // Step 3d: `AND delivered_at IS NULL` makes a DELIVERED handoff's telemetry immutable — a
-          // re-prepare with an already-consumed token gets changes===0 and the caller mints a fresh token
-          // via the insert path (never rewrites bucket_snapshot/hp at a different instant than delivery).
-          updateHandoff: db.prepare(`UPDATE handoff SET paths_to_keep = ?, summary = ?, next_task = ?,
-         summary_tokens = ?, kept_tokens = ?, discarded_tokens = ?, prepared_at_turn = ?,
-         previous_stats = ?, prepared_stats = ?, search_terms = ?, bucket_snapshot = ?, transcript_path = ?
-         WHERE load_token = ? AND delivered_at IS NULL`),
-          // Stamp ONLY paths_to_keep (per-entry telemetry back-fill: hp at prepare / hl at load). Keyed by
-          // handoff_id so a load-side stamp does not need the token in scope.
-          stampPathsToKeep: db.prepare("UPDATE handoff SET paths_to_keep = ? WHERE handoff_id = ?"),
-          loadHandoffToken: db.prepare("SELECT * FROM handoff WHERE load_token = ?"),
-          handoffExists: db.prepare("SELECT 1 FROM handoff WHERE load_token = ?"),
-          loadHandoffSession: db.prepare("SELECT * FROM handoff WHERE session_id = ? AND (project_id = ? OR ? IS NULL) ORDER BY created_at DESC LIMIT 1"),
-          loadHandoffByProject: db.prepare(`SELECT * FROM handoff
-        WHERE project_id = ? AND delivered_at IS NULL AND session_id <> ? AND created_at > ?
-        ORDER BY created_at DESC LIMIT 5`),
-          // Two stamps. markDelivered is the CAS for a never-delivered row. markDeliveredLegacy binds the
-          //   consumer of a v2 row that already has delivered_at but NULL consumer, WITHOUT touching the
-          //   historical delivered_at (guarded on delivered_session_id IS NULL so it fires at most once).
-          markDelivered: db.prepare("UPDATE handoff SET delivered_at = ?, delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NULL"),
-          markDeliveredLegacy: db.prepare("UPDATE handoff SET delivered_session_id = ?, delivered_segment = ?, loader_version = ? WHERE handoff_id = ? AND delivered_at IS NOT NULL AND delivered_session_id IS NULL"),
-          insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
-        (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
-        VALUES (?,?,?,?,?,?,?)`),
-          // Lineage: the parent edge is the delivery a session consumed before it prepared its own
-          // handoff. LIMIT 1 is replacement semantics, not a query optimization — when one child
-          // session loaded several handoffs, only the newest qualifying delivery is its parent, and
-          // the earlier ones' ancestor chains are NOT merged in. Same millisecond breaks by handoff_id.
-          findParentDelivery: db.prepare(`SELECT h.* FROM handoff_load AS hl
-        JOIN handoff AS h ON h.handoff_id = hl.handoff_id
-       WHERE hl.session_id = ? AND hl.loaded_at <= ? AND h.project_id = ?
-       ORDER BY hl.loaded_at DESC, hl.handoff_id DESC LIMIT 1`),
-          findLatestDeliveryHandoff: db.prepare(`SELECT h.* FROM handoff_load AS hl
-        JOIN handoff AS h ON h.handoff_id = hl.handoff_id
-       WHERE hl.session_id = ? AND h.project_id = ?
-       ORDER BY hl.loaded_at DESC, hl.handoff_id DESC LIMIT 1`),
-          // A read tool resolves the head it should read from the running session's delivery facts alone.
-          // No project predicate: the handoff a session actually loaded is the one it may read, and parent
-          // traversal below still scopes itself by that head row's own project. Filtering here by the
-          // watcher's project would answer "nothing loaded" about a cross-project handoff just delivered.
-          // Select the delivery fact before joining its target: if GC removed that newest handoff, return
-          // no head rather than letting the inner join silently fall back to an older delivery contract.
-          findLatestDeliveryInSession: db.prepare(`SELECT h.* FROM (
-        SELECT handoff_id FROM handoff_load
-         WHERE session_id = ?
-         ORDER BY loaded_at DESC, handoff_id DESC LIMIT 1
-      ) AS latest JOIN handoff AS h ON h.handoff_id = latest.handoff_id`),
-          getHandoff: db.prepare("SELECT * FROM handoff WHERE handoff_id = ?"),
-          // Turn note CRUD
-          // created_at is written on insert only and deliberately absent from the SET list: the first
-          // write's timestamp is the row's own age, while a later submission only revises its content.
-          upsertTurnNote: db.prepare(`INSERT INTO turn_note
-        (source_session_id, anchor_uuid, u_text, u_original_chars, note, search_terms, source_timestamp, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(source_session_id, anchor_uuid) DO UPDATE SET
-          u_text = excluded.u_text, u_original_chars = excluded.u_original_chars,
-          note = excluded.note, search_terms = excluded.search_terms,
-          source_timestamp = excluded.source_timestamp`),
-          // No ORDER BY: the page orders by the runtime T it resolves after active-path projection,
-          // so a DB order here would only look authoritative.
-          listTurnNotes: db.prepare("SELECT * FROM turn_note WHERE source_session_id = ?"),
-          // Sweep (GC)
-          expiredSessions: db.prepare("SELECT session_id FROM sessions WHERE updated_at < ? ORDER BY updated_at ASC"),
-          deleteOldHandoffs: db.prepare("DELETE FROM handoff WHERE created_at < ?"),
-          // The sessions the age delete is about to take handoffs from — read before it runs, because once
-          // those rows are gone nothing tells a session that just lost its last handoff apart from one that
-          // never had a handoff to lose.
-          sessionsWithExpiringHandoffs: db.prepare("SELECT DISTINCT session_id FROM handoff WHERE created_at < ?"),
-          // Retirement granularity is the SOURCE SESSION, not the handoff: a note outlives any single
-          // handoff and dies only when its session has none left. source_timestamp never decides this.
-          // The NOT EXISTS is the rule, not a precaution: session scanning ages on the sweep's own window
-          // while handoff retention ages on GC_HANDOFF_MAX_AGE_DAYS, so an ungated cascade would take notes
-          // a handoff still loads (`store.turn-note.test.js` — `仍有存活 handoff 引用该会话时保留 turn_note`).
-          deleteTurnNotesIfNoHandoff: db.prepare(`DELETE FROM turn_note
-        WHERE source_session_id = ?
-          AND NOT EXISTS (SELECT 1 FROM handoff AS h WHERE h.session_id = turn_note.source_session_id)`),
-          loadSessionMeta: db.prepare("SELECT model, project_id FROM sessions WHERE session_id = ?"),
-          insertProfilePath: db.prepare("INSERT OR REPLACE INTO profile_paths (session_id, segment, path, tokens) VALUES (?, 0, ?, ?)"),
-          loadState: db.prepare("SELECT value FROM state WHERE session_id = ? AND key = ?"),
-          // Line-level operations (paths + lines tables)
-          clearLines: db.prepare("DELETE FROM lines WHERE session_id = ? AND path = ?"),
-          insertLine: db.prepare(`INSERT INTO lines (session_id, path, line_num, chars) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path, line_num) DO UPDATE SET chars = excluded.chars`),
-          upsertPath: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, 0, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET updated_at = excluded.updated_at`),
-          setDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = excluded.edit_delta, updated_at = excluded.updated_at`),
-          addDelta: db.prepare(`INSERT INTO paths (session_id, path, edit_delta, updated_at) VALUES (?, ?, ?, ?)
-        ON CONFLICT(session_id, path) DO UPDATE SET edit_delta = edit_delta + excluded.edit_delta, updated_at = excluded.updated_at`),
-          pathTotal: db.prepare(`SELECT COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
-        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
-        WHERE p.session_id = ? AND p.path = ?`),
-          allTotals: db.prepare(`SELECT p.path, COALESCE(SUM(l.chars), 0) + COALESCE(p.edit_delta, 0) as total
-        FROM paths p LEFT JOIN lines l ON l.session_id = p.session_id AND l.path = p.path
-        WHERE p.session_id = ? GROUP BY p.path`),
-          clearPathMeta: db.prepare("DELETE FROM paths WHERE session_id = ? AND path = ?"),
-          clearAllLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
-          clearAllPathsMeta: db.prepare("DELETE FROM paths WHERE session_id = ?")
-        };
-      }
-      load(sessionId, key) {
-        const row = this._stmts.load.get(sessionId, key);
-        if (!row) return null;
-        try {
-          return JSON.parse(row.value);
-        } catch {
-          return null;
-        }
-      }
-      save(sessionId, key, value, { model, projectId } = {}) {
-        const now = Date.now();
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
-          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      saveBatch(sessionId, entries, { model, projectId } = {}) {
-        const now = Date.now();
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          for (const [key, value] of entries) {
-            this._stmts.save.run(sessionId, key, JSON.stringify(value), now);
-          }
-          this._stmts.touchSession.run(sessionId, now, now, model || null, projectId || null);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      delete(sessionId, key) {
-        this._stmts.delete.run(sessionId, key);
-      }
-      loadSession(sessionId) {
-        const rows = this._stmts.loadAll.all(sessionId);
-        const map = /* @__PURE__ */ new Map();
-        for (const row of rows) {
-          try {
-            map.set(row.key, JSON.parse(row.value));
-          } catch {
-          }
-        }
-        return map;
-      }
-      deleteSession(sessionId) {
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.deleteSessionState.run(sessionId);
-          this._stmts.deleteSessionPaths.run(sessionId);
-          this._stmts.deleteSessionLines.run(sessionId);
-          this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId);
-          this._stmts.deleteSessionRecord.run(sessionId);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      // --- Config CRUD ---
-      loadConfig(key) {
-        const row = this._stmts.loadConfig.get(key);
-        if (!row) return null;
-        try {
-          return JSON.parse(row.value);
-        } catch {
-          return null;
-        }
-      }
-      saveConfig(key, value) {
-        this._stmts.saveConfig.run(key, JSON.stringify(value));
-      }
-      deleteConfig(key) {
-        this._stmts.deleteConfig.run(key);
-      }
-      // --- Profile archival ---
-      archiveSession(sessionId, snapshot) {
-        const snap = { ...snapshot, archivedAt: Date.now(), archiveSource: snapshot.archiveSource || "snapshot" };
-        this._db.exec("SAVEPOINT archive_session");
-        try {
-          this._archiveSegmentProfileInner(sessionId, 0, snap, []);
-          this._db.exec("RELEASE archive_session");
-        } catch (e) {
-          this._db.exec("ROLLBACK TO archive_session");
-          throw e;
-        }
-      }
-      _segmentArgs(sessionId, segment, s) {
-        const priority = ARCHIVE_PRIORITY[s.archiveSource] ?? 1;
-        return [
-          sessionId,
-          segment,
-          s.archivedAt ?? Date.now(),
-          s.model ?? null,
-          s.projectId ?? null,
-          s.lFloor ?? null,
-          s.bTotal ?? null,
-          s.lPeak ?? null,
-          s.gFinal ?? null,
-          s.oAvg ?? null,
-          s.cRatio ?? null,
-          s.turns ?? null,
-          s.durationMs ?? null,
-          s.totalTokensRead ?? null,
-          s.mf ?? null,
-          s.ppExit ?? null,
-          s.brExit ?? null,
-          s.brPeak ?? null,
-          s.ppPeak ?? null,
-          s.p0 ?? null,
-          s.bAxis ?? null,
-          s.xAxis ?? null,
-          s.gMin ?? null,
-          s.turnAtBrAmber ?? null,
-          s.archiveSource ?? null,
-          priority
-        ];
-      }
-      // R1-B: Single priority-guarded upsert. No `replace` flag — priority enforces in SQL.
-      // A lower-priority writer can NEVER clobber a higher one. Paths are rewritten (DELETE+INSERT)
-      // iff res.changes > 0 (a fresh insert or a qualifying higher-priority update).
-      // Returns { status: 'archived' | 'already_archived', source } per R1-D.
-      _archiveSegmentProfileInner(sessionId, segment, snapshot, paths) {
-        const args2 = this._segmentArgs(sessionId, segment, snapshot);
-        const res = this._stmts.archiveSegment.run(...args2);
-        if (res.changes > 0) {
-          this._stmts.deleteSegmentPaths.run(sessionId, segment);
-          for (const p of paths) this._stmts.insertSegmentPath.run(sessionId, segment, p.path, p.tokens);
-          this._stmts.markTelemetryPending.run(sessionId, segment);
-          return { status: "archived", source: snapshot.archiveSource };
-        }
-        return { status: "already_archived", source: snapshot.archiveSource };
-      }
-      archiveSegmentProfile(sessionId, segment, snapshot, paths = []) {
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          const result = this._archiveSegmentProfileInner(sessionId, segment, snapshot, paths);
-          this._db.exec("COMMIT");
-          return result;
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      // One telemetry artifact, exactly as its producer detached it: `{ captureSource, payload }`. The Adapter
-      // decomposes it and owns the row mapping, so a producer never spells a column name. `captureSource` is the
-      // Projection's own capture label, recorded WITH the terminal status so provenance and status stay
-      // consistent.
-      archiveSegmentTelemetry(sessionId, segment, artifact) {
-        const captureSource = artifact?.captureSource ?? "cc-live";
-        const steps = artifact?.payload?.steps || [];
-        const events = artifact?.payload?.events || [];
-        let txnOpen = false;
-        try {
-          this._db.exec("BEGIN IMMEDIATE");
-          txnOpen = true;
-          const cur = this._stmts.getTelemetryStatusRow.get(sessionId, segment);
-          if (cur && (cur.telemetry_status === "complete" || cur.telemetry_status === "complete_empty")) {
-            this._db.exec("ROLLBACK");
-            txnOpen = false;
-            return { status: "skipped_stale" };
-          }
-          this._stmts.deleteSegmentStepUsage.run(sessionId, segment);
-          this._stmts.deleteSegmentPathEvents.run(sessionId, segment);
-          for (const s of steps) {
-            this._stmts.insertStepUsage.run(
-              sessionId,
-              segment,
-              s.foldedSeq,
-              s.ts ?? null,
-              s.cacheRead ?? null,
-              s.cacheCreation ?? null,
-              s.input ?? null,
-              s.output ?? null,
-              s.toolCalls ?? null,
-              s.loadToken ?? null
-            );
-          }
-          for (const e of events) {
-            this._stmts.insertPathEvent.run(
-              sessionId,
-              segment,
-              e.foldedSeq,
-              e.eventOrdinal,
-              e.path,
-              e.rawPath ?? e.path ?? null,
-              e.toolType,
-              e.isFullRead ?? null
-            );
-          }
-          const status = events.length === 0 ? "complete_empty" : "complete";
-          this._stmts.setTelemetryStatus.run(status, captureSource, sessionId, segment);
-          this._db.exec("COMMIT");
-          txnOpen = false;
-          return { status };
-        } catch (e) {
-          if (txnOpen) {
-            try {
-              this._db.exec("ROLLBACK");
-            } catch {
-            }
-          }
-          try {
-            this._stmts.setTelemetryStatusOnly.run("failed_retryable", sessionId, segment);
-          } catch (e2) {
-            if (process.env.SW_DEBUG) console.error("[telemetry-status]", e2.message);
-          }
-          if (process.env.SW_DEBUG) console.error("[archiveSegmentTelemetry]", e.message);
-          return { status: "failed_retryable" };
-        }
-      }
-      // Startup compensating sweep (spec §Startup compensating sweep). Runs AFTER open; MUST NOT be called
-      // inside the migration transaction. Selects DISTINCT sessions with any pending/failed/NULL segment and
-      // calls the injected replaySession ONCE per session — the PRODUCTION replay (carry-sweep) re-reads the
-      // transcript and archives every occurred segment through the application's own boundary path and TXN2.
-      // A never-occurred segment never boundaries → stays pending (no observed flag). The in-txn guard makes
-      // re-archiving an already-complete segment a no-op. Budgets on REAL wall-clock (performance.now());
-      // yields between sessions (setImmediate) so it is genuinely chunked. Injected replaySession keeps
-      // store.js free of any measurement-runtime import. Returns a work summary. ASYNC.
-      async backfillPendingTelemetry({
-        resolveTranscript,
-        replaySession,
-        excludeSessionIds = null,
-        limit = 200,
-        budgetMs = 1500,
-        yieldBetweenSessions = true
-      } = {}) {
-        const empty = { examined: 0, replayed: 0, missing: 0, aborted: false };
-        if (typeof resolveTranscript !== "function" || typeof replaySession !== "function") return empty;
-        const excluded = excludeSessionIds == null ? /* @__PURE__ */ new Set() : excludeSessionIds instanceof Set ? excludeSessionIds : /* @__PURE__ */ new Set([excludeSessionIds]);
-        const sqlExclude = excluded.size === 1 ? [...excluded][0] : null;
-        const sessions = this._stmts.pendingTelemetrySessions.all(sqlExclude, sqlExclude, limit).map((r) => r.session_id).filter((sid) => !excluded.has(sid));
-        const summary = { examined: 0, replayed: 0, missing: 0, aborted: false };
-        const deadline = performance2.now() + budgetMs;
-        for (const session_id of sessions) {
-          if (performance2.now() >= deadline) {
-            summary.aborted = true;
-            break;
-          }
-          summary.examined += 1;
-          try {
-            let txPath;
-            try {
-              txPath = resolveTranscript(session_id);
-            } catch {
-              txPath = null;
-            }
-            if (!txPath) {
-              summary.missing += 1;
-              continue;
-            }
-            const res = replaySession(session_id, txPath);
-            if (res == null) {
-              summary.missing += 1;
-              continue;
-            }
-            summary.replayed += 1;
-          } catch (e) {
-            summary.missing += 1;
-            if (process.env.SW_DEBUG) console.error("[telemetry-sweep session]", session_id, e.message);
-          }
-          if (yieldBetweenSessions) await yieldTick();
-        }
-        return summary;
-      }
-      getProfileSegments(sessionId) {
-        return this._stmts.loadProfileSegments.all(sessionId).map(_Store._camelizeProfile);
-      }
-      // #21: camelize profile rows from DB (snake_case columns -> camelCase JS API)
-      static _camelizeProfile(row) {
-        if (!row) return null;
-        return {
-          sessionId: row.session_id,
-          segment: row.segment,
-          archivedAt: row.archived_at,
-          model: row.model,
-          projectId: row.project_id,
-          lFloor: row.l_floor,
-          bTotal: row.b_total,
-          lPeak: row.l_peak,
-          gFinal: row.g_final,
-          oAvg: row.o_avg,
-          cRatio: row.c_ratio,
-          turns: row.turns,
-          durationMs: row.duration_ms,
-          totalTokensRead: row.total_tokens_read,
-          mf: row.mf,
-          ppExit: row.pp_exit,
-          brExit: row.br_exit,
-          brPeak: row.br_peak,
-          ppPeak: row.pp_peak,
-          p0: row.p0,
-          bAxis: row.b_axis,
-          xAxis: row.x_axis,
-          gMin: row.g_min,
-          turnAtBrAmber: row.turn_at_br_amber,
-          archiveSource: row.archive_source,
-          archivePriority: row.archive_priority
-        };
-      }
-      getProfile(sessionId) {
-        return _Store._camelizeProfile(this._stmts.loadProfile.get(sessionId));
-      }
-      getAllProfiles() {
-        return this._stmts.loadAllProfiles.all().map(_Store._camelizeProfile);
-      }
-      // --- Sweep (GC): replay-first archive-then-delete expired sessions ---
-      sweep(maxAgeMs, {
-        now = Date.now(),
-        isLiveSession,
-        resolveTranscriptPath,
-        replaySession,
-        limit = GC_BATCH_LIMIT
-      } = {}) {
-        try {
-          const handoffCutoff = now - GC_HANDOFF_MAX_AGE_DAYS * 24 * 3600 * 1e3;
-          this._db.exec("BEGIN IMMEDIATE");
-          const candidates = this._stmts.sessionsWithExpiringHandoffs.all(handoffCutoff);
-          this._stmts.deleteOldHandoffs.run(handoffCutoff);
-          for (const { session_id } of candidates) this._stmts.deleteTurnNotesIfNoHandoff.run(session_id);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          try {
-            this._db.exec("ROLLBACK");
-          } catch {
-          }
-          if (process.env.SW_DEBUG) console.error("[sweep] handoff GC", e.message);
-        }
-        const cutoff = now - maxAgeMs;
-        const expired = this._stmts.expiredSessions.all(cutoff);
-        let count = 0;
-        for (const { session_id } of expired) {
-          if (count >= limit) break;
-          if (isLiveSession && isLiveSession(session_id)) continue;
-          const transcriptPath = resolveTranscriptPath ? resolveTranscriptPath(session_id) : null;
-          const canReplay = transcriptPath && replaySession && this._canReplay(transcriptPath);
-          let archiveOk = false;
-          try {
-            if (canReplay) {
-              replaySession(session_id, transcriptPath);
-              archiveOk = true;
-            } else {
-              archiveOk = this._gcFromSnapshot(session_id);
-            }
-          } catch (e) {
-            if (process.env.SW_DEBUG) console.error("[sweep] archive", session_id, e.message);
-          }
-          if (archiveOk) {
-            this._cascadeDelete(session_id);
-            count++;
-          }
-        }
-        if (count > 0) {
-          try {
-            this._db.exec("PRAGMA incremental_vacuum");
-          } catch {
-          }
-        }
-        return count;
-      }
-      _canReplay(transcriptPath) {
-        try {
-          const st = statSync2(transcriptPath);
-          return st.isFile() && st.size <= GC_REPLAY_MAX_FILE_BYTES;
-        } catch {
-          return false;
-        }
-      }
-      _gcFromSnapshot(sessionId) {
-        const snapRow = this._stmts.loadState.get(sessionId, "profile_snapshot");
-        const sessRow = this._stmts.loadSessionMeta.get(sessionId);
-        if (!snapRow && !sessRow) return true;
-        const snap = snapRow ? JSON.parse(snapRow.value) : {};
-        this.archiveSegmentProfile(sessionId, snap.segment ?? 0, {
-          archiveSource: "snapshot",
-          model: snap.model || sessRow?.model || null,
-          projectId: sessRow?.project_id || null,
-          bTotal: snap.b_total,
-          gFinal: snap.g_final,
-          lPeak: snap.l_peak,
-          cRatio: snap.c_ratio,
-          turns: snap.turns,
-          mf: snap.mf,
-          brExit: snap.br_exit
-        }, snap.paths || []);
-        return true;
-      }
-      _cascadeDelete(sessionId) {
-        this.deleteSession(sessionId);
-      }
-      // --- Line-level operations (paths + lines tables) ---
-      setLines(sessionId, path3, entries) {
-        const now = Date.now();
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.setDelta.run(sessionId, path3, 0, now);
-          this._stmts.clearLines.run(sessionId, path3);
-          for (const [lineNum, chars] of entries) {
-            this._stmts.insertLine.run(sessionId, path3, lineNum, chars);
-          }
-          this._stmts.touchSession.run(sessionId, now, now, null, null);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      updateLines(sessionId, path3, entries) {
-        const now = Date.now();
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.upsertPath.run(sessionId, path3, now);
-          for (const [lineNum, chars] of entries) {
-            this._stmts.insertLine.run(sessionId, path3, lineNum, chars);
-          }
-          this._stmts.touchSession.run(sessionId, now, now, null, null);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      addEditDelta(sessionId, path3, delta) {
-        const now = Date.now();
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.addDelta.run(sessionId, path3, delta, now);
-          this._stmts.touchSession.run(sessionId, now, now, null, null);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      getPathTotal(sessionId, path3) {
-        const row = this._stmts.pathTotal.get(sessionId, path3);
-        return row ? row.total : 0;
-      }
-      getAllPathTotals(sessionId) {
-        const rows = this._stmts.allTotals.all(sessionId);
-        const map = /* @__PURE__ */ new Map();
-        for (const row of rows) map.set(row.path, row.total);
-        return map;
-      }
-      clearPath(sessionId, path3) {
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.clearLines.run(sessionId, path3);
-          this._stmts.clearPathMeta.run(sessionId, path3);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      clearAllPaths(sessionId) {
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          this._stmts.clearAllLines.run(sessionId);
-          this._stmts.clearAllPathsMeta.run(sessionId);
-          this._db.exec("COMMIT");
-        } catch (e) {
-          this._db.exec("ROLLBACK");
-          throw e;
-        }
-      }
-      // --- Handoff CRUD ---
-      static _camelizeHandoff(r) {
-        if (!r) return null;
-        return {
-          handoffId: r.handoff_id,
-          sessionId: r.session_id,
-          segment: r.segment,
-          loadToken: r.load_token,
-          createdAt: r.created_at,
-          pathsToKeep: r.paths_to_keep,
-          summary: r.summary,
-          nextTask: r.next_task,
-          summaryTokens: r.summary_tokens,
-          keptTokens: r.kept_tokens,
-          discardedTokens: r.discarded_tokens,
-          preparedAtTurn: r.prepared_at_turn,
-          previousStats: r.previous_stats,
-          preparedStats: r.prepared_stats,
-          searchTerms: r.search_terms,
-          projectId: r.project_id,
-          deliveredAt: r.delivered_at,
-          deliveredSegment: r.delivered_segment,
-          deliveredSessionId: r.delivered_session_id,
-          loaderVersion: r.loader_version,
-          bucketSnapshot: r.bucket_snapshot,
-          transcriptPath: r.transcript_path
-        };
-      }
-      insertHandoff(row) {
-        const res = this._stmts.insertHandoff.run(
-          row.sessionId,
-          row.segment,
-          row.loadToken,
-          row.createdAt,
-          row.pathsToKeep,
-          row.summary,
-          row.nextTask ?? null,
-          row.summaryTokens,
-          row.keptTokens ?? null,
-          row.discardedTokens ?? null,
-          row.preparedAtTurn ?? null,
-          row.previousStats ?? null,
-          row.preparedStats ?? null,
-          row.searchTerms ?? null,
-          row.projectId ?? null,
-          row.bucketSnapshot ?? null,
-          row.transcriptPath ?? null
-        );
-        return { handoffId: Number(res.lastInsertRowid) };
-      }
-      // Overwrite paths_to_keep with per-entry telemetry (content_hash_load stamping). Fire-and-forget:
-      // the caller has already committed the claim; this is a post-txn back-fill of hl on the stored row.
-      stampContentHashLoad(handoffId, pathsToKeepJson) {
-        this._stmts.stampPathsToKeep.run(pathsToKeepJson, handoffId);
-      }
-      insertHandoffLoad({ handoffId, sessionId, loadedAt, loaderVersion, claimResult, primarySessionId, consumerSegment }) {
-        this._stmts.insertHandoffLoad.run(
-          handoffId,
-          sessionId,
-          loadedAt,
-          loaderVersion ?? null,
-          claimResult,
-          primarySessionId ?? null,
-          consumerSegment ?? null
-        );
-      }
-      updateHandoff(token, row) {
-        const res = this._stmts.updateHandoff.run(
-          row.pathsToKeep,
-          row.summary,
-          row.nextTask ?? null,
-          row.summaryTokens,
-          row.keptTokens ?? null,
-          row.discardedTokens ?? null,
-          row.preparedAtTurn ?? null,
-          row.previousStats ?? null,
-          row.preparedStats ?? null,
-          row.searchTerms ?? null,
-          row.bucketSnapshot ?? null,
-          row.transcriptPath ?? null,
-          token
-        );
-        return res.changes > 0;
-      }
-      // PURE classifier: given the committed handoff row + this caller's session, what is the claim
-      // relationship? Used by the txn body AND the catch path so both agree on committed state.
-      static _classifyClaim(row, sessionId) {
-        if (row.delivered_session_id != null && row.delivered_session_id !== sessionId) {
-          return { claimResult: "duplicate", primarySessionId: row.delivered_session_id };
-        }
-        return { claimResult: "primary", primarySessionId: null };
-      }
-      // Delivery: read the handoff row, write the first primary binding when absent, write one `handoff_load`
-      // attempt, and return the detached row — all in one transaction. Response composition is the caller's and
-      // starts after commit, so a same-session retry recomposes rather than re-binds.
-      deliverHandoffByToken(token, opts = {}) {
-        const row = this._stmts.loadHandoffToken.get(token);
-        if (!row) return null;
-        const { sessionId = null, loaderVersion = null, consumerSegment = null } = opts;
-        if (sessionId == null) {
-          const out3 = _Store._camelizeHandoff(row);
-          out3.claimResult = "primary";
-          out3.claimedNow = false;
-          return out3;
-        }
-        const now = Date.now();
-        let claimResult = "primary";
-        let primarySessionId = null;
-        let claimedNow = false;
-        let legacyBind = false;
-        try {
-          this._db.exec("BEGIN IMMEDIATE");
-          if (row.delivered_at == null) {
-            const { changes } = this._stmts.markDelivered.run(now, sessionId, consumerSegment, loaderVersion, row.handoff_id);
-            if (changes > 0) {
-              claimedNow = true;
-              row.delivered_at = now;
-              row.delivered_session_id = sessionId;
-              row.delivered_segment = consumerSegment;
-              row.loader_version = loaderVersion;
-            } else {
-              Object.assign(row, this._stmts.loadHandoffToken.get(token));
-            }
-          } else if (row.delivered_session_id == null) {
-            const { changes } = this._stmts.markDeliveredLegacy.run(sessionId, consumerSegment, loaderVersion, row.handoff_id);
-            if (changes > 0) {
-              legacyBind = true;
-              claimedNow = true;
-              row.delivered_session_id = sessionId;
-              row.delivered_segment = consumerSegment;
-              row.loader_version = loaderVersion;
-            } else {
-              Object.assign(row, this._stmts.loadHandoffToken.get(token));
-            }
-          }
-          ({ claimResult, primarySessionId } = _Store._classifyClaim(row, sessionId));
-          if (legacyBind) claimResult = "legacy_unattributed";
-          this._stmts.insertHandoffLoad.run(
-            row.handoff_id,
-            sessionId,
-            now,
-            loaderVersion ?? null,
-            claimResult,
-            primarySessionId ?? null,
-            consumerSegment ?? null
-          );
-          this._db.exec("COMMIT");
-        } catch (e) {
-          try {
-            this._db.exec("ROLLBACK");
-          } catch {
-          }
-          if (process.env.SW_DEBUG) console.error("[handoff_load]", e.message);
-          return { ok: false, error: "handoff_delivery_unavailable", retryable: true };
-        }
-        const out2 = _Store._camelizeHandoff(row);
-        out2.claimResult = claimResult;
-        out2.claimedNow = claimedNow;
-        return out2;
-      }
-      hasHandoff(token) {
-        return !!this._stmts.handoffExists.get(token);
-      }
-      // R1-H: project-scoped — filters by project_id when provided (NULL = any project).
-      loadHandoffBySession(sid, { projectId = null } = {}) {
-        return _Store._camelizeHandoff(this._stmts.loadHandoffSession.get(sid, projectId, projectId));
-      }
-      // The undelivered handoffs of one project this session may auto-match, as one of three answers. It is
-      // READ-ONLY: nothing may be stamped while more than one candidate matches, so the decision and the write
-      // are separate operations.
-      findPendingHandoffsByProject(projectId, sessionId, { ttlMs = 7 * 864e5 } = {}) {
-        if (!projectId) return { status: "none" };
-        const cutoff = Date.now() - ttlMs;
-        const rows = this._stmts.loadHandoffByProject.all(projectId, sessionId, cutoff).map(_Store._camelizeHandoff);
-        if (rows.length === 0) return { status: "none" };
-        if (rows.length > 1) return { status: "ambiguous", rows };
-        return { status: "unique", row: rows[0] };
-      }
-      // R1-H: project-scoped FTS search. Statement prepared LAZILY (handoff_fts may not exist).
-      searchHandoff(matchExpr, { projectId = null, limit = 3 } = {}) {
-        if (!this.ftsAvailable) return [];
-        if (!this._searchStmt) {
-          this._searchStmt = this._db.prepare(`SELECT h.load_token, h.created_at, h.next_task,
-        substr(h.summary, 1, 200) AS summary_preview
-        FROM handoff_fts JOIN handoff h ON h.handoff_id = handoff_fts.rowid
-        WHERE handoff_fts MATCH ? AND (h.project_id = ? OR ? IS NULL)
-        ORDER BY rank LIMIT ?`);
-        }
-        return this._searchStmt.all(matchExpr, projectId, projectId, limit).map((r) => ({
-          loadToken: r.load_token,
-          createdAt: r.created_at,
-          nextTask: r.next_task,
-          summaryPreview: r.summary_preview
-        }));
-      }
-      // The handoff whose delivery into `sessionId` happened no later than `createdAt` — i.e. the
-      // parent of the handoff that `sessionId` went on to prepare at `createdAt`.
-      findParentDelivery(projectId, sessionId, createdAt) {
-        return _Store._camelizeHandoff(this._stmts.findParentDelivery.get(sessionId, createdAt, projectId));
-      }
-      // The latest handoff delivered into `sessionId` with no cutoff — the head for a running session.
-      findLatestDeliveryHandoff(projectId, sessionId) {
-        return _Store._camelizeHandoff(this._stmts.findLatestDeliveryHandoff.get(sessionId, projectId));
-      }
-      // The newest handoff this session actually loaded, across every project — the head the turn read
-      // tools resolve without being handed one.
-      findLatestDeliveryInSession(sessionId) {
-        return _Store._camelizeHandoff(this._stmts.findLatestDeliveryInSession.get(sessionId));
-      }
-      // An explicit handoff_id already names one row, so no caller project filter is applied; the
-      // returned row's projectId is the scope the lineage walk then uses.
-      getHandoff(handoffId) {
-        return _Store._camelizeHandoff(this._stmts.getHandoff.get(handoffId));
-      }
-      // --- Turn note CRUD ---
-      static _camelizeTurnNote(r) {
-        if (!r) return null;
-        return {
-          turnNoteId: r.turn_note_id,
-          sourceSessionId: r.source_session_id,
-          anchorUuid: r.anchor_uuid,
-          uText: r.u_text,
-          uOriginalChars: r.u_original_chars,
-          note: r.note,
-          searchTerms: r.search_terms,
-          sourceTimestamp: r.source_timestamp,
-          createdAt: r.created_at
-        };
-      }
-      // Whole-batch atomicity: one bad row rolls the entire submission back, so a caller never has to
-      // reason about a half-written turn queue. exec, not prepare — prepare('BEGIN IMMEDIATE') only
-      // compiles the statement and would silently leave every write outside a transaction.
-      upsertTurnNotes(rows) {
-        this._db.exec("BEGIN IMMEDIATE");
-        try {
-          for (const r of rows) this._stmts.upsertTurnNote.run(
-            r.sourceSessionId,
-            r.anchorUuid,
-            r.uText,
-            r.uOriginalChars,
-            r.note ?? null,
-            r.searchTerms,
-            r.sourceTimestamp,
-            Date.now()
-          );
-          this._db.exec("COMMIT");
-        } catch (err2) {
-          try {
-            this._db.exec("ROLLBACK");
-          } catch {
-          }
-          throw err2;
-        }
-      }
-      listTurnNotes(sessionId) {
-        return this._stmts.listTurnNotes.all(sessionId).map(_Store._camelizeTurnNote);
-      }
-      // FTS locate across a lineage's sessions. The IN list is variable-length (lineage depth), so the
-      // statement is built and prepared per call — the set is tiny. No LIMIT: the top rows are taken
-      // after the caller validates each anchor against the active path, which can drop matches.
-      locateTurnNotes(sessionIds, matchExpr) {
-        if (!sessionIds || sessionIds.length === 0) return [];
-        const holes = sessionIds.map(() => "?").join(",");
-        const sql = `SELECT tn.* FROM turn_note_fts
-      JOIN turn_note AS tn ON tn.turn_note_id = turn_note_fts.rowid
-     WHERE turn_note_fts MATCH ? AND tn.source_session_id IN (${holes})
-     ORDER BY bm25(turn_note_fts) ASC, tn.source_timestamp DESC, tn.source_session_id, tn.anchor_uuid`;
-        return this._db.prepare(sql).all(matchExpr, ...sessionIds).map(_Store._camelizeTurnNote);
-      }
-      turnFtsAvailable() {
-        return this._turnFtsAvailable === true;
-      }
-      resetForTesting() {
-        closeStoreGlobal();
-      }
-    };
-    _instance = null;
-  }
-});
-
-// lib/ledger-schema.js
-function validateLedgerState(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  if (obj.schemaVersion !== SCHEMA_VERSION) return null;
-  if (typeof obj.stateKey !== "string") return null;
-  if (obj.billingBasis !== "fullCarry") return null;
-  if (obj.ledgerRevision === void 0) obj.ledgerRevision = 0;
-  if (obj.recentStopEvents === void 0) obj.recentStopEvents = [];
-  if (obj.recentProcessedHookEventIds === void 0) obj.recentProcessedHookEventIds = [];
-  for (const f of numFields) if (!Number.isFinite(obj[f])) return null;
-  if (!(obj.billProgress >= 0 && obj.billProgress < 1)) return null;
-  if (!(obj.walletPhase >= 0 && obj.walletPhase < 1)) return null;
-  for (const f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  if (!PAUSE_REASONS.has(obj.pausedReason)) return null;
-  if (obj.lastStopEvent != null && typeof obj.lastStopEvent !== "object") return null;
-  if (!Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
-  for (const e of obj.recentStopEvents) {
-    if (!e || typeof e !== "object") return null;
-    if (typeof e.kind !== "string") return null;
-  }
-  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
-  for (const id of obj.recentProcessedHookEventIds) if (typeof id !== "string") return null;
-  return obj;
-}
-function validateRateLampSample(obj) {
-  if (!obj || typeof obj !== "object") return false;
-  if (typeof obj.reliable !== "boolean") return false;
-  if (!Number.isInteger(obj.seq) || obj.seq < 0) return false;
-  if (!Number.isInteger(obj.turnSeq) || obj.turnSeq < 0) return false;
-  if (obj.reliable) {
-    if (!(Number.isFinite(obj.L_read) && obj.L_read >= 0)) return false;
-    if (obj.deltaW !== null && !(Number.isFinite(obj.deltaW) && obj.deltaW >= 0)) return false;
-    if (obj.mf !== null && !Number.isFinite(obj.mf)) return false;
-  }
-  return true;
-}
-var SCHEMA_VERSION, numFields, intFields, PAUSE_REASONS;
-var init_ledger_schema = __esm({
-  "lib/ledger-schema.js"() {
-    init_constants();
-    SCHEMA_VERSION = 3;
-    numFields = [
-      "billProgress",
-      "billCycleCount",
-      "walletPhase",
-      "walletLapCount",
-      "lastAppliedFoldedCallSeq",
-      "currentTurnSeq",
-      "cacheExpiryCount"
-    ];
-    intFields = [
-      "billCycleCount",
-      "walletLapCount",
-      "lastAppliedFoldedCallSeq",
-      "currentTurnSeq",
-      "cacheExpiryCount",
-      "ledgerRevision"
-    ];
-    PAUSE_REASONS = /* @__PURE__ */ new Set([
-      null,
-      "folded_seq_gap",
-      "metrics_unreliable",
-      "invalid_baseline",
-      "insufficient_data",
-      "cache_unstable",
-      "seq_history_mismatch",
-      "invalid_sample"
-    ]);
-  }
-});
-
-// lib/rate-lamp-store.js
-function stateKeyOf({ segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion }) {
-  return JSON.stringify([segmentId, model, cRatio, baselineFingerprint, contextCap, schemaVersion]);
-}
-function stateKeyForStatus(status) {
-  return stateKeyOf({
-    segmentId: status.segment,
-    model: null,
-    cRatio: null,
-    baselineFingerprint: null,
-    contextCap: null,
-    schemaVersion: 1
-  });
-}
-function freshLedger(stateKey) {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    stateKey,
-    billingBasis: "fullCarry",
-    billProgress: 0,
-    billCycleCount: 0,
-    walletPhase: 0,
-    walletLapCount: 0,
-    lastAppliedFoldedCallSeq: 0,
-    currentTurnSeq: 0,
-    pausedReason: null,
-    cacheExpiryCount: 0,
-    lastStopEvent: null,
-    // condition-cleared: visible until the next human turn boundary
-    ledgerRevision: 0,
-    recentStopEvents: [],
-    recentProcessedHookEventIds: []
-  };
-}
-function invalidPausedLedger(prev) {
-  const stateKey = prev && typeof prev === "object" && typeof prev.stateKey === "string" ? prev.stateKey : "__invalid__";
-  const s = freshLedger(stateKey);
-  s.pausedReason = "invalid_sample";
-  return s;
-}
-function pushStopEventRing(ledgerOrDraft, evt) {
-  if (!ledgerOrDraft.recentStopEvents) ledgerOrDraft.recentStopEvents = [];
-  ledgerOrDraft.recentStopEvents.push(evt);
-  if (ledgerOrDraft.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) {
-    ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - RECENT_STOP_EVENTS_LIMIT);
-  }
-}
-function applyFoldedCallSample(prev, sample) {
-  if (!validateLedgerState(prev)) return invalidPausedLedger(prev);
-  const s = { ...prev };
-  if (!validateRateLampSample(sample)) {
-    s.pausedReason = "invalid_sample";
-    return s;
-  }
-  if (sample.seq <= s.lastAppliedFoldedCallSeq) return s;
-  if (s.lastAppliedFoldedCallSeq !== 0 && sample.seq !== s.lastAppliedFoldedCallSeq + 1) {
-    s.pausedReason = "folded_seq_gap";
-    s.lastAppliedFoldedCallSeq = sample.seq;
-    return s;
-  }
-  s.lastAppliedFoldedCallSeq = sample.seq;
-  if (!sample.reliable) {
-    s.pausedReason = sample.unavailableReason || "insufficient_data";
-    return s;
-  }
-  if (sample.deltaW === null) return s;
-  s.pausedReason = null;
-  let bill = s.billProgress + sample.deltaW;
-  while (bill >= 1) {
-    bill -= 1;
-    s.billCycleCount += 1;
-  }
-  s.billProgress = bill;
-  const interval = walletIntervalFor(sample.mf, BR_AMBER);
-  let phase = s.walletPhase + sample.deltaW / interval;
-  while (phase >= 1) {
-    phase -= 1;
-    s.walletLapCount += 1;
-  }
-  s.walletPhase = phase;
-  return s;
-}
-function drainFrame(ledger, frame) {
-  const preExisting = ledger.lastStopEvent;
-  for (const sample of frame.samples) {
-    if (!(sample.seq > ledger.lastAppliedFoldedCallSeq)) continue;
-    if (sample.turnSeq > ledger.currentTurnSeq && ledger.lastStopEvent && ledger.lastStopEvent === preExisting) {
-      ledger.lastStopEvent = null;
-    }
-    const lapsBefore = ledger.walletLapCount;
-    Object.assign(ledger, applyFoldedCallSample(ledger, sample));
-    if (ledger.walletLapCount > lapsBefore) {
-      const event = {
-        kind: "backstop",
-        delivery: "reader_path",
-        message: `Carry rent reminder ${ledger.walletLapCount}: accumulated rent reached the reminder point. Consider restart/compact at the next natural boundary.`,
-        billCount: ledger.walletLapCount,
-        seq: sample.seq
-      };
-      ledger.lastStopEvent = event;
-      pushStopEventRing(ledger, event);
-    }
-  }
-  ledger.currentTurnSeq = frame.turnSeq;
-}
-function loadRateLampState(sessionId) {
-  try {
-    return validateLedgerState(getStore().load(sessionId, "ledger"));
-  } catch {
-    return null;
-  }
-}
-function saveRateLampState(sessionId, state) {
-  getStore().save(sessionId, "ledger", state);
-}
-var init_rate_lamp_store = __esm({
-  "lib/rate-lamp-store.js"() {
-    init_store();
-    init_ledger_schema();
-    init_constants();
-    init_bill_regret();
-  }
-});
-
-// lib/rate-lamp-manager.js
-var rate_lamp_manager_exports = {};
-__export(rate_lamp_manager_exports, {
-  _resetRateLampManagerForTest: () => _resetRateLampManagerForTest,
-  _setRateLampManagerTestHooks: () => _setRateLampManagerTestHooks,
-  advanceRateLampToCurrent: () => advanceRateLampToCurrent,
-  enrichStatusLandmarks: () => enrichStatusLandmarks,
-  flushAll: () => flushAll,
-  flushPendingPersistsSync: () => flushPendingPersistsSync,
-  getDebugCounters: () => getDebugCounters,
-  getLiveLedger: () => getLiveLedger,
-  isEnospcPaused: () => isEnospcPaused,
-  mergeLedgerIntoStatus: () => mergeLedgerIntoStatus,
-  mutateLedger: () => mutateLedger,
-  persistLedger: () => persistLedger,
-  schedulePersist: () => schedulePersist,
-  setLiveLedger: () => setLiveLedger
-});
-function _startCoalescedTimer() {
-  if (_coalescedTimer) return;
-  const schedulerFn = _testScheduler || setInterval;
-  _coalescedTimer = schedulerFn(_flushCoalescedPersist, COALESCED_PERSIST_MS);
-  if (_coalescedTimer && typeof _coalescedTimer.unref === "function") _coalescedTimer.unref();
-}
-function _flushCoalescedPersist() {
-  for (const sid of _pendingPersistSids) {
-    if (_enospcPaused.has(sid)) continue;
-    try {
-      const ledger = _ledgers.get(sid);
-      if (!ledger) {
-        _pendingPersistSids.delete(sid);
-        continue;
-      }
-      persistLedger(sid, ledger);
-    } catch (e) {
-      _enospcPaused.add(sid);
-      _counters.enospcEngagements++;
-      if (process.env.SW_DEBUG) console.error(`[rate-lamp] ENOSPC pause engaged for ${sid}:`, e.message);
-    }
-  }
-  _pendingPersistSids.clear();
-  for (const sid of _enospcPaused) {
-    try {
-      const ledger = _ledgers.get(sid);
-      if (!ledger) {
-        _enospcPaused.delete(sid);
-        continue;
-      }
-      persistLedger(sid, ledger, { force: true });
-      clearEnospcPause(sid);
-    } catch {
-    }
-  }
-}
-function flushPendingPersistsSync() {
-  _flushCoalescedPersist();
-}
-function schedulePersist(sessionId) {
-  if (_enospcPaused.has(sessionId)) return;
-  if (_pendingPersistSids.has(sessionId)) {
-    _counters.coalesceHits++;
-  } else {
-    _counters.coalesceMisses++;
-    _pendingPersistSids.add(sessionId);
-  }
-  _startCoalescedTimer();
-}
-function isEnospcPaused(sessionId) {
-  return _enospcPaused.has(sessionId);
-}
-function clearEnospcPause(sessionId) {
-  _enospcPaused.delete(sessionId);
-  _counters.enospcRecoveries++;
-}
-function persistLedger(sessionId, ledger, { force = false } = {}) {
-  const ledgerRev = ledger.ledgerRevision ?? 0;
-  const lastPersistedRev = _lastPersistedRevision.get(sessionId) ?? 0;
-  if (!force && ledgerRev < lastPersistedRev) {
-    _counters.revisionGateBlocks++;
-    if (process.env.SW_DEBUG) console.error(`[rate-lamp] revision gate: refusing rev ${ledgerRev} <= last-persisted ${lastPersistedRev} for ${sessionId}`);
-    return;
-  }
-  if (ledgerRev === lastPersistedRev && !force) {
-    const savedContent = _lastSaved.get(sessionId);
-    if (savedContent !== void 0) {
-      if (JSON.stringify(ledger) !== savedContent) {
-        _counters.revisionGateBlocks++;
-        console.error(`[rate-lamp] DEAD-LETTER: escaped mutation for ${sessionId} \u2014 content differs at same revision ${ledgerRev}. mutateLedger was bypassed (invariant breach).`);
-      }
-      return;
-    }
-  }
-  const serialized = JSON.stringify(ledger);
-  if (!force && _lastSaved.get(sessionId) === serialized) return;
-  if (_testWriter) {
-    _testWriter(sessionId, ledger);
-  } else {
-    saveRateLampState(sessionId, ledger);
-  }
-  _lastSaved.set(sessionId, serialized);
-  _lastPersistedRevision.set(sessionId, ledgerRev);
-  _counters.diskWrites++;
-}
-function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq }) {
-  const matches = persisted && persisted.stateKey === currentKey;
-  const base = matches ? { ...persisted } : freshLedger(currentKey);
-  return {
-    ...base,
-    stateKey: currentKey,
-    // PRESERVED on a match: billProgress, billCycleCount, walletPhase, walletLapCount.
-    // The folded cursor moves to the frame TAIL, which is what skips this frame's samples.
-    lastAppliedFoldedCallSeq: frameTailSeq,
-    pausedReason: null,
-    // A pulse is an in-process single-turn signal. Carrying `lastStopEvent` across a discontinuity would
-    // re-render an alert for context this stream no longer contains.
-    lastStopEvent: null,
-    currentTurnSeq: frameTurnSeq
-  };
-}
-function mergeLedgerIntoStatus(status, ledger, currentKey) {
-  status.rateLamp = status.rateLamp || {};
-  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
-  if (!status.rateLamp?.reliable || !ledger || ledger.stateKey !== currentKey) {
-    status.rateLamp.dhat = status.rateLamp.dhat ?? null;
-    return status;
-  }
-  const rl = status.rateLamp;
-  rl.billProgress = ledger.billProgress;
-  rl.billingCycle = { progress: ledger.billProgress };
-  rl.billCycleCount = ledger.billCycleCount ?? 0;
-  rl.currentTurnSeq = ledger.currentTurnSeq;
-  if (ledger.lastStopEvent) rl.lastStopEvent = ledger.lastStopEvent;
-  const interval = walletIntervalFor(rl.mfLocal, BR_AMBER);
-  rl.rentMeter = {
-    cycleProgress: ledger.billProgress,
-    depthActive: true,
-    depthProgress: ledger.walletPhase,
-    backstopInterval: Number.isFinite(interval) ? interval : null,
-    backstopLapCount: ledger.walletLapCount,
-    depthHot: ledger.walletLapCount >= DEPTH_HOT_LAP_COUNT
-  };
-  enrichStatusLandmarks(status);
-  return status;
-}
-function enrichStatusLandmarks(status) {
-  status.rateLamp = status.rateLamp || {};
-  if (!status.rateLamp.rentMeter) status.rateLamp.rentMeter = RENT_METER_DEFAULT();
-  const rl = status.rateLamp;
-  const B = rl.B_default > 0 ? rl.B_default : rl.B_post;
-  if (!(B > 0 && rl.C_RATIO > 0)) return status;
-  rl.wallP = wallPositionFor(rl.C_RATIO);
-  return status;
-}
-function mutateLedger(ledger, reason, fn) {
-  const before = JSON.stringify(ledger);
-  const draft = structuredClone(ledger);
-  fn(draft);
-  const after = JSON.stringify(draft);
-  if (after === before) return ledger;
-  draft.ledgerRevision = (ledger.ledgerRevision ?? 0) + 1;
-  return draft;
-}
-function hydrateLedger(sessionId) {
-  const live = _ledgers.get(sessionId);
-  if (live) return live;
-  const disk = loadRateLampState(sessionId);
-  if (!disk) return null;
-  const cleaned = { ...disk, lastStopEvent: null };
-  _lastPersistedRevision.set(sessionId, cleaned.ledgerRevision ?? 0);
-  _ledgers.set(sessionId, cleaned);
-  return cleaned;
-}
-function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}) {
-  void forcePoll;
-  let ledger = hydrateLedger(sessionId);
-  const frame = watcher.readRateLampFrame(ledger ? ledger.lastAppliedFoldedCallSeq : 0);
-  const reliable = frame.status?.reliable === true;
-  if (!reliable) {
-    if (!ledger) return { ledger: null, status: frame.status, bill: null };
-    ledger = mutateLedger(ledger, "unreliable-frame", (l) => {
-      l.pausedReason = frame.status?.unavailableReason || "insufficient_data";
-      l.lastAppliedFoldedCallSeq = frame.foldedCallSeq;
-      l.currentTurnSeq = frame.turnSeq;
-    });
-    _ledgers.set(sessionId, ledger);
-    schedulePersist(sessionId);
-    return { ledger, status: frame.status, bill: null };
-  }
-  const currentKey = stateKeyForStatus({ segment: frame.progress.segment });
-  const seenRevision = _lastSeenRevision.get(sessionId);
-  const revisionChanged = seenRevision !== frame.streamRevision;
-  const sequenceGap = ledger != null && frame.foldedCallSeq < ledger.lastAppliedFoldedCallSeq;
-  if (sequenceGap && process.env.SW_DEBUG) {
-    console.error("[rate-lamp] seq mismatch \u2192 re-anchored, cycleCount preserved");
-  }
-  let drained = frame;
-  if (revisionChanged || sequenceGap || !ledger || ledger.stateKey !== currentKey) {
-    ledger = reanchorLedger(ledger, { currentKey, frameTailSeq: frame.foldedCallSeq, frameTurnSeq: frame.turnSeq });
-    drained = { ...frame, samples: [] };
-    _lastSeenRevision.set(sessionId, frame.streamRevision);
-  }
-  ledger = mutateLedger(ledger, "advance-events", (l) => drainFrame(l, drained));
-  _ledgers.set(sessionId, ledger);
-  schedulePersist(sessionId);
-  return { ledger, status: frame.status, bill: null };
-}
-function getLiveLedger(sessionId) {
-  return _ledgers.get(sessionId) ?? null;
-}
-function setLiveLedger(sessionId, ledger) {
-  _ledgers.set(sessionId, ledger);
-  persistLedger(sessionId, ledger, { force: true });
-  if (_enospcPaused.has(sessionId)) {
-    clearEnospcPause(sessionId);
-  }
-}
-function _setRateLampManagerTestHooks({ writer, scheduler } = {}) {
-  if (writer !== void 0) _testWriter = writer;
-  if (scheduler !== void 0) _testScheduler = scheduler;
-}
-function _resetRateLampManagerForTest() {
-  _ledgers.clear();
-  _lastSaved.clear();
-  _lastPersistedRevision.clear();
-  _lastSeenRevision.clear();
-  _pendingPersistSids.clear();
-  _enospcPaused.clear();
-  if (_coalescedTimer && !_testScheduler) {
-    clearInterval(_coalescedTimer);
-  }
-  _coalescedTimer = null;
-  _testWriter = null;
-  _testScheduler = null;
-  _counters.diskWrites = 0;
-  _counters.coalesceHits = 0;
-  _counters.coalesceMisses = 0;
-  _counters.revisionGateBlocks = 0;
-  _counters.enospcEngagements = 0;
-  _counters.enospcRecoveries = 0;
-}
-function getDebugCounters() {
-  return { ..._counters };
-}
-function flushAll() {
-  for (const [sid, l] of _ledgers) {
-    try {
-      saveRateLampState(sid, l);
-    } catch {
-    }
-  }
-}
-var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
-var init_rate_lamp_manager = __esm({
-  "lib/rate-lamp-manager.js"() {
-    init_rate_lamp_store();
-    init_bill_regret();
-    init_constants();
-    RENT_METER_DEFAULT = () => ({
-      cycleProgress: 0,
-      depthActive: false,
-      depthProgress: 0,
-      backstopInterval: null,
-      backstopLapCount: 0,
-      depthHot: false
-    });
-    _ledgers = /* @__PURE__ */ new Map();
-    _lastSaved = /* @__PURE__ */ new Map();
-    _lastPersistedRevision = /* @__PURE__ */ new Map();
-    _lastSeenRevision = /* @__PURE__ */ new Map();
-    _pendingPersistSids = /* @__PURE__ */ new Set();
-    _enospcPaused = /* @__PURE__ */ new Set();
-    _counters = {
-      diskWrites: 0,
-      coalesceHits: 0,
-      // schedulePersist calls that joined an existing pending
-      coalesceMisses: 0,
-      // schedulePersist calls that added a new pending
-      revisionGateBlocks: 0,
-      // writes refused by the revision gate
-      enospcEngagements: 0,
-      enospcRecoveries: 0
-    };
-    _testWriter = null;
-    _testScheduler = null;
-    _coalescedTimer = null;
-  }
-});
-
 // lib/project-key.js
 var project_key_exports = {};
 __export(project_key_exports, {
@@ -56715,7 +56972,7 @@ var init_project_key = __esm({
 });
 
 // lib/legacy-cleanup.js
-import { readdirSync as readdirSync3, unlinkSync as unlinkSync2, rmdirSync, existsSync as existsSync2 } from "node:fs";
+import { readdirSync as readdirSync3, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { join as join8 } from "node:path";
 import { homedir as homedir6 } from "node:os";
 var init_legacy_cleanup = __esm({
@@ -56726,8 +56983,7 @@ var init_legacy_cleanup = __esm({
 // lib/model-policy.js
 function ctpFor(modelId) {
   const id = String(modelId || "");
-  const prefix = Object.keys(CTP_TABLE).find((p) => id.startsWith(p));
-  const ctp = prefix ? CTP_TABLE[prefix] : DEFAULT_CTP;
+  const ctp = CTP_TABLE.find((row) => row.match.test(id)) ?? DEFAULT_CTP;
   return { ascii: ctp.ascii, cjk: ctp.cjk, version: CTP_VERSION };
 }
 function cRatioFor(modelId, ttl) {
@@ -56774,6 +57030,9 @@ function tryGetStore() {
     return null;
   }
 }
+function sanitizePresetId(presetId) {
+  return typeof presetId === "string" && presetId.length > 0 && presetId.length <= PRESET_ID_MAX_CHARS ? presetId : null;
+}
 function validatePricingInput({ readPrice, writePrice }) {
   if (!Number.isFinite(readPrice) || !Number.isFinite(writePrice))
     throw new Error("readPrice and writePrice must be finite numbers");
@@ -56803,14 +57062,17 @@ function loadPricingOverride(model) {
 function deletePricingOverride(model) {
   getStore().deleteConfig(`pricing:${model}`);
 }
+var PRESET_ID_MAX_CHARS, NO_MODEL_MESSAGE;
 var init_pricing_store = __esm({
   "lib/pricing-store.js"() {
     init_store();
+    PRESET_ID_MAX_CHARS = 80;
+    NO_MODEL_MESSAGE = "Model not yet detected; retry after first API call";
   }
 });
 
 // lib/state-reaper.js
-import { readdirSync as readdirSync4, statSync as statSync3, unlinkSync as unlinkSync3, readFileSync as readFileSync7, rmSync as rmSync2 } from "node:fs";
+import { readdirSync as readdirSync4, statSync as statSync3, unlinkSync as unlinkSync2, readFileSync as readFileSync7, rmSync as rmSync2 } from "node:fs";
 import { join as join9 } from "node:path";
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -56868,7 +57130,7 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
           if (record2.pid && isPidAlive(record2.pid)) continue;
         } catch {
         }
-        unlinkSync3(p);
+        unlinkSync2(p);
         removed++;
       }
     } catch {
@@ -56915,11 +57177,7 @@ var init_state_reaper = __esm({
 
 // lib/statusline-format.js
 function renderLamp(br, opts) {
-  if (!Number.isFinite(br)) return "\u26AA";
-  if (opts?.u < 1) return opts.u >= uLeftAtBr(opts.mf, BR_AMBER) ? "\u{1F7E2}" : "\u26AA";
-  if (br >= BR_RED) return "\u{1F534}";
-  if (br >= BR_AMBER) return "\u{1F7E1}";
-  return "\u{1F7E2}";
+  return LAMP_EMOJI[lampZone(br, opts)];
 }
 function renderBr(br) {
   if (!Number.isFinite(br) || br < 0) return "b---%";
@@ -56982,7 +57240,7 @@ function formatLine(s) {
 \u21BB ${alertMsg}`;
   return line;
 }
-var BAR_WIDTH, tagOf, kFmt;
+var BAR_WIDTH, tagOf, kFmt, LAMP_EMOJI;
 var init_statusline_format = __esm({
   "lib/statusline-format.js"() {
     init_bill_regret();
@@ -56996,6 +57254,7 @@ var init_statusline_format = __esm({
       if (n >= 1e3) return (n / 1e3).toFixed(0) + "k";
       return String(n);
     };
+    LAMP_EMOJI = { white: "\u26AA", green: "\u{1F7E2}", amber: "\u{1F7E1}", red: "\u{1F534}" };
   }
 });
 
@@ -57523,12 +57782,17 @@ var init_gitignore_loader = __esm({
 });
 
 // lib/carry-sweep.js
-import { existsSync as existsSync3, statSync as statSync4 } from "node:fs";
-function replaySessionTelemetry(sessionId, transcriptPath, { store, createWatcher } = {}) {
+import { existsSync as existsSync2, statSync as statSync4 } from "node:fs";
+function replaySessionTelemetry(sessionId, transcriptPath, {
+  store,
+  createWatcher,
+  onDiagnostics = () => {
+  }
+} = {}) {
   if (typeof createWatcher !== "function") {
     throw new Error("replaySessionTelemetry requires the host's createWatcher composition callback");
   }
-  if (!transcriptPath || !existsSync3(transcriptPath)) return null;
+  if (!transcriptPath || !existsSync2(transcriptPath)) return null;
   try {
     const stat = statSync4(transcriptPath);
     if (!stat.isFile()) return null;
@@ -57547,10 +57811,10 @@ function replaySessionTelemetry(sessionId, transcriptPath, { store, createWatche
     const frame = driver.advance({ captureMode: "replay" });
     if (!frame) break;
     sawFrame = true;
-    watcher.applyHarnessFrame(frame);
+    onDiagnostics(watcher.applyHarnessFrame(frame).diagnostics);
   }
   if (!sawFrame) return null;
-  watcher.closeCurrentSegment({ captureMode: "replay" });
+  onDiagnostics(watcher.closeCurrentSegment().diagnostics);
   return true;
 }
 var RECONSTRUCTION_GUARD_MAX;
@@ -57561,37 +57825,10 @@ var init_carry_sweep = __esm({
   }
 });
 
-// lib/lineage.js
-function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
-  const chain = [];
-  let node = headHandoff;
-  while (node && !seen.has(node.sessionId)) {
-    seen.add(node.sessionId);
-    chain.push({
-      sessionId: node.sessionId,
-      sourceLocator: node.transcriptPath || null,
-      sourceLabel: node.transcriptPath || null,
-      handoffId: node.handoffId
-    });
-    node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
-  }
-  return chain.reverse();
-}
-function fromHandoff({ store, handoffId }) {
-  const head = store.getHandoff(handoffId);
-  if (!head) return [];
-  return walk(store, head.projectId, head);
-}
-function forLoadedHandoff({ store, sessionId }) {
-  const head = store.findLatestDeliveryInSession(sessionId);
-  return head ? fromHandoff({ store, handoffId: head.handoffId }) : [];
-}
-var init_lineage = __esm({
-  "lib/lineage.js"() {
-  }
-});
-
 // lib/turn-page.js
+function invariant5(ok, message) {
+  if (!ok) throw new Error(`turn page invariant: ${message}`);
+}
 function renderRecord(label, record2) {
   const address = record2.t === null ? null : turnAddress(label, record2.t);
   const pad = address === null ? "" : " ".repeat(address.length + 1);
@@ -57599,8 +57836,8 @@ function renderRecord(label, record2) {
   if (record2.note != null) rows.push(...physicalLines(record2.note).map((line) => `${pad}| A: ${line}`));
   return rows.join("\n");
 }
-function renderPage(entries) {
-  const blocks = [TURN_NOTICE];
+function renderPage(entries, notice) {
+  const blocks = [notice];
   let openIndex = null;
   for (const entry of entries) {
     if (entry.index !== openIndex) {
@@ -57611,8 +57848,8 @@ function renderPage(entries) {
   }
   return blocks.join("\n\n");
 }
-function projectSession(store, entry, readSource) {
-  const { readable, turns } = readSource(entry.sourceLocator);
+async function projectSession(store, entry, readSource) {
+  const { readable, turns } = await readSource(entry.sourceLocator);
   const ordinals = readable ? activePathOrdinals(turns) : null;
   const addressable = ordinals !== null && ordinals.size > 0;
   const records = [];
@@ -57631,7 +57868,8 @@ function projectSession(store, entry, readSource) {
   records.sort(addressable ? byOrdinal : byAnchor);
   return { readable, records };
 }
-function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection }) {
+async function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection, notice }) {
+  invariant5(typeof notice === "string" && notice.length > 0, "notice is required");
   const sources = labelHistorySources(lineage);
   const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
   const parsed = /* @__PURE__ */ new Map();
@@ -57639,10 +57877,10 @@ function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogue
     if (!parsed.has(index)) parsed.set(index, projectSession(store, sources[index], readSource));
     return parsed.get(index);
   };
-  const boundary = before == null ? null : resolveBefore(before, sources, sessionAt);
+  const boundary = before == null ? null : await resolveBefore(before, sources, sessionAt);
   const newestIndex = boundary ? boundary.index : sources.length - 1;
-  const windowAt = (index) => {
-    const { records } = sessionAt(index);
+  const windowAt = async (index) => {
+    const { records } = await sessionAt(index);
     if (!boundary || index !== boundary.index || boundary.t === null) return records;
     return records.filter((e) => e.record.t < boundary.t);
   };
@@ -57651,10 +57889,10 @@ function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogue
   let olderRemains = false;
   fill:
     for (let index = newestIndex; index >= 0; index--) {
-      const window2 = windowAt(index);
+      const window2 = await windowAt(index);
       for (let i2 = window2.length - 1; i2 >= 0; i2--) {
         const candidate = [window2[i2], ...entries];
-        const rendered = renderPage(candidate);
+        const rendered = renderPage(candidate, notice);
         if (!isWithinHistoryBudget(estimateWireTokens({ turn_page: rendered }, DEFAULT_CTP))) {
           olderRemains = true;
           break fill;
@@ -57668,65 +57906,26 @@ function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogue
   const nextBefore = olderRemains && head.t !== null ? turnAddress(entries[0].label, head.t) : null;
   return { turnPage, nextBefore };
 }
-function resolveBefore(before, sources, sessionAt) {
+async function resolveBefore(before, sources, sessionAt) {
   const parsed = parseTurnPageBoundary(before);
   if (!parsed) throw notFound();
   const index = sources.findIndex((entry) => entry.label === parsed.label);
   if (index < 0) throw notFound();
   if (parsed.sourceOrdinal === null) return { index, t: null };
-  const session = sessionAt(index);
-  if (!session.readable) throw notFound();
   const t = parsed.sourceOrdinal;
-  if (!session.records.some((entry) => entry.record.t === t)) throw notFound();
+  if (!(await sessionAt(index)).records.some((entry) => entry.record.t === t)) throw notFound();
   return { index, t };
 }
-var TURN_NOTICE, notFound, physicalLines, byOrdinal, byAnchor;
+var notFound, physicalLines, byOrdinal, byAnchor;
 var init_turn_page = __esm({
   "lib/turn-page.js"() {
     init_constants();
     init_turn_history_budget();
     init_turn();
-    TURN_NOTICE = "Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's transcript file, and a row's T is that file's row as grep -n numbers it.";
     notFound = () => Object.assign(new Error("not_found"), { code: "not_found" });
     physicalLines = (text) => String(text).replace(/\r\n?/g, "\n").split("\n");
     byOrdinal = (a, b) => a.record.t - b.record.t;
     byAnchor = (a, b) => a.anchorUuid < b.anchorUuid ? -1 : a.anchorUuid > b.anchorUuid ? 1 : 0;
-  }
-});
-
-// lib/turn-browse.js
-function rootHeadline(rows) {
-  const opening = [];
-  for (const row of rows) {
-    opening.push(row.uText);
-    if ((row.note ?? "") !== "") break;
-  }
-  return opening.join(ROOT_HEADLINE_JOIN);
-}
-function buildTurnBrowse({ store, lineage }) {
-  const sources = labelHistorySources(lineage);
-  const sections = [];
-  sources.forEach((entry, i2) => {
-    const rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
-    if (rows.length === 0) return;
-    const entries = rows.map((row) => {
-      const out2 = { u_text: row.uText };
-      if (row.note != null) out2.note = row.note;
-      return out2;
-    });
-    const headline = i2 === 0 ? rootHeadline(rows) : store.getHandoff(sources[i2 - 1].handoffId)?.nextTask ?? "";
-    sections.push({ label: entry.label, headline, entries });
-  });
-  return { sections };
-}
-function lineageHeadlines({ store, lineage }) {
-  return buildTurnBrowse({ store, lineage }).sections.map(({ label, headline }) => ({ label, headline }));
-}
-var ROOT_HEADLINE_JOIN;
-var init_turn_browse = __esm({
-  "lib/turn-browse.js"() {
-    init_turn();
-    ROOT_HEADLINE_JOIN = " \xB7 ";
   }
 });
 
@@ -57743,7 +57942,7 @@ function canonicalEntities(fold, includeToolEvidence) {
   const entities = [];
   for (const line of dialogueFoldLines(fold)) {
     if (line.kind === "visible") {
-      if (typeof line.message.text === "string") entities.push({ text: line.message.text, line: line.sourceOrdinal });
+      entities.push({ text: line.message.text, line: line.sourceOrdinal });
       continue;
     }
     if (!includeToolEvidence(line.tool)) continue;
@@ -57783,25 +57982,25 @@ function firstHit(entities, needle) {
   }
   return null;
 }
-function* sessionsToScan(sources, scope, readSource) {
+async function* sessionsToScan(sources, scope, readSource) {
   if (scope != null) {
-    yield scopedSession(sources, scope, readSource);
+    yield await scopedSession(sources, scope, readSource);
     return;
   }
   for (let index = sources.length - 1; index >= 0; index--) {
     const entry = sources[index];
     if (!entry.sourceLocator) continue;
-    const read = readSource(entry.sourceLocator);
+    const read = await readSource(entry.sourceLocator);
     if (!read.readable) continue;
     yield { entry, folds: read.folds, turns: read.turns };
   }
 }
-function scopedSession(sources, scope, readSource) {
+async function scopedSession(sources, scope, readSource) {
   const parsed = parseTurnAddress(scope);
   if (!parsed) throw scopeNotFound();
   const entry = sources.find((e) => e.label === parsed.label);
   if (!entry || !entry.sourceLocator) throw scopeNotFound();
-  const read = readSource(entry.sourceLocator);
+  const read = await readSource(entry.sourceLocator);
   if (!read.readable) throw scopeNotFound();
   const turns = read.turns.filter((turn) => turn.sourceOrdinal === parsed.sourceOrdinal);
   if (turns.length !== 1) throw scopeNotFound();
@@ -57821,11 +58020,11 @@ function turnByFold(turns) {
   });
   return byFold;
 }
-function recordByTurnHead(store, entry, turns) {
-  const { records } = projectSession(store, entry, () => ({ readable: true, turns }));
+async function recordByTurnHead(store, entry, turns) {
+  const { records } = await projectSession(store, entry, () => ({ readable: true, turns }));
   return new Map(records.filter((r) => r.record.t !== null).map((r) => [r.anchorUuid, r.record]));
 }
-function searchTranscripts({
+async function searchTranscripts({
   store,
   lineage,
   q,
@@ -57879,7 +58078,7 @@ function searchTranscripts({
   const retained = [];
   let truncated = false;
   scan:
-    for (const { entry, folds, turns } of sessionsToScan(sources, scope, readSource)) {
+    for await (const { entry, folds, turns } of sessionsToScan(sources, scope, readSource)) {
       let membership = null;
       let recordByHead = null;
       let headFolds = null;
@@ -57893,7 +58092,7 @@ function searchTranscripts({
         let record2 = null;
         if (scope == null) {
           membership ??= turnByFold(turns);
-          recordByHead ??= recordByTurnHead(store, entry, turns);
+          recordByHead ??= await recordByTurnHead(store, entry, turns);
           const member = membership.get(fold.ordinal);
           turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`;
           record2 = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
@@ -57916,15 +58115,15 @@ function searchTranscripts({
   if (retained.length === 0 && !truncated) return { found: false };
   return wire(groupsOf([...retained].reverse()), truncated);
 }
-function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
+async function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
   if (!store.turnFtsAvailable()) throw locateUnavailable();
   const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
   const sessions = new Map(labelHistorySources(lineage).map((entry) => [entry.sessionId, entry]));
   let rows;
   try {
     rows = store.locateTurnNotes([...sessions.keys()], buildFtsMatch(q, "plain"));
-  } catch {
-    throw locateUnavailable();
+  } catch (error2) {
+    throw locateUnavailable(error2);
   }
   const projected = /* @__PURE__ */ new Map();
   let accumulated = /* @__PURE__ */ new Map();
@@ -57933,7 +58132,7 @@ function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection })
     const entry = sessions.get(row.sourceSessionId);
     if (!entry) continue;
     if (!projected.has(entry.sessionId)) {
-      const { readable, records } = projectSession(store, entry, readSource);
+      const { readable, records } = await projectSession(store, entry, readSource);
       projected.set(entry.sessionId, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
     }
     const session = projected.get(entry.sessionId);
@@ -57983,7 +58182,10 @@ var init_turn_query = __esm({
       }
       return [min, max];
     };
-    locateUnavailable = () => Object.assign(new Error("locate_unavailable"), { code: "locate_unavailable" });
+    locateUnavailable = (cause) => Object.assign(
+      new Error("locate_unavailable", cause === void 0 ? void 0 : { cause }),
+      { code: "locate_unavailable" }
+    );
     notePreview = (note) => {
       const cut = truncateToTokens(note, NOTE_PREVIEW_TOKENS, DEFAULT_CTP);
       return cut === note ? note : `${cut}${truncationMarker(note.length)}`;
@@ -58006,11 +58208,82 @@ var init_turn_query = __esm({
   }
 });
 
+// lib/turn-read-service.js
+function createTurnReadService({
+  store,
+  sessionId,
+  dialogueSource,
+  dialogueProjection,
+  includeToolEvidence,
+  recovery,
+  turnPageBuilder = buildTurnPage
+}) {
+  const history = { dialogueSource, dialogueProjection, notice: recovery.notice };
+  return {
+    async turnPage({ before = null } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        const page = await turnPageBuilder({
+          store: store(),
+          lineage,
+          before: before || null,
+          ...history
+        });
+        return withPageRecovery(turnPageWire(page));
+      } catch (err2) {
+        if (err2 && err2.code === "not_found") throw new Error(STALE_CURSOR_MESSAGE);
+        if (process.env.SW_DEBUG) console.error("[turn_page_tool]", err2);
+        return withPageRecovery({ error: "turn_page_unavailable", retryable: true });
+      }
+    },
+    async turnSearch({ q, scope = null } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        const found = await searchTranscripts({
+          store: store(),
+          lineage,
+          q,
+          scope: scope || null,
+          ...history,
+          includeToolEvidence
+        });
+        return withSearchRecovery(found, { hitRecovery: recovery.searchHit });
+      } catch (err2) {
+        if (err2 && err2.code === "scope_not_found") throw new Error(SCOPE_ABSENT_MESSAGE);
+        if (process.env.SW_DEBUG) console.error("[turn_search_tool]", err2);
+        return withSearchRecovery({ error: "search_unavailable" });
+      }
+    },
+    async turnLocate({ q } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        const located = await locateRanges({ store: store(), lineage, q, ...history });
+        return withLocateRecovery(located, { hitRecovery: recovery.locateHit });
+      } catch (err2) {
+        if (process.env.SW_DEBUG) console.error("[turn_locate_tool]", err2);
+        return withLocateRecovery({ error: "locate_unavailable" });
+      }
+    }
+  };
+}
+var init_turn_read_service = __esm({
+  "lib/turn-read-service.js"() {
+    init_lineage();
+    init_turn_tool_recovery();
+    init_turn_page();
+    init_turn_query();
+    init_wire();
+  }
+});
+
 // lib/harness/claude-code/dialogue-source.js
 import { readFileSync as readFileSync8 } from "node:fs";
 function createClaudeCodeDialogueSource({ readFile = readFileSync8 } = {}) {
   return {
-    read(sourceLocator) {
+    async read(sourceLocator) {
       let buffer;
       try {
         buffer = readFile(sourceLocator);
@@ -58133,10 +58406,12 @@ var init_history_turn_rules = __esm({
 });
 
 // lib/harness/claude-code/turn-recovery.js
-var SEARCH_HIT_RECOVERY;
+var TURN_NOTICE, SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY;
 var init_turn_recovery = __esm({
   "lib/harness/claude-code/turn-recovery.js"() {
+    TURN_NOTICE = "Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's transcript file, and a row's T is that file's row as grep -n numbers it.";
     SEARCH_HIT_RECOVERY = "line is the transcript row an excerpt sits on and span the rows around it, from its fold's anchor to its results, both as grep -n numbers them; read transcript_path there for the full text. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.";
+    LOCATE_HIT_RECOVERY = "A hit's transcript_path holds its turn at row T of its scope, as grep -n numbers rows; the other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it.";
   }
 });
 
@@ -58168,10 +58443,10 @@ function indexTranscript(filePath) {
       const msgId = idMatch ? idMatch[1] : null;
       if (msgId && idToIndex.has(msgId)) {
         const prevIdx = idToIndex.get(msgId);
-        steps[prevIdx] = { byteEnd: lineEnd, ts: lastTs };
+        steps[prevIdx] = { limit: lineEnd, ts: lastTs };
       } else {
         const idx = steps.length;
-        steps.push({ byteEnd: lineEnd, ts: lastTs });
+        steps.push({ limit: lineEnd, ts: lastTs });
         if (msgId) idToIndex.set(msgId, idx);
       }
     }
@@ -58232,8 +58507,8 @@ var init_replay = __esm({
         this.pause();
         this._done = true;
       }
-      _advance(byteLimit) {
-        return this._driver.advance({ captureMode: "replay", byteLimit });
+      _advance(limit) {
+        return this._driver.advance({ captureMode: "replay", limit });
       }
       _scheduleNext() {
         if (this._paused || this._done) return;
@@ -58249,7 +58524,7 @@ var init_replay = __esm({
         }
         const step = this._index[this._cursor];
         this._cursor++;
-        const frame = this._advance(step.byteEnd);
+        const frame = this._advance(step.limit);
         if (frame) {
           this._watcher.applyHarnessFrame(frame);
           this._drain();
@@ -58276,6 +58551,713 @@ var init_replay = __esm({
   }
 });
 
+// lib/harness/dsh/log-frames.js
+import { gunzipSync, zstdDecompressSync } from "node:zlib";
+function walkZstdFrames(buffer) {
+  const frames = [];
+  for (let start2 = 0, end; start2 < buffer.length; start2 = end) {
+    end = completeFrameEnd(buffer, start2);
+    if (end === null) break;
+    frames.push(zstdDecompressSync(buffer.subarray(start2, end)));
+  }
+  return frames;
+}
+function completeFrameEnd(buffer, start2) {
+  let offset = start2;
+  if (buffer.length - offset < 4) return null;
+  if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
+    throw new Error(`corrupt Zstandard session log: invalid frame magic at byte ${offset}`);
+  }
+  offset += 4;
+  if (offset === buffer.length) return null;
+  const descriptor = buffer.readUInt8(offset);
+  offset += 1;
+  if ((descriptor & 24) !== 0) {
+    throw new Error(`corrupt Zstandard session log: reserved frame-header bit at byte ${offset - 1}`);
+  }
+  const contentSizeFlag = descriptor >>> 6;
+  const singleSegment = (descriptor & 32) !== 0;
+  const checksum = (descriptor & 4) !== 0;
+  const dictionaryFlag = descriptor & 3;
+  const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag;
+  const contentSizeBytes = contentSizeFlag === 0 ? singleSegment ? 1 : 0 : 1 << contentSizeFlag;
+  offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes;
+  if (offset > buffer.length) return null;
+  for (; ; ) {
+    if (buffer.length - offset < 3) return null;
+    const blockHeader = buffer.readUIntLE(offset, 3);
+    offset += 3;
+    const blockType = blockHeader >>> 1 & 3;
+    if (blockType === 3) {
+      throw new Error(`corrupt Zstandard session log: reserved block type at byte ${offset - 3}`);
+    }
+    offset += blockType === 1 ? 1 : blockHeader >>> 3;
+    if (offset > buffer.length) return null;
+    if ((blockHeader & 1) !== 0) break;
+  }
+  if (checksum) offset += 4;
+  return offset > buffer.length ? null : offset;
+}
+function sessionHeaderOf(line) {
+  let record2;
+  try {
+    record2 = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return record2 !== null && typeof record2 === "object" && record2.type === "session" ? record2 : null;
+}
+function decodeDshLog(buffer) {
+  const zstd = buffer.length >= 4 && buffer.readUInt32LE(0) === ZSTD_MAGIC;
+  const gzip = !zstd && buffer.length >= 2 && buffer.readUInt16LE(0) === GZIP_MAGIC;
+  const plaintext = zstd ? Buffer.concat(walkZstdFrames(buffer)) : gzip ? gunzipSync(buffer) : buffer;
+  const firstLineEnd = plaintext.indexOf(10);
+  const header = sessionHeaderOf(plaintext.subarray(0, firstLineEnd === -1 ? plaintext.length : firstLineEnd).toString("utf8"));
+  if (header === null) {
+    if (zstd || gzip) throw new Error("not a DSH session log: its first line is not a session header");
+    return null;
+  }
+  const [, ...events] = plaintext.toString("utf8").split("\n").filter((line) => line !== "").map((line) => JSON.parse(line));
+  return { header, events };
+}
+var ZSTD_MAGIC, GZIP_MAGIC;
+var init_log_frames = __esm({
+  "lib/harness/dsh/log-frames.js"() {
+    ZSTD_MAGIC = 4247762216;
+    GZIP_MAGIC = 35615;
+  }
+});
+
+// lib/harness/dsh/transcript-observation.js
+function violation(event, field) {
+  const at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
+  return {
+    observations: [],
+    diagnostics: [{ scope: SCOPE, code: "shape-violation", message: `${event.type}${at}: malformed ${field}` }]
+  };
+}
+function faultOf(checks) {
+  return checks.find(([, holds]) => !holds)?.[0] ?? null;
+}
+function envelopeChecks(event) {
+  return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
+}
+function baseOf(event) {
+  return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
+}
+function isContent(content, ...shapes) {
+  return Array.isArray(content) && content.every((block) => isObject2(block) && shapes.every((shaped) => shaped(block)));
+}
+function textOf(content) {
+  return content.filter((block) => block.type === "text").map((block) => block.text).join("");
+}
+function callIdOf(turn, step, id) {
+  return `${turn}:${step}:${id}`;
+}
+function parseArguments(raw) {
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return raw;
+  }
+}
+function isUsage(usage) {
+  return isObject2(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
+}
+function usageOf(usage) {
+  return {
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    cacheRead: usage.cacheReadTokens ?? 0,
+    cacheWrite: usage.cacheWriteTokens ?? 0
+  };
+}
+function reduceHumanMessage(event) {
+  const { data } = event;
+  const fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.id", isId(data.id)],
+    ["data.content", isContent(data.content, textShaped)]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  const base = baseOf(event);
+  const observations = [{ type: "turn-boundary", ...base, provenance: "human" }];
+  const text = textOf(data.content);
+  if (text !== "") {
+    observations.push({
+      type: "text",
+      role: "human",
+      text,
+      messageId: MESSAGE_NAMESPACE + data.id,
+      ...base,
+      provenance: "human"
+    });
+  }
+  return { observations, diagnostics: [] };
+}
+function reduceCheckpoint(event) {
+  if (!isSurfaceOp(event.surfaceOp)) return violation(event, "surfaceOp");
+  if (event.surfaceOp === "append") return nothing();
+  const fault = faultOf(envelopeChecks(event));
+  if (fault !== null) return violation(event, fault);
+  return { observations: [{ type: "epoch-boundary", ...baseOf(event), provenance: "harness" }], diagnostics: [] };
+}
+function reduceUserMessage(event) {
+  const kind = event.data?.source?.kind;
+  if (kind === "user") return reduceHumanMessage(event);
+  if (kind === "compact-checkpoint") return reduceCheckpoint(event);
+  return typeof kind === "string" ? nothing() : violation(event, "data.source.kind");
+}
+function reduceAssistantMessage(event) {
+  const { data } = event;
+  const message = data?.message;
+  const fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.turn", isIndex(data?.turn)],
+    ["data.step", isIndex(data?.step)],
+    ["data.message.id", isId(message?.id)],
+    ["data.message.source.model", typeof message?.source?.model === "string"],
+    ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
+    ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  const base = baseOf(event);
+  const messageId = MESSAGE_NAMESPACE + message.id;
+  const model = message.source.model;
+  const observations = [];
+  const text = textOf(message.content);
+  if (text !== "") {
+    observations.push({ type: "text", role: "assistant", text, messageId, ...base, provenance: "assistant" });
+  }
+  for (const block of message.content) {
+    if (block.type !== "tool-call") continue;
+    observations.push({
+      type: "tool-use",
+      messageId,
+      model,
+      cwd: null,
+      toolUseId: callIdOf(data.turn, data.step, block.id),
+      name: block.name,
+      input: parseArguments(block.arguments),
+      ...base,
+      provenance: "assistant"
+    });
+  }
+  if (data.usage !== void 0) {
+    observations.push({
+      type: "usage",
+      messageId,
+      model,
+      usage: usageOf(data.usage),
+      ...base,
+      provenance: "assistant"
+    });
+  }
+  return { observations, diagnostics: [] };
+}
+function reduceToolResult(event) {
+  if (!isSurfaceOp(event.surfaceOp)) return violation(event, "surfaceOp");
+  if (event.surfaceOp !== "append") return nothing();
+  const { data } = event;
+  const message = data?.message;
+  const fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.turn", isIndex(data?.turn)],
+    ["data.step", isIndex(data?.step)],
+    ["data.message.toolCallId", isId(message?.toolCallId)],
+    ["data.message.isError", message?.isError === void 0 || typeof message.isError === "boolean"],
+    ["data.message.content", isContent(message?.content, textShaped)]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  return {
+    observations: [{
+      type: "tool-result",
+      toolUseId: callIdOf(data.turn, data.step, message.toolCallId),
+      content: textOf(message.content),
+      isError: message.isError,
+      // The tool's private metadata and failure identity ride uninterpreted, as Claude Code's
+      // `toolUseResult` does.
+      resultMeta: { meta: data.meta ?? null, error: data.error ?? null },
+      ...baseOf(event),
+      provenance: "harness"
+    }],
+    diagnostics: []
+  };
+}
+function reduceDshEvent(event) {
+  switch (event.type) {
+    case "user/message":
+      return reduceUserMessage(event);
+    case "assistant/message":
+      return reduceAssistantMessage(event);
+    case "tool/result":
+      return reduceToolResult(event);
+    default:
+      return nothing();
+  }
+}
+function reduceDshSnapshot(events) {
+  const batches = [];
+  const diagnostics = [];
+  for (const event of events) {
+    const reduced = reduceDshEvent(event);
+    if (reduced.observations.length > 0) batches.push(reduced.observations);
+    diagnostics.push(...reduced.diagnostics);
+  }
+  return { batches, observations: batches.flat(), diagnostics };
+}
+var SCOPE, MESSAGE_NAMESPACE, isObject2, isIndex, isId, isSurfaceOp, nothing, textShaped, toolCallShaped;
+var init_transcript_observation2 = __esm({
+  "lib/harness/dsh/transcript-observation.js"() {
+    SCOPE = "dsh-transcript-observation";
+    MESSAGE_NAMESPACE = "dsh:message:";
+    isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
+    isId = (value) => typeof value === "string" && value !== "";
+    isSurfaceOp = (value) => value === "append" || isObject2(value) && value.op === "replace";
+    nothing = () => ({ observations: [], diagnostics: [] });
+    textShaped = (block) => block.type !== "text" || typeof block.text === "string";
+    toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
+  }
+});
+
+// lib/harness/dsh/playback.js
+function indexDshLog(events) {
+  return events.filter((event) => event.type === "assistant/message" && event.data?.usage !== void 0).map((event) => ({ limit: event.seq, ts: event.time }));
+}
+function createDshPlaybackDriver({ sessionId, events }) {
+  let cursor = 0;
+  let replaced = false;
+  function advance({ captureMode = "replay", limit = Infinity } = {}) {
+    const start2 = cursor;
+    while (cursor < events.length && events[cursor].seq <= limit) cursor += 1;
+    const { batches } = reduceDshSnapshot(events.slice(start2, cursor));
+    if (batches.length === 0) return null;
+    if (replaced) return { transition: "append", batches, sourceObserved: true, captureMode };
+    replaced = true;
+    return { transition: "replace", sourceLocator: sessionId, batches, sourceObserved: true, captureMode };
+  }
+  return { advance };
+}
+var init_playback = __esm({
+  "lib/harness/dsh/playback.js"() {
+    init_transcript_observation2();
+  }
+});
+
+// lib/replay-source.js
+var replay_source_exports = {};
+__export(replay_source_exports, {
+  openReplaySource: () => openReplaySource
+});
+import { readFileSync as readFileSync10 } from "node:fs";
+function openReplaySource(path3) {
+  const log = decodeDshLog(readFileSync10(path3));
+  if (log !== null) {
+    const { header, events } = log;
+    return {
+      harness: "dsh",
+      index: indexDshLog(events),
+      createDriver: () => createDshPlaybackDriver({ sessionId: header.id, events }),
+      header,
+      dialogueSnapshot: { session: header, inheritedEventCount: 0, events }
+    };
+  }
+  return {
+    harness: "claude-code",
+    index: indexTranscript(path3),
+    createDriver: () => createClaudeCodeSourceDriver({ sourceLocator: path3, firstReadableTransition: "replace" }),
+    header: null,
+    dialogueSnapshot: null
+  };
+}
+var init_replay_source = __esm({
+  "lib/replay-source.js"() {
+    init_replay();
+    init_source_driver();
+    init_log_frames();
+    init_playback();
+  }
+});
+
+// lib/harness/dsh/dialogue-source.js
+function createDshDialogueSource({ readSession }) {
+  return {
+    async read(sessionId) {
+      let snapshot;
+      try {
+        snapshot = await readSession(sessionId);
+      } catch {
+        return { status: "unavailable", observations: [] };
+      }
+      return { status: "ok", observations: reduceDshSnapshot(snapshot.events).observations };
+    }
+  };
+}
+var init_dialogue_source2 = __esm({
+  "lib/harness/dsh/dialogue-source.js"() {
+    init_transcript_observation2();
+  }
+});
+
+// lib/harness/dsh/native-tools.js
+function canonicalizerFor2(context) {
+  const ops = context && context.path;
+  if (!ops) return (raw) => String(raw);
+  return (raw, base) => {
+    const abs = ops.isAbsolute(raw) ? raw : ops.resolve(base || "/", raw);
+    return ops.normalize(abs).split("\\").join("/");
+  };
+}
+function baseDirFor2(row, context) {
+  if (typeof row.cwd === "string" && row.cwd.length > 0) return row.cwd;
+  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
+  return null;
+}
+function isEffectiveUpdate2(update, target) {
+  if (update.type === "grepMultiFile") return Object.keys(update.files).length > 0;
+  if (update.type === "fullSet" || update.type === "lineUpdate") return target != null && update.lines.length > 0;
+  return target != null;
+}
+function residualIdentityFor2(name2, input) {
+  const inputLength = JSON.stringify(input).length;
+  if (name2 === "bash") {
+    const feature = bashFeature(input.command);
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail, inputLength };
+  }
+  if (name2.startsWith(MCP_PREFIX)) {
+    return { groupKey: name2.slice(MCP_PREFIX.length), kind: "mcp", detail: "", inputLength };
+  }
+  return { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "", inputLength };
+}
+function isLoadHandoffTool2(name2) {
+  return name2.endsWith("load_handoff");
+}
+function resolvedLoadToken2(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
+  } catch {
+    return null;
+  }
+}
+function interpretDshToolUse(observation, context) {
+  const { toolUseId, name: name2 } = observation;
+  const issuingStepId = observation.messageId ?? null;
+  const issuingPolicy = context.resolveModelPolicy(observation.model ?? null);
+  const input = observation.input ?? {};
+  const explicitToken = isLoadHandoffTool2(name2) && typeof input.load_token === "string" ? input.load_token : null;
+  const awaitLoadToken = isLoadHandoffTool2(name2) && explicitToken === null;
+  const telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] };
+  const call = { toolUseId, issuingStepId, issuingPolicy, awaitLoadToken };
+  const adapter = EFFECT_ADAPTERS.get(name2);
+  let pending = null;
+  if (adapter === void 0) {
+    pending = { kind: "residual", ...call, residual: residualIdentityFor2(name2, input) };
+  } else {
+    const base = baseDirFor2(observation, context);
+    try {
+      const target = adapter.extractTarget(input, base, canonicalizerFor2(context));
+      pending = { kind: "effect", ...call, adapter, input, base, target, rawPath: input.file_path || target };
+    } catch {
+    }
+  }
+  return { pending, effects: [], residuals: [], telemetry };
+}
+function completeDshToolResult(pending, observation, context) {
+  const text = observation.content;
+  const telemetry = {
+    toolUseId: pending.toolUseId,
+    issuingStepId: pending.issuingStepId,
+    loadToken: pending.awaitLoadToken ? resolvedLoadToken2(text) : null,
+    pathEvents: []
+  };
+  const hadError = observation.isError === true;
+  if (pending.kind === "residual") {
+    const { groupKey, kind, detail, inputLength } = pending.residual;
+    return {
+      effects: [],
+      residuals: [{ groupKey, weight: inputLength + text.length, hadError, meta: { kind, detail } }],
+      telemetry,
+      skillContinuation: null
+    };
+  }
+  const nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
+  if (hadError) return nothing2;
+  const { adapter, input, base, target, rawPath, issuingPolicy } = pending;
+  let update;
+  try {
+    update = adapter.computeUpdate(input, text, base, issuingPolicy.ctp, canonicalizerFor2(context));
+  } catch {
+    return nothing2;
+  }
+  if (!isEffectiveUpdate2(update, target)) return nothing2;
+  telemetry.pathEvents = pathEventsFor(update, target, rawPath, adapter.toolType);
+  return { effects: [effectFor(update, target)], residuals: [], telemetry, skillContinuation: null };
+}
+function resolveDshToolTarget(pair, context) {
+  const adapter = EFFECT_ADAPTERS.get(pair.name);
+  if (adapter === void 0) return null;
+  try {
+    return adapter.extractTarget(pair.input ?? {}, baseDirFor2(pair, context), canonicalizerFor2(context));
+  } catch {
+    return null;
+  }
+}
+var READ_LINE_RE, END_OF_FILE_RE, GREP_SECTION_SEPARATOR, GREP_ROW_RE, sumTokens, fileTarget, EFFECT_ADAPTERS, MCP_PREFIX, AGENT_TOOLS;
+var init_native_tools2 = __esm({
+  "lib/harness/dsh/native-tools.js"() {
+    init_constants();
+    init_token_estimate();
+    init_bash_feature();
+    init_tool_effects();
+    READ_LINE_RE = /^(\d+): /;
+    END_OF_FILE_RE = /^\(End of file - total \d+ lines\)$/;
+    GREP_SECTION_SEPARATOR = "\n\n";
+    GREP_ROW_RE = /^Line (\d+): /;
+    sumTokens = (lines) => lines.reduce((sum, [, tokens]) => sum + tokens, 0);
+    fileTarget = (input, base, canon) => input.file_path ? canon(input.file_path, base) : null;
+    EFFECT_ADAPTERS = /* @__PURE__ */ new Map([
+      ["read", {
+        toolType: "read",
+        extractTarget: fileTarget,
+        computeUpdate: (_input, text, _base, ctp) => {
+          const lines = [];
+          let reachedEnd = false;
+          for (const line of text.split("\n")) {
+            const numbered = READ_LINE_RE.exec(line);
+            if (numbered) lines.push([Number(numbered[1]), charsToTokens(line, ctp)]);
+            else if (END_OF_FILE_RE.test(line)) reachedEnd = true;
+          }
+          const isFullRead = reachedEnd && lines.length > 0 && lines[0][0] === 1;
+          const spent = sumTokens(lines) + TOOL_OVERHEAD.Read;
+          return { type: isFullRead ? "fullSet" : "lineUpdate", lines, overhead: TOOL_OVERHEAD.Read, spent };
+        }
+      }],
+      ["write", {
+        toolType: "write",
+        extractTarget: fileTarget,
+        // Written content is raw and a later read numbers it, so the write prices the read's form and the two
+        // observations of one file agree. `buildWindow` counts a final unterminated line but no line after a
+        // final newline, so neither does this.
+        computeUpdate: (input, _text, _base, ctp) => {
+          const rawLines = String(input.content ?? "").split("\n");
+          if (rawLines.at(-1) === "") rawLines.pop();
+          const lines = rawLines.map((line, index) => [index + 1, charsToTokens(`${index + 1}: ${line}`, ctp)]);
+          return { type: "write", lines, overhead: TOOL_OVERHEAD.Write, spent: sumTokens(lines) + TOOL_OVERHEAD.Write };
+        }
+      }],
+      ["edit", {
+        toolType: "edit",
+        extractTarget: fileTarget,
+        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
+        // framing overhead because the corrective read that follows most edits charges its own. Each line it
+        // adds or removes carries a line-number prefix in the read's form.
+        computeUpdate: (input, _text, _base, ctp) => {
+          const oldString = input.old_string ?? "";
+          const newString = input.new_string ?? "";
+          const oldTokens = charsToTokens(oldString, ctp);
+          const newTokens = charsToTokens(newString, ctp);
+          const lineDelta = (newString.match(/\n/g) || []).length - (oldString.match(/\n/g) || []).length;
+          const value = newTokens - oldTokens + lineDelta * (4 / ctp.ascii);
+          return { type: "editDelta", value, spent: oldTokens + newTokens + TOOL_OVERHEAD.Edit };
+        }
+      }],
+      ["grep", {
+        toolType: "grep",
+        extractTarget: () => null,
+        // the files are named by the result, not by the input
+        computeUpdate: (_input, text, base, ctp, canon) => {
+          const files = /* @__PURE__ */ Object.create(null);
+          for (const section of text.split(GREP_SECTION_SEPARATOR)) {
+            const [path3, ...rows] = section.split("\n");
+            if (GREP_ROW_RE.test(path3)) continue;
+            const lines = [];
+            for (const row of rows) {
+              const numbered = GREP_ROW_RE.exec(row);
+              if (!numbered) continue;
+              const rendered = `${numbered[1]}: ${row.slice(numbered[0].length)}`;
+              lines.push([Number(numbered[1]), charsToTokens(rendered, ctp)]);
+            }
+            if (lines.length === 0) continue;
+            files[canon(path3, base)] = lines;
+          }
+          const spent = Object.values(files).reduce((sum, lines) => sum + sumTokens(lines), TOOL_OVERHEAD.Grep);
+          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
+        }
+      }],
+      ["skill", {
+        toolType: "skill",
+        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
+        extractTarget: (input) => input.name ? "skill:" + input.name : null,
+        computeUpdate: (_input, text, _base, ctp) => {
+          const tokens = charsToTokens(text, ctp);
+          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
+        }
+      }]
+    ]);
+    MCP_PREFIX = "mcp__";
+    AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
+  }
+});
+
+// lib/harness/dsh/history-turn-rules.js
+import { isAbsolute as isAbsolute4, normalize as normalize3, resolve as resolve3 } from "node:path";
+function createDshHumanHeadRule() {
+  return (line) => {
+    if (line.kind !== "visible" || line.message.role !== "human") return PASS;
+    const text = line.message.text.trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+function answerText(result) {
+  let value;
+  try {
+    value = JSON.parse(result);
+  } catch {
+    return "";
+  }
+  const lines = [];
+  for (const answer of Array.isArray(value?.answers) ? value.answers : []) {
+    if (Array.isArray(answer?.selected)) lines.push(...answer.selected);
+    if (answer?.custom) lines.push(answer.custom);
+  }
+  return lines.join("\n");
+}
+function createDshAskHeadRule() {
+  return (line) => {
+    if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME2) return PASS;
+    if (line.tool.isError === true) return ABSORB;
+    const text = answerText(line.tool.result).trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+function createDshDialogueProjection({ sessionCwd }) {
+  const context = { path: { isAbsolute: isAbsolute4, resolve: resolve3, normalize: normalize3 }, sessionCwd };
+  const rules = [
+    createDshHumanHeadRule(),
+    createDshAskHeadRule()
+  ];
+  return {
+    project(observations) {
+      const { folds } = projectDialogue(observations);
+      for (const fold of folds) {
+        for (const pair of fold.toolPairs) {
+          pair.resourceKey = resolveDshToolTarget(pair, context);
+        }
+      }
+      return { folds };
+    },
+    groupTurns(lines) {
+      return groupTurns(lines, rules);
+    }
+  };
+}
+var ASK_TOOL_NAME2;
+var init_history_turn_rules2 = __esm({
+  "lib/harness/dsh/history-turn-rules.js"() {
+    init_turn();
+    init_dialogue_fold();
+    init_native_tools2();
+    ASK_TOOL_NAME2 = "ask_user_question";
+  }
+});
+
+// lib/harness/dsh/measurement-projection.js
+import nodePath2 from "node:path";
+function invariant6(ok, message) {
+  if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
+}
+function noSkillPayload() {
+  invariant6(false, "no skill payload phase in DSH");
+}
+function createDshMeasurementProjection({
+  cwd = null,
+  projectRoot = null,
+  resolveModelPolicy,
+  interpretToolUse,
+  completeToolResult
+} = {}) {
+  invariant6(typeof interpretToolUse === "function", "interpretToolUse must be a function");
+  invariant6(typeof completeToolResult === "function", "completeToolResult must be a function");
+  const context = { path: nodePath2, sessionCwd: cwd || projectRoot || null, resolveModelPolicy };
+  return createMeasurementProjection({
+    scope: "dsh-measurement-projection",
+    context,
+    captureSources: { live: "dsh-live", replay: "dsh-replay" },
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload: noSkillPayload
+  });
+}
+var init_measurement_projection3 = __esm({
+  "lib/harness/dsh/measurement-projection.js"() {
+    init_measurement_projection();
+  }
+});
+
+// dsh/src/composition.js
+var composition_exports = {};
+__export(composition_exports, {
+  DSH_TURN_NOTES_ROOT: () => DSH_TURN_NOTES_ROOT,
+  composeWatcher: () => composeWatcher
+});
+import { tmpdir } from "node:os";
+import { join as join11 } from "node:path";
+function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl }) {
+  const dialogueSource = createDshDialogueSource({ readSession });
+  const dialogueProjection = createDshDialogueProjection({ sessionCwd: cwd });
+  const watcher = new SessionWatcher({
+    sessionId,
+    sourceLocator: sessionId,
+    projectId: resolveProjectKey({ cwd }),
+    projectRoot: cwd,
+    turnNotesRoot,
+    resourcePolicy: createResourcePolicy({ projectRoot: cwd, isIgnored }),
+    resourceEnrichment: createResourceEnrichment(),
+    handoffComposition: createHandoffComposition(),
+    loaderVersion: PLUGIN_VERSION,
+    store,
+    dialogueSource,
+    dialogueProjection,
+    createEngine: createMeasurementEngine,
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createDshMeasurementProjection({
+      cwd,
+      projectRoot: cwd,
+      resolveModelPolicy,
+      interpretToolUse: interpretDshToolUse,
+      completeToolResult: completeDshToolResult
+    }),
+    modelPolicyFor: (modelId) => {
+      const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
+      const saved = loadPricingOverride(modelId);
+      if (saved) policy.cRatio = saved.ratio;
+      return policy;
+    }
+  });
+  return { watcher, dialogueSource, dialogueProjection };
+}
+var DSH_TURN_NOTES_ROOT;
+var init_composition = __esm({
+  "dsh/src/composition.js"() {
+    init_session_watcher();
+    init_resource_policy();
+    init_resource_enrichment();
+    init_handoff();
+    init_engine();
+    init_model_policy();
+    init_pricing_store();
+    init_project_key();
+    init_version();
+    init_constants();
+    init_dialogue_source2();
+    init_history_turn_rules2();
+    init_measurement_projection3();
+    init_native_tools2();
+    DSH_TURN_NOTES_ROOT = join11(tmpdir(), "session-watcher", "turn-notes");
+  }
+});
+
 // server.js
 var server_exports = {};
 __export(server_exports, {
@@ -58296,9 +59278,9 @@ __export(server_exports, {
   writeStateFileExclusive: () => writeStateFileExclusive
 });
 import { createServer as createHttpServer } from "node:http";
-import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
-import { dirname as dirname4, join as join11, resolve as resolve3, basename as basename2, extname as extname2, isAbsolute as isAbsolute4 } from "node:path";
-import { readdirSync as readdirSync5, statSync as statSync5, readFileSync as readFileSync10, mkdirSync as mkdirSync4, unlinkSync as unlinkSync4, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync3, appendFileSync as appendFileSync3, rmSync as rmSync3, realpathSync } from "node:fs";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+import { dirname as dirname3, join as join12, resolve as resolve4, basename as basename2, extname as extname2, isAbsolute as isAbsolute5 } from "node:path";
+import { readdirSync as readdirSync5, statSync as statSync5, readFileSync as readFileSync11, mkdirSync as mkdirSync4, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync3, appendFileSync as appendFileSync3, rmSync as rmSync3, realpathSync } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 function safeSessionId2(sessionId) {
   const s = String(sessionId ?? "");
@@ -58325,7 +59307,7 @@ function resolveJsonl(target) {
   const walk2 = (dir, depth) => {
     if (depth > 3) return;
     for (const e of readdirSync5(dir, { withFileTypes: true })) {
-      const p = join11(dir, e.name);
+      const p = join12(dir, e.name);
       if (e.isDirectory()) walk2(p, depth + 1);
       else if (e.name.endsWith(".jsonl")) found.push(p);
     }
@@ -58358,7 +59340,7 @@ function resolveBySessionId(projectsRoot, sessionId) {
       return;
     }
     for (const e of entries) {
-      const p = join11(dir, e.name);
+      const p = join12(dir, e.name);
       if (e.isDirectory()) walk2(p, depth + 1);
       else if (e.name === wanted) hits.push(p);
     }
@@ -58393,7 +59375,7 @@ function createWatcherComposition({
     projectRoot,
     // Derived once from the host's existing state directory. `SessionWatcher` has no state-directory
     // fallback, so a composition that forgot this cannot silently write Turn Notes into the real install.
-    turnNotesRoot: join11(stateDir || PORT_DIR2, "turn-notes"),
+    turnNotesRoot: join12(stateDir || PORT_DIR2, "turn-notes"),
     resourcePolicy,
     resourceEnrichment,
     handoffComposition: createHandoffComposition(),
@@ -58421,7 +59403,7 @@ function createWatcherComposition({
     now
   });
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join11(__dirname3, "public"), store = null, disableTelemetrySweep = false, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join12(__dirname2, "public"), store = null, disableTelemetrySweep = false, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
   const app = (0, import_express.default)();
   const startMs = Date.now();
   const sseClients = /* @__PURE__ */ new Set();
@@ -58432,28 +59414,17 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     sessionCwd: projectRoot || process.cwd()
   });
   const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === "residual";
-  const history = { dialogueSource, dialogueProjection };
-  function turnPageWire({ turnPage, nextBefore }) {
-    return {
-      turn_page: turnPage,
-      ...nextBefore ? { next_before: nextBefore } : {}
-    };
-  }
-  const formatLoadedHandoff = (core) => {
-    try {
-      const store2 = resolveStore();
-      const sessions = fromHandoff({ store: store2, handoffId: core.handoff_id });
-      return {
-        ...core,
-        lineage: lineageHeadlines({ store: store2, lineage: sessions }),
-        ...turnPageWire(injectedTurnPageBuilder({ store: store2, lineage: sessions, ...history }))
-      };
-    } catch (err2) {
-      if (process.env.SW_DEBUG) console.error("[turn_page_load]", err2?.message || err2);
-      return { ...core, turn_page_error: "turn_page_unavailable" };
-    }
-  };
+  const history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE };
+  const formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
+    store: resolveStore(),
+    turnPageBuilder: injectedTurnPageBuilder,
+    ...history
+  });
   let activeWatcher = watcher;
+  const activate = (next) => {
+    activeWatcher = next;
+    applyEffectiveRatio();
+  };
   let lastRequestMono = performance.now();
   app.use((req, res, next) => {
     lastRequestMono = performance.now();
@@ -58473,7 +59444,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   let nextResolveMono = -Infinity;
   const publishedDiscoveryPaths = /* @__PURE__ */ new Set();
   function writeDiscovery(targetSessionId) {
-    const path3 = join11(effectiveStateDir, `${safeSessionId2(targetSessionId)}.json`);
+    const path3 = join12(effectiveStateDir, `${safeSessionId2(targetSessionId)}.json`);
     try {
       mkdirSync4(effectiveStateDir, { recursive: true });
       writeFileSync3(path3, JSON.stringify({
@@ -58503,14 +59474,17 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     }
     if (onOwnerFatal) onOwnerFatal(error2);
   }
+  const reportedDiagnosticCodes = /* @__PURE__ */ new Set();
   function recordDiagnostics(diagnostics) {
-    if (!process.env.SW_DEBUG) return;
     for (const entry of diagnostics ?? []) {
-      if (entry?.code === "multiple_load_tokens") {
+      const code = entry?.code ?? "unknown";
+      if (reportedDiagnosticCodes.has(code) && !process.env.SW_DEBUG) continue;
+      reportedDiagnosticCodes.add(code);
+      if (code === "multiple_load_tokens") {
         console.error("[telemetry] multiple load_handoff tokens in one step; keeping first");
         continue;
       }
-      console.error(`[${entry?.scope ?? "diagnostic"}] ${entry?.code ?? "unknown"}: ${entry?.message ?? ""}`);
+      console.error(`[${entry?.scope ?? "diagnostic"}] ${code}: ${entry?.message ?? ""}`);
     }
   }
   function applyFrame(frame) {
@@ -58521,24 +59495,12 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, port: server.address()?.port ?? null, uptime: Math.floor((Date.now() - startMs) / 1e3), pid: ownerMeta.pid, startedAt: ownerMeta.startedAt });
   });
-  function statusWire(source) {
-    const { sourceLocator: sourceLocator2, ...rest } = source.getStatus();
-    return { ...rest, transcriptPath: sourceLocator2 ?? null };
-  }
   app.get("/api/status", (req, res, next) => {
     try {
-      const status = statusWire(activeWatcher);
-      if (activeWatcher !== watcher && _replayController) {
-        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-        mergeLedgerIntoStatus(status, _replayController.ledger, currentKey);
-      } else {
-        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-        const ledger = getLiveLedger(currentSessionId);
-        mergeLedgerIntoStatus(status, ledger, currentKey);
-      }
+      const ledger = activeWatcher !== watcher && _replayController ? _replayController.ledger : getLiveLedger(currentSessionId);
+      const status = statusWireWithLedger(activeWatcher.getStatus(), ledger);
       if (req.query.debug && status.rateLamp?.billingCycle) {
-        const debugLedger = activeWatcher === watcher ? getLiveLedger(currentSessionId) : null;
-        status.rateLamp.billingCycle.cycleCountInSegment = debugLedger?.billCycleCount ?? 0;
+        status.rateLamp.billingCycle.cycleCountInSegment = ledger?.billCycleCount ?? 0;
       }
       if (req.query.fmt === "line") {
         status.port = server.address()?.port ?? null;
@@ -58569,16 +59531,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       const includeSymbols = req.query.symbols === "1";
       const bd = activeWatcher.getBucketData({ includeSymbols });
       const s = activeWatcher.getStatus();
-      let paths = bd.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
-      res.json({
-        ...bd,
-        paths,
-        session_id: currentSessionId,
-        segment: bd.segment,
-        current_turn: bd.currentTurnSeq,
-        generated_at: Date.now(),
-        metrics: { br: s.br, mf: s.mf, pp: s.pp, g: s.g, b_total: s.B, c_ratio: s.cRatio }
-      });
+      res.json(bucketsPayload({ bucketData: bd, status: s, sessionId: currentSessionId, now: Date.now() }));
     } catch (e) {
       next(e);
     }
@@ -58600,11 +59553,11 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       return res.status(409).json({ error: "replay_active", message: "Cannot modify overrides during replay" });
     }
     const { overrides } = req.body || {};
-    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
-      return res.status(400).json({ error: "invalid_body", message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    if (!isOverrideMap(overrides)) {
+      return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
     }
     const replaced = watcher.replaceUserOverrides(overrides);
-    const warnings = (replaced.warnings ?? []).map((w) => w.code === "unknown_resource" ? `ignored: path "${w.resourceKey}" not in current bRebuild` : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`);
+    const warnings = overrideWarnings(replaced.warnings);
     if (sseClients.size > 0) {
       const msg = `data: ${JSON.stringify({ type: "scan" })}
 
@@ -58617,7 +59570,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
         }
       }
     }
-    const response = statusWire(watcher);
+    const response = statusWire(watcher.getStatus());
     if (warnings.length > 0) response.warnings = warnings;
     res.json(response);
   });
@@ -58626,8 +59579,8 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       return res.status(409).json({ error: "replay_active", message: "Cannot preview overrides during replay" });
     }
     const { overrides } = req.body || {};
-    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
-      return res.status(400).json({ error: "invalid_body", message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    if (!isOverrideMap(overrides)) {
+      return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
     }
     res.json({ scenario: watcher.readScenario(overrides) });
   });
@@ -58640,28 +59593,41 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       _replayController.stop();
       _replayController = null;
     }
-    activeWatcher = watcher;
     try {
-      const { indexTranscript: indexTranscript2, ReplayController: ReplayController2 } = await Promise.resolve().then(() => (init_replay(), replay_exports));
-      const index = indexTranscript2(replayPath);
+      activate(watcher);
+      const [{ ReplayController: ReplayController2 }, { openReplaySource: openReplaySource2 }] = await Promise.all([
+        Promise.resolve().then(() => (init_replay(), replay_exports)),
+        Promise.resolve().then(() => (init_replay_source(), replay_source_exports))
+      ]);
+      const source = openReplaySource2(replayPath);
+      const { index } = source;
       if (index.length === 0) return res.status(400).json({ error: "no usage rows in transcript" });
-      const replayWatcher = createWatcherComposition({
-        sessionId: null,
-        sourceLocator: replayPath,
-        projectId,
-        projectRoot,
-        stateDir: effectiveStateDir,
-        store: resolveStore(),
-        isIgnored: null,
-        // This owner's own declared lifetime: playback prices its cache writes the way the live pair beside
-        // it does, so a replayed reading is comparable with a measured one.
-        cacheTtl
-      });
-      const replayDriver = createClaudeCodeSourceDriver({
-        sourceLocator: replayPath,
-        firstReadableTransition: "replace"
-      });
-      activeWatcher = replayWatcher;
+      let replayWatcher;
+      if (source.harness === "dsh") {
+        const { composeWatcher: composeWatcher2 } = await Promise.resolve().then(() => (init_composition(), composition_exports));
+        replayWatcher = composeWatcher2({
+          sessionId: null,
+          cwd: source.header.cwd,
+          store: resolveStore(),
+          turnNotesRoot: join12(effectiveStateDir, "turn-notes"),
+          readSession: async () => source.dialogueSnapshot,
+          isIgnored: null,
+          cacheTtl: () => cacheTtl
+        }).watcher;
+      } else {
+        replayWatcher = createWatcherComposition({
+          sessionId: null,
+          sourceLocator: replayPath,
+          projectId,
+          projectRoot,
+          stateDir: effectiveStateDir,
+          store: resolveStore(),
+          isIgnored: null,
+          cacheTtl
+        });
+      }
+      const replayDriver = source.createDriver();
+      activate(replayWatcher);
       _replayController = new ReplayController2(replayWatcher, index, {
         driver: replayDriver,
         speed,
@@ -58694,7 +59660,7 @@ data: ${JSON.stringify({ type: "scan" })}
       _replayController.stop();
       _replayController = null;
     }
-    activeWatcher = watcher;
+    activate(watcher);
     res.json({ ok: true });
   });
   app.post("/api/replay/speed", (req, res) => {
@@ -58762,20 +59728,21 @@ data: ${JSON.stringify({ type: "scan" })}
         return res.status(503).json({ error: delivered.error, retryable: delivered.retryable === true });
       }
       if (!delivered.found) return res.json(delivered);
-      return res.json(formatLoadedHandoff(delivered));
+      return res.json(await formatLoadedHandoff(delivered));
     } catch (e) {
       next(e);
     }
   });
-  app.get("/api/turn/page", (req, res, next) => {
+  app.get("/api/turn/page", async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store2 = resolveStore();
+        const lineage = fromHandoff({ store: store2, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
-        const result = injectedTurnPageBuilder({
-          store: resolveStore(),
+        const result = await injectedTurnPageBuilder({
+          store: store2,
           lineage,
           before: req.query.before || null,
           ...history
@@ -58783,25 +59750,26 @@ data: ${JSON.stringify({ type: "scan" })}
         return res.json(turnPageWire(result));
       } catch (err2) {
         if (err2 && err2.code === "not_found") return res.status(404).json({ error: "not_found" });
-        if (process.env.SW_DEBUG) console.error("[turn_page]", err2?.message || err2);
+        if (process.env.SW_DEBUG) console.error("[turn_page]", err2);
         return res.status(503).json({ error: "turn_page_unavailable", retryable: true });
       }
     } catch (e) {
       next(e);
     }
   });
-  app.get("/api/turn/search", (req, res, next) => {
+  app.get("/api/turn/search", async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store2 = resolveStore();
+        const lineage = fromHandoff({ store: store2, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: "invalid_query" });
         const scope = req.query.scope == null ? null : String(req.query.scope);
         if (scope !== null && parseTurnAddress(scope) === null) return res.status(400).json({ error: "invalid_scope" });
-        return res.json(searchTranscripts({
-          store: resolveStore(),
+        return res.json(await searchTranscripts({
+          store: store2,
           lineage,
           q: req.query.q,
           scope,
@@ -58810,24 +59778,25 @@ data: ${JSON.stringify({ type: "scan" })}
         }));
       } catch (err2) {
         if (err2 && err2.code === "scope_not_found") return res.status(404).json({ error: "scope_not_found" });
-        if (process.env.SW_DEBUG) console.error("[turn_search]", err2?.message || err2);
+        if (process.env.SW_DEBUG) console.error("[turn_search]", err2);
         return res.status(503).json({ error: "search_unavailable" });
       }
     } catch (e) {
       next(e);
     }
   });
-  app.get("/api/turn/locate", (req, res, next) => {
+  app.get("/api/turn/locate", async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store2 = resolveStore();
+        const lineage = fromHandoff({ store: store2, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: "invalid_query" });
-        return res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q, ...history }));
+        return res.json(await locateRanges({ store: store2, lineage, q: req.query.q, ...history }));
       } catch (err2) {
-        if (process.env.SW_DEBUG) console.error("[turn_locate]", err2?.message || err2);
+        if (process.env.SW_DEBUG) console.error("[turn_locate]", err2);
         return res.status(503).json({ error: "locate_unavailable" });
       }
     } catch (e) {
@@ -58842,40 +59811,17 @@ data: ${JSON.stringify({ type: "scan" })}
   });
   const cliRatioAtStartup = ratioOverride;
   const buildPricingResponse = () => {
-    const model = watcher.getEpochModel() ?? "";
-    const saved = loadPricingOverride(model);
-    const policy = modelPolicyFor(model, cacheTtl);
-    const modelRatio = policy.cRatio;
-    const presets = policy.pricing.presets;
-    let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
-    if (saved) {
-      effectiveRatio = saved.ratio;
-      source = "saved";
-      effectiveRead = saved.readPrice;
-      effectiveWrite = saved.writePrice;
-      if (saved.presetId) {
-        const preset = presets.find((p) => p.id === saved.presetId);
-        if (preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice) {
-          source = "preset";
-        }
-      }
-    } else if (cliRatioAtStartup != null) {
-      effectiveRatio = cliRatioAtStartup;
-      source = "cli";
-    } else {
-      effectiveRatio = modelRatio;
-      source = "model_default";
-    }
-    return {
-      effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
-      saved: saved || null,
-      modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
-      presets
-    };
+    const model = activeWatcher.getEpochModel() ?? "";
+    return pricingResponse({
+      model,
+      saved: loadPricingOverride(model),
+      policy: modelPolicyFor(model, cacheTtl),
+      cliRatio: cliRatioAtStartup
+    });
   };
   const applyEffectiveRatio = () => {
-    const saved = loadPricingOverride(watcher.getEpochModel() ?? "");
-    watcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup);
+    const saved = loadPricingOverride(activeWatcher.getEpochModel() ?? "");
+    recordDiagnostics(activeWatcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup).diagnostics);
   };
   applyEffectiveRatio();
   app.get("/api/pricing", (req, res) => {
@@ -58890,9 +59836,9 @@ data: ${JSON.stringify({ type: "scan" })}
     }
     try {
       const { readPrice, writePrice, presetId } = req.body || {};
-      const safePresetId = typeof presetId === "string" && presetId.length > 0 && presetId.length <= 80 ? presetId : null;
-      const model = watcher.getEpochModel() ?? "";
-      if (!model) return res.status(409).json({ error: "no_model", message: "Model not yet detected; retry after first API call" });
+      const safePresetId = sanitizePresetId(presetId);
+      const model = activeWatcher.getEpochModel() ?? "";
+      if (!model) return res.status(409).json({ error: "no_model", message: NO_MODEL_MESSAGE });
       savePricingOverride(model, { readPrice, writePrice, presetId: safePresetId });
       applyEffectiveRatio();
       res.json(buildPricingResponse());
@@ -58901,8 +59847,8 @@ data: ${JSON.stringify({ type: "scan" })}
     }
   });
   app.delete("/api/pricing", (req, res) => {
-    const model = watcher.getEpochModel() ?? "";
-    if (!model) return res.status(409).json({ error: "no_model", message: "Model not yet detected; retry after first API call" });
+    const model = activeWatcher.getEpochModel() ?? "";
+    if (!model) return res.status(409).json({ error: "no_model", message: NO_MODEL_MESSAGE });
     deletePricingOverride(model);
     applyEffectiveRatio();
     res.json(buildPricingResponse());
@@ -58922,8 +59868,8 @@ data: ${JSON.stringify({ type: "scan" })}
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
   });
-  app.get("/", (req, res) => res.sendFile(join11(publicDir, "dashboard.html")));
-  app.get("/dashboard", (req, res) => res.sendFile(join11(publicDir, "dashboard.html")));
+  app.get("/", (req, res) => res.sendFile(join12(publicDir, "dashboard.html")));
+  app.get("/dashboard", (req, res) => res.sendFile(join12(publicDir, "dashboard.html")));
   app.use(import_express.default.static(publicDir, {
     setHeaders: (res) => {
       res.setHeader("Cache-Control", "no-cache");
@@ -59073,13 +60019,13 @@ data: ${JSON.stringify({ type: "scan" })}
     driver = rotated;
     currentSessionId = newSessionId;
     lastSnapshotMono = -Infinity;
-    const oldStateFile = join11(effectiveStateDir, `${safeSessionId2(oldSessionId)}.json`);
+    const oldStateFile = join12(effectiveStateDir, `${safeSessionId2(oldSessionId)}.json`);
     const published = writeDiscovery(newSessionId);
     let warning;
     if (published.ok) {
       if (published.path !== oldStateFile) {
         try {
-          unlinkSync4(oldStateFile);
+          unlinkSync3(oldStateFile);
           publishedDiscoveryPaths.delete(oldStateFile);
         } catch {
         }
@@ -59099,10 +60045,16 @@ data: ${JSON.stringify({ type: "scan" })}
     if (warning) out2.warning = warning;
     return out2;
   }
-  app.post("/api/rotate", import_express.default.json(), (req, res) => {
+  app.post("/api/rotate", (req, res) => {
     const { session_id, transcript_path } = req.body || {};
     if (!session_id) return res.status(400).json({ ok: false, error: "missing_session_id" });
-    const result = doRotation(session_id, transcript_path);
+    let result;
+    try {
+      result = doRotation(session_id, transcript_path);
+    } catch (err2) {
+      console.error("[rotate]", err2);
+      return res.status(500).json({ error: "internal" });
+    }
     res.json(result);
   });
   let sweepTimer = null;
@@ -59126,6 +60078,7 @@ data: ${JSON.stringify({ type: "scan" })}
         // session's resources against a boundary they were never inside.
         replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, {
           store: resolveStore(),
+          onDiagnostics: recordDiagnostics,
           createWatcher: ({ store: reconciled, sessionId: sid2, sourceLocator: sourceLocator2 }) => createWatcherComposition({
             sessionId: sid2,
             sourceLocator: sourceLocator2,
@@ -59156,52 +60109,15 @@ data: ${JSON.stringify({ type: "scan" })}
     getTurnSkeleton: () => watcher.getTurnSkeleton(),
     submitTurnNotes: (input) => watcher.submitTurnNotes(input || {})
   };
-  const turnReadService = {
-    turnPage({ before = null } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withPageRecovery(turnPageWire(injectedTurnPageBuilder({
-          store: resolveStore(),
-          lineage,
-          before: before || null,
-          ...history
-        })));
-      } catch (err2) {
-        if (err2 && err2.code === "not_found") throw new Error(STALE_CURSOR_MESSAGE);
-        if (process.env.SW_DEBUG) console.error("[turn_page_tool]", err2?.message || err2);
-        return withPageRecovery({ error: "turn_page_unavailable", retryable: true });
-      }
-    },
-    turnSearch({ q, scope = null } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withSearchRecovery(searchTranscripts({
-          store: resolveStore(),
-          lineage,
-          q,
-          scope: scope || null,
-          ...history,
-          includeToolEvidence
-        }), { hitRecovery: SEARCH_HIT_RECOVERY });
-      } catch (err2) {
-        if (err2 && err2.code === "scope_not_found") throw new Error(SCOPE_ABSENT_MESSAGE);
-        if (process.env.SW_DEBUG) console.error("[turn_search_tool]", err2?.message || err2);
-        return withSearchRecovery({ error: "search_unavailable" });
-      }
-    },
-    turnLocate({ q } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q, ...history }));
-      } catch (err2) {
-        if (process.env.SW_DEBUG) console.error("[turn_locate_tool]", err2?.message || err2);
-        return withLocateRecovery({ error: "locate_unavailable" });
-      }
-    }
-  };
+  const turnReadService = createTurnReadService({
+    store: resolveStore,
+    sessionId: () => currentSessionId,
+    dialogueSource,
+    dialogueProjection,
+    includeToolEvidence,
+    recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
+    turnPageBuilder: injectedTurnPageBuilder
+  });
   runPollTick();
   scheduleStartupMaintenance();
   return {
@@ -59232,7 +60148,11 @@ data: ${JSON.stringify({ type: "scan" })}
     // playback status branch merges rather than a copy of it.
     replayController: () => _replayController,
     // Terminal application finalization, for the owner's cleanup sequence.
-    closeCurrentSegment: (options) => watcher.closeCurrentSegment(options)
+    closeCurrentSegment: () => {
+      const result = watcher.closeCurrentSegment();
+      recordDiagnostics(result.diagnostics);
+      return result;
+    }
   };
 }
 function _inspectSseClientsForTest(serverHandle) {
@@ -59279,7 +60199,7 @@ function parseArgs(argv) {
     warnings
   };
 }
-var import_express, _major, _minor, __dirname3, PORT_DIR2, stateFileFor2, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery;
+var import_express, _major, _minor, __dirname2, PORT_DIR2, stateFileFor2, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery;
 var init_server3 = __esm({
   "server.js"() {
     import_express = __toESM(require_express2(), 1);
@@ -59288,11 +60208,11 @@ var init_server3 = __esm({
     init_resource_enrichment();
     init_engine();
     init_source_driver();
-    init_measurement_projection();
+    init_measurement_projection2();
     init_native_tools();
     init_cache_ttl();
     init_rate_lamp_manager();
-    init_rate_lamp_store();
+    init_wire();
     init_constants();
     init_project_key();
     init_store();
@@ -59308,7 +60228,7 @@ var init_server3 = __esm({
     init_turn();
     init_turn_history_budget();
     init_lineage();
-    init_turn_tool_recovery();
+    init_turn_read_service();
     init_turn_page();
     init_turn_browse();
     init_turn_query();
@@ -59321,9 +60241,9 @@ var init_server3 = __esm({
       console.error("Session Watcher requires Node >=22.16.0 (node:sqlite)");
       process.exit(1);
     }
-    __dirname3 = dirname4(fileURLToPath3(import.meta.url));
-    PORT_DIR2 = process.env.SW_STATE_DIR || join11(homedir7(), ".session-watcher");
-    stateFileFor2 = (sessionId) => join11(PORT_DIR2, `${safeSessionId2(sessionId || "default")}.json`);
+    __dirname2 = dirname3(fileURLToPath2(import.meta.url));
+    PORT_DIR2 = process.env.SW_STATE_DIR || join12(homedir7(), ".session-watcher");
+    stateFileFor2 = (sessionId) => join12(PORT_DIR2, `${safeSessionId2(sessionId || "default")}.json`);
     _globalTestClockMono = null;
     _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
     IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1e3;
@@ -59333,9 +60253,9 @@ var init_server3 = __esm({
       const argv = process.argv.slice(2);
       const { transcript, project, session, lbase, ratioOverride, wantPort, open, warnings } = parseArgs(argv);
       for (const w of warnings) console.error(`session-watcher: ${w}`);
-      const projectsRoot = join11(homedir7(), ".claude", "projects");
+      const projectsRoot = join12(homedir7(), ".claude", "projects");
       const byId = resolveBySessionId(projectsRoot, session);
-      const jsonlPath = transcript ? resolve3(transcript) : byId || resolveJsonl(resolve3(project || projectsRoot));
+      const jsonlPath = transcript ? resolve4(transcript) : byId || resolveJsonl(resolve4(project || projectsRoot));
       const sessionId = jsonlPath.endsWith(".jsonl") ? basename2(jsonlPath).replace(/\.jsonl$/, "") : session || "default";
       const hookSessionId = session || null;
       const projectId = resolveProjectKey({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd: project }) || process.env.CLAUDE_PROJECT_ID || null;
@@ -59372,7 +60292,7 @@ var init_server3 = __esm({
         } catch (e) {
           if (e.code === "EEXIST") {
             console.error(
-              `session-watcher: ${sessionId} already owned \u2014 refusing to start. If no live owner (e.g. a prior crash left a stale file), restart via the normal startWatcher entry (it health-probes and auto-clears a dead-port state file), or manually delete ${STATE_FILE}.`
+              `session-watcher: ${sessionId} already owned \u2014 refusing to start. If no live owner (e.g. a prior crash left a stale file), manually delete ${STATE_FILE}.`
             );
             process.exit(1);
           }
@@ -59381,9 +60301,9 @@ var init_server3 = __esm({
         console.log(`PORT=${port}`);
         startPolling();
         if (open && !process.env.SW_NO_OPEN) {
-          null.then(({ spawn: spawn2 }) => {
+          null.then(({ spawn }) => {
             const cmd = process.env.BROWSER || (process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open");
-            const opener = spawn2(cmd, [`http://127.0.0.1:${port}`], { detached: true, stdio: "ignore" });
+            const opener = spawn(cmd, [`http://127.0.0.1:${port}`], { detached: true, stdio: "ignore" });
             opener.on("error", () => {
             });
             opener.unref();
@@ -59405,7 +60325,7 @@ var init_server3 = __esm({
         }
         closeStoreGlobal();
         try {
-          unlinkSync4(STATE_FILE);
+          unlinkSync3(STATE_FILE);
         } catch {
         }
         server.close(() => process.exit(code));
@@ -59428,9 +60348,9 @@ var init_server3 = __esm({
 });
 
 // index.js
-import { pathToFileURL as pathToFileURL2, fileURLToPath as fileURLToPath4 } from "node:url";
-import { realpathSync as realpathSync2, readFileSync as readFileSync11, unlinkSync as unlinkSync5, mkdirSync as mkdirSync5 } from "node:fs";
-import { join as join12 } from "node:path";
+import { pathToFileURL as pathToFileURL2, fileURLToPath as fileURLToPath3 } from "node:url";
+import { realpathSync as realpathSync2, readFileSync as readFileSync12, unlinkSync as unlinkSync4, mkdirSync as mkdirSync5 } from "node:fs";
+import { join as join13 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 
 // lib/probe.js
@@ -59466,70 +60386,41 @@ function probeMcp({ tool, sessionIdArg, envSessionId, serverSessionId, serverTra
 init_version();
 init_turn_history_budget();
 init_turn();
+init_wire();
 
 // lib/launcher.js
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join as join3 } from "node:path";
-import { homedir as homedir3 } from "node:os";
-import { existsSync, readFileSync as readFileSync3, readdirSync as readdirSync2, unlinkSync } from "node:fs";
+import { join as join4 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { readFileSync as readFileSync3, readdirSync as readdirSync2 } from "node:fs";
 import { get as httpGet } from "node:http";
-var __dirname = dirname(fileURLToPath(import.meta.url));
-var PORT_DIR = process.env.SW_STATE_DIR || join3(homedir3(), ".session-watcher");
+var PORT_DIR = process.env.SW_STATE_DIR || join4(homedir4(), ".session-watcher");
 function safeSessionId(sessionId) {
   const s = String(sessionId ?? "");
   if (!s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..")) return "__invalid_session__";
   return s;
 }
-var stateFileFor = (sessionId) => join3(PORT_DIR, `${safeSessionId(sessionId || "default")}.json`);
-function resolveProjectDir(env = process.env) {
-  if (env.CLAUDE_PROJECT_DIR) return env.CLAUDE_PROJECT_DIR;
-  const home = env.HOME || homedir3();
-  return join3(home, ".claude", "projects");
-}
+var stateFileFor = (sessionId) => join4(PORT_DIR, `${safeSessionId(sessionId || "default")}.json`);
 function sessionIdOf(env = process.env) {
   return env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || "default";
 }
 function probeHealth(port, timeoutMs = 2e3) {
-  return new Promise((resolve4) => {
-    if (!port) return resolve4(false);
+  return new Promise((resolve5) => {
+    if (!port) return resolve5(false);
     const req = httpGet({ host: "127.0.0.1", port, path: "/api/health", timeout: timeoutMs }, (res) => {
       let body2 = "";
       res.on("data", (d) => body2 += d);
       res.on("end", () => {
         try {
-          resolve4(JSON.parse(body2).ok === true);
+          resolve5(JSON.parse(body2).ok === true);
         } catch {
-          resolve4(false);
+          resolve5(false);
         }
       });
     });
-    req.on("error", () => resolve4(false));
+    req.on("error", () => resolve5(false));
     req.on("timeout", () => {
       req.destroy();
-      resolve4(false);
-    });
-  });
-}
-function fetchHealth(port, timeoutMs = 2e3) {
-  return new Promise((resolve4) => {
-    if (!port) return resolve4(null);
-    const req = httpGet({ host: "127.0.0.1", port, path: "/api/health", timeout: timeoutMs }, (res) => {
-      let body2 = "";
-      res.on("data", (d) => body2 += d);
-      res.on("end", () => {
-        try {
-          const h = JSON.parse(body2);
-          resolve4(h && h.ok === true ? h : null);
-        } catch {
-          resolve4(null);
-        }
-      });
-    });
-    req.on("error", () => resolve4(null));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve4(null);
+      resolve5(false);
     });
   });
 }
@@ -59550,95 +60441,13 @@ function scanStateByHookSessionId(sessionId) {
   for (const f of files) {
     if (!f.endsWith(".json")) continue;
     try {
-      const st = JSON.parse(readFileSync3(join3(PORT_DIR, f), "utf8"));
+      const st = JSON.parse(readFileSync3(join4(PORT_DIR, f), "utf8"));
       if (st.hookSessionId === sessionId) return st;
     } catch {
       continue;
     }
   }
   return null;
-}
-async function startWatcher(env = process.env, { open = true, transcript, waitForPort = true, serverPath } = {}) {
-  const sessionId = sessionIdOf(env);
-  let prev = readState(sessionId);
-  if (!prev) prev = scanStateByHookSessionId(sessionId);
-  if (prev && await probeHealth(prev.port)) return { url: `http://127.0.0.1:${prev.port}`, reused: true };
-  if (prev) {
-    const stalePath = stateFileFor(prev.sessionId);
-    try {
-      unlinkSync(stalePath);
-    } catch {
-    }
-  }
-  const dir = resolveProjectDir(env);
-  const defaultServerPath = existsSync(join3(__dirname, "server.js")) ? join3(__dirname, "server.js") : join3(__dirname, "..", "server.js");
-  const resolvedServerPath = serverPath || defaultServerPath;
-  const args2 = [resolvedServerPath, "--port", "0", "--project", dir, "--session", sessionId];
-  if (transcript) args2.push("--transcript", transcript);
-  if (open) args2.push("--open");
-  if (!waitForPort) {
-    const child2 = spawn(process.execPath, args2, { detached: true, stdio: "ignore", env });
-    child2.on("error", () => {
-    });
-    child2.unref();
-    return { reused: false };
-  }
-  const child = spawn(
-    process.execPath,
-    args2,
-    { detached: true, stdio: ["ignore", "pipe", "ignore"], env }
-  );
-  const port = await new Promise((resolve4, reject) => {
-    let buf = "";
-    const t = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-      }
-      reject(new Error("server start timeout"));
-    }, 1e4);
-    child.stdout.on("data", (d) => {
-      buf += d.toString();
-      const m = buf.match(/PORT=(\d+)/);
-      if (m) {
-        clearTimeout(t);
-        resolve4(parseInt(m[1], 10));
-      }
-    });
-    child.on("error", (err2) => {
-      clearTimeout(t);
-      try {
-        child.kill();
-      } catch {
-      }
-      reject(err2);
-    });
-  });
-  child.unref();
-  return { url: `http://127.0.0.1:${port}`, reused: false };
-}
-async function stopWatcher(env = process.env) {
-  const sessionId = sessionIdOf(env);
-  let st = readState(sessionId);
-  if (!st) st = scanStateByHookSessionId(sessionId);
-  if (!st || !st.pid) return { stopped: false };
-  const health = await fetchHealth(st.port);
-  if (health) {
-    if (health.pid === st.pid && health.startedAt === st.startedAt) {
-      try {
-        process.kill(st.pid, "SIGTERM");
-      } catch {
-        return { stopped: false };
-      }
-      return { stopped: true };
-    }
-    return { stopped: false };
-  }
-  try {
-    unlinkSync(stateFileFor(st.sessionId));
-  } catch {
-  }
-  return { stopped: false };
 }
 async function watcherStatus(env = process.env) {
   const sessionId = sessionIdOf(env);
@@ -59719,7 +60528,7 @@ function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) {
       )
     },
     annotations: { readOnlyHint: true }
-  }, async (input) => reply(turnReadService.turnPage(input || {})));
+  }, async (input) => reply(await turnReadService.turnPage(input || {})));
   mcpServer.registerTool("turn_search", {
     description: "Find a known literal in the transcripts behind the handoff loaded into this session: behaves as grep -F -i -n over them, limited to the active path. Returns one entry per turn the literal landed in, oldest to newest.",
     inputSchema: {
@@ -59731,7 +60540,7 @@ function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) {
       )
     },
     annotations: { readOnlyHint: true }
-  }, async (input) => reply(turnReadService.turnSearch(input || {})));
+  }, async (input) => reply(await turnReadService.turnSearch(input || {})));
   mcpServer.registerTool("turn_locate", {
     description: "Find which turns of the loaded handoff mention a remembered term, when the source wording is unknown. Returns entries oldest to newest, each carrying its turn's S{k}:{T} scope.",
     inputSchema: {
@@ -59740,9 +60549,9 @@ function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) {
       )
     },
     annotations: { readOnlyHint: true }
-  }, async (input) => reply(turnReadService.turnLocate(input || {})));
+  }, async (input) => reply(await turnReadService.turnLocate(input || {})));
 }
-var __selfReal = realpathSync2(fileURLToPath4(import.meta.url));
+var __selfReal = realpathSync2(fileURLToPath3(import.meta.url));
 var __argvReal = (() => {
   try {
     return realpathSync2(process.argv[1]);
@@ -59763,7 +60572,7 @@ if (__selfReal === __argvReal) {
     const { loadIsIgnored: loadIsIgnored2 } = await Promise.resolve().then(() => (init_gitignore_loader(), gitignore_loader_exports));
     const { resolveClaudeCodeCacheTtl: resolveClaudeCodeCacheTtl2 } = await Promise.resolve().then(() => (init_cache_ttl(), cache_ttl_exports));
     const sessionId = process.env.CLAUDE_CODE_SESSION_ID || "default";
-    const projectsRoot = join12(homedir8(), ".claude", "projects");
+    const projectsRoot = join13(homedir8(), ".claude", "projects");
     const transcriptPath = resolveBySessionId2(projectsRoot, sessionId);
     const cwd = process.cwd();
     const projectId = resolveProjectKey2({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd });
@@ -59842,7 +60651,7 @@ if (__selfReal === __argvReal) {
       sseClients.clear();
       if (finalizeCurrentSegment) {
         try {
-          closeCurrentSegment({ captureMode: "live" });
+          closeCurrentSegment();
         } catch (e) {
           if (process.env.SW_DEBUG) console.error("[cleanup finalize]", e?.message || e);
         }
@@ -59859,8 +60668,8 @@ if (__selfReal === __argvReal) {
       }
       for (const stateFile of publishedDiscoveryPaths()) {
         try {
-          const st = JSON.parse(readFileSync11(stateFile, "utf8"));
-          if (st.pid === process.pid) unlinkSync5(stateFile);
+          const st = JSON.parse(readFileSync12(stateFile, "utf8"));
+          if (st.pid === process.pid) unlinkSync4(stateFile);
         } catch {
         }
       }
@@ -59916,26 +60725,8 @@ if (__selfReal === __argvReal) {
       const res = await fetch(url, opts);
       return res.json();
     };
-    mcpServer.registerTool("start_watcher", {
-      description: "Start (or reuse) the Session Watcher dashboard server; returns its URL. Never returns metric values.",
-      inputSchema: { ...SessionIdSchema, transcript: z.string().optional().describe("Explicit transcript .jsonl path (overrides session ID lookup)") },
-      annotations: { readOnlyHint: true }
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall("start_watcher", { sessionId: _sid });
-      const port = server.address()?.port;
-      if (!port) return reply({ error: "server_not_ready" });
-      return reply({ url: `http://127.0.0.1:${port}` });
-    });
-    mcpServer.registerTool("stop_watcher", {
-      description: "Stop the managed Session Watcher server.",
-      inputSchema: SessionIdSchema,
-      annotations: { readOnlyHint: true }
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall("stop_watcher", { sessionId: _sid });
-      return reply({ noop: true, note: "in-process mode \u2014 server lifecycle is tied to the CC session. Restart the session to reload code." });
-    });
     mcpServer.registerTool("watcher_status", {
-      description: "Report whether the Session Watcher server is running and its URL.",
+      description: "Report whether the Session Watcher is running, and the dashboard URL where the host serves one.",
       inputSchema: SessionIdSchema,
       annotations: { readOnlyHint: true }
     }, async ({ sessionId: _sid } = {}) => {
@@ -59945,21 +60736,22 @@ if (__selfReal === __argvReal) {
       return reply({ running: true, url: `http://127.0.0.1:${port}` });
     });
     mcpServer.registerTool("get_bucket_summary", {
-      description: "Return the current context bucket structure (files, skills, tools) plus a compact metrics snapshot, so the agent can decide what to carry over before /clear.",
+      description: "Return the current context bucket structure (files, skills) with each row's token size and the session's br, so the agent can decide what to carry over before the context reset the host offers.",
       inputSchema: SessionIdSchema,
       annotations: { readOnlyHint: true }
     }, async ({ sessionId: _sid } = {}) => {
       probeCall("get_bucket_summary", { sessionId: _sid });
-      return reply(await inprocFetch("/api/buckets?symbols=1"));
+      const body2 = await inprocFetch("/api/buckets?symbols=1");
+      return reply(body2.error ? body2 : bucketSummaryPayload(body2));
     });
     mcpServer.registerTool("prepare_handoff", {
-      description: "Persist a keep/discard decision + structured summary before /clear; returns a human-readable token to restore context in the next segment.",
+      description: "Persist a keep/discard decision + structured summary before the context reset the host offers; returns a human-readable token to restore context in the next segment.",
       inputSchema: {
         ...SessionIdSchema,
         paths_to_keep: z.array(z.object({
           path: z.string().describe("File path (project-relative)"),
           symbols: z.array(z.string()).optional().describe("Key symbols to focus on in this file (function/class names)")
-        })).describe("Files to carry over with optional symbol hints; lines are auto-populated by the server from B_rebuild data"),
+        })).describe("Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data"),
         skills_to_keep: z.array(z.string()).optional().describe('Skill names to carry over (e.g. "systematic-debugging", "brainstorming")'),
         load_token: z.string().optional().describe("Existing token to revise; kept if undelivered, replaced by a new token if already delivered. Omit to create new"),
         summary: z.string().describe("Structured summary of current work state"),
@@ -59976,14 +60768,14 @@ if (__selfReal === __argvReal) {
       }));
     });
     mcpServer.registerTool("load_handoff", {
-      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns. Pure read.",
+      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns.",
       inputSchema: {
         ...SessionIdSchema,
         load_token: z.string().optional().describe("Semantic token from prepare_handoff (exact match)"),
         query: z.string().optional().describe("Free-text search when the token is unknown; returns top matches"),
         query_mode: z.enum(["plain", "advanced"]).optional().describe("plain (default) escapes input; advanced passes raw FTS5 syntax")
       },
-      annotations: { readOnlyHint: true }
+      annotations: { readOnlyHint: false }
     }, async ({ sessionId: _sid, ...input } = {}) => {
       probeCall("load_handoff", { sessionId: _sid });
       const qs = new URLSearchParams(Object.entries(input).filter(([, v]) => v != null)).toString();
@@ -59992,12 +60784,11 @@ if (__selfReal === __argvReal) {
     mcpServer.registerTool("get_turn_skeleton", {
       description: "Write the current context epoch to a turn skeleton file and a notes file whose `## NOTE[T]` headings are the slot set, and return both paths, the snapshot id to submit against, and the protocol for filling them.",
       inputSchema: {},
-      // Not read-only: it creates a directory under the state dir and writes both files. A client that
-      // auto-approves read-only tools must not reach this without asking.
+      // Not read-only: it creates a directory under the state dir and writes both files.
       annotations: { readOnlyHint: false }
-    }, async () => reply(turnService.getTurnSkeleton()));
+    }, async () => reply(await turnService.getTurnSkeleton()));
     mcpServer.registerTool("submit_turn_notes", {
-      description: "Commit the notes file the latest get_turn_skeleton wrote. The server locates that file itself, so no note text crosses the wire. All-or-nothing: every NOTE slot must be covered \u2014 by a section in the notes file or by a row the store already holds for that turn \u2014 and the snapshot must still be current.",
+      description: "Commit the notes file the latest get_turn_skeleton wrote. Session Watcher locates that file itself, so no note text crosses the wire. All-or-nothing: every NOTE slot must be covered \u2014 by a section in the notes file or by a row the store already holds for that turn \u2014 and the snapshot must still be current.",
       inputSchema: {
         snapshot_id: z.string().describe("snapshot_id from get_turn_skeleton")
       },
@@ -60019,19 +60810,15 @@ if (__selfReal === __argvReal) {
   }
 }
 export {
-  fetchHealth,
   getBucketSummary,
   loadHandoff,
   prepareHandoff,
   probeHealth,
   readState,
   registerTurnReadTools,
-  resolveProjectDir,
   rotateSession,
   sessionIdOf,
-  startWatcher,
   stateFileFor,
-  stopWatcher,
   watcherStatus
 };
 /*! Bundled license information:

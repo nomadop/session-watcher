@@ -21,28 +21,36 @@ function assistantWithUsage({ uuid, parentUuid = null, messageId, timestamp, tex
   return entry;
 }
 
-test('an unreadable Source returns unavailable with no observations', () => {
+test('read returns a Promise of the read result', async () => {
+  const path = join(tmpDir(), 'empty.jsonl');
+  writeFileSync(path, '');
+  const pending = createClaudeCodeDialogueSource().read(path);
+  assert.ok(pending instanceof Promise);
+  assert.deepEqual(await pending, { status: 'ok', observations: [] });
+});
+
+test('an unreadable Source returns unavailable with no observations', async () => {
   const source = createClaudeCodeDialogueSource();
-  const result = source.read(join(tmpDir(), 'absent.jsonl'));
+  const result = await source.read(join(tmpDir(), 'absent.jsonl'));
 
   assert.deepEqual(result, { status: 'unavailable', observations: [] });
 });
 
-test('a readable empty Source returns ok with no observations', () => {
+test('a readable empty Source returns ok with no observations', async () => {
   const path = join(tmpDir(), 'empty.jsonl');
   writeFileSync(path, '');
 
-  assert.deepEqual(createClaudeCodeDialogueSource().read(path), { status: 'ok', observations: [] });
+  assert.deepEqual(await createClaudeCodeDialogueSource().read(path), { status: 'ok', observations: [] });
 });
 
-test('a readable all-malformed Source returns ok with no observations', () => {
+test('a readable all-malformed Source returns ok with no observations', async () => {
   const path = join(tmpDir(), 'malformed.jsonl');
   writeFileSync(path, 'not-json\n{"broken":\n');
 
-  assert.deepEqual(createClaudeCodeDialogueSource().read(path), { status: 'ok', observations: [] });
+  assert.deepEqual(await createClaudeCodeDialogueSource().read(path), { status: 'ok', observations: [] });
 });
 
-test('malformed complete rows are skipped and later valid rows continue', () => {
+test('malformed complete rows are skipped and later valid rows continue', async () => {
   const path = join(tmpDir(), 'mixed.jsonl');
   writeFileSync(path, [
     'not-json',
@@ -51,26 +59,26 @@ test('malformed complete rows are skipped and later valid rows continue', () => 
     JSON.stringify(userMessage({ uuid: 'u2', parentUuid: 'u1', text: 'again', timestamp: ts(2) })),
   ].join('\n') + '\n');
 
-  const { status, observations } = createClaudeCodeDialogueSource().read(path);
+  const { status, observations } = await createClaudeCodeDialogueSource().read(path);
 
   assert.equal(status, 'ok');
   assert.deepEqual(observations.filter(o => o.type === 'text').map(o => o.text), ['hi', 'again']);
   assert.deepEqual(observations.filter(o => o.type === 'text').map(o => o.sourceOrdinal), [2, 4]);
 });
 
-test('a sealed read accepts a final newline-less row', () => {
+test('a sealed read accepts a final newline-less row', async () => {
   const path = join(tmpDir(), 'unterminated.jsonl');
   writeFileSync(path, [
     JSON.stringify(userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) })),
     JSON.stringify(userMessage({ uuid: 'u2', parentUuid: 'u1', text: 'tail', timestamp: ts(2) })),
   ].join('\n'));
 
-  const { observations } = createClaudeCodeDialogueSource().read(path);
+  const { observations } = await createClaudeCodeDialogueSource().read(path);
 
   assert.deepEqual(observations.filter(o => o.type === 'text').map(o => o.text), ['hi', 'tail']);
 });
 
-test('one read returns the complete canonical multi-epoch snapshot', () => {
+test('one read returns the complete canonical multi-epoch snapshot', async () => {
   const dir = tmpDir();
   const path = writeTranscript(dir, [
     userMessage({ uuid: 'u1', text: 'first epoch', timestamp: ts(1) }),
@@ -79,7 +87,7 @@ test('one read returns the complete canonical multi-epoch snapshot', () => {
     assistantWithUsage({ uuid: 'a2', parentUuid: 'u2', messageId: 'msg_2', timestamp: ts(4), text: 'two' }),
   ]);
 
-  const { status, observations } = createClaudeCodeDialogueSource().read(path);
+  const { status, observations } = await createClaudeCodeDialogueSource().read(path);
 
   assert.equal(status, 'ok');
   assert.deepEqual(observations.filter(o => o.type === 'text').map(o => o.text),
@@ -88,7 +96,7 @@ test('one read returns the complete canonical multi-epoch snapshot', () => {
   assert.deepEqual(epochs.map(o => o.sourceEntryId), ['u2']);
 });
 
-test('repeated reads build fresh reconstruction state and return detached values', () => {
+test('repeated reads build fresh reconstruction state and return detached values', async () => {
   const dir = tmpDir();
   const path = writeTranscript(dir, [
     userMessage({ uuid: 'u1', text: 'hi', timestamp: ts(1) }),
@@ -96,8 +104,8 @@ test('repeated reads build fresh reconstruction state and return detached values
   ]);
   const source = createClaudeCodeDialogueSource();
 
-  const first = source.read(path);
-  const second = source.read(path);
+  const first = await source.read(path);
+  const second = await source.read(path);
 
   assert.deepEqual(first, second);
   assert.notEqual(first.observations, second.observations);
@@ -106,23 +114,23 @@ test('repeated reads build fresh reconstruction state and return detached values
   first.observations.length = 0;
   first.observations.push({ type: 'mutated' });
   assert.ok(second.observations.length > 1, 'a mutated result does not reach the next read');
-  assert.deepEqual(source.read(path).observations, second.observations);
+  assert.deepEqual((await source.read(path)).observations, second.observations);
 });
 
-test('a Source read failure is reported as unavailable rather than thrown', () => {
+test('a Source read failure is reported as unavailable rather than thrown', async () => {
   const source = createClaudeCodeDialogueSource({
     readFile: () => { throw new Error('EACCES'); },
   });
 
-  assert.deepEqual(source.read('/anything'), { status: 'unavailable', observations: [] });
+  assert.deepEqual(await source.read('/anything'), { status: 'unavailable', observations: [] });
 });
 
-test('the Adapter reads the locator it is given', () => {
+test('the Adapter reads the locator it is given', async () => {
   const seen = [];
   const source = createClaudeCodeDialogueSource({
     readFile: locator => { seen.push(locator); return Buffer.from(''); },
   });
 
-  source.read('/transcripts/session.jsonl');
+  await source.read('/transcripts/session.jsonl');
   assert.deepEqual(seen, ['/transcripts/session.jsonl']);
 });

@@ -304,23 +304,30 @@ describe('Claude Code Measurement Projection', () => {
     assert.equal(artifact.payload.steps[0].toolCalls, 0);
   });
 
-  test('an empty native completion deletes its correlation and emits no measurement record', () => {
+  test('an empty native completion completes its call and emits no measurement record', () => {
     const observations = observationsOf(chain([
       userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
       readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) }),
       // A short single-line result is a harness hint, not file content: the adapter computes no update.
       toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: 'File is empty', timestamp: ts(3) }),
     ]));
+    const lateResult = {
+      type: 'tool-result', toolUseId: 't1', content: READ_RESULT, isError: undefined,
+      resultMeta: { annotation: undefined }, sourceOrdinal: 9, sourceEntryId: 'r9', timestamp: 9000,
+      provenance: 'harness',
+    };
+    // Control: the same observation completes a correlation that is still armed, so the silence asserted below
+    // is the completion's and not a shape the Projection no longer reads.
+    const armed = makeProjection();
+    run(armed, observations.filter(observation => observation.type !== 'tool-result'));
+    assert.equal(recordsOfType(armed.project(lateResult).records, 'effect').length, 1,
+      'control: the literal completes an armed correlation');
+
     const projection = makeProjection();
     const { records } = run(projection, observations);
     assert.deepEqual(recordsOfType(records, 'effect'), []);
     assert.deepEqual(recordsOfType(records, 'residual'), []);
-    const late = projection.project({
-      type: 'tool-result', toolUseId: 't1', content: READ_RESULT, isError: undefined,
-      resultMeta: { annotation: undefined }, sourceOrdinal: 9, sourceEntryId: 'r9', timestamp: 9000,
-      provenance: 'harness',
-    });
-    assert.deepEqual(late.records, [], 'the correlation was deleted, not left armed');
+    assert.deepEqual(projection.project(lateResult).records, [], 'the call was completed, not left armed');
   });
 
   test('duplicate tool results are first-result-wins', () => {
@@ -339,6 +346,48 @@ describe('Claude Code Measurement Projection', () => {
     assert.equal(perResult.length, 2, 'both results were observed');
     assert.equal(recordsOfType(perResult[0], 'effect').length, 1);
     assert.deepEqual(perResult[1], [], 'the second result of one tool use emits nothing');
+  });
+
+  test('a result written before its tool use completes the call once the use arrives', () => {
+    // The recorded shape: the result row is written one row ahead of the use row it hangs from.
+    const use = readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) });
+    use.parentUuid = 'u1';
+    const observations = observationsOf([
+      userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
+      use,
+    ]);
+    assert.deepEqual(observations.filter(o => o.toolUseId === 't1').map(o => o.type), ['tool-result', 'tool-use']);
+    const projection = makeProjection();
+    const { records } = run(projection, observations);
+    assert.equal(recordsOfType(records, 'effect').length, 1);
+  });
+
+  test('a tool use after its call completed is a revision and charges nothing again', () => {
+    const observations = observationsOf(chain([
+      userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
+      readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) }),
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
+      readToolUse({ uuid: 'a2', parentUuid: 'r1', messageId: 'm2', toolUseId: 't1', timestamp: ts(4) }),
+      toolResult({ uuid: 'r2', parentUuid: 'a2', toolUseId: 't1', content: READ_RESULT, timestamp: ts(5) }),
+    ]));
+    const projection = makeProjection();
+    const { records } = run(projection, observations);
+    assert.equal(recordsOfType(records, 'effect').length, 1);
+  });
+
+  test('a result completes a call that had nothing to await, so a later revision arms nothing', () => {
+    const observations = observationsOf(chain([
+      userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
+      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', name: 'NoAdapterTool',
+        input: {}, timestamp: ts(2) }),
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
+      readToolUse({ uuid: 'a2', parentUuid: 'r1', messageId: 'm2', toolUseId: 't1', timestamp: ts(4) }),
+      toolResult({ uuid: 'r2', parentUuid: 'a2', toolUseId: 't1', content: READ_RESULT, timestamp: ts(5) }),
+    ]));
+    const projection = makeProjection();
+    const { records } = run(projection, observations);
+    assert.equal(recordsOfType(records, 'effect').length, 0);
   });
 
   test('pending correlations stay Projection-local and clear on epoch', () => {

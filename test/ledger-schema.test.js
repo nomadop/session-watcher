@@ -39,6 +39,15 @@ test('walletPhase is guarded to [0, 1) and walletLapCount to a non-negative inte
   assert.equal(validateLedgerState({ ...validV3, walletLapCount: -1 }), null);
 });
 
+test('billProgress and walletPhase refuse a non-number that coerces into the unit interval', () => {
+  // null is also what a NaN reloads as from JSON.
+  for (const field of ['billProgress', 'walletPhase']) {
+    for (const value of [null, false, [], '0.5']) {
+      assert.equal(validateLedgerState({ ...validV3, [field]: value }), null, `${field}: ${JSON.stringify(value)}`);
+    }
+  }
+});
+
 test('round-2 GPT#11: validateLedgerState enforces RANGES, not just finiteness', () => {
   assert.equal(validateLedgerState({ ...validV3, billProgress: 1.0 }), null, 'billProgress must be < 1');
   assert.equal(validateLedgerState({ ...validV3, billProgress: -0.1 }), null, 'billProgress must be ≥ 0');

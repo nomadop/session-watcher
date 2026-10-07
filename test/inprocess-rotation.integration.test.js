@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 import { openStore, closeStore } from '../lib/store.js';
 import { createServer, createWatcherComposition } from '../server.js';
 import { strictWatcherFacade } from './helpers/server-boot.js';
-import { assistantToolUse, chain, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
+import {
+  assistantObservation, assistantToolUse, chain, toolResult, ts, usage, userMessage, writeTranscript,
+} from './helpers/transcript-fixtures.js';
+import { _seedDeliveredHandoff } from './helpers/handoff-seed.js';
 import { discoverServerByClientPid } from '../hooks/session-start.js';
 
 // One measured step and its result, as its own chain root: a null-parent row is a topology root, so a run
@@ -104,6 +107,59 @@ test('integration: full rotation lifecycle (discover → POST /api/rotate → ve
   } finally {
     stopTimers();
     for (const c of sseClients) { try { c.end(); } catch {} }
+    await new Promise(r => server.close(r));
+  }
+});
+
+test('integration: after a rotation the turn read tools resolve the lineage of the session rotated to', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-integ-read-'));
+  const stateDir = join(dir, 'state');
+  mkdirSync(stateDir, { recursive: true });
+  const projRoot = join(dir, 'projects', 'enc');
+  mkdirSync(projRoot, { recursive: true });
+
+  const oldSessionId = 'sess-old-read';
+  const newSessionId = 'sess-new-read';
+  const oldPath = join(projRoot, `${oldSessionId}.jsonl`);
+  const newPath = join(projRoot, `${newSessionId}.jsonl`);
+  writeFileSync(oldPath, usageJsonl(1000));
+  writeFileSync(newPath, usageJsonl(2000));
+
+  const owner = composeOwner({
+    sessionId: oldSessionId, sourceLocator: oldPath, projectsRoot: join(dir, 'projects'), stateDir, dir,
+  });
+  const { server, stopTimers, doRotation, turnReadService } = owner;
+  const store = stores.at(-1);
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    assert.equal(doRotation(newSessionId, newPath).ok, true);
+
+    const loadToken = 'tok-rotated-read';
+    const handoffId = _seedDeliveredHandoff(store, {
+      sessionId: newSessionId, sourceSessionId: 'sess-read-src', loadToken,
+      transcriptPath: writeTranscript(dir, [
+        userMessage({ uuid: 'u-rot-read', text: 'rotated read evidence', timestamp: ts(1) }),
+        assistantObservation({ uuid: 'a-rot-read', parentUuid: 'u-rot-read', messageId: 'm-rot-read',
+          timestamp: ts(2), blocks: [{ type: 'text', text: 'rotated read reply' }] }),
+      ]),
+    });
+    // A lineage with no turn note renders an empty page, which no lineage's page could be told apart from.
+    store.upsertTurnNotes([{
+      sourceSessionId: 'sess-read-src', anchorUuid: 'u-rot-read',
+      uText: 'rotated read evidence', uOriginalChars: 'rotated read evidence'.length,
+      note: 'rotated read note', searchTerms: 'rotated read evidence', sourceTimestamp: Date.parse(ts(1)),
+    }]);
+    // The load route writes the delivery row under the application's own session, which rotation has
+    // already moved, so the only remaining way to miss this lineage is the read service's session id.
+    await fetch(`${base}/api/handoff/load?load_token=${loadToken}`);
+
+    const viaTool = await turnReadService.turnPage({});
+    const viaHttp = await (await fetch(`${base}/api/turn/page?lineage_head=${handoffId}`)).json();
+    assert.deepEqual(viaTool, viaHttp, 'turn_page reads the lineage delivered into the rotated-to session');
+  } finally {
+    stopTimers();
     await new Promise(r => server.close(r));
   }
 });

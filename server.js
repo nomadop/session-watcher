@@ -18,14 +18,18 @@ import {
   interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
 } from './lib/harness/claude-code/native-tools.js';
 import { resolveClaudeCodeCacheTtl } from './lib/harness/claude-code/cache-ttl.js';
-import { advanceRateLampToCurrent, mergeLedgerIntoStatus, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
-import { stateKeyForStatus } from './lib/rate-lamp-store.js';
+import { advanceRateLampToCurrent, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
+import {
+  statusWire, statusWireWithLedger, bucketsPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap, INVALID_OVERRIDES_MESSAGE,
+} from './lib/wire.js';
 import { IDLE_HEARTBEAT_MS, DEFAULT_CTP } from './lib/constants.js';
 import { resolveProjectKey } from './lib/project-key.js';
 import { initStore, closeStoreGlobal, getStore } from './lib/store.js';
 import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
 import { modelPolicyFor } from './lib/model-policy.js';
-import { loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput } from './lib/pricing-store.js';
+import {
+  loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput, sanitizePresetId, NO_MODEL_MESSAGE,
+} from './lib/pricing-store.js';
 import { sweepStaleState, sweepStalePortFiles, sweepStaleTurnNotes } from './lib/state-reaper.js';
 import {
   formatLine,
@@ -37,17 +41,14 @@ import { PLUGIN_VERSION } from './lib/version.js';
 import { parseTurnAddress } from './lib/turn.js';
 import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { fromHandoff, forLoadedHandoff } from './lib/lineage.js';
-import {
-  NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE,
-  withPageRecovery, withSearchRecovery, withLocateRecovery,
-} from './lib/turn-tool-recovery.js';
+import { createTurnReadService } from './lib/turn-read-service.js';
 import { buildTurnPage } from './lib/turn-page.js';
-import { buildTurnBrowse, lineageHeadlines } from './lib/turn-browse.js';
+import { buildTurnBrowse } from './lib/turn-browse.js';
 import { searchTranscripts, locateRanges } from './lib/turn-query.js';
 import { createClaudeCodeDialogueSource } from './lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from './lib/harness/claude-code/history-turn-rules.js';
 import { classifyToolPair } from './lib/harness/claude-code/native-tools.js';
-import { SEARCH_HIT_RECOVERY } from './lib/harness/claude-code/turn-recovery.js';
+import { SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY, TURN_NOTICE } from './lib/harness/claude-code/turn-recovery.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -69,11 +70,9 @@ export const PORT_DIR = process.env.SW_STATE_DIR || join(homedir(), '.session-wa
 // Defense-in-depth: the sid is a harness UUID in practice.
 export const stateFileFor = (sessionId) => join(PORT_DIR, `${safeSessionId(sessionId || 'default')}.json`);
 
-// Atomic exclusive create (spec §5.2, invariant #20): O_CREAT|O_EXCL. Throws EEXIST if a live sibling
-// already owns this sid's state file — the single-instance BACKSTOP for a bare `node server.js` relaunch
-// that bypassed startWatcher's health-probe (startWatcher owns the PRIMARY guard; see the listen callback).
-// shutdown()'s unlinkSync removes it, so a clean restart re-creates freely. NO probe/liveness logic here —
-// liveness truth stays in startWatcher (SSOT); a crash-stale file is cleared by startWatcher's dead-port probe.
+// Atomic exclusive create: O_CREAT|O_EXCL. Throws EEXIST if a sibling already owns this sid's state file,
+// which is the single-instance guard for a `node server.js` launch. shutdown()'s unlinkSync removes it, so a
+// clean restart re-creates freely; a crash leaves it behind, and the EEXIST exit names the file to delete.
 export function writeStateFileExclusive(path, record) {
   const fd = openSync(path, 'wx');
   try {
@@ -153,7 +152,7 @@ let _globalTestClockMono = null;
 // (disable idle shutdown) would be ignored and the 24h default would silently apply.
 const _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
 export const IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1000;
-// V3-D3: profile_snapshot write throttle (30s). The snapshot only needs to be current at session end
+// profile_snapshot write throttle (30s). The snapshot only needs to be current at session end
 // (GC archival reads it days later); 30s max staleness on crash is acceptable.
 export const SNAPSHOT_THROTTLE_MS = 30_000;
 
@@ -271,41 +270,21 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // there at full length, so ADR 0004 keeps it out of the transcript corpus. The classifier consumes the
   // target the Adapter already resolved.
   const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === 'residual';
-  const history = { dialogueSource, dialogueProjection };
-
-  // ── turnPageWire ─────────────────────────────────────────────────────────────
-  // Maps buildTurnPage's internal { turnPage, nextBefore } to the wire shape. The cursor travels bare:
-  // load injection, GET /api/turn/page and the turn_page MCP tool all call this, so all three are
-  // byte-identical for one head and one persisted state.
-  function turnPageWire({ turnPage, nextBefore }) {
-    return {
-      turn_page: turnPage,
-      ...(nextBefore ? { next_before: nextBefore } : {}),
-    };
-  }
+  const history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE };
 
   // ── formatLoadedHandoff ──────────────────────────────────────────────────────
-  // Enrich the delivered package with its lineage headlines and its turn page, or attach
-  // turn_page_error on failure. Both projections sit inside the same try and share its error name, so a
-  // fault in either drops both: the reply keeps the core handoff and carries neither.
-  const formatLoadedHandoff = (core) => {
-    try {
-      const store = resolveStore();
-      const sessions = fromHandoff({ store, handoffId: core.handoff_id });
-      return {
-        ...core,
-        lineage: lineageHeadlines({ store, lineage: sessions }),
-        ...turnPageWire(injectedTurnPageBuilder({ store, lineage: sessions, ...history })),
-      };
-    } catch (err) {
-      if (process.env.SW_DEBUG) console.error('[turn_page_load]', err?.message || err);
-      return { ...core, turn_page_error: 'turn_page_unavailable' };
-    }
-  };
+  const formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
+    store: resolveStore(), turnPageBuilder: injectedTurnPageBuilder, ...history,
+  });
 
   // activeWatcher: routes read from this. Normally === watcher; during replay of a
   // different transcript, may point to a temporary fully-processed watcher.
   let activeWatcher = watcher;
+  // Pricing prices the watcher the reads come from, so every switch re-applies the effective ratio to it.
+  const activate = (next) => {
+    activeWatcher = next;
+    applyEffectiveRatio();
+  };
 
   // Idle auto-shutdown: track last HTTP request time (monotonic)
   let lastRequestMono = performance.now();
@@ -324,14 +303,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   let pollTimer = null;
   // -Infinity so the first tick always runs: the gate checks `now - lastAdvanceMono < IDLE_HEARTBEAT_MS`.
   let lastAdvanceMono = -Infinity;
-  let lastSnapshotMono = -Infinity;   // V3-D3: ensures the first changed tick always writes
+  let lastSnapshotMono = -Infinity;   // ensures the first changed tick always writes
   // Test-injection seam (A20): reads the module-level _globalTestClockMono (set via _setServerTestClock) so
   // tests drive the idle gate and the resolution schedule deterministically.
   const _nowMono = () => _globalTestClockMono != null ? _globalTestClockMono : performance.now();
 
-  // Captured ONCE. `/api/health` and every discovery record read these same three values, which is what
-  // makes the launcher's identity handshake (health.pid === discovery.pid, health.startedAt ===
-  // discovery.startedAt) an equality rather than two independent clock reads that can disagree.
+  // Captured ONCE. `/api/health` and every discovery record read these same three values, so the identity
+  // the two report is one reading rather than two independent clock reads that can disagree.
   const ownerMeta = { pid: process.pid, startedAt: startMs, clientPid: process.ppid };
 
   // The installed driver owns the locator published in discovery. Acquisition installs it after applying a
@@ -385,23 +363,26 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     if (onOwnerFatal) onOwnerFatal(error);
   }
 
-  // The Projection cannot restore this line: reading process-global env is what its layering forbids, so it
-  // emits an unconditional diagnostic instead and host wiring — which may read env — writes the baseline
-  // stderr line for that code. Diagnostics are otherwise recorded and never added to a response.
+  // The one stderr sink for the application results of this owner's own watcher — live frames and the
+  // terminal close — and of the carry reconstruction. The Projection cannot print, because reading
+  // process-global env is what its layering forbids, so it emits a diagnostic and this host wiring writes
+  // the line. Every code is a failure or an unusual input, so a code's first occurrence in this owner is
+  // written unconditionally — a retryable telemetry write is noticed without a database query — and its
+  // repeats wait for SW_DEBUG. Diagnostics never reach a response.
+  const reportedDiagnosticCodes = new Set();
   function recordDiagnostics(diagnostics) {
-    if (!process.env.SW_DEBUG) return;
     for (const entry of diagnostics ?? []) {
+      const code = entry?.code ?? 'unknown';
+      if (reportedDiagnosticCodes.has(code) && !process.env.SW_DEBUG) continue;
+      reportedDiagnosticCodes.add(code);
       // The one line the baseline printed, restored verbatim — its own tag, its own wording, and no extra
-      // argument. The Projection cannot print it: reading process-global env is what its layering forbids, so
-      // it emits the diagnostic and host wiring, which may read env, writes the line.
-      if (entry?.code === 'multiple_load_tokens') {
+      // argument.
+      if (code === 'multiple_load_tokens') {
         console.error('[telemetry] multiple load_handoff tokens in one step; keeping first');
         continue;
       }
-      // Every OTHER code needs a consumer too, or the Interface's "emits an internal diagnostic" describes
-      // something nobody can observe. One debug-gated sink, tagged by the diagnostic's own scope, so a
-      // telemetry join failure or an unusable model policy is visible where baseline's own logs were.
-      console.error(`[${entry?.scope ?? 'diagnostic'}] ${entry?.code ?? 'unknown'}: ${entry?.message ?? ''}`);
+      // Every other code, tagged by the diagnostic's own scope.
+      console.error(`[${entry?.scope ?? 'diagnostic'}] ${code}: ${entry?.message ?? ''}`);
     }
   }
 
@@ -413,38 +394,22 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     return result;
   }
 
-  // #7: /api/health doubles as an IDENTITY proof for the MCP launcher. It returns pid + startedAt from the
-  // immutable owner metadata so stopWatcher can confirm the process listening on this port is genuinely OUR
-  // server before it ever SIGTERMs a pid (guards against a recycled/foreign pid). The discovery record
-  // carries these exact values, so health.startedAt === discovery.startedAt for a live owner.
+  // pid + startedAt come from the immutable owner metadata, the same values the discovery record carries.
   // Stays fast, unauthenticated, loopback-only, and non-throwing.
   app.get('/api/health', (req, res) => {
     res.json({ ok: true, port: server.address()?.port ?? null, uptime: Math.floor((Date.now() - startMs) / 1000), pid: ownerMeta.pid, startedAt: ownerMeta.startedAt });
   });
 
-  // Map the application's opaque sourceLocator to the retained transcriptPath wire field.
-  function statusWire(source) {
-    const { sourceLocator, ...rest } = source.getStatus();
-    return { ...rest, transcriptPath: sourceLocator ?? null };
-  }
-
   app.get('/api/status', (req, res, next) => {
     try {
-      const status = statusWire(activeWatcher);
-      if (activeWatcher !== watcher && _replayController) {
-        // Transcript Playback: the controller's ledger is merged exactly as the live one is.
-        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-        mergeLedgerIntoStatus(status, _replayController.ledger, currentKey);
-      } else {
-        // Live mode: full ledger merge
-        const currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-        const ledger = getLiveLedger(currentSessionId);
-        mergeLedgerIntoStatus(status, ledger, currentKey);
-      }
+      // Transcript Playback merges the controller's ledger exactly as live mode merges the live one.
+      const ledger = (activeWatcher !== watcher && _replayController)
+        ? _replayController.ledger
+        : getLiveLedger(currentSessionId);
+      const status = statusWireWithLedger(activeWatcher.getStatus(), ledger);
       // billCycleCount is DEBUG-ONLY: attached only when the ?debug query param is set.
       if (req.query.debug && status.rateLamp?.billingCycle) {
-        const debugLedger = (activeWatcher === watcher) ? getLiveLedger(currentSessionId) : null;
-        status.rateLamp.billingCycle.cycleCountInSegment = debugLedger?.billCycleCount ?? 0;
+        status.rateLamp.billingCycle.cycleCountInSegment = ledger?.billCycleCount ?? 0;
       }
       if (req.query.fmt === 'line') {
         status.port = server.address()?.port ?? null;
@@ -473,15 +438,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       const includeSymbols = req.query.symbols === '1';
       const bd = activeWatcher.getBucketData({ includeSymbols });
       const s = activeWatcher.getStatus();
-      let paths = bd.paths.map(p => ({ ...p, last_active_turn: p.lastTurn }));
-      res.json({
-        ...bd, paths,
-        session_id: currentSessionId,
-        segment: bd.segment,
-        current_turn: bd.currentTurnSeq,
-        generated_at: Date.now(),
-        metrics: { br: s.br, mf: s.mf, pp: s.pp, g: s.g, b_total: s.B, c_ratio: s.cRatio },
-      });
+      res.json(bucketsPayload({ bucketData: bd, status: s, sessionId: currentSessionId, now: Date.now() }));
     } catch (e) { next(e); }
   });
 
@@ -515,17 +472,15 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       return res.status(409).json({ error: 'replay_active', message: 'Cannot modify overrides during replay' });
     }
     const { overrides } = req.body || {};
-    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
-      return res.status(400).json({ error: 'invalid_body', message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    if (!isOverrideMap(overrides)) {
+      return res.status(400).json({ error: 'invalid_body', message: INVALID_OVERRIDES_MESSAGE });
     }
 
     // Whole-set replacement through the named operation. The Engine owns the current epoch's override set and
-    // reports each rejected entry structurally; this route is the only place those structures become the
-    // baseline warning STRINGS, because the wording is a wire fact and the Engine has no wire.
+    // reports each rejected entry structurally; `overrideWarnings` is the one place those structures become
+    // the baseline warning STRINGS, because the wording is a wire fact and the Engine has no wire.
     const replaced = watcher.replaceUserOverrides(overrides);
-    const warnings = (replaced.warnings ?? []).map(w => (w.code === 'unknown_resource'
-      ? `ignored: path "${w.resourceKey}" not in current bRebuild`
-      : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`));
+    const warnings = overrideWarnings(replaced.warnings);
 
     // Broadcast SSE scan so dashboard refreshes
     if (sseClients.size > 0) {
@@ -533,7 +488,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
     }
 
-    const response = statusWire(watcher);
+    const response = statusWire(watcher.getStatus());
     if (warnings.length > 0) response.warnings = warnings;
     res.json(response);
   });
@@ -548,14 +503,14 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       return res.status(409).json({ error: 'replay_active', message: 'Cannot preview overrides during replay' });
     }
     const { overrides } = req.body || {};
-    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
-      return res.status(400).json({ error: 'invalid_body', message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    if (!isOverrideMap(overrides)) {
+      return res.status(400).json({ error: 'invalid_body', message: INVALID_OVERRIDES_MESSAGE });
     }
     res.json({ scenario: watcher.readScenario(overrides) });
   });
 
   // ── Replay (post-v3: transcript replay for demo recording) ──────────────
-  // Architecture: a fresh watcher with byte-limit valve runs the full production pipeline.
+  // Architecture: a fresh watcher paced by its source's own driver runs the full production pipeline.
   // No re-derivation of metrics — getStatus/mergeLedger produce everything naturally.
   let _replayController = null;
 
@@ -566,26 +521,37 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
     // Stop any existing replay
     if (_replayController) { _replayController.stop(); _replayController = null; }
-    activeWatcher = watcher;
 
     try {
-      const { indexTranscript, ReplayController } = await import('./lib/replay.js');
-      const index = indexTranscript(replayPath);
+      activate(watcher);
+      const [{ ReplayController }, { openReplaySource }] = await Promise.all([
+        import('./lib/replay.js'), import('./lib/replay-source.js'),
+      ]);
+      const source = openReplaySource(replayPath);
+      const { index } = source;
       if (index.length === 0) return res.status(400).json({ error: 'no usage rows in transcript' });
 
       // A fresh application and its OWN source driver, isolated from the live pair: Transcript Playback
-      // paces the driver with absolute line-end byte limits and never touches the live Source cursor.
-      const replayWatcher = createWatcherComposition({
-        sessionId: null, sourceLocator: replayPath, projectId, projectRoot,
-        stateDir: effectiveStateDir, store: resolveStore(), isIgnored: null,
-        // This owner's own declared lifetime: playback prices its cache writes the way the live pair beside
-        // it does, so a replayed reading is comparable with a measured one.
-        cacheTtl,
-      });
-      const replayDriver = createClaudeCodeSourceDriver({
-        sourceLocator: replayPath, firstReadableTransition: 'replace',
-      });
-      activeWatcher = replayWatcher;
+      // paces the driver with its index's limits and never touches the live Source cursor. A null session id
+      // archives no profile row. Either harness prices its cache writes under this owner's own declared lifetime,
+      // the way the live pair beside it does, so a replayed reading is comparable with a measured one.
+      let replayWatcher;
+      if (source.harness === 'dsh') {
+        const { composeWatcher } = await import('./dsh/src/composition.js');
+        replayWatcher = composeWatcher({
+          sessionId: null, cwd: source.header.cwd, store: resolveStore(),
+          turnNotesRoot: join(effectiveStateDir, 'turn-notes'),
+          readSession: async () => source.dialogueSnapshot, isIgnored: null, cacheTtl: () => cacheTtl,
+        }).watcher;
+      } else {
+        replayWatcher = createWatcherComposition({
+          sessionId: null, sourceLocator: replayPath, projectId, projectRoot,
+          stateDir: effectiveStateDir, store: resolveStore(), isIgnored: null,
+          cacheTtl,
+        });
+      }
+      const replayDriver = source.createDriver();
+      activate(replayWatcher);
 
       _replayController = new ReplayController(replayWatcher, index, {
         driver: replayDriver,
@@ -612,7 +578,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   app.post('/api/replay/stop', (req, res) => {
     if (_replayController) { _replayController.stop(); _replayController = null; }
-    activeWatcher = watcher;
+    activate(watcher);
     res.json({ ok: true });
   });
 
@@ -684,7 +650,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         return res.status(503).json({ error: delivered.error, retryable: delivered.retryable === true });
       }
       if (!delivered.found) return res.json(delivered);
-      return res.json(formatLoadedHandoff(delivered));
+      return res.json(await formatLoadedHandoff(delivered));
     } catch (e) { next(e); }
   });
 
@@ -695,7 +661,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // an S{k} session label or an S{k}:{T} turn address.
   // The route does not read watcher._projectId: lineage scope comes from the handoff row's own project,
   // so an explicit head resolves the same way no matter which project asks for it.
-  app.get('/api/turn/page', (req, res, next) => {
+  app.get('/api/turn/page', async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
@@ -704,10 +670,11 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       // one while building the page are the same turn-page projection failure, not an internal 500.
       // An unresolvable head is still 404 — that return is not a throw, so this catch never sees it.
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store = resolveStore();
+        const lineage = fromHandoff({ store, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
-        const result = injectedTurnPageBuilder({
-          store: resolveStore(),
+        const result = await injectedTurnPageBuilder({
+          store,
           lineage,
           before: req.query.before || null,
           ...history,
@@ -718,7 +685,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         // 每条 turn 路由自己兜住 503 后，终端 error boundary 再也看不到这些抛出 —— 所以三条 catch
         // 各自接上它那条 SW_DEBUG 门控日志。只报成因：不带 q、页文本或转录路径，错误响应不夹带正文，
         // 日志也不是它的后门。
-        if (process.env.SW_DEBUG) console.error('[turn_page]', err?.message || err);
+        if (process.env.SW_DEBUG) console.error('[turn_page]', err);
         return res.status(503).json({ error: 'turn_page_unavailable', retryable: true });
       }
     } catch (e) { next(e); }
@@ -727,7 +694,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // GET /api/turn/search — exact literal search over the canonical transcripts of one lineage.
   // `q` is a literal, never a pattern; `scope` is an optional S{k}:{T} turn span. The response is always
   // sized by HISTORY_TOKEN_BUDGET, so a `budget` parameter is ignored rather than rejected.
-  app.get('/api/turn/search', (req, res, next) => {
+  app.get('/api/turn/search', async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
@@ -735,19 +702,20 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       // parent chain leaves this route unable to answer — a 503 the caller may retry, not an internal
       // 500. Every 404 here is a `return`, never a throw, so widening the try cannot swallow one.
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store = resolveStore();
+        const lineage = fromHandoff({ store, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
 
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
         const scope = req.query.scope == null ? null : String(req.query.scope);
         if (scope !== null && parseTurnAddress(scope) === null) return res.status(400).json({ error: 'invalid_scope' });
 
-        return res.json(searchTranscripts({
-          store: resolveStore(), lineage, q: req.query.q, scope, ...history, includeToolEvidence,
+        return res.json(await searchTranscripts({
+          store, lineage, q: req.query.q, scope, ...history, includeToolEvidence,
         }));
       } catch (err) {
         if (err && err.code === 'scope_not_found') return res.status(404).json({ error: 'scope_not_found' });
-        if (process.env.SW_DEBUG) console.error('[turn_search]', err?.message || err);
+        if (process.env.SW_DEBUG) console.error('[turn_search]', err);
         return res.status(503).json({ error: 'search_unavailable' });
       }
     } catch (e) { next(e); }
@@ -757,7 +725,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // active path. No `scope`: locate is what produces one. The response is a fixed pair of shapes whose
   // size locate caps against HISTORY_TOKEN_BUDGET itself, so a `budget` parameter is ignored rather than
   // rejected.
-  app.get('/api/turn/locate', (req, res, next) => {
+  app.get('/api/turn/locate', async (req, res, next) => {
     try {
       const headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
@@ -765,13 +733,14 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       // parent chain leaves locate unable to answer — the same 503 an unusable turn FTS already
       // returns. Every 404 here is a `return`, never a throw, so widening the try cannot swallow one.
       try {
-        const lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        const store = resolveStore();
+        const lineage = fromHandoff({ store, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: 'invalid_query' });
 
-        return res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q, ...history }));
+        return res.json(await locateRanges({ store, lineage, q: req.query.q, ...history }));
       } catch (err) {
-        if (process.env.SW_DEBUG) console.error('[turn_locate]', err?.message || err);
+        if (process.env.SW_DEBUG) console.error('[turn_locate]', err);
         return res.status(503).json({ error: 'locate_unavailable' });
       }
     } catch (e) { next(e); }
@@ -810,39 +779,12 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     // The EPOCH model, not the latest measured one. Pricing is a model-DEPENDENT read: this same value is the
     // key `loadPricingOverride`/`savePricingOverride` store under, so taking the latest identity would move
     // an override's key mid-epoch.
-    const model = watcher.getEpochModel() ?? '';
-    const saved = loadPricingOverride(model);
-    // The declared prompt-cache TTL as well as the model: the reported model default is the price
-    // measurement is actually charging this epoch, which the composition resolved under the same TTL.
-    const policy = modelPolicyFor(model, cacheTtl);
-    const modelRatio = policy.cRatio;
-    const presets = policy.pricing.presets;
-
-    let effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
-    if (saved) {
-      effectiveRatio = saved.ratio; source = 'saved';
-      effectiveRead = saved.readPrice; effectiveWrite = saved.writePrice;
-
-      // Preset drift detection (spec §10.3): if presetId saved, check prices still match
-      if (saved.presetId) {
-        const preset = presets.find(p => p.id === saved.presetId);
-        if (preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice) {
-          source = 'preset';
-        }
-        // else: prices drifted or preset removed — source stays 'saved'
-      }
-    } else if (cliRatioAtStartup != null) {
-      effectiveRatio = cliRatioAtStartup; source = 'cli';
-    } else {
-      effectiveRatio = modelRatio; source = 'model_default';
-    }
-
-    return {
-      effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
-      saved: saved || null,
-      modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
-      presets,
-    };
+    const model = activeWatcher.getEpochModel() ?? '';
+    // The declared prompt-cache TTL as well as the model: the reported model default is the price this host's
+    // own composition charges this epoch, resolved under the same TTL.
+    return pricingResponse({
+      model, saved: loadPricingOverride(model), policy: modelPolicyFor(model, cacheTtl), cliRatio: cliRatioAtStartup,
+    });
   };
 
   // The one runtime ratio mutation. `setRatioOverride` refreshes the Engine's named reads without rebuilding
@@ -851,8 +793,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // saved > CLI > null priority here and maintains no second effective model policy.
   const applyEffectiveRatio = () => {
     // Same key as the response builder above: the saved override is looked up under the EPOCH model.
-    const saved = loadPricingOverride(watcher.getEpochModel() ?? '');
-    watcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup);
+    const saved = loadPricingOverride(activeWatcher.getEpochModel() ?? '');
+    recordDiagnostics(activeWatcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup).diagnostics);
   };
 
   // Apply saved pricing at startup (persisted override must take effect without POST)
@@ -872,13 +814,11 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     }
     try {
       const { readPrice, writePrice, presetId } = req.body || {};
-      // Sanitize presetId: must be null or a short string
-      const safePresetId = (typeof presetId === 'string' && presetId.length > 0 && presetId.length <= 80)
-        ? presetId : null;
+      const safePresetId = sanitizePresetId(presetId);
       // The WRITE key is the epoch model, so an override lands under the same identity the read looks it up
       // by. A latest-identity key would store under one model and be read back under another mid-epoch.
-      const model = watcher.getEpochModel() ?? '';
-      if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });  // #9: guard empty model key
+      const model = activeWatcher.getEpochModel() ?? '';
+      if (!model) return res.status(409).json({ error: 'no_model', message: NO_MODEL_MESSAGE });  // #9: guard empty model key
       savePricingOverride(model, { readPrice, writePrice, presetId: safePresetId });
       applyEffectiveRatio();
       res.json(buildPricingResponse());
@@ -888,8 +828,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   });
 
   app.delete('/api/pricing', (req, res) => {
-    const model = watcher.getEpochModel() ?? '';
-    if (!model) return res.status(409).json({ error: 'no_model', message: 'Model not yet detected; retry after first API call' });
+    const model = activeWatcher.getEpochModel() ?? '';
+    if (!model) return res.status(409).json({ error: 'no_model', message: NO_MODEL_MESSAGE });
     deletePricingOverride(model);
     applyEffectiveRatio();
     res.json(buildPricingResponse());
@@ -954,7 +894,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       }
       if (changed) for (const c of sseClients) { try { c.write(`data: ${JSON.stringify({ type: 'scan' })}\n\n`); } catch { sseClients.delete(c); } }
     } catch (e) { if (process.env.SW_DEBUG) console.error('[sse]', e.message); }
-    // v3 (spec section 6.7): profile snapshot for GC archival — throttled (V3-D3). The snapshot only needs
+    // v3 (spec section 6.7): profile snapshot for GC archival — throttled. The snapshot only needs
     // to be current at session end; staleness on crash is acceptable because GC archival runs days later.
     if (changed) {
       const now = _nowMono();
@@ -1096,7 +1036,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     const oldSessionId = currentSessionId;
     driver = rotated;
     currentSessionId = newSessionId;
-    // V3-D3: the new session gets an immediate snapshot on its first changed tick, so a snapshot written
+    // The new session gets an immediate snapshot on its first changed tick, so a snapshot written
     // just before the rotation cannot suppress it.
     lastSnapshotMono = -Infinity;
 
@@ -1127,10 +1067,19 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     return out;
   }
 
-  app.post('/api/rotate', express.json(), (req, res) => {
+  // Registered after the terminal error boundary, so a throw here would reach Express's default HTML page;
+  // this route answers with the boundary's JSON instead. An application that refuses the rotate frame has
+  // already taken the owner-fatal path inside doRotation, so what arrives here is a candidate Source failure,
+  // which nothing else logs: its cause is written whatever SW_DEBUG says.
+  app.post('/api/rotate', (req, res) => {
     const { session_id, transcript_path } = req.body || {};
     if (!session_id) return res.status(400).json({ ok: false, error: 'missing_session_id' });
-    const result = doRotation(session_id, transcript_path);
+    let result;
+    try { result = doRotation(session_id, transcript_path); }
+    catch (err) {
+      console.error('[rotate]', err);
+      return res.status(500).json({ error: 'internal' });
+    }
     res.json(result);
   });
 
@@ -1193,6 +1142,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
           // session's resources against a boundary they were never inside.
           replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, {
             store: resolveStore(),
+            onDiagnostics: recordDiagnostics,
             createWatcher: ({ store: reconciled, sessionId: sid2, sourceLocator }) => createWatcherComposition({
               sessionId: sid2, sourceLocator, projectId: null, projectRoot: null,
               stateDir: effectiveStateDir, store: reconciled, isIgnored: null,
@@ -1223,55 +1173,15 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   };
 
   // ── Turn read service ────────────────────────────────────────────────────────
-  // The three read tools take no lineage identifier. forLoadedHandoff resolves the newest handoff
-  // delivered into THIS session and runs the same walk as the explicit-head HTTP routes. The page
-  // result is byte-identical; search and locate add only their tool-side recovery. Because the head
-  // is never a parameter, "you must have loaded a handoff" is a precondition the schema cannot express
-  // wrongly — there is no guessable integer to fabricate.
-  //
-  // An address the caller supplied that does not resolve is rethrown with its recovery as the message:
-  // the HTTP route answers 404 there, and 404 has no meaning over MCP, while turn_page_unavailable's
-  // "call again" would be wrong advice for a value that reproduces the same failure.
-  const turnReadService = {
-    turnPage({ before = null } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withPageRecovery(turnPageWire(injectedTurnPageBuilder({
-          store: resolveStore(), lineage, before: before || null, ...history,
-        })));
-      } catch (err) {
-        if (err && err.code === 'not_found') throw new Error(STALE_CURSOR_MESSAGE);
-        if (process.env.SW_DEBUG) console.error('[turn_page_tool]', err?.message || err);
-        return withPageRecovery({ error: 'turn_page_unavailable', retryable: true });
-      }
-    },
-
-    turnSearch({ q, scope = null } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withSearchRecovery(searchTranscripts({
-          store: resolveStore(), lineage, q, scope: scope || null, ...history, includeToolEvidence,
-        }), { hitRecovery: SEARCH_HIT_RECOVERY });
-      } catch (err) {
-        if (err && err.code === 'scope_not_found') throw new Error(SCOPE_ABSENT_MESSAGE);
-        if (process.env.SW_DEBUG) console.error('[turn_search_tool]', err?.message || err);
-        return withSearchRecovery({ error: 'search_unavailable' });
-      }
-    },
-
-    turnLocate({ q } = {}) {
-      try {
-        const lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        if (lineage.length === 0) return NO_HANDOFF_LOADED;
-        return withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q, ...history }));
-      } catch (err) {
-        if (process.env.SW_DEBUG) console.error('[turn_locate_tool]', err?.message || err);
-        return withLocateRecovery({ error: 'locate_unavailable' });
-      }
-    },
-  };
+  const turnReadService = createTurnReadService({
+    store: resolveStore,
+    sessionId: () => currentSessionId,
+    dialogueSource,
+    dialogueProjection,
+    includeToolEvidence,
+    recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
+    turnPageBuilder: injectedTurnPageBuilder,
+  });
 
   // ── Synchronous bootstrap ────────────────────────────────────────────────────
   // The SAME tick the recurring timer drives, run exactly once before the server is exposed, so the very
@@ -1281,8 +1191,8 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   runPollTick();
   scheduleStartupMaintenance();
 
-  // #7: expose startMs as `startedAt` so the CLI writes the SAME timestamp to the state file that
-  // /api/health reports — one source of truth for the identity handshake (health===discovery).
+  // startMs goes out as `startedAt` so the CLI writes the SAME timestamp to the state file that
+  // /api/health reports — the two report one reading.
   return {
     app, server, sseClients, startPolling, startedAt: startMs, applyEffectiveRatio,
     stopTimers: () => { clearInterval(pollTimer); clearInterval(pingTimer); if (sweepTimer) clearTimeout(sweepTimer); },
@@ -1299,7 +1209,11 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     // playback status branch merges rather than a copy of it.
     replayController: () => _replayController,
     // Terminal application finalization, for the owner's cleanup sequence.
-    closeCurrentSegment: (options) => watcher.closeCurrentSegment(options),
+    closeCurrentSegment: () => {
+      const result = watcher.closeCurrentSegment();
+      recordDiagnostics(result.diagnostics);
+      return result;
+    },
   };
 }
 
@@ -1388,7 +1302,7 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
   // Bind state to the transcript basename — this is the PERSISTENT id the statusline
   // queries (CC sends different session_ids to the hook vs. the statusline). The
   // --session value (hook's per-restart id) is stored as hookSessionId for the
-  // sessionMismatch guard and startWatcher's fallback scan.
+  // sessionMismatch guard and the launcher's `scanStateByHookSessionId` fallback.
   const sessionId = jsonlPath.endsWith('.jsonl') ? basename(jsonlPath).replace(/\.jsonl$/, '') : (session || 'default');
   const hookSessionId = session || null;
   const projectId = resolveProjectKey({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd: project }) || process.env.CLAUDE_PROJECT_ID || null;
@@ -1415,21 +1329,18 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
     mkdirSync(PORT_DIR, { recursive: true });
     cleanupLegacyJson(defaultBaseDir());
     applyEffectiveRatio();
-    // #7: write createServer's startedAt (NOT a fresh Date.now()) so the state file's identity tokens
-    // (pid, startedAt) are the exact values /api/health reports — the handshake stopWatcher relies on.
-    // D5 (spec §5.2, invariant #20): write ATOMICALLY with wx (O_CREAT|O_EXCL). startWatcher owns the
-    // PRIMARY single-instance guard (it health-probes the recorded port and reuses without respawning);
-    // this closes the residual window of a bare relaunch for the SAME sid that bypassed startWatcher —
-    // the loser hits EEXIST and exits rather than clobbering a live owner's port/pid.
+    // createServer's startedAt (NOT a fresh Date.now()) so the state file's (pid, startedAt) are the values
+    // /api/health reports. Written with wx, so a second launch for the SAME sid hits EEXIST and exits rather
+    // than clobbering a live owner's port/pid.
     try {
       writeStateFileExclusive(STATE_FILE, { port, pid: process.pid, transcriptPath: jsonlPath, sessionId, hookSessionId: session, startedAt });
     } catch (e) {
       if (e.code === 'EEXIST') {
         console.error(
-          `session-watcher: ${sessionId} already owned — refusing to start. If no live owner (e.g. a prior crash left a stale file), restart via the normal startWatcher entry (it health-probes and auto-clears a dead-port state file), or manually delete ${STATE_FILE}.`,
+          `session-watcher: ${sessionId} already owned — refusing to start. If no live owner (e.g. a prior crash left a stale file), manually delete ${STATE_FILE}.`,
         );
         process.exit(1);
-      } // B15: actionable, not a dead-end. No probe logic here — liveness truth stays in startWatcher (SSOT); see R5.
+      } // Actionable, not a dead-end: the message names the file to delete.
       throw e;
     }
     console.log(`PORT=${port}`);
@@ -1443,11 +1354,9 @@ if (typeof __CLI_BUNDLE__ === 'undefined' && process.argv[1] && import.meta.url 
           || (process.platform === 'darwin' ? 'open'
             : process.platform === 'win32' ? 'start'
             : 'xdg-open');
-        // A missing/failed opener (headless box: no $BROWSER and no `open`/`xdg-open`) makes the child
-        // emit 'error'. Without a listener that 'error' is unhandled → it crashes THIS server milliseconds
-        // after it wrote its state file + printed PORT=, leaving a stale state file pointing at a dead port
-        // (every later auto-launch then re-crashes). Opening the dashboard is best-effort; on failure the
-        // server keeps running and the user clicks the printed URL — swallow the error.
+        // A missing opener (headless box: no $BROWSER and no `open`/`xdg-open`) makes the child emit
+        // 'error'. Opening the dashboard is best-effort, so the failure is handled here rather than left
+        // to the process-level uncaughtException handler; the user clicks the printed URL instead.
         const opener = spawn(cmd, [`http://127.0.0.1:${port}`], { detached: true, stdio: 'ignore' });
         opener.on('error', () => {});
         opener.unref();

@@ -10,7 +10,8 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { readStdin, isMainModule, buildServerContext, discoverHandoffs, formatHandoffContext, discoverServerByClientPid, buildRotationFallbackContext } from '../hooks/session-start.js';
+import { readStdin, isMainModule, buildServerContext, discoverServerByClientPid, buildRotationFallbackContext } from '../hooks/session-start.js';
+import { discoverHandoffs, formatHandoffContext } from '../lib/handoff-discovery.js';
 import { openStore, closeStore } from '../lib/store.js';
 import { HANDOFF_HOOK_SOURCES } from '../lib/constants.js';
 
@@ -45,17 +46,22 @@ test('readStdin resolves on a hard timeout when the stream never ends (never han
 });
 
 // Spawn the REAL hook and capture its own stdout — SessionStart stdout becomes model context, so the
-// hook must emit NOTHING to stdout regardless of input. `env: SW_NO_OPEN` belt-and-suspenders so no
-// browser pops even if a valid payload ever reaches startWatcher in this suite.
+// hook must emit NOTHING to stdout regardless of input.
+// The hook's whole environment is a fresh state dir: nothing inherited from the developer's shell, so an
+// exported SW_PROBE or SW_STATE_DIR cannot make it write into the real install.
 function runHook(stdinStr) {
+  const stateDir = mkdtempSync(join(tmpdir(), 'sw-hook-state-'));
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK], {
       stdio: ['pipe', 'pipe', 'ignore'],
-      env: { ...process.env, SW_NO_OPEN: '1' },
+      env: { PATH: process.env.PATH, HOME: stateDir, SW_STATE_DIR: stateDir },
     });
     let out = '';
     child.stdout.on('data', (d) => { out += d.toString(); });
-    child.on('exit', (code) => resolve({ code, out }));
+    child.on('exit', (code) => {
+      rmSync(stateDir, { recursive: true, force: true });
+      resolve({ code, out });
+    });
     child.stdin.write(stdinStr);
     child.stdin.end();
   });

@@ -81,7 +81,7 @@ function compose({ sessionId = 'sid-producer', store, measurement = MEASUREMENT,
     handoffComposition: createHandoffComposition({ now: () => NOW, randomInt: () => (tokenSeq++) % 256 }),
     loaderVersion: '9.9.9',
     store: own,
-    dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+    dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: () => fakeEngine(measurement),
     createMeasurementProjection: () => ({ project: () => ({ records: [], diagnostics: [] }), finishSegment: () => ({ artifact: null, diagnostics: [] }) }),
@@ -131,7 +131,7 @@ describe('prepareHandoff', () => {
     assert.ok(result.summary_tokens > 0);
     assert.deepEqual(result.unknown_paths, []);
     assert.deepEqual(result.invalid_paths, []);
-    assert.match(result.instruction, /\/clear/);
+    assert.match(result.instruction, /context reset the host offers/);
     assert.ok(result.instruction.includes(result.load_token));
 
     const row = handoffRow(store, result.load_token);

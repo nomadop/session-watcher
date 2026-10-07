@@ -35,11 +35,14 @@ const dialogueSource = createClaudeCodeDialogueSource();
 const dialogueProjection = createClaudeCodeDialogueProjection();
 const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === 'residual';
 const HISTORY = { dialogueSource, dialogueProjection };
+// A Source whose read settles on a later tick: the seam's contract is a Promise, and a consumer that reads
+// `.status` off the pending value would see every Source as unreadable.
+const deferred = { read: async (locator) => dialogueSource.read(locator) };
 // One History Source, spelled the way lib/lineage.js spells it.
 const source = (sessionId, locator, handoffId) =>
   ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId });
-const searchWith = (args) => searchTranscriptsImpl({ ...HISTORY, includeToolEvidence, ...args });
-const locateWith = (args) => locateRanges({ ...HISTORY, ...args });
+const searchWith = async (args) => searchTranscriptsImpl({ ...HISTORY, includeToolEvidence, ...args });
+const locateWith = async (args) => locateRanges({ ...HISTORY, ...args });
 
 const dir = mkdtempSync(join(tmpdir(), 'sw-turn-query-'));
 process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
@@ -54,7 +57,7 @@ const testStore = (name) => {
 // search 的默认库是一个真库，里面一条 turn_note 都没有：除 enrichment 组外，每条 search 断言都跑在
 // 「会话早于 turn_note 存在」这一侧，命中因此是裸形。
 const storeEmpty = testStore('search-empty');
-const searchTranscripts = args => searchWith({ store: storeEmpty, ...args });
+const searchTranscripts = async args => searchWith({ store: storeEmpty, ...args });
 
 // 命中现在挂在 turn 分组里。断言匹配语义的用例只关心「哪些 fold 命中了、按什么顺序」，所以走这个拉平
 // 视图；分组本身由分组段的用例负责。
@@ -190,27 +193,32 @@ const transcriptEdge = writeTranscript(dir, [
 const edgeLineage = [source('sess-edge', transcriptEdge, 904)];
 
 // One read + projection of a fixture Source, the way every consumer composes it.
-const readOf = (path) => readHistorySource(HISTORY, path);
-const foldsById = (path, id) => readOf(path).folds.filter(f => f.sourceEntryId === id);
-const foldById = (path, id) => foldsById(path, id)[0];
-const lineOfFold = (path, id) => foldById(path, id).sourceOrdinal;
-const turnsOfPath = (path) => readOf(path).turns;
+const readOf = async (path) => readHistorySource(HISTORY, path);
+const foldsById = async (path, id) => (await readOf(path)).folds.filter(f => f.sourceEntryId === id);
+const foldById = async (path, id) => (await foldsById(path, id))[0];
+const lineOfFold = async (path, id) => (await foldById(path, id)).sourceOrdinal;
+const turnsOfPath = async (path) => (await readOf(path)).turns;
 
 // ── Fixture self-proofs ────────────────────────────────────────────────────────
 
-test('fixture 自证：三个头 U 落在 grep -n 给它们的那三行', () => {
-  assert.deepEqual(turnsOfPath(transcriptA).map(t => t.sourceOrdinal), [1, 13, 32]);
+test('fixture 自证：三个头 U 落在 grep -n 给它们的那三行', async () => {
+  assert.deepEqual((await turnsOfPath(transcriptA)).map(t => t.sourceOrdinal), [1, 13, 32]);
 });
 
-test('fixture 自证：Read 对真落在 Path 桶，Bash 对落在 Residual 桶', () => {
-  assert.equal(classifyToolPair(foldById(transcriptA, 'a-read').toolPairs[0], DEFAULT_CTP), 'path');
-  assert.equal(classifyToolPair(foldById(transcriptA, 'a-bash').toolPairs[0], DEFAULT_CTP), 'residual');
+test('延后 resolve 的 Source 读为 readable，folds 与 turns 同同步读', async () => {
+  assert.deepEqual(await readHistorySource({ dialogueSource: deferred, dialogueProjection }, transcriptA),
+    await readHistorySource(HISTORY, transcriptA));
 });
 
-test('桶与 ctp 无关：Read 对在 CTP_TABLE 每一档与缺省档都是 Path', () => {
+test('fixture 自证：Read 对真落在 Path 桶，Bash 对落在 Residual 桶', async () => {
+  assert.equal(classifyToolPair((await foldById(transcriptA, 'a-read')).toolPairs[0], DEFAULT_CTP), 'path');
+  assert.equal(classifyToolPair((await foldById(transcriptA, 'a-bash')).toolPairs[0], DEFAULT_CTP), 'residual');
+});
+
+test('桶与 ctp 无关：Read 对在 CTP_TABLE 每一档与缺省档都是 Path', async () => {
   // search 固定 DEFAULT_CTP，bookmark detail 用 ctpForModel(canonical.model)。两处若能对同一对给出
   // 不同桶，一条命中就会「search 找得到、detail 取不到」—— 这条不变量代码里没有别处声明。
-  const pair = foldById(transcriptA, 'a-read').toolPairs[0];
+  const pair = (await foldById(transcriptA, 'a-read')).toolPairs[0];
   for (const ctp of [...Object.values(CTP_TABLE), DEFAULT_CTP]) {
     assert.equal(classifyToolPair(pair, ctp), 'path', JSON.stringify(ctp));
   }
@@ -218,62 +226,62 @@ test('桶与 ctp 无关：Read 对在 CTP_TABLE 每一档与缺省档都是 Path
 
 // ── Matcher semantics ──────────────────────────────────────────────────────────
 
-test('ASCII 折叠逐码元只映射 A–Z；非 ASCII 不经 toLowerCase 变长', () => {
-  const r = searchTranscripts({ lineage, q: 'config_key' });
+test('ASCII 折叠逐码元只映射 A–Z；非 ASCII 不经 toLowerCase 变长', async () => {
+  const r = await searchTranscripts({ lineage, q: 'config_key' });
   assert.equal(r.found, true);
   assert.ok(allMatches(r)[0].excerpt.includes('CONFIG_KEY'));
-  assert.equal(searchTranscripts({ lineage, q: 'i̇stanbul' }).found, false);
+  assert.equal((await searchTranscripts({ lineage, q: 'i̇stanbul' })).found, false);
 });
 
-test('命中偏移不因 İ 变长而错位：紧跟其后的 200 字符 span 完整落在 excerpt 里', () => {
-  const r = searchTranscripts({ lineage, q: 'z'.repeat(200) });
+test('命中偏移不因 İ 变长而错位：紧跟其后的 200 字符 span 完整落在 excerpt 里', async () => {
+  const r = await searchTranscripts({ lineage, q: 'z'.repeat(200) });
   assert.equal(r.found, true);
   assert.equal(allMatches(r)[0].excerpt.replace(/^…|…$/g, ''), Z_RUN);
 });
 
-test('found:true 的 excerpt 完整包含来源命中 span', () => {
-  const r = searchTranscripts({ lineage, q: 'needle-literal' });
+test('found:true 的 excerpt 完整包含来源命中 span', async () => {
+  const r = await searchTranscripts({ lineage, q: 'needle-literal' });
   assert.equal(r.found, true);
   assert.equal(allMatches(r).length, 2);
   assert.ok(allMatches(r).every(m => m.excerpt.includes('needle-literal')));
 });
 
-test('200 字符 q 仍完整落在 excerpt 中，不被「居中」算法切半', () => {
-  const r = searchTranscripts({ lineage, q: LONG_Q });
+test('200 字符 q 仍完整落在 excerpt 中，不被「居中」算法切半', async () => {
+  const r = await searchTranscripts({ lineage, q: LONG_Q });
   assert.equal(r.found, true);
   assert.ok(allMatches(r)[0].excerpt.includes(LONG_Q));
   assert.equal(allMatches(r)[0].excerpt.replace(/^…|…$/g, '').length, HISTORY_EXCERPT_CHARS);
 });
 
-test('一个 fold 只返回一次，excerpt 取 canonical 首命中实体', () => {
-  const r = searchTranscripts({ lineage, q: 'dup-literal' });
+test('一个 fold 只返回一次，excerpt 取 canonical 首命中实体', async () => {
+  const r = await searchTranscripts({ lineage, q: 'dup-literal' });
   assert.equal(allMatches(r).length, 1);
   assert.ok(allMatches(r)[0].excerpt.includes('visible-body dup-literal'));
 });
 
-test('工具实体命中的 line 是工具行，可见消息命中的 line 是消息行', () => {
-  assert.equal(allMatches(searchTranscripts({ lineage, q: 'tool-only-literal' }))[0].line,
-    lineOfFold(transcriptA, 'tool-fold-uuid'));
-  assert.equal(allMatches(searchTranscripts({ lineage, q: 'visible-literal' }))[0].line,
-    lineOfFold(transcriptA, 'a1'));
+test('工具实体命中的 line 是工具行，可见消息命中的 line 是消息行', async () => {
+  assert.equal(allMatches(await searchTranscripts({ lineage, q: 'tool-only-literal' }))[0].line,
+    await lineOfFold(transcriptA, 'tool-fold-uuid'));
+  assert.equal(allMatches(await searchTranscripts({ lineage, q: 'visible-literal' }))[0].line,
+    await lineOfFold(transcriptA, 'a1'));
 });
 
-test('ABSORB harness evidence 不参与匹配', () => {
-  assert.equal(searchTranscripts({ lineage, q: 'local-command-stdout' }).found, false);
+test('ABSORB harness evidence 不参与匹配', async () => {
+  assert.equal((await searchTranscripts({ lineage, q: 'local-command-stdout' })).found, false);
 });
 
-test('Path 桶工具一个实体都不产出（连工具名也不进），Residual 桶搜得到', () => {
-  assert.equal(searchTranscripts({ lineage, q: 'read-bucket-literal' }).found, false);
-  assert.equal(searchTranscripts({ lineage, q: 'Read' }).found, false);
-  assert.equal(searchTranscripts({ lineage, q: 'residual-bucket-literal' }).found, true);
+test('Path 桶工具一个实体都不产出（连工具名也不进），Residual 桶搜得到', async () => {
+  assert.equal((await searchTranscripts({ lineage, q: 'read-bucket-literal' })).found, false);
+  assert.equal((await searchTranscripts({ lineage, q: 'Read' })).found, false);
+  assert.equal((await searchTranscripts({ lineage, q: 'residual-bucket-literal' })).found, true);
   // Residual 工具名逐字可搜，且 ASCII 大小写不敏感
-  assert.equal(searchTranscripts({ lineage, q: 'bash' }).found, true);
+  assert.equal((await searchTranscripts({ lineage, q: 'bash' })).found, true);
 });
 
-test('[delta] search keeps distinct folds that share a sourceEntryId', () => {
-  const twins = foldsById(transcriptEdge, 'a-twin');
+test('[delta] search keeps distinct folds that share a sourceEntryId', async () => {
+  const twins = await foldsById(transcriptEdge, 'a-twin');
   assert.equal(twins.length, 2, 'fixture 自证：两个 fold 真的共用一个 native identity');
-  const hits = allMatches(searchTranscripts({ lineage: edgeLineage, q: 'twin-literal' }));
+  const hits = allMatches(await searchTranscripts({ lineage: edgeLineage, q: 'twin-literal' }));
   assert.equal(hits.length, 2);
   // 两条命中各自的行与正文都留着 —— 身份重复不再让其中一条消失。
   assert.deepEqual(hits.map(m => m.line), twins.map(f => f.sourceOrdinal));
@@ -281,29 +289,29 @@ test('[delta] search keeps distinct folds that share a sourceEntryId', () => {
   assert.ok(hits[1].excerpt.includes('second twin body'));
 });
 
-test('resultStr === null 不产出 result 实体，同一对的 input 仍可搜', () => {
-  const r = searchTranscripts({ lineage: edgeLineage, q: 'unpaired-input-literal' });
+test('resultStr === null 不产出 result 实体，同一对的 input 仍可搜', async () => {
+  const r = await searchTranscripts({ lineage: edgeLineage, q: 'unpaired-input-literal' });
   assert.equal(r.found, true);
-  assert.equal(allMatches(r)[0].line, lineOfFold(transcriptEdge, 'a-unpaired'));
+  assert.equal(allMatches(r)[0].line, await lineOfFold(transcriptEdge, 'a-unpaired'));
   // 整个 edge 会话的原文里没有 'null'：命中只可能来自把空结果字符串化后塞进实体
-  assert.deepEqual(searchTranscripts({ lineage: edgeLineage, q: 'null' }), { found: false });
+  assert.deepEqual(await searchTranscripts({ lineage: edgeLineage, q: 'null' }), { found: false });
 });
 
-test('excerpt 边界不切开代理对，也不因此丢掉命中', () => {
-  const matches = allMatches(searchTranscripts({ lineage: edgeLineage, q: 'surrogate-hit' }));
+test('excerpt 边界不切开代理对，也不因此丢掉命中', async () => {
+  const matches = allMatches(await searchTranscripts({ lineage: edgeLineage, q: 'surrogate-hit' }));
   assert.ok(matches[0].excerpt.includes('surrogate-hit'));
   assert.ok(!matches[0].excerpt.includes('\uDE00'), '不得留下半个代理对');
   assert.equal(matches[0].excerpt.replaceAll('…', '').length, HISTORY_EXCERPT_CHARS - 1);
 });
 
-test('工具实体的待搜文本复用 detail 的序列化，不另造 raw JSONL 表示', () => {
-  const r = searchTranscripts({ lineage, q: '"command":"echo residual-bucket-literal"' });
+test('工具实体的待搜文本复用 detail 的序列化，不另造 raw JSONL 表示', async () => {
+  const r = await searchTranscripts({ lineage, q: '"command":"echo residual-bucket-literal"' });
   assert.equal(r.found, true);
-  assert.equal(allMatches(r)[0].line, lineOfFold(transcriptA, 'a-bash'));
+  assert.equal(allMatches(r)[0].line, await lineOfFold(transcriptA, 'a-bash'));
 });
 
-test('search 的扫描面与行枚举同源：同一 fold 的每条行都在匹配面上', () => {
-  const fold = foldById(transcriptA, 'a-split');
+test('search 的扫描面与行枚举同源：同一 fold 的每条行都在匹配面上', async () => {
+  const fold = await foldById(transcriptA, 'a-split');
   const lines = dialogueFoldLines(fold);
   // 行枚举对这个 fold 的产出写死在这里：少一条工具行或换一种载荷，下面的字面量就不再可搜。
   assert.deepEqual(lines.map(l => l.kind), ['visible', 'tool']);
@@ -322,33 +330,33 @@ test('search 的扫描面与行枚举同源：同一 fold 的每条行都在匹�
   const rows = lines.flatMap(line => line.kind === 'visible'
     ? [line.sourceOrdinal]
     : [line.sourceOrdinal, line.sourceOrdinal, line.tool.resultSourceOrdinal]);
-  needles.forEach((needle, i) => {
-    const r = searchTranscripts({ lineage, q: needle });
+  for (const [i, needle] of needles.entries()) {
+    const r = await searchTranscripts({ lineage, q: needle });
     assert.ok(r.found && allMatches(r).some(m => m.line === rows[i]), needle);
-  });
+  }
 });
 
 
 // 注入的谓词是这一层对「哪些工具证据算 Source 独有」的唯一知识来源：shared Turn History 不认识任何
 // Harness 的 outcome 分类，所以同一批 fold 在 true 与 false 下的匹配面必须整块地不同。
-test('search：注入 () => true 时每个工具对都进匹配面', () => {
-  const all = searchWith({ store: storeEmpty, lineage, q: 'read-bucket-literal',
+test('search：注入 () => true 时每个工具对都进匹配面', async () => {
+  const all = await searchWith({ store: storeEmpty, lineage, q: 'read-bucket-literal',
     includeToolEvidence: () => true });
   assert.equal(all.found, true);
   // 这个字面量在 result 里，所以命中行是 result 自己那一行，不是发起调用的那一行。
-  assert.equal(allMatches(all)[0].line, foldById(transcriptA, 'a-read').toolPairs[0].resultSourceOrdinal);
+  assert.equal(allMatches(all)[0].line, (await foldById(transcriptA, 'a-read')).toolPairs[0].resultSourceOrdinal);
 });
 
-test('search：注入 () => false 时一个工具对都不进，可见正文仍照旧命中', () => {
+test('search：注入 () => false 时一个工具对都不进，可见正文仍照旧命中', async () => {
   const none = { store: storeEmpty, lineage, includeToolEvidence: () => false };
-  assert.deepEqual(searchWith({ ...none, q: 'residual-bucket-literal' }), { found: false });
-  assert.deepEqual(searchWith({ ...none, q: 'tool-only-literal' }), { found: false });
-  assert.equal(searchWith({ ...none, q: 'visible-literal' }).found, true);
+  assert.deepEqual(await searchWith({ ...none, q: 'residual-bucket-literal' }), { found: false });
+  assert.deepEqual(await searchWith({ ...none, q: 'tool-only-literal' }), { found: false });
+  assert.equal((await searchWith({ ...none, q: 'visible-literal' })).found, true);
 });
 
-test('search：谓词只在配对之后被调用，拿到的是胜出的那一对', () => {
+test('search：谓词只在配对之后被调用，拿到的是胜出的那一对', async () => {
   const seen = [];
-  searchWith({ store: storeEmpty, lineage, q: 'needle-literal',
+  await searchWith({ store: storeEmpty, lineage, q: 'needle-literal',
     includeToolEvidence: (pair) => { seen.push(pair); return true; } });
   assert.ok(seen.length > 0);
   const bash = seen.find(p => p.toolUseId === 'tu-bash');
@@ -358,13 +366,13 @@ test('search：谓词只在配对之后被调用，拿到的是胜出的那一�
   assert.equal(read.resourceKey, '/synthetic/read-target.js');
 });
 
-test('head U 的匹配面是 fold 原文，不是清洗结果', () => {
-  assert.equal(searchTranscripts({ lineage, q: '/model opus' }).found, false);
-  assert.equal(searchTranscripts({ lineage, q: '/model' }).found, true);
+test('head U 的匹配面是 fold 原文，不是清洗结果', async () => {
+  assert.equal((await searchTranscripts({ lineage, q: '/model opus' })).found, false);
+  assert.equal((await searchTranscripts({ lineage, q: '/model' })).found, true);
 });
 
-test('超长实体中段可命中（不先套 detail 的 10k cap）', () => {
-  const r = searchTranscripts({ lineage, q: 'mid-literal' });
+test('超长实体中段可命中（不先套 detail 的 10k cap）', async () => {
+  const r = await searchTranscripts({ lineage, q: 'mid-literal' });
   assert.equal(r.found, true);
   assert.ok(allMatches(r)[0].excerpt.includes('mid-literal'));
   assert.ok(allMatches(r)[0].excerpt.startsWith('…') && allMatches(r)[0].excerpt.endsWith('…'));
@@ -373,64 +381,69 @@ test('超长实体中段可命中（不先套 detail 的 10k cap）', () => {
 
 // ── Budget / ordering ──────────────────────────────────────────────────────────
 
-test('预算内只装完整命中；首个装不下的更旧命中 ⇒ truncated:true 并停止读取更老会话', () => {
+test('预算内只装完整命中；首个装不下的更旧命中 ⇒ truncated:true 并停止读取更老会话', async () => {
   const read = [];
-  const counting = { read: (locator) => { read.push(locator); return dialogueSource.read(locator); } };
-  const r = searchTranscripts({ lineage: twoSessionLineage, q: 'frequent', dialogueSource: counting });
+  const counting = { read: async (locator) => { read.push(locator); return dialogueSource.read(locator); } };
+  const r = await searchTranscripts({ lineage: twoSessionLineage, q: 'frequent', dialogueSource: counting });
   assert.equal(r.truncated, true);
   assert.ok(allMatches(r).length > 0 && allMatches(r).length < FREQUENT_COUNT);
   assert.deepEqual(read, [twoSessionLineage[1].sourceLocator]);
   assert.ok(allMatches(r).every(m => m.excerpt.replaceAll('…', '').length <= HISTORY_EXCERPT_CHARS));
 });
 
-test('稀有词扫到 lineage 尽头且 truncated:false；零命中精确为 {found:false}', () => {
-  const rare = searchTranscripts({ lineage: twoSessionLineage, q: 'rare-literal' });
+test('稀有词扫到 lineage 尽头且 truncated:false；零命中精确为 {found:false}', async () => {
+  const rare = await searchTranscripts({ lineage: twoSessionLineage, q: 'rare-literal' });
   assert.equal(rare.found, true);
   assert.equal(rare.truncated, false);
-  assert.deepEqual(searchTranscripts({ lineage: twoSessionLineage, q: 'nowhere' }), { found: false });
+  assert.deepEqual(await searchTranscripts({ lineage: twoSessionLineage, q: 'nowhere' }), { found: false });
 });
 
-test('保留集按 canonical 旧→新输出', () => {
-  const r = searchTranscripts({ lineage: twoSessionLineage, q: 'cross-session-literal' });
+test('保留集按 canonical 旧→新输出', async () => {
+  const r = await searchTranscripts({ lineage: twoSessionLineage, q: 'cross-session-literal' });
   assert.deepEqual(r.ranges.map(g => g.transcript_path), [transcriptOld, transcriptNew]);
   assert.deepEqual(Object.keys(allMatches(r)[0]).sort(), ['excerpt', 'line', 'span'],
     '路径提到了 turn 级 —— match 只剩行地址与证据');
 });
 
-test('不可读会话在无 scope 搜索里被静默跳过，不影响其余命中', () => {
+test('search：延后 resolve 的 Source 命中与同步读相同', async () => {
+  assert.deepEqual(await searchTranscripts({ lineage, q: 'visible-literal', dialogueSource: deferred }),
+    await searchTranscripts({ lineage, q: 'visible-literal' }));
+});
+
+test('不可读会话在无 scope 搜索里被静默跳过，不影响其余命中', async () => {
   const withMissing = [
     source('sess-missing', join(dir, 'no-such-file.jsonl'), 970),
     source('sess-search-a', transcriptA, 971),
   ];
-  const r = searchTranscripts({ lineage: withMissing, q: 'visible-literal' });
+  const r = await searchTranscripts({ lineage: withMissing, q: 'visible-literal' });
   assert.equal(r.found, true);
   assert.deepEqual(r.ranges.map(g => g.transcript_path), [transcriptA]);
 });
 
 // ── Scope ──────────────────────────────────────────────────────────────────────
 
-test('合法 scope 内零命中仍是 found:false；scope 只改变扫描范围', () => {
-  assert.deepEqual(searchTranscripts({ lineage, q: 'visible-literal', scope: 'S1:32' }), { found: false });
-  assert.equal(searchTranscripts({ lineage, q: 'visible-literal', scope: 'S1:13' }).found, true);
+test('合法 scope 内零命中仍是 found:false；scope 只改变扫描范围', async () => {
+  assert.deepEqual(await searchTranscripts({ lineage, q: 'visible-literal', scope: 'S1:32' }), { found: false });
+  assert.equal((await searchTranscripts({ lineage, q: 'visible-literal', scope: 'S1:13' })).found, true);
 });
 
-test('scope 覆盖整个 turn span，而不是整个 session 或仅头 U', () => {
-  assert.equal(searchTranscripts({ lineage, q: 'span-only-literal', scope: 'S1:13' }).found, true);
-  assert.deepEqual(searchTranscripts({ lineage, q: 'span-only-literal', scope: 'S1:32' }), { found: false });
+test('scope 覆盖整个 turn span，而不是整个 session 或仅头 U', async () => {
+  assert.equal((await searchTranscripts({ lineage, q: 'span-only-literal', scope: 'S1:13' })).found, true);
+  assert.deepEqual(await searchTranscripts({ lineage, q: 'span-only-literal', scope: 'S1:32' }), { found: false });
   // 头 U 自己的原文也在 span 内
-  assert.equal(searchTranscripts({ lineage, q: '/model', scope: 'S1:13' }).found, true);
+  assert.equal((await searchTranscripts({ lineage, q: '/model', scope: 'S1:13' })).found, true);
   // 别的 turn 的正文不进这个 span
-  assert.deepEqual(searchTranscripts({ lineage, q: 'needle-literal', scope: 'S1:13' }), { found: false });
+  assert.deepEqual(await searchTranscripts({ lineage, q: 'needle-literal', scope: 'S1:13' }), { found: false });
 });
 
-test('label / T 不存在、转录不可读、非头 U 的 T 一律 scope_not_found', () => {
+test('label / T 不存在、转录不可读、非头 U 的 T 一律 scope_not_found', async () => {
   const cases = ['S9:13', 'S1:14', 'S1:99999', 'nonsense', ''];
   for (const scope of cases) {
-    assert.throws(() => searchTranscripts({ lineage, q: 'visible-literal', scope }),
+    await assert.rejects(() => searchTranscripts({ lineage, q: 'visible-literal', scope }),
       /scope_not_found/, scope);
   }
   const unreadable = [source('sess-gone', join(dir, 'gone.jsonl'), 972)];
-  assert.throws(() => searchTranscripts({ lineage: unreadable, q: 'x', scope: 'S1:1' }), /scope_not_found/);
+  await assert.rejects(() => searchTranscripts({ lineage: unreadable, q: 'x', scope: 'S1:1' }), /scope_not_found/);
 });
 
 // ── Locate fixtures ────────────────────────────────────────────────────────────
@@ -595,7 +608,7 @@ storeWin.upsertTurnNotes([
     { uuid: `win-b-${j}`, uText, note: `note b${j}`, sourceTimestamp: 500 - j * 100 })),
 ]);
 const winIds = winLineage.map(e => e.sessionId);
-const locateWin = (q) => locateWith({ store: storeWin, lineage: winLineage, q });
+const locateWin = async (q) => locateWith({ store: storeWin, lineage: winLineage, q });
 
 // 预算组与地板组：note 取 NOTE_TOKEN_LIMIT 的满额（DEFAULT_CTP 下 800 token = 2400 个 ascii 字符），
 // 也就是提交侧允许的最大值。预算组的 u 短，地板组的 u 也取满额 —— 一条最坏情况的命中带满窗口仍必须
@@ -622,7 +635,7 @@ const floorLineage = [source('sess-win-floor', floorPath, 943)];
 storeFloor.upsertTurnNotes(FLOOR_U.map((uText, i) => noteRow('sess-win-floor',
   { uuid: `flo-${i}`, uText, note: MAX_NOTE, sourceTimestamp: 5000 - i * 100 })));
 
-const locate = (args) => locateWith({ store: storeMain, lineage: locateLineage, ...args });
+const locate = async (args) => locateWith({ store: storeMain, lineage: locateLineage, ...args });
 
 // `hit` 只出现在命中项上，所以「哪一项是命中」只能从这个键读出来；context 项断言键的缺席。
 const hitScopes = (r) => r.ranges.filter(e => e.hit).map(e => e.scope);
@@ -631,22 +644,22 @@ const entryAt = (r, scope) => r.ranges.find(e => e.scope === scope);
 
 // ── Locate fixture self-proofs ─────────────────────────────────────────────────
 
-test('fixture 自证：活跃锚落在预期物理行，废弃兄弟不在活跃路径上，S3 转录确实不可读', () => {
-  const ordinalsOf = (p) => activePathOrdinals(turnsOfPath(p));
-  const main = ordinalsOf(locateMainPath);
+test('fixture 自证：活跃锚落在预期物理行，废弃兄弟不在活跃路径上，S3 转录确实不可读', async () => {
+  const ordinalsOf = async (p) => activePathOrdinals(await turnsOfPath(p));
+  const main = await ordinalsOf(locateMainPath);
   assert.equal(main.get('loc-kept'), 14);
   assert.equal(main.has('loc-lost'), false, '废弃兄弟必须真的丢掉活跃路径');
-  assert.deepEqual([...ordinalsOf(locateIndexPath).entries()], [
+  assert.deepEqual([...(await ordinalsOf(locateIndexPath)).entries()], [
     ['loc-shape-noted', 21], ['loc-shape-bare', 31], ['loc-path-row', 41],
     ['loc-cjk-row', 51], ['loc-and-row', 61], ['loc-prefix-row', 71],
   ]);
-  assert.equal(dialogueSource.read(locateLineage[2].sourceLocator).status, 'unavailable');
-  assert.deepEqual([...ordinalsOf(rankBPath).entries()],
+  assert.equal((await dialogueSource.read(locateLineage[2].sourceLocator)).status, 'unavailable');
+  assert.deepEqual([...(await ordinalsOf(rankBPath)).entries()],
     [['rank-b-20', 21], ['rank-b-40', 41], ['rank-b-60', 61], ['rank-b-80', 81]]);
-  assert.deepEqual([...ordinalsOf(rankAPath).entries()], [['rank-a-30', 31], ['rank-a-50', 51]]);
+  assert.deepEqual([...(await ordinalsOf(rankAPath)).entries()], [['rank-a-30', 31], ['rank-a-50', 51]]);
   // 窗口组的锚落在连续物理行，所以下标之差就是 T 之差 —— 窗口断言里的 S{k}:{T} 直接对应下标距离。
-  assert.deepEqual([...ordinalsOf(winAPath).values()], [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual([...ordinalsOf(winBPath).values()], [1, 2, 3]);
+  assert.deepEqual([...(await ordinalsOf(winAPath)).values()], [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual([...(await ordinalsOf(winBPath)).values()], [1, 2, 3]);
 });
 
 test('fixture 自证：机械路径索引只收路径，前缀行的 u_text 真的截掉了尾部字面量', () => {
@@ -660,36 +673,36 @@ test('fixture 自证：机械路径索引只收路径，前缀行的 u_text 真�
 
 // ── Locate ─────────────────────────────────────────────────────────────────────
 
-test('locate：多词保持 AND，零命中不做 OR fallback，FTS 运算符按字面量处理', () => {
-  assert.equal(locate({ q: 'alpha' }).found, true);
-  assert.equal(locate({ q: 'alpha zzzz' }).found, false);
-  assert.equal(locate({ q: 'alpha OR zzzz' }).found, false, 'advanced MATCH 不可达：OR 只是一个词');
+test('locate：多词保持 AND，零命中不做 OR fallback，FTS 运算符按字面量处理', async () => {
+  assert.equal((await locate({ q: 'alpha' })).found, true);
+  assert.equal((await locate({ q: 'alpha zzzz' })).found, false);
+  assert.equal((await locate({ q: 'alpha OR zzzz' })).found, false, 'advanced MATCH 不可达：OR 只是一个词');
 });
 
-test('locate：note 未提到的路径仍可命中（机械索引），工具名不进索引', () => {
-  const r = locate({ q: 'lib/store.js' });
+test('locate：note 未提到的路径仍可命中（机械索引），工具名不进索引', async () => {
+  const r = await locate({ q: 'lib/store.js' });
   assert.deepEqual(hitScopes(r), ['S2:41']);
   const hit = entryAt(r, 'S2:41');
   assert.ok(!hit.u.includes('store.js') && !hit.note.includes('store.js'));
-  assert.equal(locate({ q: 'Bash' }).found, false, '工具名不是检索词');
+  assert.equal((await locate({ q: 'Bash' })).found, false, '工具名不是检索词');
 });
 
-test('locate：连续中文经 bigram 命中，与 search_terms 同一套切分', () => {
-  assert.deepEqual(hitScopes(locate({ q: '连续中文' })), ['S2:51']);
+test('locate：连续中文经 bigram 命中，与 search_terms 同一套切分', async () => {
+  assert.deepEqual(hitScopes(await locate({ q: '连续中文' })), ['S2:51']);
 });
 
-test('locate：候选返回前解析 T 并校验 active path；废弃分支与不可读来源都省略', () => {
+test('locate：候选返回前解析 T 并校验 active path；废弃分支与不可读来源都省略', async () => {
   // 全量列表而非只看命中：废弃的兄弟 U 也不能作为邻居被窗口捎带进来。
-  assert.deepEqual(allScopes(locate({ q: 'shared-note-word' })), ['S1:14']);
+  assert.deepEqual(allScopes(await locate({ q: 'shared-note-word' })), ['S1:14']);
 });
 
-test('locate：全部候选无法验证时与零命中同形，不暴露候选元数据', () => {
-  assert.deepEqual(locateWith({ store: storeMain, lineage: unreadableOnlyLineage, q: 'shared-note-word' }),
+test('locate：全部候选无法验证时与零命中同形，不暴露候选元数据', async () => {
+  assert.deepEqual(await locateWith({ store: storeMain, lineage: unreadableOnlyLineage, q: 'shared-note-word' }),
     { found: false });
 });
 
-test('locate：命中投影为 {scope,u,note?,transcript_path}+hit，context 项同形但无 hit 与路径，note 为 NULL 时键不出现', () => {
-  const r = locate({ q: 'projshape-word' });
+test('locate：命中投影为 {scope,u,note?,transcript_path}+hit，context 项同形但无 hit 与路径，note 为 NULL 时键不出现', async () => {
+  const r = await locate({ q: 'projshape-word' });
   assert.deepEqual(hitScopes(r), ['S2:21', 'S2:31']);
   assert.deepEqual(allScopes(r), ['S2:21', 'S2:31', 'S2:41', 'S2:51']);
   assert.deepEqual(Object.keys(entryAt(r, 'S2:21')).sort(), ['hit', 'note', 'scope', 'transcript_path', 'u']);
@@ -700,54 +713,58 @@ test('locate：命中投影为 {scope,u,note?,transcript_path}+hit，context 项
   assert.equal(entryAt(r, 'S2:21').note, 'a recorded decision');
 });
 
-test('locate：hit 的 transcript_path 是它自己那个 session 的转录，不是 lineage 里别的', () => {
-  const r = locate({ q: 'projshape-word' });
+test('locate：hit 的 transcript_path 是它自己那个 session 的转录，不是 lineage 里别的', async () => {
+  const r = await locate({ q: 'projshape-word' });
   // 上下文条目的职责是被认出来而不是被读，而路径按条目重复会从预算里挤掉候选 —— 所以只有 hit 带它。
   assert.equal(entryAt(r, 'S2:21').transcript_path, locateIndexPath);
   assert.equal(entryAt(r, 'S2:31').transcript_path, locateIndexPath);
 });
 
-test('locate：u_text 只索引 C-token 前缀 —— 前缀命中、尾部不命中，尾部仍由无 scope search 找到', () => {
-  const r = locate({ q: 'prefix-literal' });
+test('locate：u_text 只索引 C-token 前缀 —— 前缀命中、尾部不命中，尾部仍由无 scope search 找到', async () => {
+  const r = await locate({ q: 'prefix-literal' });
   assert.deepEqual(hitScopes(r), ['S2:71']);
   assert.ok(entryAt(r, 'S2:71').u.endsWith(` [truncated; ${prefixStored.uOriginalChars} chars]`),
     '投影复用消费侧 Turn Record，截断标记照旧');
-  assert.equal(locate({ q: 'tail-literal' }).found, false);
-  assert.equal(searchTranscripts({ lineage: locateLineage, q: 'tail-literal' }).found, true);
+  assert.equal((await locate({ q: 'tail-literal' })).found, false);
+  assert.equal((await searchTranscripts({ lineage: locateLineage, q: 'tail-literal' })).found, true);
 });
 
-test('locate：session 集合为空时精确返回 {found:false}', () => {
-  assert.deepEqual(locateWith({ store: storeMain, lineage: [], q: 'shared-note-word' }), { found: false });
+test('locate：延后 resolve 的 Source 命中与同步读相同', async () => {
+  assert.deepEqual(await locate({ q: 'alpha', dialogueSource: deferred }), await locate({ q: 'alpha' }));
 });
 
-test('locate：turn FTS 状态位为 false 时不发查询即 locate_unavailable', (t) => {
+test('locate：session 集合为空时精确返回 {found:false}', async () => {
+  assert.deepEqual(await locateWith({ store: storeMain, lineage: [], q: 'shared-note-word' }), { found: false });
+});
+
+test('locate：turn FTS 状态位为 false 时不发查询即 locate_unavailable', async (t) => {
   const priorFlag = storeMain._turnFtsAvailable;
   const original = storeMain.locateTurnNotes;
   let queries = 0;
   storeMain.locateTurnNotes = (...args) => { queries++; return original.apply(storeMain, args); };
   storeMain._turnFtsAvailable = false;
   t.after(() => { storeMain._turnFtsAvailable = priorFlag; storeMain.locateTurnNotes = original; });
-  assert.throws(() => locate({ q: 'shared-note-word' }), /locate_unavailable/);
+  await assert.rejects(() => locate({ q: 'shared-note-word' }), /locate_unavailable/);
   assert.equal(queries, 0, '状态位为 false 时不再查 FTS');
 });
 
-test('locate：SQL 的全局 rank 顺序原样取用，跨 session 交错不重排，最多 5 个命中', () => {
-  const r = locateWith({ store: storeRank, lineage: rankLineage, q: 'rank-probe-word' });
+test('locate：SQL 的全局 rank 顺序原样取用，跨 session 交错不重排，最多 5 个命中', async () => {
+  const r = await locateWith({ store: storeRank, lineage: rankLineage, q: 'rank-probe-word' });
   // 全局前五 = b-80/a-50/b-60/a-30/b-40；按 session 分桶会取成 b-80/b-60/b-40/b-20/a-50 —— 集合不同。
   assert.deepEqual(hitScopes(r), ['S1:31', 'S1:51', 'S2:41', 'S2:61', 'S2:81']);
   // S2 的三个命中共用一段窗口，把未命中的 b-20 一并带进来，且只带一次。
   assert.deepEqual(allScopes(r), ['S1:31', 'S1:51', 'S2:21', 'S2:41', 'S2:61', 'S2:81']);
 });
 
-test('locate：按需解析，每 session 至多一次；凑满 5 个命中后不打开更低 rank 的 session', () => {
+test('locate：按需解析，每 session 至多一次；凑满 5 个命中后不打开更低 rank 的 session', async () => {
   const read = [];
-  const counting = { read: (locator) => { read.push(locator); return dialogueSource.read(locator); } };
-  const r = locateWith({ store: storeRank, lineage: rankLineage, q: 'rank-probe-word', dialogueSource: counting });
+  const counting = { read: async (locator) => { read.push(locator); return dialogueSource.read(locator); } };
+  const r = await locateWith({ store: storeRank, lineage: rankLineage, q: 'rank-probe-word', dialogueSource: counting });
   assert.equal(hitScopes(r).length, 5);
   assert.deepEqual(read, [rankBPath, rankAPath], 'S2 只读一次，S3 完全不打开');
 });
 
-test('locate：运行期虚表被删（状态位仍为 true）⇒ locate_unavailable，精确 search 不受影响', (t) => {
+test('locate：运行期虚表被删（状态位仍为 true）⇒ locate_unavailable，精确 search 不受影响', async (t) => {
   // 三个触发器仍指向已删虚表，所以本例结束前必须重建虚表并 rebuild，否则同库后续 upsert 全炸。
   storeDrop._db.exec('DROP TABLE turn_note_fts');
   t.after(() => {
@@ -756,21 +773,22 @@ test('locate：运行期虚表被删（状态位仍为 true）⇒ locate_unavail
     storeDrop._db.exec("INSERT INTO turn_note_fts(turn_note_fts) VALUES('rebuild')");
   });
   assert.equal(storeDrop.turnFtsAvailable(), true, '可用性状态位在 open 时算定，删表不改它');
-  assert.throws(() => locateWith({ store: storeDrop, lineage: dropLineage, q: 'drop-probe-word' }),
-    /locate_unavailable/);
-  assert.equal(searchTranscripts({ lineage: dropLineage, q: 'drop-visible-literal' }).found, true);
+  await assert.rejects(() => locateWith({ store: storeDrop, lineage: dropLineage, q: 'drop-probe-word' }),
+    (err) => err.code === 'locate_unavailable' && /turn_note_fts/.test(err.cause?.message ?? ''),
+    'locate_unavailable 带上 SQL 错误作为 cause');
+  assert.equal((await searchTranscripts({ lineage: dropLineage, q: 'drop-visible-literal' })).found, true);
 });
 
-test('locate：虚表重建后同一 store 仍可写可定位（上一例的收尾确实生效）', () => {
+test('locate：虚表重建后同一 store 仍可写可定位（上一例的收尾确实生效）', async () => {
   storeDrop.upsertTurnNotes([noteRow('sess-loc-drop', { uuid: 'drop-u', uText: 'drop-probe-word turn again' })]);
-  const r = locateWith({ store: storeDrop, lineage: dropLineage, q: 'drop-probe-word' });
+  const r = await locateWith({ store: storeDrop, lineage: dropLineage, q: 'drop-probe-word' });
   assert.deepEqual(allScopes(r), ['S1:1']);
 });
 
 // ── Locate windows ─────────────────────────────────────────────────────────────
 
-test('locate：命中带上同会话前后各两条邻居，摊平成一条按 T 升序的列表', () => {
-  const r = locateWin('winmidword');
+test('locate：命中带上同会话前后各两条邻居，摊平成一条按 T 升序的列表', async () => {
+  const r = await locateWin('winmidword');
   assert.deepEqual(hitScopes(r), ['S1:5']);
   assert.deepEqual(allScopes(r), ['S1:3', 'S1:4', 'S1:5', 'S1:6', 'S1:7']);
   for (const scope of ['S1:3', 'S1:4', 'S1:6', 'S1:7']) {
@@ -778,36 +796,36 @@ test('locate：命中带上同会话前后各两条邻居，摊平成一条按 T
   }
 });
 
-test('locate：会话边缘的命中拿短窗口，绝不借邻居会话的记录；输出先按 lineage 序再按 T 序', () => {
+test('locate：会话边缘的命中拿短窗口，绝不借邻居会话的记录；输出先按 lineage 序再按 T 序', async () => {
   const raw = storeWin.locateTurnNotes(winIds, 'winedgeword').map(row => row.anchorUuid);
   assert.deepEqual(raw, ['win-b-0', 'win-a-7'], 'rank 序把 S2 排在 S1 之前 —— 升序输出不是 rank 序的复制');
-  const r = locateWin('winedgeword');
+  const r = await locateWin('winedgeword');
   assert.deepEqual(hitScopes(r), ['S1:8', 'S2:1']);
   // 前者是 A 的末条、后者是 B 的首条：两侧各缺一半窗口，且谁都没有拿到对面会话的记录。
   assert.deepEqual(allScopes(r), ['S1:6', 'S1:7', 'S1:8', 'S2:1', 'S2:2', 'S2:3']);
 });
 
-test('locate：会话末条上的单个命中，窗口只在本会话内收缩 —— 绝不借下一个会话的记录', () => {
+test('locate：会话末条上的单个命中，窗口只在本会话内收缩 —— 绝不借下一个会话的记录', async () => {
   // 边缘窗口那一例里每个会话都有命中，它们的窗口并起来正好等于断言的列表，所以那一例分辨不出
   // 「窗口跨了会话」。这一例只让 A 的末条命中，于是 S2 的任何一条出现都只可能来自跨会话取窗。
   const raw = storeWin.locateTurnNotes(winIds, 'winrow7').map(row => row.anchorUuid);
   assert.deepEqual(raw, ['win-a-7'], 'fixture 自证：这个词只命中 A 的末条');
-  const r = locateWin('winrow7');
+  const r = await locateWin('winrow7');
   assert.deepEqual(hitScopes(r), ['S1:8']);
   assert.deepEqual(allScopes(r), ['S1:6', 'S1:7', 'S1:8']);
 });
 
-test('locate：相隔 2 的两个命中共享 context，共享记录只出现一次，后到的命中把 context 升级', () => {
+test('locate：相隔 2 的两个命中共享 context，共享记录只出现一次，后到的命中把 context 升级', async () => {
   const raw = storeWin.locateTurnNotes(winIds, 'windedupword').map(row => row.anchorUuid);
   assert.deepEqual(raw, ['win-a-4', 'win-a-2'], 'rank 序先给 win-a-4 —— win-a-2 先作为 context 落地再被升级');
-  const r = locateWin('windedupword');
+  const r = await locateWin('windedupword');
   assert.deepEqual(allScopes(r), ['S1:1', 'S1:2', 'S1:3', 'S1:4', 'S1:5', 'S1:6', 'S1:7']);
   assert.deepEqual(hitScopes(r), ['S1:3', 'S1:5']);
   assert.equal(entryAt(r, 'S1:3').note, WIN_LONG_NOTE, '升级后带完整 note，不再是预览');
 });
 
-test('locate：context 项的 note 压到预览额度并带上原长后缀，短 note 原样不加标记', () => {
-  const r = locateWin('winmidword');
+test('locate：context 项的 note 压到预览额度并带上原长后缀，短 note 原样不加标记', async () => {
+  const r = await locateWin('winmidword');
   const suffix = ` [truncated; ${WIN_LONG_NOTE.length} chars]`;
   const preview = entryAt(r, 'S1:3').note;
   assert.ok(preview.endsWith(suffix), 'context note 复用投影 u 的同一条截断标记');
@@ -818,19 +836,19 @@ test('locate：context 项的 note 压到预览额度并带上原长后缀，短
   assert.equal(entryAt(r, 'S1:4').note, 'note three', '本来就在额度内的 note 不进截断路径');
 });
 
-test('locate：验证通过的候选多于上限时恰好留 5 个命中，且这一刀不是预算切的', () => {
+test('locate：验证通过的候选多于上限时恰好留 5 个命中，且这一刀不是预算切的', async () => {
   assert.equal(storeWin.locateTurnNotes(winIds, 'wincapword').length, 8, '候选真的多于 5');
-  const r = locateWin('wincapword');
+  const r = await locateWin('wincapword');
   assert.equal(hitScopes(r).length, 5);
   assert.ok(estimateWireTokens(r, DEFAULT_CTP) < HISTORY_TOKEN_BUDGET / 2,
     '离预算还很远 —— 砍到 5 的是命中上限而不是预算');
 });
 
-test('locate：note 撑满额度时预算压低命中数，响应仍在预算内，且没有任何字段声明这次删减', () => {
+test('locate：note 撑满额度时预算压低命中数，响应仍在预算内，且没有任何字段声明这次删减', async () => {
   const nominated = storeBudget.locateTurnNotes(['sess-win-budget'], 'winbudgetword');
   assert.deepEqual(nominated.map(row => row.anchorUuid), BUDGET_HITS.map(i => `bud-${i}`),
     'rank 序就是下标序 —— 留下的三个必须是它的前缀，才说明走停了而不是跳着挑');
-  const r = locateWith({ store: storeBudget, lineage: budgetLineage, q: 'winbudgetword' });
+  const r = await locateWith({ store: storeBudget, lineage: budgetLineage, q: 'winbudgetword' });
   assert.deepEqual(hitScopes(r), ['S1:3', 'S1:8', 'S1:13']);
   assert.ok(isWithinHistoryBudget(estimateWireTokens(r, DEFAULT_CTP)));
   assert.deepEqual(Object.keys(r).sort(), ['found', 'ranges'], '没有 truncated、没有计数、没有 rank');
@@ -840,8 +858,8 @@ test('locate：note 撑满额度时预算压低命中数，响应仍在预算内
   }
 });
 
-test('locate：u 与 note 都撑满的单条命中带满窗口仍在预算内 —— 预算砍不掉第一个命中', () => {
-  const r = locateWith({ store: storeFloor, lineage: floorLineage, q: 'winfloorword' });
+test('locate：u 与 note 都撑满的单条命中带满窗口仍在预算内 —— 预算砍不掉第一个命中', async () => {
+  const r = await locateWith({ store: storeFloor, lineage: floorLineage, q: 'winfloorword' });
   assert.equal(r.found, true);
   assert.deepEqual(hitScopes(r), ['S1:3']);
   assert.deepEqual(allScopes(r), ['S1:1', 'S1:2', 'S1:3', 'S1:4', 'S1:5']);
@@ -892,7 +910,7 @@ storeEnrich.upsertTurnNotes([
   noteRow('sess-enrich-a', { uuid: 'enr-nonote', uText: 'nonote turn instruction', sourceTimestamp: 1000 }),
 ]);
 
-const enrichSearch = (q, scope = null) =>
+const enrichSearch = async (q, scope = null) =>
   searchWith({ store: storeEnrich, lineage: enrichLineage, q, scope });
 // 富化挂在 turn 上，所以「裸形」是一个 turn 分组的性质，不再是单条 match 的性质。
 const BARE_GROUP_KEYS = ['matches', 'transcript_path'];
@@ -908,11 +926,11 @@ storeFreq.upsertTurnNotes(Array.from({ length: FREQUENT_COUNT }, (_, i) => noteR
 
 // ── Search enrichment fixture self-proofs ──────────────────────────────────────
 
-test('fixture 自证：A 会话三个头 U 各占自己那一行，命中 fold 的 T 真的不是头 U 的 T，B 会话零记录', () => {
-  assert.deepEqual(turnsOfPath(enrichAPath).map(t => t.sourceOrdinal), [1, 5, 7]);
+test('fixture 自证：A 会话三个头 U 各占自己那一行，命中 fold 的 T 真的不是头 U 的 T，B 会话零记录', async () => {
+  assert.deepEqual((await turnsOfPath(enrichAPath)).map(t => t.sourceOrdinal), [1, 5, 7]);
   assert.deepEqual(
-    ['enr-deep', 'enr-tool', 'enr-orphan-a', 'enr-nonote-a']
-      .map(u => lineOfFold(enrichAPath, u)),
+    await Promise.all(['enr-deep', 'enr-tool', 'enr-orphan-a', 'enr-nonote-a']
+      .map(u => lineOfFold(enrichAPath, u))),
     [2, 3, 6, 8], '命中 fold 都不在头 U 那一行 —— 两个 T 若相同，scope 断言就不再有区分力');
   assert.equal(storeEnrich.listTurnNotes('sess-enrich-b').length, 0);
   assert.deepEqual(storeEnrich.listTurnNotes('sess-enrich-a').map(r => r.anchorUuid).sort(),
@@ -921,8 +939,8 @@ test('fixture 自证：A 会话三个头 U 各占自己那一行，命中 fold �
 
 // ── Search enrichment ──────────────────────────────────────────────────────────
 
-test('search：命中所在 turn 有记录时分组带上 scope / u / 完整 note；同一次调用里零记录的会话仍是裸形', () => {
-  const r = enrichSearch('crossenrich-literal');
+test('search：命中所在 turn 有记录时分组带上 scope / u / 完整 note；同一次调用里零记录的会话仍是裸形', async () => {
+  const r = await enrichSearch('crossenrich-literal');
   assert.deepEqual(r.ranges.map(g => g.transcript_path), [enrichAPath, enrichBPath]);
   const [enriched, bare] = r.ranges;
   assert.deepEqual(keysOf(enriched), [...BARE_GROUP_KEYS, 'note', 'scope', 'u'].sort());
@@ -932,57 +950,57 @@ test('search：命中所在 turn 有记录时分组带上 scope / u / 完整 not
   assert.deepEqual(keysOf(bare), BARE_GROUP_KEYS);
 });
 
-test('search：scope 是头 U 的 T，而不是命中 fold 的行号', () => {
+test('search：scope 是头 U 的 T，而不是命中 fold 的行号', async () => {
   for (const q of ['deepfold-literal', 'toolfold-literal']) {
-    assert.equal(enrichSearch(q).ranges[0].scope, 'S1:1', q);
+    assert.equal((await enrichSearch(q)).ranges[0].scope, 'S1:1', q);
   }
 });
 
-test('search：无记录的 turn 分组一个富化字段都不带，绝不借前一个 noted turn 的记录', () => {
-  const r = enrichSearch('orphanfold-literal');
-  assert.deepEqual(allMatches(r).map(m => m.line), [lineOfFold(enrichAPath, 'enr-orphan-a')]);
+test('search：无记录的 turn 分组一个富化字段都不带，绝不借前一个 noted turn 的记录', async () => {
+  const r = await enrichSearch('orphanfold-literal');
+  assert.deepEqual(allMatches(r).map(m => m.line), [await lineOfFold(enrichAPath, 'enr-orphan-a')]);
   assert.deepEqual(keysOf(r.ranges[0]), BARE_GROUP_KEYS);
   // 头 U 自己的原文同理：这个 turn 整个没有记录，而它前面那个 turn 有
-  assert.deepEqual(keysOf(enrichSearch('orphan turn instruction').ranges[0]), BARE_GROUP_KEYS);
+  assert.deepEqual(keysOf((await enrichSearch('orphan turn instruction')).ranges[0]), BARE_GROUP_KEYS);
 });
 
-test('search：note 为 NULL 的记录只带 scope 与 u，note 键不出现', () => {
-  const g = enrichSearch('nonotefold-literal').ranges[0];
+test('search：note 为 NULL 的记录只带 scope 与 u，note 键不出现', async () => {
+  const g = (await enrichSearch('nonotefold-literal')).ranges[0];
   assert.deepEqual(keysOf(g), [...BARE_GROUP_KEYS, 'scope', 'u'].sort());
   assert.equal(g.scope, 'S1:7');
   assert.equal(g.u, 'nonote turn instruction');
 });
 
-test('search：带 scope 的分组一律裸形 —— 这个 turn 有带 note 的记录也一样', () => {
-  const scoped = enrichSearch('deepfold-literal', 'S1:1');
-  assert.deepEqual(allMatches(scoped).map(m => m.line), [lineOfFold(enrichAPath, 'enr-deep')]);
+test('search：带 scope 的分组一律裸形 —— 这个 turn 有带 note 的记录也一样', async () => {
+  const scoped = await enrichSearch('deepfold-literal', 'S1:1');
+  assert.deepEqual(allMatches(scoped).map(m => m.line), [await lineOfFold(enrichAPath, 'enr-deep')]);
   assert.deepEqual(keysOf(scoped.ranges[0]), BARE_GROUP_KEYS);
   // 同一个命中在无 scope 时确实富化 —— 那三个键的缺席只可能来自 scope 这一个条件
-  assert.deepEqual(keysOf(enrichSearch('deepfold-literal').ranges[0]),
+  assert.deepEqual(keysOf((await enrichSearch('deepfold-literal')).ranges[0]),
     [...BARE_GROUP_KEYS, 'note', 'scope', 'u'].sort());
 });
 
-test('search：无 scope 分组交出的 scope 喂回 search 拿回同一条命中', () => {
-  const [group] = enrichSearch('crossenrich-literal').ranges;
+test('search：无 scope 分组交出的 scope 喂回 search 拿回同一条命中', async () => {
+  const [group] = (await enrichSearch('crossenrich-literal')).ranges;
   assert.equal(group.scope, 'S1:1');
-  const round = enrichSearch('crossenrich-literal', group.scope);
+  const round = await enrichSearch('crossenrich-literal', group.scope);
   // 往返的是命中身份 —— 文件、命中行、excerpt；turn 级地址按上一例不参与
   assert.deepEqual(allMatches(round).map(m => m.line), group.matches.map(m => m.line));
   assert.equal(round.ranges[0].transcript_path, group.transcript_path);
   assert.equal(allMatches(round)[0].excerpt, group.matches[0].excerpt);
 });
 
-test('search：分组不改写定位符 —— line 是命中所在的物理行，不是头 U 的行', () => {
+test('search：分组不改写定位符 —— line 是命中所在的物理行，不是头 U 的行', async () => {
   for (const [q, t] of [['deepfold-literal', 2], ['toolfold-literal', 3]]) {
     // 分组的 scope 指向头 U 那一行，命中的 line 指向命中自己那一行 —— 两者是不同的坐标
-    assert.equal(allMatches(enrichSearch(q))[0].line, t, q);
-    assert.equal(enrichSearch(q).ranges[0].scope, 'S1:1', q);
+    assert.equal(allMatches(await enrichSearch(q))[0].line, t, q);
+    assert.equal((await enrichSearch(q)).ranges[0].scope, 'S1:1', q);
   }
 });
 
-test('search：一命中一 turn 时记录仍更早填满预算，被丢掉的是更旧的那些，只由 truncated:true 报告', () => {
-  const bare = searchTranscripts({ lineage: twoSessionLineage, q: 'frequent' });
-  const enriched = searchWith({
+test('search：一命中一 turn 时记录仍更早填满预算，被丢掉的是更旧的那些，只由 truncated:true 报告', async () => {
+  const bare = await searchTranscripts({ lineage: twoSessionLineage, q: 'frequent' });
+  const enriched = await searchWith({
     store: storeFreq, lineage: twoSessionLineage, q: 'frequent',
   });
   assert.equal(bare.truncated, true);
@@ -998,7 +1016,7 @@ test('search：一命中一 turn 时记录仍更早填满预算，被丢掉的�
   assert.ok(isWithinHistoryBudget(estimateWireTokens(enriched, DEFAULT_CTP)));
 });
 
-test('search：记录按需解析 —— 有命中的会话只解析一次，没有命中的会话一次都不解析', () => {
+test('search：记录按需解析 —— 有命中的会话只解析一次，没有命中的会话一次都不解析', async () => {
   // projectSession 从 store 只要 listTurnNotes。Proxy 把这条性质变成断言：被测代码多要一个方法时，失败
   // 消息就是那个方法名，而不是 store.foo is not a function —— 后者读起来像桩写漏了，不像依赖换了。
   const listed = [];
@@ -1006,16 +1024,16 @@ test('search：记录按需解析 —— 有命中的会话只解析一次，没
     { listTurnNotes: (id) => { listed.push(id); return storeEnrich.listTurnNotes(id); } },
     { get: (t, p) => p in t ? t[p] : assert.fail(`search 只该向 store 要 listTurnNotes，这次要了 ${String(p)}`) },
   );
-  const countingSearch = (q) =>
+  const countingSearch = async (q) =>
     searchWith({ store: counting, lineage: enrichLineage, q });
 
   // 'literal' 在 A 的五个 fold 与 B 的一个 fold 上都命中：每个会话仍只解析一次。
-  const both = countingSearch('literal');
+  const both = await countingSearch('literal');
   assert.equal(allMatches(both).length, 6);
   assert.deepEqual(listed, ['sess-enrich-b', 'sess-enrich-a'], '扫描序是新→旧，每会话一次');
 
   listed.length = 0;
-  countingSearch('deepfold-literal');
+  await countingSearch('deepfold-literal');
   assert.deepEqual(listed, ['sess-enrich-a'], 'B 先被扫描但一条都没命中 —— 它的记录不该被解析');
 });
 
@@ -1038,7 +1056,7 @@ const groupLineage = [source('sess-group', groupPath, 960)];
 storeGroup.upsertTurnNotes(Array.from({ length: GROUP_TURNS }, (_, k) => noteRow('sess-group', {
   uuid: `grp-${k}-head`, uText: `grouped turn ${k} head groupword`, note: GROUP_NOTE, sourceTimestamp: 1000 + k,
 })));
-const groupSearch = (scope = null) =>
+const groupSearch = async (scope = null) =>
   searchWith({ store: storeGroup, lineage: groupLineage, q: 'groupword', scope });
 // 每个 turn 占 GROUP_HITS_PER_TURN 行，头 U 是其中第一行，按 grep -n 编号。
 const headT = (k) => k * GROUP_HITS_PER_TURN + 1;
@@ -1078,8 +1096,8 @@ storePre.upsertTurnNotes([noteRow('sess-prehead', {
 
 // ── 分组 fixture 自证 ──────────────────────────────────────────────────────────
 
-test('fixture 自证：分组 fixture 的每个 turn 恰好 3 条命中 fold，且每个 turn 都有带 note 的记录', () => {
-  const turns = turnsOfPath(groupPath);
+test('fixture 自证：分组 fixture 的每个 turn 恰好 3 条命中 fold，且每个 turn 都有带 note 的记录', async () => {
+  const turns = await turnsOfPath(groupPath);
   assert.equal(turns.length, GROUP_TURNS);
   assert.deepEqual([...new Set(turns.map(t => t.lines.length))], [GROUP_HITS_PER_TURN]);
   assert.deepEqual(turns.map(t => t.sourceOrdinal),
@@ -1089,11 +1107,11 @@ test('fixture 自证：分组 fixture 的每个 turn 恰好 3 条命中 fold，�
 
 // ── 分组 wire ──────────────────────────────────────────────────────────────────
 
-test('search：同一 turn 的多条命中收成一个 ranges 条目，turn 级字段整条 wire 上只出现一次', () => {
-  const r = enrichSearch('literal');
+test('search：同一 turn 的多条命中收成一个 ranges 条目，turn 级字段整条 wire 上只出现一次', async () => {
+  const r = await enrichSearch('literal');
   const [first] = r.ranges;
   assert.deepEqual(first.matches.map(m => m.line),
-    ['enr-head', 'enr-deep', 'enr-tool'].map(u => lineOfFold(enrichAPath, u)));
+    await Promise.all(['enr-head', 'enr-deep', 'enr-tool'].map(u => lineOfFold(enrichAPath, u))));
   assert.deepEqual(Object.keys(first), ['transcript_path', 'scope', 'u', 'note', 'matches']);
   assert.equal(first.scope, 'S1:1');
   assert.equal(first.u, 'enrich head instruction crossenrich-literal');
@@ -1104,24 +1122,24 @@ test('search：同一 turn 的多条命中收成一个 ranges 条目，turn 级�
   assert.deepEqual(Object.keys(first.matches[0]).sort(), ['excerpt', 'line', 'span']);
 });
 
-test('search：ranges 按时间线拉平 —— 先 lineage 序再 turn 序，未捕获的 turn 也自成一组', () => {
-  const r = enrichSearch('literal');
+test('search：ranges 按时间线拉平 —— 先 lineage 序再 turn 序，未捕获的 turn 也自成一组', async () => {
+  const r = await enrichSearch('literal');
   assert.deepEqual(r.ranges.map(g => g.transcript_path),
     [enrichAPath, enrichAPath, enrichAPath, enrichBPath]);
   assert.deepEqual(r.ranges.map(g => g.scope ?? null), ['S1:1', null, 'S1:7', null]);
   assert.deepEqual(r.ranges.map(g => g.matches.length), [3, 1, 1, 1]);
   assert.deepEqual(allMatches(r).map(m => m.line), [
-    ...['enr-head', 'enr-deep', 'enr-tool', 'enr-orphan-a', 'enr-nonote-a']
-      .map(u => lineOfFold(enrichAPath, u)),
-    lineOfFold(enrichBPath, 'enr-b-head'),
+    ...await Promise.all(['enr-head', 'enr-deep', 'enr-tool', 'enr-orphan-a', 'enr-nonote-a']
+      .map(u => lineOfFold(enrichAPath, u))),
+    await lineOfFold(enrichBPath, 'enr-b-head'),
   ]);
 });
 
-test('search：保留集是命中序列最新的那一后缀，分组只是把它按 turn 渲染出来', () => {
+test('search：保留集是命中序列最新的那一后缀，分组只是把它按 turn 渲染出来', async () => {
   // 这一例不证明「切点可以落在 turn 内部」—— 这个 fixture 里每个 turn 都带记录，一个条目的开销（note）
   // 远大于一条 excerpt，所以溢出几乎总发生在「新开一个条目」的那条候选上，切点因此落在 turn 边界。真正
   // 钉住 turn 内部切点的是下面的 `单个 turn 的命中就超预算`。
-  const r = groupSearch();
+  const r = await groupSearch();
   assert.equal(r.truncated, true, 'fixture 必须真的撑破预算，否则这条断言是空的');
   assert.ok(r.ranges.length < GROUP_TURNS, `应当丢掉一些 turn：${r.ranges.length} / ${GROUP_TURNS}`);
   const keptHeads = r.ranges.map(g => Number(g.scope.slice(3)));
@@ -1132,8 +1150,8 @@ test('search：保留集是命中序列最新的那一后缀，分组只是把�
   assert.ok(isWithinHistoryBudget(estimateWireTokens(r, DEFAULT_CTP)));
 });
 
-test('search：单个 turn 的命中就超预算时仍返回行地址 —— 该 turn 部分进入，而不是整条响应变空', () => {
-  const r = searchWith({ store: storeWide, lineage: wideLineage, q: 'widehit' });
+test('search：单个 turn 的命中就超预算时仍返回行地址 —— 该 turn 部分进入，而不是整条响应变空', async () => {
+  const r = await searchWith({ store: storeWide, lineage: wideLineage, q: 'widehit' });
   assert.equal(r.truncated, true);
   // 回归点：准入若按 turn 整体切，这里会是 ranges:[] —— found:true 却一个地址都没有，消费者无处可去
   assert.equal(r.ranges.length, 1, '所有命中都在同一个 turn 里');
@@ -1144,17 +1162,17 @@ test('search：单个 turn 的命中就超预算时仍返回行地址 —— 该
   assert.ok(isWithinHistoryBudget(estimateWireTokens(r, DEFAULT_CTP)));
 });
 
-test('search：首个 head 之前的 fold 自成一个裸条目，不并进它后面那个 turn', () => {
-  const r = searchWith({ store: storePre, lineage: preLineage, q: 'preheadword' });
-  assert.deepEqual(allMatches(r).map(m => m.line), ['pre-a', 'pre-h'].map(u => lineOfFold(prePath, u)),
+test('search：首个 head 之前的 fold 自成一个裸条目，不并进它后面那个 turn', async () => {
+  const r = await searchWith({ store: storePre, lineage: preLineage, q: 'preheadword' });
+  assert.deepEqual(allMatches(r).map(m => m.line), await Promise.all(['pre-a', 'pre-h'].map(u => lineOfFold(prePath, u))),
     '两条命中各自成组，且旧的在前');
   assert.deepEqual(keysOf(r.ranges[0]), BARE_GROUP_KEYS, '没有 turn 就没有地址可带');
   assert.deepEqual(keysOf(r.ranges[1]), [...BARE_GROUP_KEYS, 'note', 'scope', 'u'].sort());
   assert.equal(r.ranges[1].scope, 'S1:2');
 });
 
-test('search：带 scope 的响应同样是分组的 —— 一个 turn 一组，且一个 turn 级地址都不带', () => {
-  const scoped = groupSearch(`S1:${headT(GROUP_TURNS - 1)}`);
+test('search：带 scope 的响应同样是分组的 —— 一个 turn 一组，且一个 turn 级地址都不带', async () => {
+  const scoped = await groupSearch(`S1:${headT(GROUP_TURNS - 1)}`);
   assert.deepEqual(scoped.ranges.map(g => Object.keys(g)), [['transcript_path', 'matches']]);
   assert.equal(scoped.ranges[0].transcript_path, groupPath);
   assert.equal(scoped.ranges[0].matches.length, GROUP_HITS_PER_TURN);
@@ -1172,14 +1190,14 @@ const transcriptAddr = writeTranscript(dir, linear([
 ]));
 const addrLineage = [source('sess-addr', transcriptAddr, 963)];
 
-test('可见体命中：line 是该 fold 自己的物理行，span 收敛成单行', () => {
-  const m = allMatches(searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' }))[0];
+test('可见体命中：line 是该 fold 自己的物理行，span 收敛成单行', async () => {
+  const m = allMatches(await searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' }))[0];
   assert.equal(m.line, 1);
   assert.deepEqual(m.span, [1, 1]);
 });
 
-test('工具结果命中：line 指向 result 行而不是请求它的 fold 行', () => {
-  const m = allMatches(searchTranscripts({ lineage: addrLineage, q: 'resultonlyliteral' }))[0];
+test('工具结果命中：line 指向 result 行而不是请求它的 fold 行', async () => {
+  const m = allMatches(await searchTranscripts({ lineage: addrLineage, q: 'resultonlyliteral' }))[0];
   // 请求它的 fold 与它自己各占一行。发前者就会让读者读到一行不含自己 excerpt 的内容。
   assert.equal(m.line, 3);
   assert.deepEqual(m.span, [2, 3]);
@@ -1187,26 +1205,26 @@ test('工具结果命中：line 指向 result 行而不是请求它的 fold 行'
 
 // 这个 fold 没有可见文本，锚行就是调用行 —— 两个口径在这里同值，所以这一条断言分不开它们；分得开的
 // fixture 带可见文本行，见本文件 `扫描面与行枚举同源`。
-test('工具名与序列化 input 的命中指向发起调用的那一行', () => {
-  const m = allMatches(searchTranscripts({ lineage: addrLineage, q: '"command":"echo go"' }))[0];
+test('工具名与序列化 input 的命中指向发起调用的那一行', async () => {
+  const m = allMatches(await searchTranscripts({ lineage: addrLineage, q: '"command":"echo go"' }))[0];
   assert.equal(m.line, 2);
   assert.deepEqual(m.span, [2, 3]);
 });
 
-test('每条 ranges 条目带自己的 transcript_path', () => {
-  const r = searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' });
+test('每条 ranges 条目带自己的 transcript_path', async () => {
+  const r = await searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' });
   assert.equal(r.ranges[0].transcript_path, transcriptAddr);
 });
 
-test('响应与命中都不再携带任何 bookmark 字段', () => {
-  const r = searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' });
+test('响应与命中都不再携带任何 bookmark 字段', async () => {
+  const r = await searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral' });
   assert.deepEqual(Object.keys(r).sort(), ['found', 'ranges', 'truncated']);
   assert.deepEqual(Object.keys(r.ranges[0]).sort(), ['matches', 'transcript_path']);
   assert.deepEqual(Object.keys(r.ranges[0].matches[0]).sort(), ['excerpt', 'line', 'span']);
 });
 
-test('scoped 响应同样带 transcript_path —— 调用者给的是 turn 地址，不是文件', () => {
-  const scoped = searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral', scope: 'S1:1' });
+test('scoped 响应同样带 transcript_path —— 调用者给的是 turn 地址，不是文件', async () => {
+  const scoped = await searchTranscripts({ lineage: addrLineage, q: 'visiblebodyliteral', scope: 'S1:1' });
   // scope / u / note 三个键在 scoped 下缺席（它们只会回显输入），路径不在那三个里面。
   assert.deepEqual(Object.keys(scoped.ranges[0]).sort(), ['matches', 'transcript_path']);
   assert.equal(scoped.ranges[0].transcript_path, transcriptAddr);

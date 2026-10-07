@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { thresholdLinesOf } from '../public/elements/historyChart.js';
+import { pickThresholdLine, shownThresholdLinesOf, thresholdLinesOf } from '../public/elements/historyChart.js';
 import { projectedX } from '../public/lib/xScale.js';
 
 test('thresholdLinesOf anchors the conversion at the plotted point, so a landmark at the current causal position lands exactly on it', () => {
@@ -46,4 +46,44 @@ test('thresholdLinesOf yields null lines for an absent landmark, a non-positive 
   assert.deepEqual(thresholdLinesOf({ reference, u: 1, xBrAmberL: 1.2, xBrAmberR: 2.0, xBrRedR: 2.6 }, 0, 60000), nulls);
   assert.deepEqual(thresholdLinesOf(null, 50000, 60000), nulls);
   assert.deepEqual(thresholdLinesOf({ u: 1, xBrAmberL: 1.2, xBrAmberR: 2.0, xBrRedR: 2.6 }, 50000, 60000), nulls);
+});
+
+const colors = { mint: 'mint', amber: 'amber', coral: 'coral' };
+
+test('pickThresholdLine shows the next line ahead of L, and the red line once L is past the amber exit', () => {
+  const [entryL, exitL, redL] = [100000, 200000, 300000];
+  assert.equal(pickThresholdLine(50000, entryL, exitL, redL, colors).value, entryL);
+  assert.equal(pickThresholdLine(150000, entryL, exitL, redL, colors).value, exitL);
+  assert.equal(pickThresholdLine(250000, entryL, exitL, redL, colors).value, redL);
+  assert.equal(pickThresholdLine(350000, entryL, exitL, redL, colors).value, redL, 'red stays once crossed');
+  assert.deepEqual(pickThresholdLine(50000, entryL, exitL, redL, colors),
+    { value: entryL, color: 'mint', label: 'entry 100k' });
+  assert.equal(pickThresholdLine(50000, null, null, null, colors), null);
+});
+
+// Two landmark sources on one reference whose lines differ, so which one is drawn is readable off the entry line.
+const reference = { a: 1, d: 1 };
+const defaultLandmarks = { reference, u: 1, xBrAmberL: 1.5, xBrAmberR: 2, xBrRedR: 3, B_default: 50000 };
+const fitted = { reliable: true, reference, u: 1, xBrAmberL: 1.2, xBrAmberR: 2, xBrRedR: 3, bDefault: 50000 };
+const defaultEntry = thresholdLinesOf(defaultLandmarks, 50000, 100000).entry;
+const previewEntry = thresholdLinesOf(fitted, 50000, 100000).entry;
+
+test('shownThresholdLinesOf draws a fitted preview only while the hero shows the preview group', () => {
+  assert.notEqual(defaultEntry, previewEntry, 'precondition: the two sources draw different lines');
+  const dirty = { dirty: true, scenario: fitted };
+  assert.equal(shownThresholdLinesOf(defaultLandmarks, dirty, 'mint', 100000).entry, previewEntry);
+  assert.equal(shownThresholdLinesOf(defaultLandmarks, dirty, 'amber', 100000).entry, defaultEntry,
+    'the default dot shows the default landmarks with the preview still standing');
+});
+
+test('shownThresholdLinesOf keeps the default landmarks for a preview that is clean, unreliable or unfitted', () => {
+  for (const previewState of [
+    null,
+    { dirty: false, scenario: fitted },
+    { dirty: true, scenario: { ...fitted, reliable: false } },
+    { dirty: true, scenario: { ...fitted, reference: null } },
+  ]) {
+    assert.equal(shownThresholdLinesOf(defaultLandmarks, previewState, 'mint', 100000).entry, defaultEntry,
+      JSON.stringify(previewState));
+  }
 });

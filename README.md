@@ -26,6 +26,7 @@ Session Watcher treats your prompt cache as *inventory* — it uses EOQ theory t
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#install">Install</a> ·
+  <a href="#dsh-plugin">DSH</a> ·
   <a href="#how-it-works">How It Works</a> ·
   <a href="#context-buckets">Context Buckets</a> ·
   <a href="#handoff">Handoff</a> ·
@@ -42,7 +43,7 @@ Session Watcher reads your Claude Code transcript in real time and answers one q
 
 Most context tools optimize *how* you consume tokens — Headroom compresses, `/compact` shrinks, RTK filters. Session Watcher tracks *when* the cost curve is drifting, giving you the data to decide. They compose: run any pruning strategy you like, SW measures the cost curve so you can decide when to hand off.
 
-SW reads from the transcript, never writes to it. The dashboard and statusline are pure observers; MCP tools return data for you to act on. Metrics stay on your screen, not in the model's context window.
+SW reads from the transcript, never writes to it. The dashboard and statusline are pure observers; MCP tools return data for you to act on.
 
 ## How it works
 
@@ -106,9 +107,26 @@ Or from within a Claude Code session:
 
 This registers:
 - **MCP tools** — available in every session
-- **SessionStart hook** — auto-launches the dashboard server on each session
+- **SessionStart hook** — points the running watcher at a new session and announces pending handoffs
 
 If you installed or updated in an already-running session, run `/reload-plugins` to activate.
+
+## DSH plugin
+
+`@nomadop/session-watcher-dsh` runs Session Watcher inside DeepSeek Harness (DSH). It watches every running session of the host it loads into and shares `~/.session-watcher` with the Claude Code plugin.
+
+```bash
+dsh plugin --profile <name> add @nomadop/session-watcher-dsh
+```
+
+- **The Session Watcher tab** — a view in the conversation view strip that mounts the dashboard's elements for that session.
+- **The composer dock** — a pill below the composer showing the lamp, the bill premium and the alert clock, with the position and the context stock in its popover.
+- **Tools** — the [MCP tools](#mcp-tools), each answering for the calling agent's own session.
+- **Skills** — `sw-handoff`, `sw-load` and `sw-explain`, registered with the host.
+- **Handoff across sessions** — an agent that starts or resumes gets a message listing the pending handoffs other sessions prepared for its project.
+- **Replay** — `npx -y @nomadop/session-watcher replay <path>` plays a DSH session log back on the dashboard.
+
+See the [DSH plugin docs](https://nomadop.github.io/session-watcher/docs/dsh/) for the profile to add it to, what the tab and the dock show, the surface they are supported on, and handoffs that cross between the two hosts.
 
 ## Statusline
 
@@ -150,36 +168,7 @@ When it's time to restart, handoff preserves the state you want to keep. Run `/s
 
 ## MCP Tools
 
-**Server lifecycle**
-
-| Tool | Description |
-|------|-------------|
-| `start_watcher` | Start (or reuse) the dashboard server; returns its URL |
-| `stop_watcher` | Stop the managed server |
-| `watcher_status` | Report whether the server is running and its URL |
-| `rotate_session` | Rotate to a new session ID |
-
-**Handoff workflow**
-
-| Tool | Description |
-|------|-------------|
-| `get_bucket_summary` | Return current context bucket structure (files, skills, tools) with metrics |
-| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
-| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
-| `prepare_handoff` | Persist selected paths + summary as a handoff package; returns a semantic token |
-| `load_handoff` | Load a handoff by token, free-text search, or auto-match for the current project |
-
-**Turn history**
-
-Read the history turns carried by the handoff loaded into the current session. All three resolve that lineage themselves and take no lineage identifier — without a loaded handoff there is nothing to read.
-
-| Tool | Description |
-|------|-------------|
-| `turn_page` | Page deeper into the history, newest first; a returned cursor proves more history remains, while its absence does not prove none does |
-| `turn_search` | Find a literal that occurs verbatim in the transcripts — an identifier, a path, a quoted phrase |
-| `turn_locate` | Find which turn ranges mention a remembered term, when the original wording is unknown |
-
-Tools return data for you to decide on — only handoff injects context back into the model, and only the paths you explicitly selected.
+Both plugins register the same tools, except for `rotate_session`, which only Claude Code registers. The [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools) tables them once, with where the two hosts differ.
 
 ## Agent support
 
@@ -188,12 +177,13 @@ Session Watcher is agent-agnostic. Everything below the harness layer consumes n
 | Agent | Driver | Status |
 |-------|--------|--------|
 | Claude Code | JSONL tail (native) | ✅ |
+| DSH (DeepSeek Harness) | session event log (native) | harness ✅ · plugin ✅ |
 | OpenCode | adapter-ready | pending |
 | OpenClaw | adapter-ready | pending |
 | Hermes | adapter-ready | pending |
 | Aider | adapter-ready | pending |
 
-Adding a new agent means writing a harness for it: a source driver that turns that agent's own session evidence into normalized observations, and a projection that maps those observations onto measurement records. The engine, dialogue history, handoff, and every product surface are shared and need no change. See [`lib/harness/claude-code/`](lib/harness/claude-code/) for the reference harness — [`source-driver.js`](lib/harness/claude-code/source-driver.js) and [`measurement-projection.js`](lib/harness/claude-code/measurement-projection.js) are the two pieces a new agent supplies. PRs welcome.
+Adding a new agent means writing a harness for it under `lib/harness/<agent>/`: a source driver that turns that agent's own session evidence into normalized observations, a thin measurement projection adapter over the shared [`lib/measurement-projection.js`](lib/measurement-projection.js) with the interpreters for the agent's native tools, the dialogue source and history turn rules that read its conversation, and the recovery sentences that tell a reader how to open a turn it cites. The engine, dialogue history, handoff, and every product surface are shared and need no change. See [`lib/harness/claude-code/`](lib/harness/claude-code/) for the reference harness and [`lib/harness/dsh/`](lib/harness/dsh/) for a second one. PRs welcome.
 
 ## Paper
 
@@ -236,7 +226,7 @@ npx playwright test   # E2E (requires running server)
 - Transcripts are read locally and never uploaded.
 - Local aggregate usage and handoff records are stored under `~/.session-watcher`.
 - No transcript prose or file contents are stored in telemetry.
-- Removing `~/.session-watcher` deletes all local state.
+- Removing `~/.session-watcher` deletes all local state, except the Turn Notes a DSH session prepared and has not yet submitted successfully, which sit under the system temp directory.
 
 ## License
 

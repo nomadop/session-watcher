@@ -108,9 +108,6 @@ export function mount(root, ctx) {
   let effectiveSource = null;
   let effectiveRatio = null;
 
-  let draftReadPrice = null;
-  let draftWritePrice = null;
-
   let presets = [];
   let activePresetId = null;
 
@@ -213,8 +210,6 @@ export function mount(root, ctx) {
         presetSelect.value = '';
       }
     }
-    draftReadPrice = parseFloat(readInput.value);
-    draftWritePrice = parseFloat(writeInput.value);
     updateRatioDisplay();
     if (formState === STATE.SAVING) return;
     applyFormState(inputsMatchEffective() ? STATE.PRISTINE : STATE.DIRTY);
@@ -281,7 +276,7 @@ export function mount(root, ctx) {
 
     applyFormState(STATE.SAVING);
     try {
-      const res = await fetch('/api/pricing', {
+      const res = await ctx.request('/api/pricing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ readPrice, writePrice, presetId: activePresetId }),
@@ -314,7 +309,7 @@ export function mount(root, ctx) {
     resetBtn.disabled = true;
     resetBtn.textContent = 'Resetting…';
     try {
-      const res = await fetch('/api/pricing', { method: 'DELETE' });
+      const res = await ctx.request('/api/pricing', { method: 'DELETE' });
       if (res.ok) {
         const data = await res.json();
         applyPricingData(data);
@@ -377,7 +372,7 @@ export function mount(root, ctx) {
 
   async function loadInitialPricing() {
     try {
-      const res = await fetch('/api/pricing');
+      const res = await ctx.request('/api/pricing');
       if (res.ok) {
         const data = await res.json();
         applyPricingData(data);

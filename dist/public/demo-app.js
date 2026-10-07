@@ -68,7 +68,7 @@ function registerElement(mountFn, slotId) {
 }
 
 function mountAll() {
-  const ctx = { transport, store };
+  const ctx = { transport, store, request: (url, init) => fetch(url, init), bus: document, charts: { hero: null, history: null }, overlayRoot: document.body };
   for (const el of elements) {
     const root = document.getElementById(el.slotId);
     if (root) el.instance = el.mountFn(root, ctx);

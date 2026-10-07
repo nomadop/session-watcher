@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { stateFileFor } from '../lib/launcher.js';
 
-const PORT_DIR = join(homedir(), '.session-watcher');
+const PORT_DIR = dirname(stateFileFor('probe'));
 
 test('RV-C13: stateFileFor sanitizes path-traversal characters', () => {
   const p = stateFileFor('../../../etc/passwd');

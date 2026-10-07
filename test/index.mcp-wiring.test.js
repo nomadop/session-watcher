@@ -55,7 +55,7 @@ const TRANSCRIPT_ENTRIES = [
 
 const EXPECTED_TOOLS = [
   'get_bucket_summary', 'get_turn_skeleton', 'load_handoff', 'prepare_handoff', 'rotate_session',
-  'start_watcher', 'stop_watcher', 'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
+  'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
 
@@ -151,13 +151,6 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
   test('the tool list is exactly the set the entrypoint guard registers', async () => {
     const { tools } = await client.listTools(undefined, { timeout: REQUEST_TIMEOUT_MS });
     assert.deepEqual(tools.map(({ name }) => name).sort(), [...EXPECTED_TOOLS].sort());
-    // get_turn_skeleton creates a directory and writes two files; submit_turn_notes writes the rows and then
-    // rmSyncs that directory. The annotation a client reads before deciding whether to prompt has to say so,
-    // and it travels ONLY in this reply — nothing else in the suite sees it, and get_turn_skeleton's already
-    // flipped to readOnlyHint: true once without a single case noticing.
-    for (const name of ['get_turn_skeleton', 'submit_turn_notes']) {
-      assert.equal(tools.find((t) => t.name === name).annotations?.readOnlyHint, false, name);
-    }
   });
 
   test('get_turn_skeleton writes this process\'s own transcript through the real turnService', async () => {

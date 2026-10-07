@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BR_AMBER, BR_RED, computeMovableFrac, computeBr,
-  computePp, uAtBr, uLeftAtBr, walletIntervalFor,
+  computePp, uAtBr, uLeftAtBr, walletIntervalFor, lampZone,
 } from '../lib/bill-regret.js';
 
 describe('bill-regret constants', () => {
@@ -141,4 +141,15 @@ describe('wallet interval and its roots', () => {
     assert.ok(uLeftAtBr(0.3, BR_AMBER) < 1);
     assert.equal(uLeftAtBr(0, BR_AMBER), 0);
   });
+});
+
+test('lampZone answers white for a non-finite br, white below the amber-left root and green from it on the left arm, and red, amber and green by BR_RED and BR_AMBER on the right', () => {
+  const mf = 0.3, left = uLeftAtBr(mf, BR_AMBER);
+  assert.equal(lampZone(0.15, { u: left - 0.05, mf }), 'white');
+  assert.equal(lampZone(0.05, { u: left + 0.05, mf }), 'green');
+  assert.equal(lampZone(0.3, { u: 2, mf }), 'red');
+  assert.equal(lampZone(0.15, { u: 2, mf }), 'amber');
+  assert.equal(lampZone(0.01, { u: 1.2, mf }), 'green');
+  assert.equal(lampZone(null, { u: 0, mf: null }), 'white', 'the first frame');
+  assert.equal(lampZone(NaN, { u: 2, mf }), 'white', 'a non-finite br on the right arm');
 });

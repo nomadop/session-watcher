@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { createServer, formatLine } from '../server.js';
 import { composeForTranscript } from './helpers/server-boot.js';
+import { lampZone } from '../lib/bill-regret.js';
 
 // One session's worth of measured steps, CHAINED into a single topology. Chaining is load-bearing: a
 // null-parent row is a topology root and a root with a call behind it is a compact epoch, so a run built from
@@ -47,9 +48,8 @@ test('GET /api/health returns ok', async () => {
   });
 });
 
-// #7 Part A — /api/health must expose identity tokens (pid + startedAt) so a caller can prove the
-// process it is about to signal is genuinely ours. startedAt must be the server's own start
-// timestamp and STABLE across calls (single source of truth), pid must be this process's pid.
+// /api/health exposes pid + startedAt, the values the discovery record carries. startedAt is the
+// server's own start timestamp and STABLE across calls (single source of truth), pid is this process's pid.
 test('GET /api/health returns pid and a stable startedAt (identity tokens)', async () => {
   await withServer(async (port) => {
     const a = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
@@ -73,7 +73,7 @@ test('GET /api/health returns pid and a stable startedAt (identity tokens)', asy
 function isolatedCliEnv(extra = {}) {
   const home = mkdtempSync(join(tmpdir(), 'sw-cli-home-'));
   const stateDir = join(home, 'state');
-  return { stateDir, env: { ...process.env, HOME: home, SW_STATE_DIR: stateDir, ...extra } };
+  return { stateDir, env: { PATH: process.env.PATH, HOME: home, SW_STATE_DIR: stateDir, ...extra } };
 }
 
 test('spawned server.js: state file startedAt/pid EQUAL /api/health startedAt/pid', async () => {
@@ -115,25 +115,22 @@ test('spawned server.js: state file startedAt/pid EQUAL /api/health startedAt/pi
   }
 });
 
-// Headless --open must NOT crash the server. Spawn WITH --open (no SW_NO_OPEN) but force the browser
-// opener to a nonexistent binary via BROWSER=/nonexistent — the opener child emits 'error'. Pre-fix
-// (no opener.on('error')) that error was unhandled → the server died milliseconds after printing PORT=,
-// leaving a stale state file at a dead port. This test proves the server stays alive: /api/health still
-// answers ~600ms after PORT=. The existing real-launch test uses SW_NO_OPEN=1, so ONLY this test can
-// catch a regression here.
-test('spawned server.js with --open and a missing opener stays alive (headless crash guard)', async () => {
+// A failed --open is handled where the opener is spawned, not left to the process-level
+// uncaughtException handler, which logs `[uncaught]` under SW_DEBUG and would otherwise hide it.
+test('spawned server.js with --open and a missing opener handles the failure itself', async () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const serverPath = join(__dirname, '..', 'server.js');
   const sessionId = `sw-openguard-e2e-${randomUUID()}`;
   const projectDir = mkdtempSync(join(tmpdir(), 'sw-proj-'));
 
-  const { stateDir, env } = isolatedCliEnv({ BROWSER: '/nonexistent/sw-opener-that-does-not-exist' });
+  const { stateDir, env } = isolatedCliEnv({ BROWSER: '/nonexistent/sw-opener-that-does-not-exist', SW_DEBUG: '1' });
   const stateFile = join(stateDir, `${sessionId}.json`);
-  delete env.SW_NO_OPEN; // MUST let the opener actually spawn — that is the code path under test.
 
   const child = spawn(process.execPath,
     [serverPath, '--port', '0', '--project', projectDir, '--session', sessionId, '--open'],
-    { stdio: ['ignore', 'pipe', 'ignore'], env });
+    { stdio: ['ignore', 'pipe', 'pipe'], env });
+  let stderr = '';
+  child.stderr.on('data', (d) => { stderr += d.toString(); });
 
   try {
     const port = await new Promise((resolve, reject) => {
@@ -147,10 +144,10 @@ test('spawned server.js with --open and a missing opener stays alive (headless c
       child.on('error', (e) => { clearTimeout(t); reject(e); });
     });
 
-    // Wait past the window where the failed opener would have crashed the server, then probe.
     await new Promise(r => setTimeout(r, 600));
     const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
-    assert.equal(health.ok, true, 'server survived a failed browser-open and still serves /api/health');
+    assert.equal(health.ok, true, 'server still serves /api/health after a failed browser-open');
+    assert.doesNotMatch(stderr, /\[uncaught\]/, 'the opener failure never reaches the uncaughtException handler');
   } finally {
     try { child.kill('SIGTERM'); } catch {}
     await new Promise(r => setTimeout(r, 300));
@@ -164,6 +161,14 @@ test('GET /api/status returns full Status JSON', async () => {
     assert.equal(typeof j.L, 'number');
     // v3 status shape: L, B, g, model, rateLamp, segment
     assert.ok('rateLamp' in j && 'model' in j && 'segment' in j);
+  });
+});
+
+test('GET /api/status carries lamp, the zone of its reliable rateLamp', async () => {
+  await withServer(async (port) => {
+    const j = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+    assert.equal(j.rateLamp.reliable, true, 'the fixture measures');
+    assert.equal(j.lamp, lampZone(j.rateLamp.br, { u: j.rateLamp.u, mf: j.rateLamp.mf }));
   });
 });
 
@@ -213,6 +218,41 @@ test('GET /api/status?debug=1 attaches billingCycle.cycleCountInSegment, absent 
 
     const debug = await (await fetch(`http://127.0.0.1:${port}/api/status?debug=1`)).json();
     assert.ok('cycleCountInSegment' in debug.rateLamp.billingCycle, 'present with debug=1');
+  });
+});
+
+// Transcript Playback merges its controller's ledger onto the status, so the debug count must come from that
+// same ledger. The run grows L steeply enough that the replayed ledger completes cycles: with none, a debug
+// read of zero would agree with the wire whichever ledger it came from.
+test('GET /api/status?debug=1 during Transcript Playback counts the replayed ledger\'s cycles', async () => {
+  const rows = [];
+  let cr = 42000;
+  for (let i = 0; i < 24; i++) {
+    cr += 20000;
+    rows.push({
+      type: 'assistant', uuid: 'p' + i, parentUuid: i === 0 ? null : 'p' + (i - 1),
+      isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
+      message: { id: 'pm' + i, role: 'assistant', model: 'deepseek-v4-pro', content: [], usage: {
+        input_tokens: 560, output_tokens: 380, cache_creation_input_tokens: 0, cache_read_input_tokens: cr } },
+    });
+  }
+  const replayed = join(mkdtempSync(join(tmpdir(), 'sw-')), 'replayed.jsonl');
+  writeFileSync(replayed, rows.map(r => JSON.stringify(r) + '\n').join(''));
+  await withServer(async (port) => {
+    const url = (path) => `http://127.0.0.1:${port}${path}`;
+    const started = await (await fetch(url('/api/replay/start'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ transcript: replayed, speed: 1000 }),
+    })).json();
+    assert.equal(started.ok, true);
+    for (let i = 0; i < 200; i++) {
+      const progress = await (await fetch(url('/api/replay/status'))).json();
+      if (progress.current >= progress.total) break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    const debug = await (await fetch(url('/api/status?debug=1'))).json();
+    assert.ok(debug.rateLamp.billCycleCount > 0, 'the replayed ledger completed cycles');
+    assert.equal(debug.rateLamp.billingCycle.cycleCountInSegment, debug.rateLamp.billCycleCount);
   });
 });
 
@@ -278,36 +318,6 @@ test('poll loop emits SSE scan on snapshot output growth (changed, not just newC
   }
 });
 
-test('formatLine renders restart + reliability states', () => {
-  // v3: without rateLamp.reliable, formatLine renders calibrating (no L/L* bar in new layout).
-  // A reliable frame with no rateLamp falls to renderCalibratingV3 (progressive fill with tag).
-  const green = formatLine({ L: 137000, Lstar: 375000, Lthreshold: 375000, restart: false, metricsReliable: true, phi: 2.4, paybackP: 2.6, etaCalls: 89, baseline: { total: 55000 }, model: 'deepseek-v4-pro' });
-  assert.ok(green.includes('deepseek'), 'model tag still present in calibrating output');
-  const red = formatLine({ L: 400000, Lstar: 375000, Lthreshold: 375000, restart: true, restartReason: 'cost', metricsReliable: true, phi: 3, paybackP: 4, etaCalls: 0, baseline: { total: 55000 } });
-  // v3: no rateLamp → calibrating path; restart indicator is NOT shown in v3 calibrating
-  assert.ok(red.length > 0, 'non-empty output');
-  // B2: metricsReliable===false unlatched ALWAYS carries calibratingReason (watcher.js: latched⟹null,
-  // else metrics_unreliable) — the bare {metricsReliable:false, calibratingReason:null, no rateLamp}
-  // state is unreachable from real getStatus, so pin the reason to make the fixture faithful (not weaker).
-  // formatLine's collapse guard is reason-keyed (gate.reason != null) so a real restart is never masked.
-  const shaky = formatLine({ L: 1, Lstar: 1, Lthreshold: 1, restart: false, metricsReliable: false, calibratingReason: 'metrics_unreliable', baseline: { total: 1 } });
-  assert.ok(/[⚪🟢🟡⚠️]/.test(shaky), 'calibrating output should contain a lamp emoji');
-});
-
-// #6-server: during warmup metricsReliable is TRUE but calibratingReason is set. formatLine must
-// render the CALIBRATING state (no misleading full ▓ bar / 🟡🟢 gauge) whenever calibratingReason
-// != null. Pre-fix branches only on !metricsReliable → renders the gauge → these FAIL on pre-fix.
-test('formatLine shows calibrating (not a full bar) when metricsReliable but calibratingReason set', () => {
-  // L≈Lthreshold → pre-fix pct≈100% → full ▓▓▓▓▓▓▓▓▓▓ + 🟡. Post-fix: calibrating string instead.
-  const s = { L: 55000, Lstar: 55000, Lthreshold: 55000, restart: false, metricsReliable: true,
-    calibratingReason: 'insufficient_data', phi: 1, paybackP: 1, etaCalls: 0, baseline: { total: 55000 }, model: 'deepseek-v4-pro' };
-  const out = formatLine(s);
-  assert.ok(out.length > 0, 'never empty');
-  // v3: calibrating uses renderCalibratingV3 which shows carousel lamp + progressive info + tag
-  assert.ok(!out.includes('▮'.repeat(10)), 'no full meter bar during warmup');
-  assert.ok(/deepseek|opus|sonnet|haiku/i.test(out), 'keeps the model tag');
-});
-
 test('formatLine shows measuring when rateLamp.reliable is false (no_transcript)', () => {
   // v3: no calibrating carousel — unreliable status shows "measuring…"
   const s = { L: 0, model: 'opus', rateLamp: { reliable: false, unavailableReason: 'no_transcript' } };
@@ -315,27 +325,12 @@ test('formatLine shows measuring when rateLamp.reliable is false (no_transcript)
   assert.ok(out.length > 0 && /measuring/i.test(out), 'unreliable shows measuring');
 });
 
-test('formatLine still renders the normal gauge when calibratingReason is null (regression)', () => {
-  // v3: full layout requires rateLamp.reliable===true; without it, calibrating path is taken.
-  // With rateLamp.reliable, the v3 meter bar uses ▮/░.
-  const s = { L: 137000, Lstar: 375000, Lthreshold: 375000, restart: false, metricsReliable: true,
-    calibratingReason: null, phi: 2.4, paybackP: 2.6, etaCalls: 89, baseline: { total: 55000 }, model: 'deepseek-v4-pro',
-    rateLamp: { reliable: true, billProgress: 0.42, billCycleCount: 2, band: 'entry_to_sweet',
-      x_display: 2.1, dhat: 0.4, xEntry: 1.2, xExit: 2.0, lBase: 55000, L_read: 137000,
-      L_cap: 960000, inDeepWater: false, deepWaterDisplayLatched: false,
-      targetL: 200000, kAvg: 3000, currentTurnSeq: 1 } };
+test('formatLine renders the v3 meter and a lamp for a reliable rateLamp', () => {
+  // v3: full layout requires rateLamp.reliable===true; without it, the measuring… line is taken.
+  const s = { L: 137000, model: 'deepseek-v4-pro',
+    rateLamp: { reliable: true, billProgress: 0.42, billCycleCount: 2,
+      x_display: 2.1, dhat: 0.4, L_read: 137000, L_cap: 960000, currentTurnSeq: 1 } };
   const out = formatLine(s);
-  assert.ok(out.includes('▮') || out.includes('░'), 'reliable status shows the v3 meter bar');
+  assert.match(out, /[▓░]/, 'reliable status shows the v3 meter bar');
   assert.ok(/🟡|🟢|⚪/.test(out), 'reliable status still shows a lamp');
-});
-
-// M1: statusline vs dashboard "calibrating" divergence. The dashboard uses
-// `calibratingReason != null || metricsReliable === false`; formatLine must use the SAME
-// expression so an ABSENT metricsReliable field (undefined) is NOT forced into calibrating
-// (pre-fix `!undefined === true` diverged from the dashboard's `undefined === false`).
-test('formatLine: field-absent metricsReliable is not calibrating (M1 alignment)', () => {
-  const line = formatLine({ model: 'claude-opus', L: 50000, Lstar: 80000, Lthreshold: 80000,
-    etaCalls: 5, phi: 1.4, paybackP: 0.2, restart: false });
-  // metricsReliable undefined + no calibratingReason → must render the live bar, NOT "校准中"
-  assert.ok(!line.includes('校准中'), 'field-absent metricsReliable must not force calibrating');
 });

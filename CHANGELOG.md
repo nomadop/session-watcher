@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.9.0 (2026-10-07) — Session Watcher for DSH
+
+### DSH plugin
+
+- **`@nomadop/session-watcher-dsh` brings Session Watcher to DeepSeek Harness** — `dsh plugin --profile <name> add @nomadop/session-watcher-dsh` loads it into a DSH profile. It keeps one watcher per session, subagent sessions included, reads each session from the host's event log, and shares its store under `~/.session-watcher` with the Claude Code plugin.
+- **The Session Watcher tab** — a view in the conversation view strip mounts the dashboard's elements for that session: the hero chart, the depth bar, the cycle and reminder bars, the history chart and drawer, the bucket panel and the pricing chip. It is refreshed by the host's change signal and pulls its readings over the plugin's `/session-watcher` RPC channel. A badge in its top row names the signal stream's state while that is not live, and otherwise the state of a read that is not live — being read, not observed, failed or unreachable — while the elements stay mounted without a reading. The tab follows the host's chat column width and paints a light palette under a light host theme. Its texts, and the dock's, come in English and Simplified Chinese and follow the host's locale.
+- **The composer dock** — a pill below the composer shows a lamp ring (the alert clock's progress as its arc, the lamp's zone at its core) with the bill premium, an arrow for the arm and a corner badge counting the alert clock's laps, or one short word while the lamp has no reading; clicking it opens the position, the context stock, the alert clock and the latest alert. It reads the same readings as the tab.
+- **A session is read on demand** — a settled session, or one from before a host restart, has its watcher built the first time the tab or the dock asks for it, so it reads there like a running one; a session the host has not persisted answers as not observed.
+- **The tools** — the Claude Code MCP tool set minus `rotate_session`, each answering for the calling agent's own session. `watcher_status` carries no URL; the readings are in the tab and the dock.
+- **The skills** — `sw-handoff`, `sw-load` and `sw-explain` ship with the package and are registered with the host.
+- **Handoff across sessions** — an agent that starts or resumes receives a message listing the pending handoffs other sessions prepared for its project, the same text the Claude Code SessionStart hook shows. Turn addresses name a session and an event `seq`, and the turn tools point at `session_event_read` to read one in full.
+- **The Turn Notes are written under the system temp directory** — DSH's `workspace-write` sandbox admits it, so the agent's write of the notes file asks for no approval.
+- **`session-watcher replay` plays back a DSH session log** — a `session.v4.jsonl.zstd` or a plaintext `session.v4.jsonl` from the host's session store, on the dashboard it plays a Claude Code transcript on.
+- **A DSH model call is measured under its catalog name** — the host resolves each call's provider and model id through the `llm` service and measures the call under the catalog `name` of that pair, under the id where none resolves. A pricing override saved under a model id has to be saved again under the name to apply to a DSH session, and a catalog name without the model family in it prices under the defaults where its id would have matched a row.
+
+### Claude Code
+
+- **A cache miss is a cache-read collapse alone** — a step is a miss when its cache read falls below a fixed fraction of the previous step's L, whether or not the total stock held, and a miss measures its L from the total stock. A step whose read collapsed while the stock also fell used to count as no miss and measure L from the collapsed read, so for the sessions that have one, that step's L and the position ratio built on it change, and with them the fitted reference, the landmarks and the bill progress.
+- **A tool result written ahead of its call is held and charged when the call arrives** — the transcript does not order a result after its call, and a result that found no call before it charged nothing. A tool call id names one call for the epoch: it is charged once, at its first result, whether that result is written before or after the call, a revision of the call that follows its result arms nothing, and an empty id names no call. A file read whose result was written ahead of its call reaches its file's total, and B, g and the bucket panel follow for the sessions that have one.
+- **`start_watcher` and `stop_watcher` are retired** — the dashboard server runs inside the MCP process for the life of the session, so `start_watcher` only reported its URL and `stop_watcher` answered that nothing was stopped; `watcher_status` reports whether the watcher is running and its URL.
+- **`load_handoff` declares that it writes** — a delivery binds the handoff to the loading session and records the load, so the tool is annotated as not read-only and its description no longer says it is a pure read.
+- **The history chart's threshold line follows the group the hero shows** — while a bucket selection is being previewed, the line is the preview's only when the hero shows the preview group, and selecting the default group on the hero or the depth bar moves the line back with it.
+- **A failed rotation answers with JSON** — `POST /api/rotate` answers status 500 with `{"error":"internal"}` where Express's HTML error page came back, and writes the cause of a failed candidate source to stderr whatever `SW_DEBUG` says.
+- **The replayed ledger's cycle count is reported** — `/api/status?debug=1` during a playback carries the playback ledger's bill cycle count as `cycleCountInSegment`, where it carried zero.
+- **An application diagnostic reaches stderr once per code without `SW_DEBUG`** — the first occurrence of each code in an owner, from a live frame, the terminal close, the ratio refresh or a reconstruction sweep, is written; its repeats wait for `SW_DEBUG`.
+- **`sw-load` reads a kept path without a line range from its opening** — an entry carrying neither `lines` nor resolved symbols loads the opening of its file and places the symbols it names with `grep -n`, where it read the whole file; the load summary reports where those symbols sit.
+- **`turn_search` names tokens seen verbatim as the way to retry a miss** — when no transcript holds the literal, its reply tells the agent to search a shorter fragment or a token seen verbatim, an id, a path or a commit hash, or to call `turn_locate`.
+- **The `prepare_handoff` reply no longer names `/clear`** — its instruction, like the skills' text, describes the context reset the host offers.
+- **The bucket payload gains `residual.tool`** — `/api/buckets` carries the key, always empty under Claude Code.
+- **`get_bucket_summary` answers the handoff decision's view of the buckets** — each file or skill row carries its path or name, token size, read and edit counts, default selection with its reason where one applies, the user's override and its active symbols, beside the session id, the segment and `br`; the per-touch history, spend ratios, totals, residual groups and the other metrics the dashboard panels render stay on `/api/buckets`, and sizes are whole tokens.
+- **A model id is matched against the calibrated tokenizer rows by pattern** — an id the old bare-prefix test missed, for example one with a vendor prefix or different letter case, now has its file and tool token sizes estimated with the characters-per-token ratio of the tokenizer it names, rather than the conservative default.
+- **A handoff load cut off by shutdown fails** — when the store closes while the load waits on symbol resolution, the reply takes the route's error path instead of a successful reply carrying `turn_page_error`.
+- **The skills and the `watcher_status`, `get_bucket_summary`, `prepare_handoff` and `submit_turn_notes` tool descriptions are reworded** so they hold for both hosts, and `sw-handoff` and `sw-load` no longer fall back to the dashboard's HTTP routes with `curl` when the tools are unavailable.
+- **The `session-watcher demo` page's depth bar aligns to the hero chart** — it spans the hero chart's plot area, as it does on the dashboard.
+- **The status payload carries the lamp's zone** — `/api/status` and the `POST /api/user-overrides` reply carry `lamp`, the statusline lamp's zone, null while measuring.
+- **A segment closed at shutdown with no live update since its last rebuild archives as a replay** — the rebuild at startup, or the one after a rewind the live poll found; the segment is recorded as `cc-replay` and stamped with its last measured step's time, where it was recorded as `cc-live` and stamped at shutdown.
+- **Pricing during a playback follows the playback** — while a transcript plays back, `/api/pricing`, the pricing chip and a price saved or cleared there use the playback's epoch model, and a `--ratio` given on the command line, or a price saved or cleared during the playback, prices the playback's readings. Starting or stopping a playback re-applies the saved price to the live session, so a price saved or cleared during a playback under the live session's own model reaches it when the playback stops.
+- **`session-watcher replay`'s wording covers both hosts** — the help line names a DSH session log beside a Claude Code transcript, the extension warning accepts `.jsonl`, `.jsonl.gz` and `.zstd`, and the no-usage error no longer says that only Claude Code transcripts are supported.
+- **The hero chart's axis title and red-zone gutter label follow the theme** — they read the theme's `--txt-dim` and `--coral` where they read two variables no theme defines and painted fixed fallback colours.
+
+Every other Claude Code output is unchanged.
+
+---
+
 ## 0.8.0 (2026-09-25) — Causal position and the wallet clock
 
 ### Measurement

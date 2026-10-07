@@ -16,7 +16,7 @@ Quantities that locate the session on the token-position number line.
 
 **Units.** tokens
 
-**Definition.** The authoritative size of the context the model is currently reading. Normally equals the cache-read token count from the latest API response. When a cache miss is detected (cache eviction mid-session), L is reconstructed as cache-read plus cache-creation so the metrics see a continuous value rather than a cliff.
+**Definition.** The authoritative size of the context the model is currently reading. Normally equals the cache-read token count from the latest API response. When a cache miss is detected (cache eviction mid-session), L is reconstructed as the whole context stock — input, cache-read and cache-creation — so the metrics see a continuous value rather than a cliff.
 
 **Validity.** Always non-negative. Zero before the first model interaction in a segment, or on a true cold-start where no cached context exists yet.
 

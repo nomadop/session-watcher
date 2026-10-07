@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  renderReliability,
   renderLB,
   formatLine,
   _resetRenderState,
@@ -9,29 +8,18 @@ import {
 
 const base = {
   model: "claude-opus-4-8",
-  calibratingReason: null,
-  metricsReliable: true,
   L: 168000,
-  Lstar: 300000,
-  Lthreshold: 300000,
-  restart: false,
-  restartReason: null,
-  phi: 1.4,
-  paybackP: 0.2,
-  kAvg: 3000,
   rateLamp: {
     reliable: true,
-    hBreak: 8,
     billProgress: 0.42,
     currentTurnSeq: 5,
     lastStopEvent: null,
-    lastBillEvent: null,
   },
 };
 
 test("D1: unreliable rateLamp renders measuring… line (v3 drops carousel/no_transcript branch)", () => {
   // v3: any !rl?.reliable state → single neutral "measuring…" line; no carousel, no no_transcript branch
-  const s = { ...base, calibratingReason: "no_transcript", rateLamp: { reliable: false } };
+  const s = { ...base, rateLamp: { reliable: false } };
   const out = formatLine(s);
   assert.match(out, /measuring…/);
   assert.ok(out.includes("opus"), "model tag present");
@@ -49,17 +37,10 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
       billCycleCount: 3,
       x_display: 2.1,
       dhat: 0.4167,
-      band: "entry_to_sweet",
-      lBase: 80000,
-      deepWaterDisplayLatched: false,
-      inDeepWater: false,
-      targetL: 200000,
-      kAvg: 3000,
       currentTurnSeq: 5,
       mf: 0.3,
       rentMeter: { depthActive: true, depthProgress: 0.42 },
     },
-    baseline: { total: 80000 },
   };
   const out = formatLine(s);
   // v3 layout has no [tag] prefix; uses ▮ bars; has 4 groups separated by ·
@@ -70,97 +51,6 @@ test("D1→A2: reliable line composes the new v3 layout (lamp bar %% xN · count
   assert.ok(out.includes("opus"), "model tag present");
   assert.ok(!out.includes(":38017"), "port not in formatLine (server appends URL)");
   assert.ok(out.includes(" · "), "groups separated by ·");
-});
-
-test("B1: latched + no calibratingReason → hardUnavailable false, reason null", () => {
-  const r = renderReliability({
-    metricsReliable: true,
-    calibratingReason: null,
-    rateLamp: { reliable: true, billProgress: 0.42 },
-  });
-  assert.equal(r.hardUnavailable, false);
-  assert.equal(r.reason, null);
-});
-
-test("B1: un-latched → reason surfaced", () => {
-  const r = renderReliability({
-    metricsReliable: true,
-    calibratingReason: "low_confidence",
-    rateLamp: { reliable: false },
-  });
-  assert.equal(r.reason, "low_confidence");
-  assert.equal(r.hardUnavailable, false);
-});
-
-test("B1: no_transcript → hardUnavailable true", () => {
-  const r = renderReliability({
-    metricsReliable: true,
-    calibratingReason: "no_transcript",
-    rateLamp: { reliable: false },
-  });
-  assert.equal(r.hardUnavailable, true);
-  assert.equal(r.reason, "no_transcript");
-});
-
-test("B1: reliable but billProgress NaN → reason null (formatLine handles rendering)", () => {
-  const r = renderReliability({
-    metricsReliable: true,
-    calibratingReason: null,
-    rateLamp: { reliable: true, billProgress: NaN },
-  });
-  assert.equal(r.reason, null);
-  assert.equal(r.hardUnavailable, false);
-});
-
-test("B1: no_transcript + STALE reliable ledger → hardUnavailable true", () => {
-  // The gap the reliable:false no_transcript test above misses: transcript gone but the last frame's
-  // ledger is still reliable with a finite (now-stale) billProgress. hardUnavailable forces calibrating path.
-  const r = renderReliability({
-    metricsReliable: true,
-    calibratingReason: "no_transcript",
-    rateLamp: { reliable: true, billProgress: 0.42 },
-  });
-  assert.equal(r.hardUnavailable, true);
-  assert.equal(r.reason, "no_transcript");
-});
-
-test("B2: post-latch metricsReliable===false renders the v3 meter, not 校准中", () => {
-  _resetRenderState();
-  const s = {
-    model: "opus",
-    port: 38017,
-    metricsReliable: false,
-    calibratingReason: null,
-    L: 100000,
-    Lstar: 200000,
-    Lthreshold: 200000,
-    restart: false,
-    baseline: { total: 55000 },
-    rateLamp: {
-      reliable: true,
-      billProgress: 0.5,
-      billCycleCount: 1,
-      hBreak: 8,
-      band: "entry_to_sweet",
-      x_display: 2.0,
-      dhat: 0.4,
-      lBase: 55000,
-      L_read: 100000,
-      L_cap: 960000,
-      inDeepWater: false,
-      deepWaterDisplayLatched: false,
-      targetL: 150000,
-      kAvg: 3000,
-      currentTurnSeq: 1,
-    },
-  };
-  const out = formatLine(s);
-  assert.doesNotMatch(
-    out,
-    /指标校准中/,
-    "FU-C3 fix: post-latch meter is not collapsed",
-  );
-  assert.ok(out.includes("▮") || out.includes("░"), "v3 meter bar renders");
 });
 
 // v3: without rateLamp.reliable, formatLine returns a single neutral "measuring…" line.
@@ -187,26 +77,19 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
   const s = {
     model: "claude-opus-4-8",
     port: 38017,
-    metricsReliable: true,
-    calibratingReason: null,
     L: 168000,
     B: 80000,
-    baseline: { total: 80000 },
     rateLamp: {
       reliable: true,
       billProgress: 0.71,
       billCycleCount: 2,
-      hBreak: 8,
       x_display: 2.1,
       dhat: 0.4167,
       br: 0.05,
       u: 2.1,
       mf: 0.3,
-      lBase: 80000,
       L_read: 168000,
       L_cap: 960000,
-      inDeepWater: false,
-      kAvg: 3000,
       currentTurnSeq: 1,
       lastStopEvent: null,
       rentMeter: { depthActive: true, depthProgress: 0.42 },
@@ -225,37 +108,30 @@ test("A2: full new v3 layout — lamp bar %% xN · countdown u · delta L/b · t
   assert.ok(!out.includes("\n"), "single line (no alert)");
 });
 
-test("A2: deep band shows 🟡 in v3 layout", () => {
+test("A2: an amber br on the right arm shows 🟡 in v3 layout", () => {
   _resetRenderState();
   const s = {
     model: "opus",
     port: 38017,
-    metricsReliable: true,
-    calibratingReason: null,
     L: 512000,
     B: 55000,
-    baseline: { total: 55000 },
     rateLamp: {
       reliable: true,
       billProgress: 0.31,
       billCycleCount: 5,
-      hBreak: 2,
       x_display: 9.3,
       dhat: 0.4,
       br: 0.15,
       u: 9.3,
       mf: 0.3,
-      lBase: 55000,
       L_read: 512000,
       L_cap: 960000,
-      inDeepWater: true,
-      kAvg: 5000,
       currentTurnSeq: 1,
       rentMeter: { depthActive: true, depthProgress: 0.88 },
     },
   };
   const out = formatLine(s);
-  assert.ok(out.includes("🟡"), "deep water lamp");
+  assert.ok(out.includes("🟡"), "amber lamp");
   assert.ok(out.includes("88%"), "wallet phase percentage");
   assert.ok(!out.includes("31%"), "the sibling bill phase is not what the meter reads");
   assert.ok(out.includes("L512k"), "L value");
@@ -297,25 +173,15 @@ test("A2: alert on the hook turn renders on second line (no verdict word)", () =
   const s = {
     model: "opus",
     port: 38017,
-    metricsReliable: true,
-    calibratingReason: null,
     L: 512000,
-    baseline: { total: 55000 },
     rateLamp: {
       reliable: true,
       billProgress: 0.5,
       billCycleCount: 1,
-      hBreak: 2,
       x_display: 9,
       dhat: 0.4,
-      band: "above_exit",
-      lBase: 55000,
       L_read: 512000,
       L_cap: 960000,
-      inDeepWater: true,
-      deepWaterDisplayLatched: true,
-      targetL: 600000,
-      kAvg: 5000,
       currentTurnSeq: 3,
       lastStopEvent: {
         message: "空烧一个重启周期",
@@ -343,25 +209,15 @@ test("A2/RV-C17: the new statusline layout never reads fitWindow (ER-2 retired t
   const s = {
     model: "opus",
     port: 38017,
-    metricsReliable: true,
-    calibratingReason: null,
     L: 168000,
-    baseline: { total: 80000 },
     rateLamp: {
       reliable: true,
       billProgress: 0.42,
       billCycleCount: 2,
-      hBreak: 8,
       x_display: 2.1,
       dhat: 0.4,
-      band: "entry_to_sweet",
-      lBase: 80000,
       L_read: 168000,
       L_cap: 960000,
-      inDeepWater: false,
-      deepWaterDisplayLatched: false,
-      targetL: 200000,
-      kAvg: 3000,
       currentTurnSeq: 1,
     },
   };
@@ -404,7 +260,6 @@ test("formatLine uses s.bDefault for L/b display (§3.1 position basis)", () => 
     rateLamp: {
       reliable: true,
       billProgress: 0.42,
-      hBreak: 8,
       br: 0.05,
       x_display: 2.1,
       dhat: 0.4167,
@@ -412,7 +267,6 @@ test("formatLine uses s.bDefault for L/b display (§3.1 position basis)", () => 
       xBrAmberL: 1.05,
       mf: 0.3,
       gEma: 3000,
-      hasDeepWaterGateFired: false,
       lastStopEvent: null,
     },
   };

@@ -13,12 +13,11 @@ export function markerModel(rl, previewState, activeGroup) {
   const x = projectedX(rl.reference, rl.u);
   const scenario = previewState?.dirty && previewState.scenario?.reliable === true ? previewState.scenario : null;
   const mintX = scenario ? projectedX(scenario.reference, scenario.u) : null;
-  const dirty = previewState?.dirty === true;
   const useMint = activeGroup === 'mint' && mintX !== null;
-  return { x, mintX, dirty, activeX: useMint ? mintX : x, activeBr: useMint ? scenario.br : rl.br };
+  return { x, mintX, activeX: useMint ? mintX : x, activeBr: useMint ? scenario.br : rl.br };
 }
 
-export function mount(root, _ctx) {
+export function mount(root, ctx) {
   const container = document.createElement('div');
   container.className = 'sw-depth-aux';
   container.innerHTML = `
@@ -57,7 +56,7 @@ export function mount(root, _ctx) {
     } else {
       activeGroup = clickedGroup;
     }
-    document.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
+    ctx.bus.dispatchEvent(new CustomEvent('sw-active-group', { detail: { activeGroup } }));
     if (lastSnapshot) renderBar(lastSnapshot);
   }
 
@@ -72,7 +71,7 @@ export function mount(root, _ctx) {
   let activeGroup = 'amber';
 
   function syncToChartArea() {
-    const heroChart = window.__SW_dashboard?.charts?.hero;
+    const heroChart = ctx.charts.hero;
     if (!heroChart?.chartArea) return;
     const ca = heroChart.chartArea;
     barWrap.style.marginLeft = `${ca.left}px`;
@@ -80,7 +79,7 @@ export function mount(root, _ctx) {
   }
 
   function setupResizeObserver() {
-    const heroCanvas = document.querySelector('.sw-hero-diptych .sw-hero-canvas');
+    const heroCanvas = ctx.charts.hero?.canvas;
     if (!heroCanvas) return;
     resizeObserver = new ResizeObserver(() => syncToChartArea());
     resizeObserver.observe(heroCanvas);
@@ -107,8 +106,8 @@ export function mount(root, _ctx) {
     if (barWidth >= 120) {
       const sweetMid = ((entryPct + exitPct) / 2).toFixed(1);
       const deepMid = ((exitPct + wallPct) / 2).toFixed(1);
-      labels.push(`<span class="sw-aux-zone-label" style="left:${sweetMid}%;color:#052018">sweet</span>`);
-      labels.push(`<span class="sw-aux-zone-label" style="left:${deepMid}%;color:#3a2a08">deep</span>`);
+      labels.push(`<span class="sw-aux-zone-label" style="left:${sweetMid}%;color:var(--sw-on-fill, #052018)">sweet</span>`);
+      labels.push(`<span class="sw-aux-zone-label" style="left:${deepMid}%;color:var(--sw-on-fill, #3a2a08)">deep</span>`);
     }
     return labels.join('');
   }
@@ -119,7 +118,7 @@ export function mount(root, _ctx) {
     const available = capabilities?.eoqLandmarks?.available === true;
 
     if (!available || !rl) {
-      gradientEl.style.background = 'linear-gradient(90deg, #0a0d10 0%, #141a1e 40%, #0e1215 100%)';
+      gradientEl.style.background = 'var(--sw-groove, linear-gradient(90deg, #0a0d10 0%, #141a1e 40%, #0e1215 100%))';
       gradientEl.style.backgroundSize = '';
       gradientEl.style.animation = '';
       amberMarkerEl.style.display = 'none';
@@ -131,6 +130,8 @@ export function mount(root, _ctx) {
     }
 
     const { xBrAmberL, xSweet, xBrAmberR, xBrRedR } = rl;
+    // The server sends `wallP` only with an accepted ledger (`enrichStatusLandmarks`); a status without
+    // one reads the wall here, since this unbundled module cannot import `wallPositionFor`.
     const wallP = rl.wallP ?? (1 + rl.C_RATIO);
 
     // Segment change resets ratchet — uses snapshot.status.segment (always in API response)
@@ -222,8 +223,8 @@ export function mount(root, _ctx) {
     if (lastSnapshot) renderBar(lastSnapshot);
   }
 
-  document.addEventListener('sw-bucket-preview', onBucketPreview);
-  document.addEventListener('sw-active-group', onActiveGroup);
+  ctx.bus.addEventListener('sw-bucket-preview', onBucketPreview);
+  ctx.bus.addEventListener('sw-active-group', onActiveGroup);
 
   function update(snapshot) {
     lastSnapshot = snapshot;
@@ -232,8 +233,8 @@ export function mount(root, _ctx) {
   }
 
   function destroy() {
-    document.removeEventListener('sw-bucket-preview', onBucketPreview);
-    document.removeEventListener('sw-active-group', onActiveGroup);
+    ctx.bus.removeEventListener('sw-bucket-preview', onBucketPreview);
+    ctx.bus.removeEventListener('sw-active-group', onActiveGroup);
     if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
     container.remove();
   }

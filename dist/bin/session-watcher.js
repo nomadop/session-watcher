@@ -45,9 +45,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, SEGMENT_DROP_EPSILON, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, init_constants = __esm({
+var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, init_constants = __esm({
   "lib/constants.js"() {
-    RECENT_STOP_EVENTS_LIMIT = 32, RECENT_PROCESSED_HOOK_IDS_LIMIT = 128, DEFAULT_CACHE_TTL = "5m", C_RATIO_TABLE = [
+    C_RATIO_TABLE = [
       // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
       // not express invariance, a scalar row does, and a provider whose price does not move with the lifetime
       // takes one.
@@ -55,9 +55,9 @@ var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL
       // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
       // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
       // precedes the broader one whose pattern also matches its ids.
-      { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, "1h": 80 } },
-      { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, "1h": 40 } },
-      { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, "1h": 20 } },
+      { match: /fable.?5.?1/i, ratio: { "5m": 50, "1h": 80 } },
+      { match: /opus.?5.?5/i, ratio: { "5m": 25, "1h": 40 } },
+      { match: /claude|opus|sonnet|haiku|fable/i, ratio: { "5m": 12.5, "1h": 20 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
     ], DEFAULT_C_RATIO = 10, MODEL_PRICING_PRESETS = [
@@ -99,12 +99,12 @@ var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL
       { match: /1m|-1m|opus-4-8/i, window: 1e6 },
       { match: /claude|opus|sonnet|haiku/i, window: 1e6 },
       { match: /deepseek/i, window: 1e6 }
-    ], DEFAULT_CONTEXT_WINDOW = 1e6, RESERVED_OUTPUT = 32e3, CTX_SAFETY_MARGIN = 8e3, COALESCED_PERSIST_MS = 2e3, IDLE_HEARTBEAT_MS = 5e3, CTP_TABLE = {
-      claude: { ascii: 2.45, cjk: 0.59 },
+    ], DEFAULT_CONTEXT_WINDOW = 1e6, RESERVED_OUTPUT = 32e3, CTX_SAFETY_MARGIN = 8e3, COALESCED_PERSIST_MS = 2e3, IDLE_HEARTBEAT_MS = 5e3, CTP_TABLE = [
+      { match: /claude/i, ascii: 2.45, cjk: 0.59 },
       // Anthropic tokenizer (n=5881)
-      deepseek: { ascii: 3.24, cjk: 0.94 }
+      { match: /deepseek/i, ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    }, DEFAULT_CTP = { ascii: 3, cjk: 1 }, TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 }, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, SEGMENT_DROP_EPSILON = 100, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5;
+    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 }, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5;
   }
 });
 
@@ -709,7 +709,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
       // Projection's own capture label, recorded WITH the terminal status so provenance and status stay
       // consistent.
       archiveSegmentTelemetry(sessionId, segment, artifact) {
-        let captureSource = artifact?.captureSource ?? "cc-live", steps = artifact?.payload?.steps || [], events = artifact?.payload?.events || [], txnOpen = !1;
+        let captureSource = artifact?.captureSource ?? null, steps = artifact?.payload?.steps || [], events = artifact?.payload?.events || [], txnOpen = !1;
         try {
           this._db.exec("BEGIN IMMEDIATE"), txnOpen = !0;
           let cur = this._stmts.getTelemetryStatusRow.get(sessionId, segment);
@@ -1061,7 +1061,9 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
       }
       // Delivery: read the handoff row, write the first primary binding when absent, write one `handoff_load`
       // attempt, and return the detached row — all in one transaction. Response composition is the caller's and
-      // starts after commit, so a same-session retry recomposes rather than re-binds.
+      // starts after commit, so a same-session retry recomposes rather than re-binds. Only the failure carries
+      // `ok` (`ok: false`); a delivered row has no `ok` field and an unknown token returns null, so a caller
+      // tells failure by `ok === false`.
       deliverHandoffByToken(token, opts = {}) {
         let row = this._stmts.loadHandoffToken.get(token);
         if (!row) return null;
@@ -1211,33 +1213,22 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
 
 // lib/ledger-schema.js
 function validateLedgerState(obj) {
-  if (!obj || typeof obj != "object" || obj.schemaVersion !== SCHEMA_VERSION || typeof obj.stateKey != "string" || obj.billingBasis !== "fullCarry") return null;
-  obj.ledgerRevision === void 0 && (obj.ledgerRevision = 0), obj.recentStopEvents === void 0 && (obj.recentStopEvents = []), obj.recentProcessedHookEventIds === void 0 && (obj.recentProcessedHookEventIds = []);
-  for (let f of numFields) if (!Number.isFinite(obj[f])) return null;
-  if (!(obj.billProgress >= 0 && obj.billProgress < 1) || !(obj.walletPhase >= 0 && obj.walletPhase < 1)) return null;
+  if (!obj || typeof obj != "object" || obj.schemaVersion !== SCHEMA_VERSION || typeof obj.stateKey != "string" || obj.billingBasis !== "fullCarry" || (obj.ledgerRevision === void 0 && (obj.ledgerRevision = 0), obj.recentStopEvents === void 0 && (obj.recentStopEvents = []), obj.recentProcessedHookEventIds === void 0 && (obj.recentProcessedHookEventIds = []), !(typeof obj.billProgress == "number" && obj.billProgress >= 0 && obj.billProgress < 1)) || !(typeof obj.walletPhase == "number" && obj.walletPhase >= 0 && obj.walletPhase < 1)) return null;
   for (let f of intFields) if (!Number.isInteger(obj[f]) || obj[f] < 0) return null;
-  if (!PAUSE_REASONS.has(obj.pausedReason) || obj.lastStopEvent != null && typeof obj.lastStopEvent != "object" || !Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT) return null;
+  if (!PAUSE_REASONS.has(obj.pausedReason) || obj.lastStopEvent != null && typeof obj.lastStopEvent != "object" || !Array.isArray(obj.recentStopEvents) || obj.recentStopEvents.length > 32) return null;
   for (let e of obj.recentStopEvents)
     if (!e || typeof e != "object" || typeof e.kind != "string") return null;
-  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > RECENT_PROCESSED_HOOK_IDS_LIMIT) return null;
+  if (!Array.isArray(obj.recentProcessedHookEventIds) || obj.recentProcessedHookEventIds.length > 128) return null;
   for (let id of obj.recentProcessedHookEventIds) if (typeof id != "string") return null;
   return obj;
 }
 function validateRateLampSample(obj) {
   return !(!obj || typeof obj != "object" || typeof obj.reliable != "boolean" || !Number.isInteger(obj.seq) || obj.seq < 0 || !Number.isInteger(obj.turnSeq) || obj.turnSeq < 0 || obj.reliable && (!(Number.isFinite(obj.L_read) && obj.L_read >= 0) || obj.deltaW !== null && !(Number.isFinite(obj.deltaW) && obj.deltaW >= 0) || obj.mf !== null && !Number.isFinite(obj.mf)));
 }
-var SCHEMA_VERSION, numFields, intFields, PAUSE_REASONS, init_ledger_schema = __esm({
+var SCHEMA_VERSION, intFields, PAUSE_REASONS, init_ledger_schema = __esm({
   "lib/ledger-schema.js"() {
     init_constants();
-    SCHEMA_VERSION = 3, numFields = [
-      "billProgress",
-      "billCycleCount",
-      "walletPhase",
-      "walletLapCount",
-      "lastAppliedFoldedCallSeq",
-      "currentTurnSeq",
-      "cacheExpiryCount"
-    ], intFields = [
+    SCHEMA_VERSION = 3, intFields = [
       "billCycleCount",
       "walletLapCount",
       "lastAppliedFoldedCallSeq",
@@ -1287,6 +1278,9 @@ function walletIntervalFor(mf, brTarget) {
 function uLeftAtBr(mf, brTarget) {
   return 1 / uAtBr(mf, brTarget);
 }
+function lampZone(br, { u, mf }) {
+  return Number.isFinite(br) ? u < 1 ? u >= uLeftAtBr(mf, 0.1) ? "green" : "white" : br >= 0.25 ? "red" : br >= 0.1 ? "amber" : "green" : "white";
+}
 function wallPositionFor(cRatio) {
   return 1 + cRatio;
 }
@@ -1334,7 +1328,7 @@ function invalidPausedLedger(prev) {
   return s.pausedReason = "invalid_sample", s;
 }
 function pushStopEventRing(ledgerOrDraft, evt) {
-  ledgerOrDraft.recentStopEvents || (ledgerOrDraft.recentStopEvents = []), ledgerOrDraft.recentStopEvents.push(evt), ledgerOrDraft.recentStopEvents.length > RECENT_STOP_EVENTS_LIMIT && ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - RECENT_STOP_EVENTS_LIMIT);
+  ledgerOrDraft.recentStopEvents || (ledgerOrDraft.recentStopEvents = []), ledgerOrDraft.recentStopEvents.push(evt), ledgerOrDraft.recentStopEvents.length > 32 && ledgerOrDraft.recentStopEvents.splice(0, ledgerOrDraft.recentStopEvents.length - 32);
 }
 function applyFoldedCallSample(prev, sample) {
   if (!validateLedgerState(prev)) return invalidPausedLedger(prev);
@@ -1416,10 +1410,10 @@ function indexTranscript(filePath) {
       let idMatch = head.match(/"id"\s*:\s*"([^"]+)"/), msgId = idMatch ? idMatch[1] : null;
       if (msgId && idToIndex.has(msgId)) {
         let prevIdx = idToIndex.get(msgId);
-        steps[prevIdx] = { byteEnd: lineEnd, ts: lastTs };
+        steps[prevIdx] = { limit: lineEnd, ts: lastTs };
       } else {
         let idx = steps.length;
-        steps.push({ byteEnd: lineEnd, ts: lastTs }), msgId && idToIndex.set(msgId, idx);
+        steps.push({ limit: lineEnd, ts: lastTs }), msgId && idToIndex.set(msgId, idx);
       }
     }
     pos = lineEnd;
@@ -1460,8 +1454,8 @@ var INDEX_HEAD_BYTES, ReplayController, init_replay = __esm({
       stop() {
         this.pause(), this._done = !0;
       }
-      _advance(byteLimit) {
-        return this._driver.advance({ captureMode: "replay", byteLimit });
+      _advance(limit) {
+        return this._driver.advance({ captureMode: "replay", limit });
       }
       _scheduleNext() {
         if (this._paused || this._done) return;
@@ -1472,7 +1466,7 @@ var INDEX_HEAD_BYTES, ReplayController, init_replay = __esm({
         }
         let step = this._index[this._cursor];
         this._cursor++;
-        let frame = this._advance(step.byteEnd);
+        let frame = this._advance(step.limit);
         if (frame && (this._watcher.applyHarnessFrame(frame), this._drain()), this._onAdvance && this._onAdvance(), this._cursor < this._index.length) {
           let next = this._index[this._cursor], rawGap = next.ts && step.ts ? Math.max(0, next.ts - step.ts) : 0, clampedGap = Math.min(1e4, rawGap), minDelay = this._speed >= 20 ? 50 : 500, delay = Math.max(minDelay, clampedGap / this._speed);
           this._timer = setTimeout(() => {
@@ -1484,6 +1478,599 @@ var INDEX_HEAD_BYTES, ReplayController, init_replay = __esm({
           }, 100).unref();
       }
     };
+  }
+});
+
+// lib/harness/claude-code/transcript-observation.js
+function normalizeTimestamp(value) {
+  if (value == null) return null;
+  if (typeof value == "number") return Number.isFinite(value) ? value : null;
+  let parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+function readClaudeCodeRows(buffer, {
+  baseOffset = 0,
+  sourceOrdinal = 1,
+  maxBytes = buffer.length,
+  atEof = !1
+} = {}) {
+  let rows = [], limit = Math.min(buffer.length, maxBytes), byte = 0, ordinal = sourceOrdinal;
+  for (; byte < limit; ) {
+    let lf = buffer.indexOf(10, byte);
+    if (lf === -1 || lf >= limit) break;
+    let contentEnd = lf;
+    contentEnd > byte && buffer[contentEnd - 1] === 13 && contentEnd--;
+    let row = decodeRow(buffer, byte, contentEnd, lf + 1, baseOffset, ordinal);
+    row && rows.push(row), ordinal++, byte = lf + 1;
+  }
+  if (atEof && byte < limit) {
+    let row = decodeRow(buffer, byte, limit, limit, baseOffset, ordinal);
+    row && rows.push(row), ordinal++, byte = limit;
+  }
+  return { rows, nextOffset: baseOffset + byte, nextSourceOrdinal: ordinal };
+}
+function decodeRow(buffer, contentStart, contentEnd, byteEnd, baseOffset, ordinal) {
+  let entry;
+  try {
+    entry = JSON.parse(buffer.toString("utf8", contentStart, contentEnd));
+  } catch {
+    return null;
+  }
+  return entry === null || typeof entry != "object" || Array.isArray(entry) ? null : {
+    entry,
+    sourceOrdinal: ordinal,
+    sourceEntryId: typeof entry.uuid == "string" ? entry.uuid : null,
+    timestamp: normalizeTimestamp(entry.timestamp),
+    byteStart: baseOffset + contentStart,
+    byteEnd: baseOffset + byteEnd
+  };
+}
+function cacheCreationTotal(usage) {
+  let cc = usage.cache_creation;
+  return cc && typeof cc == "object" ? (cc.ephemeral_5m_input_tokens || 0) + (cc.ephemeral_1h_input_tokens || 0) : usage.cache_creation_input_tokens || 0;
+}
+function normalizeClaudeCodeUsage(entry) {
+  if (!entry || entry.type !== "assistant") return null;
+  let message = entry.message;
+  if (!message || !message.usage || typeof message.usage != "object") return null;
+  let usage = message.usage;
+  if (KNOWN_USAGE_FIELDS.some((field) => usage[field] === null)) return null;
+  let input = usage.input_tokens || 0, output = usage.output_tokens || 0, cacheRead = usage.cache_read_input_tokens || 0, cacheWrite = cacheCreationTotal(usage);
+  return message.model === "<synthetic>" || input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0 ? null : { input, output, cacheRead, cacheWrite };
+}
+function extractSkillText(entry) {
+  let content = entry.message?.content;
+  if (!Array.isArray(content)) return null;
+  let text = "";
+  for (let block of content)
+    block?.type === "text" && typeof block.text == "string" && (text += block.text);
+  return text || null;
+}
+function isTaskNotificationRow(entry) {
+  return entry.type === "user" && typeof entry.message?.content == "string" && entry.message.content.trimStart().startsWith(TASK_NOTIFICATION_TAG);
+}
+function isClaudeCodeUserTurnBoundary(entry) {
+  if (!entry || entry.type !== "user" || entry.isSidechain === !0 || entry.isMeta === !0 || entry.isCompactSummary === !0) return !1;
+  let message = entry.message;
+  if (!message) return !1;
+  let content = message.content;
+  return typeof content == "string" ? !isTaskNotificationRow(entry) : Array.isArray(content) ? !content.some((block) => block && block.type === "tool_result") : !1;
+}
+function createTopology() {
+  return {
+    parentById: /* @__PURE__ */ new Map(),
+    childrenById: /* @__PURE__ */ new Map(),
+    roots: [],
+    writeOrder: [],
+    activeLeafId: null
+  };
+}
+function indexTopologyRow(topology, row) {
+  let id = row.sourceEntryId;
+  if (id === null) return;
+  let parent = row.entry.parentUuid ?? null;
+  if (topology.parentById.set(id, parent), parent) {
+    let children = topology.childrenById.get(parent);
+    children || (children = /* @__PURE__ */ new Set(), topology.childrenById.set(parent, children)), children.add(id);
+  } else topology.roots.includes(id) || topology.roots.push(id);
+  topology.writeOrder.push(id);
+}
+function newestWriteInSubtree(topology, rootId) {
+  let subtree = /* @__PURE__ */ new Set(), stack = [rootId];
+  for (; stack.length > 0; ) {
+    let id = stack.pop();
+    if (subtree.has(id)) continue;
+    subtree.add(id);
+    let children = topology.childrenById.get(id);
+    if (children) for (let child of children) stack.push(child);
+  }
+  let leaf = rootId;
+  for (let id of topology.writeOrder) subtree.has(id) && (leaf = id);
+  return leaf;
+}
+function canonicalPath(topology, leafId) {
+  let seen = /* @__PURE__ */ new Set(), reversed = [], current = leafId;
+  for (; current != null && !seen.has(current); )
+    seen.add(current), reversed.push(current), current = topology.parentById.get(current) ?? null;
+  return reversed.reverse();
+}
+function resolveCanonical(topology) {
+  let leafByRoot = topology.roots.map((rootId) => newestWriteInSubtree(topology, rootId)), newestId = topology.writeOrder[topology.writeOrder.length - 1], liveIndex = topology.roots.length - 1;
+  for (let index = 0; index < leafByRoot.length; index++)
+    leafByRoot[index] === newestId && (liveIndex = index);
+  let acceptedIds = /* @__PURE__ */ new Set(), activeLeafId = null, activePath = [];
+  for (let index = 0; index <= liveIndex; index++) {
+    activeLeafId = leafByRoot[index], activePath = canonicalPath(topology, activeLeafId);
+    for (let id of activePath) acceptedIds.add(id);
+  }
+  return { acceptedIds, activeLeafId, activePath };
+}
+function messageIdFor(row) {
+  let nativeId = row.entry.message?.id;
+  return typeof nativeId == "string" && nativeId.length > 0 ? NATIVE_MESSAGE_NAMESPACE + nativeId : ROW_MESSAGE_NAMESPACE + row.sourceOrdinal;
+}
+function isToolCallId(value) {
+  return typeof value == "string" && value !== "";
+}
+function nativeModelOf(entry) {
+  let model = entry.message?.model;
+  return typeof model == "string" ? model : null;
+}
+function contentObservations(row, base, messageId) {
+  let entry = row.entry;
+  if (entry.isCompactSummary === !0) return [];
+  if (entry.isMeta === !0)
+    return isToolCallId(entry.sourceToolUseID) ? [{
+      type: "skill-payload",
+      toolUseId: entry.sourceToolUseID,
+      text: extractSkillText(entry) ?? "",
+      ...base,
+      provenance: "harness"
+    }] : [];
+  let role = entry.type === "assistant" ? "assistant" : entry.type === "user" ? "human" : null;
+  if (role === null) return [];
+  let content = entry.message?.content;
+  if (typeof content == "string")
+    return isTaskNotificationRow(entry) ? [{ type: "task-notification", text: content, ...base, provenance: "harness" }] : [{ type: "text", role, text: content, messageId, ...base, provenance: role }];
+  if (!Array.isArray(content)) return [];
+  let observations = [];
+  for (let block of content)
+    if (block)
+      if (block.type === "text" && typeof block.text == "string") {
+        if (block.text === "") continue;
+        observations.push({ type: "text", role, text: block.text, messageId, ...base, provenance: role });
+      } else block.type === "tool_use" && isToolCallId(block.id) ? observations.push({
+        type: "tool-use",
+        messageId,
+        model: nativeModelOf(entry),
+        cwd: typeof entry.cwd == "string" ? entry.cwd : null,
+        toolUseId: block.id,
+        name: block.name,
+        input: block.input,
+        ...base,
+        provenance: "assistant"
+      }) : block.type === "tool_result" && isToolCallId(block.tool_use_id) && observations.push({
+        type: "tool-result",
+        toolUseId: block.tool_use_id,
+        content: block.content,
+        // An absent is_error stays distinct from a present false: the wire reports the native field.
+        isError: block.is_error === void 0 ? void 0 : block.is_error === !0,
+        // The harness's own annotation of this result row, carried through uninterpreted — the tool-name
+        // set is a product of local plugin configuration, so this layer stays name-agnostic. Present with
+        // an absent `annotation` when the row carried none, which a consumer tells from no paired result
+        // at all; the row's time is the observation's own `timestamp`.
+        resultMeta: { annotation: entry.toolUseResult },
+        ...base,
+        provenance: "harness"
+      });
+  return observations;
+}
+function observationsForRow(row, { epoch }) {
+  let base = {
+    sourceOrdinal: row.sourceOrdinal,
+    sourceEntryId: row.sourceEntryId,
+    timestamp: row.timestamp
+  }, observations = [];
+  epoch && observations.push({ type: "epoch-boundary", ...base, provenance: "harness" }), isClaudeCodeUserTurnBoundary(row.entry) && observations.push({ type: "turn-boundary", ...base, provenance: "human" });
+  let messageId = messageIdFor(row);
+  observations.push(...contentObservations(row, base, messageId));
+  let usage = normalizeClaudeCodeUsage(row.entry);
+  return usage && observations.push({
+    type: "usage",
+    messageId,
+    model: nativeModelOf(row.entry),
+    usage,
+    ...base,
+    provenance: "assistant"
+  }), observations;
+}
+function carriesToolResult(entry) {
+  let content = entry.message?.content;
+  return Array.isArray(content) && content.some((block) => block?.type === "tool_result");
+}
+function createClaudeCodeObservationReducer() {
+  let topology = createTopology(), epochOpenedForRoot = /* @__PURE__ */ new Set(), unobservedIds = /* @__PURE__ */ new Set(), activePath = [], firstUsageOrdinal = null;
+  function append(rows) {
+    let previousLeafId = topology.activeLeafId, kept = [];
+    for (let row of rows)
+      row.entry.isSidechain !== !0 && (indexTopologyRow(topology, row), kept.push(row));
+    let resolved = resolveCanonical(topology);
+    if (topology.activeLeafId = resolved.activeLeafId, activePath = resolved.activePath, previousLeafId !== null && !resolved.acceptedIds.has(previousLeafId))
+      return { batches: [], staleBranch: !0 };
+    for (let id of unobservedIds)
+      if (resolved.acceptedIds.has(id)) return { batches: [], staleBranch: !0 };
+    let batches = [];
+    for (let row of kept) {
+      let id = row.sourceEntryId;
+      if (firstUsageOrdinal === null && normalizeClaudeCodeUsage(row.entry) !== null && (firstUsageOrdinal = row.sourceOrdinal), id !== null && !resolved.acceptedIds.has(id) && !(carriesToolResult(row.entry) && resolved.acceptedIds.has(topology.parentById.get(id)))) {
+        unobservedIds.add(id);
+        continue;
+      }
+      let nonFirstRoot = id !== null && topology.roots.indexOf(id) > 0, atOrAfterFirstUsage = firstUsageOrdinal !== null && row.sourceOrdinal >= firstUsageOrdinal, epoch = nonFirstRoot && atOrAfterFirstUsage && !epochOpenedForRoot.has(id);
+      epoch && epochOpenedForRoot.add(id);
+      let observations = observationsForRow(row, { epoch });
+      observations.length > 0 && batches.push(observations);
+    }
+    return { batches, staleBranch: !1 };
+  }
+  function snapshot() {
+    return {
+      activeLeafId: topology.activeLeafId,
+      activePath: activePath.slice(),
+      roots: topology.roots.slice()
+    };
+  }
+  return { append, snapshot };
+}
+function reduceClaudeCodeSnapshot(rows) {
+  let reducer = createClaudeCodeObservationReducer(), { batches } = reducer.append(rows), { activeLeafId, activePath } = reducer.snapshot();
+  return { batches, observations: batches.flat(), activeLeafId, activePath };
+}
+var NATIVE_MESSAGE_NAMESPACE, ROW_MESSAGE_NAMESPACE, KNOWN_USAGE_FIELDS, TASK_NOTIFICATION_TAG, init_transcript_observation = __esm({
+  "lib/harness/claude-code/transcript-observation.js"() {
+    NATIVE_MESSAGE_NAMESPACE = "cc:message:", ROW_MESSAGE_NAMESPACE = "cc:row:", KNOWN_USAGE_FIELDS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"], TASK_NOTIFICATION_TAG = "<task-notification>";
+  }
+});
+
+// lib/harness/claude-code/source-driver.js
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+function createClaudeCodeSourceDriver({
+  sourceLocator = null,
+  firstReadableTransition = "replace",
+  open = openSync,
+  read = readSync,
+  close = closeSync,
+  stat = fstatSync
+} = {}) {
+  let locator = sourceLocator, offset = 0, nextSourceOrdinal = 1, inode = null, initialized = !1, reducer = createClaudeCodeObservationReducer(), pendingReplace = null, closeFailure = null;
+  function rebuild(pendingCaptureMode = null) {
+    reducer = createClaudeCodeObservationReducer(), offset = 0, nextSourceOrdinal = 1, pendingReplace = { captureMode: pendingCaptureMode };
+  }
+  function readSpan(fd, from, until) {
+    let length = Math.max(0, until - from);
+    if (length === 0) return Buffer.alloc(0);
+    let buffer = Buffer.allocUnsafe(length), bytes = read(fd, buffer, 0, length, from);
+    return buffer.subarray(0, bytes);
+  }
+  function advance({ captureMode = "live", limit = 1 / 0 } = {}) {
+    if (closeFailure) throw closeFailure;
+    let fd;
+    try {
+      fd = open(locator, "r");
+    } catch {
+      return null;
+    }
+    try {
+      let status;
+      try {
+        status = stat(fd);
+      } catch {
+        return null;
+      }
+      (status.size < offset || inode != null && status.ino !== inode) && rebuild();
+      let until = Math.min(status.size, limit), chunk;
+      try {
+        chunk = readSpan(fd, offset, until);
+      } catch {
+        return null;
+      }
+      let reading = readClaudeCodeRows(chunk, {
+        baseOffset: offset,
+        sourceOrdinal: nextSourceOrdinal,
+        maxBytes: chunk.length
+      }), appended = reducer.append(reading.rows);
+      if (offset = reading.nextOffset, nextSourceOrdinal = reading.nextSourceOrdinal, inode = status.ino, appended.staleBranch) {
+        rebuild("replay");
+        let whole = readSpan(fd, 0, until), rebuilt = readClaudeCodeRows(whole, { maxBytes: whole.length });
+        appended = reducer.append(rebuilt.rows), offset = rebuilt.nextOffset, nextSourceOrdinal = rebuilt.nextSourceOrdinal;
+      }
+      if (initialized && !pendingReplace && appended.batches.length === 0) return null;
+      let transition = initialized ? pendingReplace ? "replace" : "append" : firstReadableTransition, mode = pendingReplace?.captureMode ?? captureMode;
+      return initialized = !0, pendingReplace = null, transition === "replace" ? { transition, sourceLocator: locator, batches: appended.batches, sourceObserved: !0, captureMode: mode } : { transition, batches: appended.batches, sourceObserved: !0, captureMode: mode };
+    } finally {
+      try {
+        close(fd);
+      } catch (error) {
+        throw closeFailure = error, error;
+      }
+    }
+  }
+  return { advance, get sourceLocator() {
+    return locator;
+  } };
+}
+var init_source_driver = __esm({
+  "lib/harness/claude-code/source-driver.js"() {
+    init_transcript_observation();
+  }
+});
+
+// lib/harness/dsh/log-frames.js
+import { gunzipSync, zstdDecompressSync } from "node:zlib";
+function walkZstdFrames(buffer) {
+  let frames = [];
+  for (let start2 = 0, end; start2 < buffer.length && (end = completeFrameEnd(buffer, start2), end !== null); start2 = end)
+    frames.push(zstdDecompressSync(buffer.subarray(start2, end)));
+  return frames;
+}
+function completeFrameEnd(buffer, start2) {
+  let offset = start2;
+  if (buffer.length - offset < 4) return null;
+  if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC)
+    throw new Error(`corrupt Zstandard session log: invalid frame magic at byte ${offset}`);
+  if (offset += 4, offset === buffer.length) return null;
+  let descriptor = buffer.readUInt8(offset);
+  if (offset += 1, (descriptor & 24) !== 0)
+    throw new Error(`corrupt Zstandard session log: reserved frame-header bit at byte ${offset - 1}`);
+  let contentSizeFlag = descriptor >>> 6, singleSegment = (descriptor & 32) !== 0, checksum = (descriptor & 4) !== 0, dictionaryFlag = descriptor & 3, dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag, contentSizeBytes = contentSizeFlag === 0 ? singleSegment ? 1 : 0 : 1 << contentSizeFlag;
+  if (offset += (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes, offset > buffer.length) return null;
+  for (; ; ) {
+    if (buffer.length - offset < 3) return null;
+    let blockHeader = buffer.readUIntLE(offset, 3);
+    offset += 3;
+    let blockType = blockHeader >>> 1 & 3;
+    if (blockType === 3)
+      throw new Error(`corrupt Zstandard session log: reserved block type at byte ${offset - 3}`);
+    if (offset += blockType === 1 ? 1 : blockHeader >>> 3, offset > buffer.length) return null;
+    if ((blockHeader & 1) !== 0) break;
+  }
+  return checksum && (offset += 4), offset > buffer.length ? null : offset;
+}
+function sessionHeaderOf(line) {
+  let record;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return record !== null && typeof record == "object" && record.type === "session" ? record : null;
+}
+function decodeDshLog(buffer) {
+  let zstd = buffer.length >= 4 && buffer.readUInt32LE(0) === ZSTD_MAGIC, gzip = !zstd && buffer.length >= 2 && buffer.readUInt16LE(0) === GZIP_MAGIC, plaintext = zstd ? Buffer.concat(walkZstdFrames(buffer)) : gzip ? gunzipSync(buffer) : buffer, firstLineEnd = plaintext.indexOf(10), header = sessionHeaderOf(plaintext.subarray(0, firstLineEnd === -1 ? plaintext.length : firstLineEnd).toString("utf8"));
+  if (header === null) {
+    if (zstd || gzip) throw new Error("not a DSH session log: its first line is not a session header");
+    return null;
+  }
+  let [, ...events] = plaintext.toString("utf8").split(`
+`).filter((line) => line !== "").map((line) => JSON.parse(line));
+  return { header, events };
+}
+var ZSTD_MAGIC, GZIP_MAGIC, init_log_frames = __esm({
+  "lib/harness/dsh/log-frames.js"() {
+    ZSTD_MAGIC = 4247762216, GZIP_MAGIC = 35615;
+  }
+});
+
+// lib/harness/dsh/transcript-observation.js
+function violation(event, field) {
+  let at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
+  return {
+    observations: [],
+    diagnostics: [{ scope: SCOPE, code: "shape-violation", message: `${event.type}${at}: malformed ${field}` }]
+  };
+}
+function faultOf(checks) {
+  return checks.find(([, holds]) => !holds)?.[0] ?? null;
+}
+function envelopeChecks(event) {
+  return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
+}
+function baseOf(event) {
+  return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
+}
+function isContent(content, ...shapes) {
+  return Array.isArray(content) && content.every((block) => isObject(block) && shapes.every((shaped) => shaped(block)));
+}
+function textOf(content) {
+  return content.filter((block) => block.type === "text").map((block) => block.text).join("");
+}
+function callIdOf(turn, step, id) {
+  return `${turn}:${step}:${id}`;
+}
+function parseArguments(raw) {
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return raw;
+  }
+}
+function isUsage(usage) {
+  return isObject(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
+}
+function usageOf(usage) {
+  return {
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    cacheRead: usage.cacheReadTokens ?? 0,
+    cacheWrite: usage.cacheWriteTokens ?? 0
+  };
+}
+function reduceHumanMessage(event) {
+  let { data } = event, fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.id", isId(data.id)],
+    ["data.content", isContent(data.content, textShaped)]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  let base = baseOf(event), observations = [{ type: "turn-boundary", ...base, provenance: "human" }], text = textOf(data.content);
+  return text !== "" && observations.push({
+    type: "text",
+    role: "human",
+    text,
+    messageId: MESSAGE_NAMESPACE + data.id,
+    ...base,
+    provenance: "human"
+  }), { observations, diagnostics: [] };
+}
+function reduceCheckpoint(event) {
+  if (!isSurfaceOp(event.surfaceOp)) return violation(event, "surfaceOp");
+  if (event.surfaceOp === "append") return nothing();
+  let fault = faultOf(envelopeChecks(event));
+  return fault !== null ? violation(event, fault) : { observations: [{ type: "epoch-boundary", ...baseOf(event), provenance: "harness" }], diagnostics: [] };
+}
+function reduceUserMessage(event) {
+  let kind = event.data?.source?.kind;
+  return kind === "user" ? reduceHumanMessage(event) : kind === "compact-checkpoint" ? reduceCheckpoint(event) : typeof kind == "string" ? nothing() : violation(event, "data.source.kind");
+}
+function reduceAssistantMessage(event) {
+  let { data } = event, message = data?.message, fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.turn", isIndex(data?.turn)],
+    ["data.step", isIndex(data?.step)],
+    ["data.message.id", isId(message?.id)],
+    ["data.message.source.model", typeof message?.source?.model == "string"],
+    ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
+    ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  let base = baseOf(event), messageId = MESSAGE_NAMESPACE + message.id, model = message.source.model, observations = [], text = textOf(message.content);
+  text !== "" && observations.push({ type: "text", role: "assistant", text, messageId, ...base, provenance: "assistant" });
+  for (let block of message.content)
+    block.type === "tool-call" && observations.push({
+      type: "tool-use",
+      messageId,
+      model,
+      cwd: null,
+      toolUseId: callIdOf(data.turn, data.step, block.id),
+      name: block.name,
+      input: parseArguments(block.arguments),
+      ...base,
+      provenance: "assistant"
+    });
+  return data.usage !== void 0 && observations.push({
+    type: "usage",
+    messageId,
+    model,
+    usage: usageOf(data.usage),
+    ...base,
+    provenance: "assistant"
+  }), { observations, diagnostics: [] };
+}
+function reduceToolResult(event) {
+  if (!isSurfaceOp(event.surfaceOp)) return violation(event, "surfaceOp");
+  if (event.surfaceOp !== "append") return nothing();
+  let { data } = event, message = data?.message, fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.turn", isIndex(data?.turn)],
+    ["data.step", isIndex(data?.step)],
+    ["data.message.toolCallId", isId(message?.toolCallId)],
+    ["data.message.isError", message?.isError === void 0 || typeof message.isError == "boolean"],
+    ["data.message.content", isContent(message?.content, textShaped)]
+  ]);
+  return fault !== null ? violation(event, fault) : {
+    observations: [{
+      type: "tool-result",
+      toolUseId: callIdOf(data.turn, data.step, message.toolCallId),
+      content: textOf(message.content),
+      isError: message.isError,
+      // The tool's private metadata and failure identity ride uninterpreted, as Claude Code's
+      // `toolUseResult` does.
+      resultMeta: { meta: data.meta ?? null, error: data.error ?? null },
+      ...baseOf(event),
+      provenance: "harness"
+    }],
+    diagnostics: []
+  };
+}
+function reduceDshEvent(event) {
+  switch (event.type) {
+    case "user/message":
+      return reduceUserMessage(event);
+    case "assistant/message":
+      return reduceAssistantMessage(event);
+    case "tool/result":
+      return reduceToolResult(event);
+    default:
+      return nothing();
+  }
+}
+function reduceDshSnapshot(events) {
+  let batches = [], diagnostics = [];
+  for (let event of events) {
+    let reduced = reduceDshEvent(event);
+    reduced.observations.length > 0 && batches.push(reduced.observations), diagnostics.push(...reduced.diagnostics);
+  }
+  return { batches, observations: batches.flat(), diagnostics };
+}
+var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex, isId, isSurfaceOp, nothing, textShaped, toolCallShaped, init_transcript_observation2 = __esm({
+  "lib/harness/dsh/transcript-observation.js"() {
+    SCOPE = "dsh-transcript-observation", MESSAGE_NAMESPACE = "dsh:message:", isObject = (value) => value !== null && typeof value == "object" && !Array.isArray(value), isIndex = (value) => Number.isSafeInteger(value) && value >= 0, isId = (value) => typeof value == "string" && value !== "", isSurfaceOp = (value) => value === "append" || isObject(value) && value.op === "replace", nothing = () => ({ observations: [], diagnostics: [] });
+    textShaped = (block) => block.type !== "text" || typeof block.text == "string", toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name == "string" && typeof block.arguments == "string";
+  }
+});
+
+// lib/harness/dsh/playback.js
+function indexDshLog(events) {
+  return events.filter((event) => event.type === "assistant/message" && event.data?.usage !== void 0).map((event) => ({ limit: event.seq, ts: event.time }));
+}
+function createDshPlaybackDriver({ sessionId, events }) {
+  let cursor = 0, replaced = !1;
+  function advance({ captureMode = "replay", limit = 1 / 0 } = {}) {
+    let start2 = cursor;
+    for (; cursor < events.length && events[cursor].seq <= limit; ) cursor += 1;
+    let { batches } = reduceDshSnapshot(events.slice(start2, cursor));
+    return batches.length === 0 ? null : replaced ? { transition: "append", batches, sourceObserved: !0, captureMode } : (replaced = !0, { transition: "replace", sourceLocator: sessionId, batches, sourceObserved: !0, captureMode });
+  }
+  return { advance };
+}
+var init_playback = __esm({
+  "lib/harness/dsh/playback.js"() {
+    init_transcript_observation2();
+  }
+});
+
+// lib/replay-source.js
+var replay_source_exports = {};
+__export(replay_source_exports, {
+  openReplaySource: () => openReplaySource
+});
+import { readFileSync as readFileSync2 } from "node:fs";
+function openReplaySource(path3) {
+  let log = decodeDshLog(readFileSync2(path3));
+  if (log !== null) {
+    let { header, events } = log;
+    return {
+      harness: "dsh",
+      index: indexDshLog(events),
+      createDriver: () => createDshPlaybackDriver({ sessionId: header.id, events }),
+      header,
+      dialogueSnapshot: { session: header, inheritedEventCount: 0, events }
+    };
+  }
+  return {
+    harness: "claude-code",
+    index: indexTranscript(path3),
+    createDriver: () => createClaudeCodeSourceDriver({ sourceLocator: path3, firstReadableTransition: "replace" }),
+    header: null,
+    dialogueSnapshot: null
+  };
+}
+var init_replay_source = __esm({
+  "lib/replay-source.js"() {
+    init_replay();
+    init_source_driver();
+    init_log_frames();
+    init_playback();
   }
 });
 
@@ -5412,10 +5999,10 @@ var require_raw_body = __commonJS({
       if (!done && !global.Promise)
         throw new TypeError("argument callback is required");
       var encoding = opts.encoding !== !0 ? opts.encoding : "utf-8", limit = bytes.parse(opts.limit), length = opts.length != null && !isNaN(opts.length) ? parseInt(opts.length, 10) : null;
-      return done ? readStream(stream, encoding, length, limit, wrap(done)) : new Promise(function(resolve5, reject) {
+      return done ? readStream(stream, encoding, length, limit, wrap(done)) : new Promise(function(resolve6, reject) {
         readStream(stream, encoding, length, limit, function(err2, buf) {
           if (err2) return reject(err2);
-          resolve5(buf);
+          resolve6(buf);
         });
       });
     }
@@ -14380,7 +14967,7 @@ var require_type_is = __commonJS({
     module2.exports = typeofrequest;
     module2.exports.is = typeis;
     module2.exports.hasBody = hasbody;
-    module2.exports.normalize = normalize3;
+    module2.exports.normalize = normalize4;
     module2.exports.match = mimeMatch;
     function typeis(value, types_) {
       var i2, types = types_, val = tryNormalizeType(value);
@@ -14393,7 +14980,7 @@ var require_type_is = __commonJS({
         return val;
       var type;
       for (i2 = 0; i2 < types.length; i2++)
-        if (mimeMatch(normalize3(type = types[i2]), val))
+        if (mimeMatch(normalize4(type = types[i2]), val))
           return type[0] === "+" || type.indexOf("*") !== -1 ? val : type;
       return !1;
     }
@@ -14412,7 +14999,7 @@ var require_type_is = __commonJS({
       var value = req.headers["content-type"];
       return typeis(value, types);
     }
-    function normalize3(type) {
+    function normalize4(type) {
       if (typeof type != "string")
         return !1;
       switch (type) {
@@ -17410,7 +17997,7 @@ var require_query = __commonJS({
 var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports, module2) {
     "use strict";
-    var debug = require_src()("express:view"), path3 = __require("path"), fs3 = __require("fs"), dirname6 = path3.dirname, basename3 = path3.basename, extname3 = path3.extname, join12 = path3.join, resolve5 = path3.resolve;
+    var debug = require_src()("express:view"), path3 = __require("path"), fs3 = __require("fs"), dirname6 = path3.dirname, basename3 = path3.basename, extname3 = path3.extname, join13 = path3.join, resolve6 = path3.resolve;
     module2.exports = View;
     function View(name2, options) {
       var opts = options || {};
@@ -17431,7 +18018,7 @@ var require_view = __commonJS({
       var path4, roots = [].concat(this.root);
       debug('lookup "%s"', name2);
       for (var i2 = 0; i2 < roots.length && !path4; i2++) {
-        var root = roots[i2], loc = resolve5(root, name2), dir = dirname6(loc), file = basename3(loc);
+        var root = roots[i2], loc = resolve6(root, name2), dir = dirname6(loc), file = basename3(loc);
         path4 = this.resolve(dir, file);
       }
       return path4;
@@ -17440,8 +18027,8 @@ var require_view = __commonJS({
       debug('render "%s"', this.path), this.engine(this.path, options, callback);
     };
     View.prototype.resolve = function(dir, file) {
-      var ext = this.ext, path4 = join12(dir, file), stat = tryStat(path4);
-      if (stat && stat.isFile() || (path4 = join12(dir, basename3(file, ext), "index" + ext), stat = tryStat(path4), stat && stat.isFile()))
+      var ext = this.ext, path4 = join13(dir, file), stat = tryStat(path4);
+      if (stat && stat.isFile() || (path4 = join13(dir, basename3(file, ext), "index" + ext), stat = tryStat(path4), stat && stat.isFile()))
         return path4;
     };
     function tryStat(path4) {
@@ -17868,7 +18455,7 @@ var require_range_parser = __commonJS({
 var require_send = __commonJS({
   "node_modules/send/index.js"(exports, module2) {
     "use strict";
-    var createError = require_http_errors(), debug = require_src()("send"), deprecate = require_depd()("send"), destroy = require_destroy(), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), etag = require_etag(), fresh = require_fresh(), fs3 = __require("fs"), mime = require_mime(), ms = require_ms2(), onFinished = require_on_finished(), parseRange = require_range_parser(), path3 = __require("path"), statuses = require_statuses(), Stream = __require("stream"), util = __require("util"), extname3 = path3.extname, join12 = path3.join, normalize3 = path3.normalize, resolve5 = path3.resolve, sep = path3.sep, BYTES_RANGE_REGEXP = /^ *bytes=/, MAX_MAXAGE = 3600 * 24 * 365 * 1e3, UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+    var createError = require_http_errors(), debug = require_src()("send"), deprecate = require_depd()("send"), destroy = require_destroy(), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), etag = require_etag(), fresh = require_fresh(), fs3 = __require("fs"), mime = require_mime(), ms = require_ms2(), onFinished = require_on_finished(), parseRange = require_range_parser(), path3 = __require("path"), statuses = require_statuses(), Stream = __require("stream"), util = __require("util"), extname3 = path3.extname, join13 = path3.join, normalize4 = path3.normalize, resolve6 = path3.resolve, sep = path3.sep, BYTES_RANGE_REGEXP = /^ *bytes=/, MAX_MAXAGE = 3600 * 24 * 365 * 1e3, UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
     function send(req, path4, options) {
@@ -17879,7 +18466,7 @@ var require_send = __commonJS({
       var opts = options || {};
       if (this.options = opts, this.path = path4, this.req = req, this._acceptRanges = opts.acceptRanges !== void 0 ? !!opts.acceptRanges : !0, this._cacheControl = opts.cacheControl !== void 0 ? !!opts.cacheControl : !0, this._etag = opts.etag !== void 0 ? !!opts.etag : !0, this._dotfiles = opts.dotfiles !== void 0 ? opts.dotfiles : "ignore", this._dotfiles !== "ignore" && this._dotfiles !== "allow" && this._dotfiles !== "deny")
         throw new TypeError('dotfiles option must be "allow", "deny", or "ignore"');
-      this._hidden = !!opts.hidden, opts.hidden !== void 0 && deprecate("hidden: use dotfiles: '" + (this._hidden ? "allow" : "ignore") + "' instead"), opts.dotfiles === void 0 && (this._dotfiles = void 0), this._extensions = opts.extensions !== void 0 ? normalizeList(opts.extensions, "extensions option") : [], this._immutable = opts.immutable !== void 0 ? !!opts.immutable : !1, this._index = opts.index !== void 0 ? normalizeList(opts.index, "index option") : ["index.html"], this._lastModified = opts.lastModified !== void 0 ? !!opts.lastModified : !0, this._maxage = opts.maxAge || opts.maxage, this._maxage = typeof this._maxage == "string" ? ms(this._maxage) : Number(this._maxage), this._maxage = isNaN(this._maxage) ? 0 : Math.min(Math.max(0, this._maxage), MAX_MAXAGE), this._root = opts.root ? resolve5(opts.root) : null, !this._root && opts.from && this.from(opts.from);
+      this._hidden = !!opts.hidden, opts.hidden !== void 0 && deprecate("hidden: use dotfiles: '" + (this._hidden ? "allow" : "ignore") + "' instead"), opts.dotfiles === void 0 && (this._dotfiles = void 0), this._extensions = opts.extensions !== void 0 ? normalizeList(opts.extensions, "extensions option") : [], this._immutable = opts.immutable !== void 0 ? !!opts.immutable : !1, this._index = opts.index !== void 0 ? normalizeList(opts.index, "index option") : ["index.html"], this._lastModified = opts.lastModified !== void 0 ? !!opts.lastModified : !0, this._maxage = opts.maxAge || opts.maxage, this._maxage = typeof this._maxage == "string" ? ms(this._maxage) : Number(this._maxage), this._maxage = isNaN(this._maxage) ? 0 : Math.min(Math.max(0, this._maxage), MAX_MAXAGE), this._root = opts.root ? resolve6(opts.root) : null, !this._root && opts.from && this.from(opts.from);
     }
     util.inherits(SendStream, Stream);
     SendStream.prototype.etag = deprecate.function(function(val) {
@@ -17893,7 +18480,7 @@ var require_send = __commonJS({
       return debug("index %o", paths), this._index = index2, this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function(path4) {
-      return this._root = resolve5(String(path4)), debug("root %s", this._root), this;
+      return this._root = resolve6(String(path4)), debug("root %s", this._root), this;
     };
     SendStream.prototype.from = deprecate.function(
       SendStream.prototype.root,
@@ -18001,13 +18588,13 @@ var require_send = __commonJS({
         return this.error(400), res;
       var parts2;
       if (root !== null) {
-        if (path4 && (path4 = normalize3("." + sep + path4)), UP_PATH_REGEXP.test(path4))
+        if (path4 && (path4 = normalize4("." + sep + path4)), UP_PATH_REGEXP.test(path4))
           return debug('malicious path "%s"', path4), this.error(403), res;
-        parts2 = path4.split(sep), path4 = normalize3(join12(root, path4));
+        parts2 = path4.split(sep), path4 = normalize4(join13(root, path4));
       } else {
         if (UP_PATH_REGEXP.test(path4))
           return debug('malicious path "%s"', path4), this.error(403), res;
-        parts2 = normalize3(path4).split(sep), path4 = resolve5(path4);
+        parts2 = normalize4(path4).split(sep), path4 = resolve6(path4);
       }
       if (containsDotFile(parts2)) {
         var access = this._dotfiles;
@@ -18084,7 +18671,7 @@ var require_send = __commonJS({
       function next(err2) {
         if (++i2 >= self._index.length)
           return err2 ? self.onStatError(err2) : self.error(404);
-        var p = join12(path4, self._index[i2]);
+        var p = join13(path4, self._index[i2]);
         debug('stat "%s"', p), fs3.stat(p, function(err3, stat) {
           if (err3) return next(err3);
           if (stat.isDirectory()) return next();
@@ -18812,7 +19399,7 @@ var require_utils2 = __commonJS({
 var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports, module2) {
     "use strict";
-    var finalhandler = require_finalhandler(), Router = require_router(), methods = require_methods(), middleware = require_init(), query = require_query(), debug = require_src()("express:application"), View = require_view(), http = __require("http"), compileETag = require_utils2().compileETag, compileQueryParser = require_utils2().compileQueryParser, compileTrust = require_utils2().compileTrust, deprecate = require_depd()("express"), flatten = require_array_flatten(), merge = require_utils_merge(), resolve5 = __require("path").resolve, setPrototypeOf = require_setprototypeof(), hasOwnProperty = Object.prototype.hasOwnProperty, slice = Array.prototype.slice, app = exports = module2.exports = {}, trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
+    var finalhandler = require_finalhandler(), Router = require_router(), methods = require_methods(), middleware = require_init(), query = require_query(), debug = require_src()("express:application"), View = require_view(), http = __require("http"), compileETag = require_utils2().compileETag, compileQueryParser = require_utils2().compileQueryParser, compileTrust = require_utils2().compileTrust, deprecate = require_depd()("express"), flatten = require_array_flatten(), merge = require_utils_merge(), resolve6 = __require("path").resolve, setPrototypeOf = require_setprototypeof(), hasOwnProperty = Object.prototype.hasOwnProperty, slice = Array.prototype.slice, app = exports = module2.exports = {}, trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app.init = function() {
       this.cache = {}, this.engines = {}, this.settings = {}, this.defaultConfiguration();
     };
@@ -18823,7 +19410,7 @@ var require_application = __commonJS({
         value: !0
       }), debug("booting in %s mode", env), this.on("mount", function(parent) {
         this.settings[trustProxyDefaultSymbol] === !0 && typeof parent.settings["trust proxy fn"] == "function" && (delete this.settings["trust proxy"], delete this.settings["trust proxy fn"]), setPrototypeOf(this.request, parent.request), setPrototypeOf(this.response, parent.response), setPrototypeOf(this.engines, parent.engines), setPrototypeOf(this.settings, parent.settings);
-      }), this.locals = /* @__PURE__ */ Object.create(null), this.mountpath = "/", this.locals.settings = this.settings, this.set("view", View), this.set("views", resolve5("views")), this.set("jsonp callback name", "callback"), env === "production" && this.enable("view cache"), Object.defineProperty(this, "router", {
+      }), this.locals = /* @__PURE__ */ Object.create(null), this.mountpath = "/", this.locals.settings = this.settings, this.set("view", View), this.set("views", resolve6("views")), this.set("jsonp callback name", "callback"), env === "production" && this.enable("view cache"), Object.defineProperty(this, "router", {
         get: function() {
           throw new Error(`'app.router' is deprecated!
 Please see the 3.x to 4.x migration guide for details on how to update your app.`);
@@ -19772,7 +20359,7 @@ var require_vary = __commonJS({
 var require_response = __commonJS({
   "node_modules/express/lib/response.js"(exports, module2) {
     "use strict";
-    var Buffer2 = require_safe_buffer().Buffer, contentDisposition = require_content_disposition(), createError = require_http_errors(), deprecate = require_depd()("express"), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), http = __require("http"), isAbsolute5 = require_utils2().isAbsolute, onFinished = require_on_finished(), path3 = __require("path"), statuses = require_statuses(), merge = require_utils_merge(), sign = require_cookie_signature().sign, normalizeType = require_utils2().normalizeType, normalizeTypes = require_utils2().normalizeTypes, setCharset = require_utils2().setCharset, cookie = require_cookie(), send = require_send(), extname3 = path3.extname, mime = send.mime, resolve5 = path3.resolve, vary = require_vary(), res = Object.create(http.ServerResponse.prototype);
+    var Buffer2 = require_safe_buffer().Buffer, contentDisposition = require_content_disposition(), createError = require_http_errors(), deprecate = require_depd()("express"), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), http = __require("http"), isAbsolute6 = require_utils2().isAbsolute, onFinished = require_on_finished(), path3 = __require("path"), statuses = require_statuses(), merge = require_utils_merge(), sign = require_cookie_signature().sign, normalizeType = require_utils2().normalizeType, normalizeTypes = require_utils2().normalizeTypes, setCharset = require_utils2().setCharset, cookie = require_cookie(), send = require_send(), extname3 = path3.extname, mime = send.mime, resolve6 = path3.resolve, vary = require_vary(), res = Object.create(http.ServerResponse.prototype);
     module2.exports = res;
     var charsetRegExp = /;\s*charset\s*=/;
     res.status = function(code) {
@@ -19830,7 +20417,7 @@ var require_response = __commonJS({
         throw new TypeError("path argument is required to res.sendFile");
       if (typeof path4 != "string")
         throw new TypeError("path must be a string to res.sendFile");
-      if (typeof options == "function" && (done = options, opts = {}), !opts.root && !isAbsolute5(path4))
+      if (typeof options == "function" && (done = options, opts = {}), !opts.root && !isAbsolute6(path4))
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       var pathname = encodeURI(path4), file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err2) {
@@ -19865,7 +20452,7 @@ var require_response = __commonJS({
           key.toLowerCase() !== "content-disposition" && (headers[key] = opts.headers[key]);
         }
       opts = Object.create(opts), opts.headers = headers;
-      var fullPath = opts.root ? path4 : resolve5(path4);
+      var fullPath = opts.root ? path4 : resolve6(path4);
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function(type) {
@@ -20023,7 +20610,7 @@ var require_response = __commonJS({
 var require_serve_static = __commonJS({
   "node_modules/serve-static/index.js"(exports, module2) {
     "use strict";
-    var encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), parseUrl = require_parseurl(), resolve5 = __require("path").resolve, send = require_send(), url = __require("url");
+    var encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), parseUrl = require_parseurl(), resolve6 = __require("path").resolve, send = require_send(), url = __require("url");
     module2.exports = serveStatic;
     module2.exports.mime = send.mime;
     function serveStatic(root, options) {
@@ -20034,7 +20621,7 @@ var require_serve_static = __commonJS({
       var opts = Object.create(options || null), fallthrough = opts.fallthrough !== !1, redirect = opts.redirect !== !1, setHeaders = opts.setHeaders;
       if (setHeaders && typeof setHeaders != "function")
         throw new TypeError("option setHeaders must be function");
-      opts.maxage = opts.maxage || opts.maxAge || 0, opts.root = resolve5(root);
+      opts.maxage = opts.maxage || opts.maxAge || 0, opts.root = resolve6(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -20176,7 +20763,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     let relative = root ? path.relative(root, absolute) : resourceKey;
     return relative && ignoreMatcher && ignoreMatcher(relative) ? "gitignore" : null;
   }
-  function resolve5(resourceKey) {
+  function resolve6(resourceKey) {
     let defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -20208,7 +20795,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve5, infer };
+  return { resolve: resolve6, infer };
 }
 var SKILL_RESOURCE_PREFIX, init_resource_policy = __esm({
   "lib/resource-policy.js"() {
@@ -20245,7 +20832,7 @@ function absorbToolUse(group, observation) {
     input: observation.input,
     cwd: observation.cwd ?? null,
     sourceOrdinal: observation.sourceOrdinal,
-    sourceEntryId: observation.sourceEntryId ?? null,
+    sourceEntryId: observation.sourceEntryId || null,
     timestamp: observation.timestamp ?? null
   });
 }
@@ -20268,15 +20855,12 @@ function projectDialogue(observations) {
       continue;
     }
     if (observation.type === "tool-use") {
-      if (openHumanGroup = null, !observation.toolUseId) continue;
+      openHumanGroup = null;
       let group = assistantGroups.get(observation.messageId);
       group || (group = createGroup("assistant", observation), assistantGroups.set(observation.messageId, group), groups.push(group)), absorbToolUse(group, observation);
       continue;
     }
-    if (observation.type === "tool-result") {
-      if (openHumanGroup = null, !observation.toolUseId) continue;
-      pendingResults.set(observation.toolUseId, observation);
-    }
+    observation.type === "tool-result" && (openHumanGroup = null, pendingResults.set(observation.toolUseId, observation));
   }
   return { folds: groups.map((group, ordinal) => ({
     ordinal,
@@ -20311,7 +20895,7 @@ function pairFor(toolUseId, use, pendingResults) {
     isError: result === void 0 ? void 0 : result.isError,
     resultMeta: result === void 0 ? null : result.resultMeta,
     resultSourceOrdinal: result === void 0 ? null : result.sourceOrdinal,
-    resultSourceEntryId: result === void 0 ? null : result.sourceEntryId ?? null,
+    resultSourceEntryId: result === void 0 ? null : result.sourceEntryId || null,
     resultTimestamp: result === void 0 ? null : result.timestamp ?? null
   };
 }
@@ -20347,12 +20931,11 @@ var init_dialogue_fold = __esm({
 });
 
 // lib/landmarks.js
-function nucleus(cRatio, kAvg, lBase) {
-  return cRatio <= 0 || kAvg <= 0 || lBase <= 0 ? 0 : Math.sqrt(2 * cRatio * kAvg / lBase);
+function nucleus(cRatio, g, bDefault) {
+  return cRatio <= 0 || g <= 0 || bDefault <= 0 ? 0 : Math.sqrt(2 * cRatio * g / bDefault);
 }
 var init_landmarks = __esm({
   "lib/landmarks.js"() {
-    init_constants();
   }
 });
 
@@ -20375,7 +20958,7 @@ var CJK_RE, init_token_estimate = __esm({
 // lib/handoff.js
 import { posix, isAbsolute, join as join2, normalize, resolve as resolvePath } from "node:path";
 import { homedir as homedir2 } from "node:os";
-import { readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
+import { readFileSync as readFileSync3, statSync as statSync2 } from "node:fs";
 import { createHash, randomInt as cryptoRandomInt } from "node:crypto";
 function redactSecrets(text) {
   if (typeof text != "string") return text;
@@ -20430,7 +21013,7 @@ function buildFtsMatch(query, mode = "plain") {
 function hashFileContent(absPath) {
   try {
     let st = statSync2(absPath);
-    return !st.isFile() || st.size > HASH_MAX_BYTES ? null : createHash("sha256").update(readFileSync2(absPath)).digest("hex");
+    return !st.isFile() || st.size > HASH_MAX_BYTES ? null : createHash("sha256").update(readFileSync3(absPath)).digest("hex");
   } catch {
     return null;
   }
@@ -20461,7 +21044,7 @@ function collapseLineRanges(lineNumbers) {
   return ranges.push([start2, end]), ranges;
 }
 function createHandoffComposition({
-  readBytes = (absPath) => readFileSync2(absPath),
+  readBytes = (absPath) => readFileSync3(absPath),
   statFile = statSync2,
   hashFile = hashFileContent,
   now = Date.now,
@@ -20620,7 +21203,7 @@ function createHandoffComposition({
     for (let attempt = 0; attempt < HANDOFF_TOKEN_MAX_RETRIES; attempt++)
       yield generateLoadToken(tokenSeed.summary, tokenSeed.nextTask, randomInt);
   }
-  let instructionFor = (loadToken) => `Handoff prepared. Token: ${loadToken}. Please /clear when ready.`, searchExpression = (query, queryMode) => buildFtsMatch(String(query ?? ""), queryMode === "advanced" ? "advanced" : "plain");
+  let instructionFor = (loadToken) => `Handoff prepared. Token: ${loadToken}. Please use the context reset the host offers when ready.`, searchExpression = (query, queryMode) => buildFtsMatch(String(query ?? ""), queryMode === "advanced" ? "advanced" : "plain");
   function searchResponse(results) {
     return results.length ? {
       found: !0,
@@ -21192,8 +21775,8 @@ function parseTurnPageBoundary(raw) {
 function labelHistorySources(lineage) {
   return lineage.map((entry, index) => ({ ...entry, label: `S${index + 1}`, index }));
 }
-function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
-  let read = dialogueSource.read(sourceLocator);
+async function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
+  let read = await dialogueSource.read(sourceLocator);
   if (read.status !== "ok") return { readable: !1, folds: [], turns: [] };
   let { folds } = dialogueProjection.project(read.observations);
   return { readable: !0, folds, turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)) };
@@ -21240,7 +21823,7 @@ function buildSkeleton(turns, sessionId) {
       if (line.kind === "tool")
         return toolCalls++, line.tool.resourceKey && basenames.add(basename(line.tool.resourceKey)), [];
       if (line.message.role !== "human" && !shown.has(i2)) return [];
-      let role = line.message.role === "human" ? "U  " : "A  ", normalized = String(line.message.text).replace(/\r\n?/g, `
+      let role = line.message.role === "human" ? "U  " : "A  ", normalized = line.message.text.replace(/\r\n?/g, `
 `);
       return (line.message.role === "human" ? headCut(normalized, U_HEAD_CHARS) : i2 === headCutAt ? headCut(normalized, A_CUT_CHARS) : tailCut(normalized, A_CUT_CHARS)).split(`
 `).map((part) => `T ${t} | ${role} : ${part}`);
@@ -21387,7 +21970,7 @@ var init_turn_note = __esm({
 
 // lib/session-watcher.js
 import { join as join3 } from "node:path";
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync, appendFileSync, rmSync } from "node:fs";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync, appendFileSync, rmSync } from "node:fs";
 function invariant(ok, message) {
   if (!ok) throw new Error(`session watcher invariant: ${message}`);
 }
@@ -21426,7 +22009,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
     init_turn();
     init_constants();
     DIAGNOSTIC_SCOPE = "session-watcher";
-    RESIDUAL_FAMILIES = /* @__PURE__ */ new Set(["bash", "mcp", "agent"]), SessionWatcher = class {
+    RESIDUAL_FAMILIES = /* @__PURE__ */ new Set(["bash", "mcp", "agent", "tool"]), SessionWatcher = class {
       constructor({
         sessionId = null,
         sourceLocator = null,
@@ -21441,7 +22024,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         dialogueSource,
         dialogueProjection,
         createEngine,
-        createMeasurementProjection,
+        createMeasurementProjection: createMeasurementProjection2,
         modelPolicyFor: modelPolicyFor2,
         now = () => Date.now()
       } = {}) {
@@ -21451,7 +22034,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         ), invariant(
           resourcePolicy !== null && typeof resourcePolicy == "object" && typeof resourcePolicy.resolve == "function" && typeof resourcePolicy.infer == "function",
           "resourcePolicy is required and exposes resolve and infer"
-        ), invariant(resourceEnrichment !== null && typeof resourceEnrichment == "object", "resourceEnrichment is required"), invariant(handoffComposition !== null && typeof handoffComposition == "object", "handoffComposition is required"), invariant(typeof loaderVersion == "string" && loaderVersion.length > 0, "loaderVersion is required"), invariant(typeof turnNotesRoot == "string" && turnNotesRoot.length > 0, "turnNotesRoot is required and has no fallback"), invariant(typeof createEngine == "function", "createEngine must be a function"), invariant(typeof createMeasurementProjection == "function", "createMeasurementProjection must be a function"), invariant(typeof modelPolicyFor2 == "function", "modelPolicyFor must be a function"), invariant(typeof now == "function", "now must be a function"), this._projectId = projectId, this._projectRoot = projectRoot, this._turnNotesRoot = turnNotesRoot, this._loaderVersion = loaderVersion, this._store = store, this._dialogueSource = dialogueSource, this._dialogueProjection = dialogueProjection, this._policy = resourcePolicy, this._enrichment = resourceEnrichment, this._handoff = handoffComposition, this._createEngine = createEngine, this._createProjection = createMeasurementProjection, this._modelPolicyFor = modelPolicyFor2, this._now = now, this._startMs = now(), this._sessionId = sessionId, this._sourceLocator = sourceLocator, this._ratioOverride = null, this._hasObservedSource = !1, this._streamRevision = 0, this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._applying = !1, this._resolveModelPolicy = (modelId) => {
+        ), invariant(resourceEnrichment !== null && typeof resourceEnrichment == "object", "resourceEnrichment is required"), invariant(handoffComposition !== null && typeof handoffComposition == "object", "handoffComposition is required"), invariant(typeof loaderVersion == "string" && loaderVersion.length > 0, "loaderVersion is required"), invariant(typeof turnNotesRoot == "string" && turnNotesRoot.length > 0, "turnNotesRoot is required and has no fallback"), invariant(typeof createEngine == "function", "createEngine must be a function"), invariant(typeof createMeasurementProjection2 == "function", "createMeasurementProjection must be a function"), invariant(typeof modelPolicyFor2 == "function", "modelPolicyFor must be a function"), invariant(typeof now == "function", "now must be a function"), this._projectId = projectId, this._projectRoot = projectRoot, this._turnNotesRoot = turnNotesRoot, this._loaderVersion = loaderVersion, this._store = store, this._dialogueSource = dialogueSource, this._dialogueProjection = dialogueProjection, this._policy = resourcePolicy, this._enrichment = resourceEnrichment, this._handoff = handoffComposition, this._createEngine = createEngine, this._createProjection = createMeasurementProjection2, this._modelPolicyFor = modelPolicyFor2, this._now = now, this._startMs = now(), this._sessionId = sessionId, this._sourceLocator = sourceLocator, this._ratioOverride = null, this._hasObservedSource = !1, this._streamRevision = 0, this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._applying = !1, this._liveMark = !1, this._resolveModelPolicy = (modelId) => {
           let policy = readPolicy(this._modelPolicyFor, modelId);
           return policy === null && (policy = readPolicy(this._modelPolicyFor, null) ?? this._modelPolicyFor(null)), this._ratioOverride == null ? policy : { ...policy, cRatio: this._ratioOverride };
         }, this._resolveResourcePolicy = (resourceKey) => this._policy.resolve(resourceKey), this._engine = this._createEngine({
@@ -21494,27 +22077,27 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
                 record.type === "epoch" && this._consumeClosedSegment(result, captureMode, diagnostics);
               }
             }
-          return this._flushResourcePolicy(diagnostics), { changed: newCalls > 0 || revisedCalls > 0 || runtimeReplaced, diagnostics };
+          return this._flushResourcePolicy(diagnostics), captureMode === "live" && (this._liveMark = !0), { changed: newCalls > 0 || revisedCalls > 0 || runtimeReplaced, diagnostics };
         } finally {
           this._applying = !1;
         }
       }
       /**
        * Close the current segment as a terminal application operation. It is not a Source transition and
-       * synthesizes no epoch record.
+       * synthesizes no epoch record. The segment archives as `live` when a live frame has completed since the
+       * segment opened, where a `replace` counts as opening a segment, and as `replay` otherwise.
        *
-       * @param {{ captureMode?: 'live'|'replay' }} [options]
        * @returns {{ diagnostics: object[] }}
        */
-      closeCurrentSegment({ captureMode = "live" } = {}) {
-        let diagnostics = [];
+      closeCurrentSegment() {
+        let captureMode = this._liveMark ? "live" : "replay", diagnostics = [];
         this._flushResourcePolicy(diagnostics);
         let result = this._engine.closeCurrentSegment();
         for (let entry of result.diagnostics) diagnostics.push(entry);
         return this._consumeClosedSegment(result, captureMode, diagnostics), { diagnostics };
       }
       _installFreshRuntime(sourceLocator) {
-        this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._sourceLocator = sourceLocator ?? null, this._engine = this._createEngine({
+        this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._liveMark = !1, this._sourceLocator = sourceLocator ?? null, this._engine = this._createEngine({
           resolveModelPolicy: this._resolveModelPolicy,
           resolveResourcePolicy: this._resolveResourcePolicy
         }), this._projection = this._createProjection(this._sourceLocator, this._resolveModelPolicy);
@@ -21531,6 +22114,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
       }
       // The one closed-segment consumer behind a successful epoch, a rotate and an explicit close.
       _consumeClosedSegment(result, captureMode, diagnostics) {
+        this._liveMark = !1;
         let closedSegment = result.closedSegments[0] ?? null, finished = this._projection.finishSegment(closedSegment, { captureMode });
         for (let entry of finished.diagnostics) diagnostics.push(entry);
         if (closedSegment == null || !this._sessionId) return;
@@ -21652,7 +22236,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
           }
           paths.push(entry);
         }
-        let residual = { bash: [], mcp: [], agent: [] };
+        let residual = { bash: [], mcp: [], agent: [], tool: [] };
         for (let group of bucket.residual) {
           let family = group.meta?.kind;
           if (!RESIDUAL_FAMILIES.has(family)) continue;
@@ -21721,13 +22305,17 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
       readScenario(overrides) {
         return this._engine.readScenario(overrides);
       }
-      // The only runtime ratio mutation. It moves the policy signature, so the Engine re-stamps every step of the
+      // The runtime ratio override. It moves the policy signature, so the Engine re-stamps every step of the
       // open segment under the new price. It recomputes no closed segment's extremum, leaves the Rate Lamp
       // ledger's integral as it stands and does not move `streamRevision`, so the ledger keeps what it already
       // integrated and the re-stamped increments reach it with the frames drained after the change. The Engine
       // finalizer freezes the effective close-time ratio in the closed segment.
       setRatioOverride(value) {
         return this._ratioOverride = typeof value == "number" && Number.isFinite(value) && value > 0 ? value : null, this._engine.refreshReadPolicies();
+      }
+      // The resolver's inputs changed outside the watcher, so the Engine re-reads them; no override value moves.
+      refreshReadPolicies() {
+        return this._engine.refreshReadPolicies();
       }
       // ── Handoff operations ─────────────────────────────────────────────────────
       prepareHandoff({ pathsToKeep, skillsToKeep, summary, nextTask, observedSegment, loadToken } = {}) {
@@ -21850,8 +22438,8 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
       // One capture behind both entry points, so the skeleton and the submission can never see different Turns.
       // The read status travels with it: an unavailable Source has an empty capture, which is otherwise
       // indistinguishable from a genuinely empty epoch whose submission would commit nothing.
-      _captureTurns() {
-        let read = this._dialogueSource.read(this._sourceLocator);
+      async _captureTurns() {
+        let read = await this._dialogueSource.read(this._sourceLocator);
         return read.status !== "ok" ? { status: read.status, turns: [] } : { status: "ok", ...captureCurrentEpochTurns({ observations: read.observations, dialogueProjection: this._dialogueProjection }) };
       }
       // The two files' one address, derived here and nowhere else. The key is the Context Epoch — this session
@@ -21870,8 +22458,8 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
       _storedNotes() {
         return new Map(this._store.listTurnNotes(this._sessionId).map((row) => [row.anchorUuid, row.note]));
       }
-      getTurnSkeleton() {
-        let { status, turns } = this._captureTurns();
+      async getTurnSkeleton() {
+        let { status, turns } = await this._captureTurns();
         if (status !== "ok") throw new Error("transcript is not readable; no turn skeleton can be captured");
         if (!captureIsPersistable(turns))
           throw new Error("captured turn heads carry no persistable identity; no turn skeleton can be captured");
@@ -21879,7 +22467,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         mkdirSync2(dir, { recursive: !0 });
         let existing = null;
         try {
-          existing = readFileSync3(notesPath, "utf8");
+          existing = readFileSync4(notesPath, "utf8");
         } catch (error) {
           if (error?.code !== "ENOENT") throw new Error(`turn notes file cannot be read: ${notesPath}`);
         }
@@ -21896,14 +22484,14 @@ ${renderNoteSections(missing, prefill)}`), {
           protocol: TURN_NOTE_PROTOCOL
         };
       }
-      submitTurnNotes({ snapshot_id: snapshotId } = {}) {
-        let { status, turns } = this._captureTurns();
+      async submitTurnNotes({ snapshot_id: snapshotId } = {}) {
+        let { status, turns } = await this._captureTurns();
         if (status !== "ok") return { committed: !1, error: "invalid_snapshot" };
         if (snapshotDigest(turns) !== snapshotId) return { committed: !1, error: "stale_snapshot" };
         if (!captureIsPersistable(turns)) return { committed: !1, error: "invalid_snapshot" };
         let slots = slotKeysOf(turns), { dir, notesPath } = this._turnNotePaths(turns), raw = null;
         try {
-          raw = readFileSync3(notesPath, "utf8");
+          raw = readFileSync4(notesPath, "utf8");
         } catch {
         }
         let { sections, issues } = parseNoteSections(raw, slots), stored;
@@ -22055,11 +22643,11 @@ async function Module2(moduleArg = {}) {
       );
     }, "readBinary")), readAsync = /* @__PURE__ */ __name(async (url) => {
       if (isFileURI(url))
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           var xhr = new XMLHttpRequest();
           xhr.open("GET", url, !0), xhr.responseType = "arraybuffer", xhr.onload = () => {
             if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-              resolve5(xhr.response);
+              resolve6(xhr.response);
               return;
             }
             reject(xhr.status);
@@ -22192,9 +22780,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module.instantiateWasm)
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve6, reject) => {
         Module.instantiateWasm(info2, (mod, inst) => {
-          resolve5(receiveInstance(mod, inst));
+          resolve6(receiveInstance(mod, inst));
         });
       });
     wasmBinaryFile ??= findWasmBinary();
@@ -22937,8 +23525,8 @@ async function Module2(moduleArg = {}) {
   }
   __name(run, "run");
   var wasmExports;
-  return wasmExports = await createWasm(), run(), runtimeInitialized ? moduleRtn = Module : moduleRtn = new Promise((resolve5, reject) => {
-    readyPromiseResolve = resolve5, readyPromiseReject = reject;
+  return wasmExports = await createWasm(), run(), runtimeInitialized ? moduleRtn = Module : moduleRtn = new Promise((resolve6, reject) => {
+    readyPromiseResolve = resolve6, readyPromiseReject = reject;
   }), moduleRtn;
 }
 async function initializeBinding(moduleOptions) {
@@ -25056,9 +25644,9 @@ var __dirname, MAX_SYMBOL_FILE_BYTES, EXT_TO_GRAMMAR, EXT_TO_LANG, ORPHAN_EXCLUD
 
 // lib/resource-enrichment.js
 import { extname, isAbsolute as isAbsolute2, join as join5 } from "node:path";
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 function createResourceEnrichment({
-  readFile = (absPath) => readFileSync5(absPath, "utf8"),
+  readFile = (absPath) => readFileSync6(absPath, "utf8"),
   // The grammar prewarm request. It performs no filtering of its own: an extension with no grammar, and one
   // already loaded, are both a resolved promise inside `loadGrammar`.
   warmer = loadGrammar,
@@ -25130,10 +25718,8 @@ var init_resource_enrichment = __esm({
 });
 
 // lib/l-measure.js
-function classifyMiss({ cacheRead, totalStock, prevL, prevTotalStock }) {
-  if (!(prevL > 0)) return !1;
-  let crDropped = cacheRead < prevL * MISS_CR_DROP, stockPreserved = totalStock >= prevTotalStock - SEGMENT_DROP_EPSILON;
-  return crDropped && stockPreserved;
+function classifyMiss({ cacheRead, prevL }) {
+  return prevL > 0 ? cacheRead < prevL * MISS_CR_DROP : !1;
 }
 var init_l_measure = __esm({
   "lib/l-measure.js"() {
@@ -25621,12 +26207,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function acceptNewStep(record, usage, usageTotal, timestamp, result) {
     let totalStock = usage.input + usage.cacheRead + usage.cacheWrite, model = record.model ?? null, firstOfEpoch = segmentSteps.length === 0;
     settlementCursor === null && totalStock > 0 && (dead = totalStock, sessionFloor = totalStock);
-    let totals = ledger.residentTotals(), residentTotal = residentTotalOf(totals), miss = settlementCursor !== null && classifyMiss({
-      cacheRead: usage.cacheRead,
-      totalStock,
-      prevL: settlementCursor.L,
-      prevTotalStock: settlementCursor.totalStock
-    }), L = miss ? totalStock : usage.cacheRead, growth = null;
+    let totals = ledger.residentTotals(), residentTotal = residentTotalOf(totals), miss = settlementCursor !== null && classifyMiss({ cacheRead: usage.cacheRead, prevL: settlementCursor.L }), L = miss ? totalStock : usage.cacheRead, growth = null;
     settlementCursor !== null ? growth = settle({ L, totalStock, residentTotal, totals }) : (gEma === null && (gEma = G_FLOOR), resourceGrowth = /* @__PURE__ */ new Map()), (pendingTurn || turnSeq === 0) && (turnSeq += 1, pendingTurn = !1), foldedSeq += 1, firstOfEpoch && (epochModel = model, epochPolicy = resolveEpochPolicy(model, result.diagnostics)), latestMeasuredModel = model;
     let step = {
       id: record.id,
@@ -26005,336 +26586,7 @@ var USAGE_KEYS, SETTLEMENT_EPSILON, init_engine = __esm({
   }
 });
 
-// lib/harness/claude-code/transcript-observation.js
-function normalizeTimestamp(value) {
-  if (value == null) return null;
-  if (typeof value == "number") return Number.isFinite(value) ? value : null;
-  let parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-function readClaudeCodeRows(buffer, {
-  baseOffset = 0,
-  sourceOrdinal = 1,
-  maxBytes = buffer.length,
-  atEof = !1
-} = {}) {
-  let rows = [], limit = Math.min(buffer.length, maxBytes), byte = 0, ordinal = sourceOrdinal;
-  for (; byte < limit; ) {
-    let lf = buffer.indexOf(10, byte);
-    if (lf === -1 || lf >= limit) break;
-    let contentEnd = lf;
-    contentEnd > byte && buffer[contentEnd - 1] === 13 && contentEnd--;
-    let row = decodeRow(buffer, byte, contentEnd, lf + 1, baseOffset, ordinal);
-    row && rows.push(row), ordinal++, byte = lf + 1;
-  }
-  if (atEof && byte < limit) {
-    let row = decodeRow(buffer, byte, limit, limit, baseOffset, ordinal);
-    row && rows.push(row), ordinal++, byte = limit;
-  }
-  return { rows, nextOffset: baseOffset + byte, nextSourceOrdinal: ordinal };
-}
-function decodeRow(buffer, contentStart, contentEnd, byteEnd, baseOffset, ordinal) {
-  let entry;
-  try {
-    entry = JSON.parse(buffer.toString("utf8", contentStart, contentEnd));
-  } catch {
-    return null;
-  }
-  return entry === null || typeof entry != "object" || Array.isArray(entry) ? null : {
-    entry,
-    sourceOrdinal: ordinal,
-    sourceEntryId: typeof entry.uuid == "string" ? entry.uuid : null,
-    timestamp: normalizeTimestamp(entry.timestamp),
-    byteStart: baseOffset + contentStart,
-    byteEnd: baseOffset + byteEnd
-  };
-}
-function cacheCreationTotal(usage) {
-  let cc = usage.cache_creation;
-  return cc && typeof cc == "object" ? (cc.ephemeral_5m_input_tokens || 0) + (cc.ephemeral_1h_input_tokens || 0) : usage.cache_creation_input_tokens || 0;
-}
-function normalizeClaudeCodeUsage(entry) {
-  if (!entry || entry.type !== "assistant") return null;
-  let message = entry.message;
-  if (!message || !message.usage || typeof message.usage != "object") return null;
-  let usage = message.usage;
-  if (KNOWN_USAGE_FIELDS.some((field) => usage[field] === null)) return null;
-  let input = usage.input_tokens || 0, output = usage.output_tokens || 0, cacheRead = usage.cache_read_input_tokens || 0, cacheWrite = cacheCreationTotal(usage);
-  return message.model === "<synthetic>" || input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0 ? null : { input, output, cacheRead, cacheWrite };
-}
-function extractSkillText(entry) {
-  let content = entry.message?.content;
-  if (!Array.isArray(content)) return null;
-  let text = "";
-  for (let block of content)
-    block?.type === "text" && typeof block.text == "string" && (text += block.text);
-  return text || null;
-}
-function isTaskNotificationRow(entry) {
-  return entry.type === "user" && typeof entry.message?.content == "string" && entry.message.content.trimStart().startsWith(TASK_NOTIFICATION_TAG);
-}
-function isClaudeCodeUserTurnBoundary(entry) {
-  if (!entry || entry.type !== "user" || entry.isSidechain === !0 || entry.isMeta === !0 || entry.isCompactSummary === !0) return !1;
-  let message = entry.message;
-  if (!message) return !1;
-  let content = message.content;
-  return typeof content == "string" ? !isTaskNotificationRow(entry) : Array.isArray(content) ? !content.some((block) => block && block.type === "tool_result") : !1;
-}
-function createTopology() {
-  return {
-    parentById: /* @__PURE__ */ new Map(),
-    childrenById: /* @__PURE__ */ new Map(),
-    roots: [],
-    writeOrder: [],
-    activeLeafId: null
-  };
-}
-function indexTopologyRow(topology, row) {
-  let id = row.sourceEntryId;
-  if (id === null) return;
-  let parent = row.entry.parentUuid ?? null;
-  if (topology.parentById.set(id, parent), parent) {
-    let children = topology.childrenById.get(parent);
-    children || (children = /* @__PURE__ */ new Set(), topology.childrenById.set(parent, children)), children.add(id);
-  } else topology.roots.includes(id) || topology.roots.push(id);
-  topology.writeOrder.push(id);
-}
-function newestWriteInSubtree(topology, rootId) {
-  let subtree = /* @__PURE__ */ new Set(), stack = [rootId];
-  for (; stack.length > 0; ) {
-    let id = stack.pop();
-    if (subtree.has(id)) continue;
-    subtree.add(id);
-    let children = topology.childrenById.get(id);
-    if (children) for (let child of children) stack.push(child);
-  }
-  let leaf = rootId;
-  for (let id of topology.writeOrder) subtree.has(id) && (leaf = id);
-  return leaf;
-}
-function canonicalPath(topology, leafId) {
-  let seen = /* @__PURE__ */ new Set(), reversed = [], current = leafId;
-  for (; current != null && !seen.has(current); )
-    seen.add(current), reversed.push(current), current = topology.parentById.get(current) ?? null;
-  return reversed.reverse();
-}
-function resolveCanonical(topology) {
-  let leafByRoot = topology.roots.map((rootId) => newestWriteInSubtree(topology, rootId)), newestId = topology.writeOrder[topology.writeOrder.length - 1], liveIndex = topology.roots.length - 1;
-  for (let index = 0; index < leafByRoot.length; index++)
-    leafByRoot[index] === newestId && (liveIndex = index);
-  let acceptedIds = /* @__PURE__ */ new Set(), activeLeafId = null, activePath = [];
-  for (let index = 0; index <= liveIndex; index++) {
-    activeLeafId = leafByRoot[index], activePath = canonicalPath(topology, activeLeafId);
-    for (let id of activePath) acceptedIds.add(id);
-  }
-  return { acceptedIds, activeLeafId, activePath };
-}
-function messageIdFor(row) {
-  let nativeId = row.entry.message?.id;
-  return typeof nativeId == "string" && nativeId.length > 0 ? NATIVE_MESSAGE_NAMESPACE + nativeId : ROW_MESSAGE_NAMESPACE + row.sourceOrdinal;
-}
-function nativeModelOf(entry) {
-  let model = entry.message?.model;
-  return typeof model == "string" ? model : null;
-}
-function contentObservations(row, base, messageId) {
-  let entry = row.entry;
-  if (entry.isCompactSummary === !0) return [];
-  if (entry.isMeta === !0)
-    return typeof entry.sourceToolUseID != "string" ? [] : [{
-      type: "skill-payload",
-      toolUseId: entry.sourceToolUseID,
-      text: extractSkillText(entry) ?? "",
-      ...base,
-      provenance: "harness"
-    }];
-  let role = entry.type === "assistant" ? "assistant" : entry.type === "user" ? "human" : null;
-  if (role === null) return [];
-  let content = entry.message?.content;
-  if (typeof content == "string")
-    return isTaskNotificationRow(entry) ? [{ type: "task-notification", text: content, ...base, provenance: "harness" }] : [{ type: "text", role, text: content, messageId, ...base, provenance: role }];
-  if (!Array.isArray(content)) return [];
-  let observations = [];
-  for (let block of content)
-    if (block)
-      if (block.type === "text" && typeof block.text == "string") {
-        if (block.text === "") continue;
-        observations.push({ type: "text", role, text: block.text, messageId, ...base, provenance: role });
-      } else block.type === "tool_use" && typeof block.id == "string" ? observations.push({
-        type: "tool-use",
-        messageId,
-        model: nativeModelOf(entry),
-        cwd: typeof entry.cwd == "string" ? entry.cwd : null,
-        toolUseId: block.id,
-        name: block.name,
-        input: block.input,
-        ...base,
-        provenance: "assistant"
-      }) : block.type === "tool_result" && typeof block.tool_use_id == "string" && observations.push({
-        type: "tool-result",
-        toolUseId: block.tool_use_id,
-        content: block.content,
-        // An absent is_error stays distinct from a present false: the wire reports the native field.
-        isError: block.is_error === void 0 ? void 0 : block.is_error === !0,
-        // The harness's own annotation of this result row, carried through uninterpreted — the tool-name
-        // set is a product of local plugin configuration, so this layer stays name-agnostic. Present with
-        // an absent `annotation` when the row carried none, which a consumer tells from no paired result
-        // at all; the row's time is the observation's own `timestamp`.
-        resultMeta: { annotation: entry.toolUseResult },
-        ...base,
-        provenance: "harness"
-      });
-  return observations;
-}
-function observationsForRow(row, { epoch }) {
-  let base = {
-    sourceOrdinal: row.sourceOrdinal,
-    sourceEntryId: row.sourceEntryId,
-    timestamp: row.timestamp
-  }, observations = [];
-  epoch && observations.push({ type: "epoch-boundary", ...base, provenance: "harness" }), isClaudeCodeUserTurnBoundary(row.entry) && observations.push({ type: "turn-boundary", ...base, provenance: "human" });
-  let messageId = messageIdFor(row);
-  observations.push(...contentObservations(row, base, messageId));
-  let usage = normalizeClaudeCodeUsage(row.entry);
-  return usage && observations.push({
-    type: "usage",
-    messageId,
-    model: nativeModelOf(row.entry),
-    usage,
-    ...base,
-    provenance: "assistant"
-  }), observations;
-}
-function carriesToolResult(entry) {
-  let content = entry.message?.content;
-  return Array.isArray(content) && content.some((block) => block?.type === "tool_result");
-}
-function createClaudeCodeObservationReducer() {
-  let topology = createTopology(), epochOpenedForRoot = /* @__PURE__ */ new Set(), unobservedIds = /* @__PURE__ */ new Set(), activePath = [], firstUsageOrdinal = null;
-  function append(rows) {
-    let previousLeafId = topology.activeLeafId, kept = [];
-    for (let row of rows)
-      row.entry.isSidechain !== !0 && (indexTopologyRow(topology, row), kept.push(row));
-    let resolved = resolveCanonical(topology);
-    if (topology.activeLeafId = resolved.activeLeafId, activePath = resolved.activePath, previousLeafId !== null && !resolved.acceptedIds.has(previousLeafId))
-      return { batches: [], staleBranch: !0 };
-    for (let id of unobservedIds)
-      if (resolved.acceptedIds.has(id)) return { batches: [], staleBranch: !0 };
-    let batches = [];
-    for (let row of kept) {
-      let id = row.sourceEntryId;
-      if (firstUsageOrdinal === null && normalizeClaudeCodeUsage(row.entry) !== null && (firstUsageOrdinal = row.sourceOrdinal), id !== null && !resolved.acceptedIds.has(id) && !(carriesToolResult(row.entry) && resolved.acceptedIds.has(topology.parentById.get(id)))) {
-        unobservedIds.add(id);
-        continue;
-      }
-      let nonFirstRoot = id !== null && topology.roots.indexOf(id) > 0, atOrAfterFirstUsage = firstUsageOrdinal !== null && row.sourceOrdinal >= firstUsageOrdinal, epoch = nonFirstRoot && atOrAfterFirstUsage && !epochOpenedForRoot.has(id);
-      epoch && epochOpenedForRoot.add(id);
-      let observations = observationsForRow(row, { epoch });
-      observations.length > 0 && batches.push(observations);
-    }
-    return { batches, staleBranch: !1 };
-  }
-  function snapshot() {
-    return {
-      activeLeafId: topology.activeLeafId,
-      activePath: activePath.slice(),
-      roots: topology.roots.slice()
-    };
-  }
-  return { append, snapshot };
-}
-function reduceClaudeCodeSnapshot(rows) {
-  let reducer = createClaudeCodeObservationReducer(), { batches } = reducer.append(rows), { activeLeafId, activePath } = reducer.snapshot();
-  return { batches, observations: batches.flat(), activeLeafId, activePath };
-}
-var NATIVE_MESSAGE_NAMESPACE, ROW_MESSAGE_NAMESPACE, KNOWN_USAGE_FIELDS, TASK_NOTIFICATION_TAG, init_transcript_observation = __esm({
-  "lib/harness/claude-code/transcript-observation.js"() {
-    NATIVE_MESSAGE_NAMESPACE = "cc:message:", ROW_MESSAGE_NAMESPACE = "cc:row:", KNOWN_USAGE_FIELDS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"], TASK_NOTIFICATION_TAG = "<task-notification>";
-  }
-});
-
-// lib/harness/claude-code/source-driver.js
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-function createClaudeCodeSourceDriver({
-  sourceLocator = null,
-  firstReadableTransition = "replace",
-  open = openSync,
-  read = readSync,
-  close = closeSync,
-  stat = fstatSync
-} = {}) {
-  let locator = sourceLocator, offset = 0, nextSourceOrdinal = 1, inode = null, initialized = !1, reducer = createClaudeCodeObservationReducer(), pendingReplace = null, closeFailure = null;
-  function rebuild(pendingCaptureMode = null) {
-    reducer = createClaudeCodeObservationReducer(), offset = 0, nextSourceOrdinal = 1, pendingReplace = { captureMode: pendingCaptureMode };
-  }
-  function readSpan(fd, from, until) {
-    let length = Math.max(0, until - from);
-    if (length === 0) return Buffer.alloc(0);
-    let buffer = Buffer.allocUnsafe(length), bytes = read(fd, buffer, 0, length, from);
-    return buffer.subarray(0, bytes);
-  }
-  function advance({ captureMode = "live", byteLimit = 1 / 0 } = {}) {
-    if (closeFailure) throw closeFailure;
-    let fd;
-    try {
-      fd = open(locator, "r");
-    } catch {
-      return null;
-    }
-    try {
-      let status;
-      try {
-        status = stat(fd);
-      } catch {
-        return null;
-      }
-      (status.size < offset || inode != null && status.ino !== inode) && rebuild();
-      let until = Math.min(status.size, byteLimit), chunk;
-      try {
-        chunk = readSpan(fd, offset, until);
-      } catch {
-        return null;
-      }
-      let reading = readClaudeCodeRows(chunk, {
-        baseOffset: offset,
-        sourceOrdinal: nextSourceOrdinal,
-        maxBytes: chunk.length
-      }), appended = reducer.append(reading.rows);
-      if (offset = reading.nextOffset, nextSourceOrdinal = reading.nextSourceOrdinal, inode = status.ino, appended.staleBranch) {
-        rebuild("replay");
-        let whole = readSpan(fd, 0, until), rebuilt = readClaudeCodeRows(whole, { maxBytes: whole.length });
-        appended = reducer.append(rebuilt.rows), offset = rebuilt.nextOffset, nextSourceOrdinal = rebuilt.nextSourceOrdinal;
-      }
-      if (initialized && !pendingReplace && appended.batches.length === 0) return null;
-      let transition = initialized ? pendingReplace ? "replace" : "append" : firstReadableTransition, mode = pendingReplace?.captureMode ?? captureMode;
-      return initialized = !0, pendingReplace = null, transition === "replace" ? { transition, sourceLocator: locator, batches: appended.batches, sourceObserved: !0, captureMode: mode } : { transition, batches: appended.batches, sourceObserved: !0, captureMode: mode };
-    } finally {
-      try {
-        close(fd);
-      } catch (error) {
-        throw closeFailure = error, error;
-      }
-    }
-  }
-  return { advance, get sourceLocator() {
-    return locator;
-  } };
-}
-var init_source_driver = __esm({
-  "lib/harness/claude-code/source-driver.js"() {
-    init_transcript_observation();
-  }
-});
-
-// lib/harness/claude-code/measurement-projection.js
-import nodePath from "node:path";
-import { homedir as homedir3 } from "node:os";
-function invariant4(ok, message) {
-  if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
-}
-function diagnostic3(code, message) {
-  return { scope: DIAGNOSTIC_SCOPE2, code, message };
-}
+// lib/measurement-projection.js
 function emptyFacts() {
   return { toolUseIds: /* @__PURE__ */ new Set(), loadToken: null, pathEvents: [] };
 }
@@ -26368,18 +26620,22 @@ function joinFacts(factsByStepId, closedSegment) {
   }
   return { steps, events };
 }
-function createClaudeCodeMeasurementProjection({
-  cwd = null,
-  projectRoot = null,
-  sourceLocator = null,
-  resolveModelPolicy,
+function createMeasurementProjection({
+  scope,
+  context,
+  captureSources,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload,
-  interpretTaskNotification
-} = {}) {
-  invariant4(typeof resolveModelPolicy == "function", "resolveModelPolicy must be a function"), invariant4(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant4(typeof completeToolResult == "function", "completeToolResult must be a function"), invariant4(typeof interpretSkillPayload == "function", "interpretSkillPayload must be a function"), invariant4(typeof interpretTaskNotification == "function", "interpretTaskNotification must be a function");
-  let sessionCwd = cwd || projectRoot || null, transcriptDir = typeof sourceLocator == "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null, context = { path: nodePath, homedir: homedir3, sessionCwd, transcriptDir, resolveModelPolicy }, correlationByToolUseId = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map();
+  interpretSkillPayload
+}) {
+  let invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
+  function invariant7(ok, message) {
+    if (!ok) throw new Error(`${invariantPrefix}: ${message}`);
+  }
+  function diagnostic3(code, message) {
+    return { scope, code, message };
+  }
+  let callByToolUseId = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map();
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     return facts || (facts = emptyFacts(), sidecarByStepId.set(stepId, facts)), facts;
@@ -26400,24 +26656,33 @@ function createClaudeCodeMeasurementProjection({
     for (let residual of interpreted.residuals) records.push({ type: "residual", ...residual });
   }
   function projectToolUse(observation, records, diagnostics) {
+    let id = observation.toolUseId, entry = callByToolUseId.get(id);
+    if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
     let interpreted = interpretToolUse(observation, context);
-    mergeTelemetry(interpreted.telemetry, diagnostics), interpreted.pending && correlationByToolUseId.set(observation.toolUseId, { phase: "await-result", pending: interpreted.pending }), pushRecords(interpreted, records);
+    mergeTelemetry(interpreted.telemetry, diagnostics), callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" }), pushRecords(interpreted, records), entry && entry.phase === "held" && projectToolResult(entry.result, records, diagnostics);
   }
   function projectToolResult(observation, records, diagnostics) {
-    let entry = correlationByToolUseId.get(observation.toolUseId);
-    if (!entry || entry.phase !== "await-result") return;
-    correlationByToolUseId.delete(observation.toolUseId);
+    let id = observation.toolUseId, entry = callByToolUseId.get(id);
+    if (!entry) {
+      callByToolUseId.set(id, { phase: "held", result: observation });
+      return;
+    }
+    if (entry.phase === "issued") {
+      callByToolUseId.set(id, { phase: "completed" });
+      return;
+    }
+    if (entry.phase !== "await-result") return;
     let completed = completeToolResult(entry.pending, observation, context);
-    mergeTelemetry(completed.telemetry, diagnostics), completed.skillContinuation && correlationByToolUseId.set(observation.toolUseId, {
+    mergeTelemetry(completed.telemetry, diagnostics), callByToolUseId.set(id, completed.skillContinuation ? {
       phase: "await-skill-payload",
       resourceKey: completed.skillContinuation.resourceKey,
       issuingPolicy: completed.skillContinuation.issuingPolicy
-    }), pushRecords(completed, records);
+    } : { phase: "completed" }), pushRecords(completed, records);
   }
   function projectSkillPayload(observation, records, diagnostics) {
-    let entry = correlationByToolUseId.get(observation.toolUseId);
+    let entry = callByToolUseId.get(observation.toolUseId);
     if (!entry || entry.phase !== "await-skill-payload") return;
-    correlationByToolUseId.delete(observation.toolUseId);
+    callByToolUseId.set(observation.toolUseId, { phase: "completed" });
     let interpreted = interpretSkillPayload(
       { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
       observation
@@ -26425,11 +26690,11 @@ function createClaudeCodeMeasurementProjection({
     mergeTelemetry(interpreted.telemetry, diagnostics), pushRecords(interpreted, records);
   }
   function project(observation) {
-    invariant4(observation !== null && typeof observation == "object", "observation must be an object");
+    invariant7(observation !== null && typeof observation == "object", "observation must be an object");
     let records = [], diagnostics = [];
     switch (observation.type) {
       case "epoch-boundary":
-        correlationByToolUseId = /* @__PURE__ */ new Map(), records.push({ type: "epoch" });
+        callByToolUseId = /* @__PURE__ */ new Map(), records.push({ type: "epoch" });
         break;
       case "turn-boundary":
         records.push({ type: "turn-boundary" });
@@ -26457,19 +26722,16 @@ function createClaudeCodeMeasurementProjection({
       case "skill-payload":
         projectSkillPayload(observation, records, diagnostics);
         break;
-      case "task-notification":
-        pushRecords(interpretTaskNotification(observation), records);
-        break;
       case "text":
         break;
       default:
-        invariant4(!1, `unsupported observation type: ${String(observation.type)}`);
+        invariant7(!1, `unsupported observation type: ${String(observation.type)}`);
     }
     return { records, diagnostics };
   }
   function finishSegment(closedSegment, { captureMode = "live" } = {}) {
     let closing = sidecarByStepId;
-    sidecarByStepId = /* @__PURE__ */ new Map(), correlationByToolUseId = /* @__PURE__ */ new Map();
+    sidecarByStepId = /* @__PURE__ */ new Map(), callByToolUseId = /* @__PURE__ */ new Map();
     let diagnostics = [];
     if (closedSegment == null) return { artifact: null, diagnostics };
     let payload;
@@ -26479,15 +26741,63 @@ function createClaudeCodeMeasurementProjection({
       return diagnostics.push(diagnostic3("segment_telemetry_join_failed", `telemetry join failed: ${error.message}`)), { artifact: null, diagnostics };
     }
     return {
-      artifact: { captureSource: captureMode === "replay" ? "cc-replay" : "cc-live", payload },
+      artifact: {
+        captureSource: captureMode === "replay" ? captureSources.replay : captureSources.live,
+        payload
+      },
       diagnostics
     };
   }
   return { project, finishSegment };
 }
-var DIAGNOSTIC_SCOPE2, init_measurement_projection = __esm({
+var init_measurement_projection = __esm({
+  "lib/measurement-projection.js"() {
+  }
+});
+
+// lib/harness/claude-code/measurement-projection.js
+import nodePath from "node:path";
+import { homedir as homedir3 } from "node:os";
+function invariant4(ok, message) {
+  if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
+}
+function createClaudeCodeMeasurementProjection({
+  cwd = null,
+  projectRoot = null,
+  sourceLocator = null,
+  resolveModelPolicy,
+  interpretToolUse,
+  completeToolResult,
+  interpretSkillPayload,
+  interpretTaskNotification
+} = {}) {
+  invariant4(typeof resolveModelPolicy == "function", "resolveModelPolicy must be a function"), invariant4(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant4(typeof completeToolResult == "function", "completeToolResult must be a function"), invariant4(typeof interpretSkillPayload == "function", "interpretSkillPayload must be a function"), invariant4(typeof interpretTaskNotification == "function", "interpretTaskNotification must be a function");
+  let sessionCwd = cwd || projectRoot || null, transcriptDir = typeof sourceLocator == "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null, shared = createMeasurementProjection({
+    scope: "claude-code-measurement-projection",
+    context: { path: nodePath, homedir: homedir3, sessionCwd, transcriptDir, resolveModelPolicy },
+    captureSources: { live: "cc-live", replay: "cc-replay" },
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload
+  });
+  function project(observation) {
+    if (observation?.type === "task-notification") {
+      let interpreted = interpretTaskNotification(observation);
+      return {
+        records: [
+          ...interpreted.effects.map((effect) => ({ type: "effect", ...effect })),
+          ...interpreted.residuals.map((residual) => ({ type: "residual", ...residual }))
+        ],
+        diagnostics: []
+      };
+    }
+    return shared.project(observation);
+  }
+  return { project, finishSegment: shared.finishSegment };
+}
+var init_measurement_projection2 = __esm({
   "lib/harness/claude-code/measurement-projection.js"() {
-    DIAGNOSTIC_SCOPE2 = "claude-code-measurement-projection";
+    init_measurement_projection();
   }
 });
 
@@ -26566,25 +26876,7 @@ var ERROR_PATTERNS, init_serena_parse = __esm({
   }
 });
 
-// lib/harness/claude-code/native-tools.js
-function canonicalizerFor(context) {
-  let ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  let homedir6 = context.homedir;
-  return (raw, base) => {
-    let value = raw;
-    (value === "~" || value.startsWith("~/")) && (value = ops.join(homedir6(), value.slice(1)));
-    let abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor(observation, context) {
-  return typeof observation.cwd == "string" && observation.cwd.length > 0 ? observation.cwd : typeof context.sessionCwd == "string" && context.sessionCwd.length > 0 ? context.sessionCwd : context.transcriptDir ?? null;
-}
-function resultTextOf(content) {
-  return typeof content == "string" ? content : Array.isArray(content) ? content.filter((part) => part?.type === "text" && typeof part.text == "string").map((part) => part.text).join(`
-`) : "";
-}
+// lib/bash-feature.js
 function stripShellPreamble(command) {
   let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim(), effectiveCwd = null, headerLines = 0;
   for (; ; ) {
@@ -26603,6 +26895,190 @@ function stripShellPreamble(command) {
     }
     return { rest, effectiveCwd, headerLines };
   }
+}
+function splitByPipe(s) {
+  let stages = [], current = "", i2 = 0;
+  for (; i2 < s.length; )
+    if (s[i2] === '"') {
+      for (current += s[i2++]; i2 < s.length && s[i2] !== '"'; ) {
+        if (s[i2] === "\\") {
+          current += s[i2++], i2 < s.length && (current += s[i2++]);
+          continue;
+        }
+        current += s[i2++];
+      }
+      i2 < s.length && (current += s[i2++]);
+    } else if (s[i2] === "'") {
+      for (current += s[i2++]; i2 < s.length && s[i2] !== "'"; ) current += s[i2++];
+      i2 < s.length && (current += s[i2++]);
+    } else if (s[i2] === "\\" && i2 + 1 < s.length && s[i2 + 1] === "|") {
+      let trailingBS = 0;
+      for (let k = current.length - 1; k >= 0 && current[k] === "\\"; k--) trailingBS++;
+      if (trailingBS % 2 === 1) {
+        i2++;
+        let trimmed2 = current.trim();
+        trimmed2 && stages.push(trimmed2), current = "", i2++;
+      } else
+        current += s[i2++], current += s[i2++];
+    } else {
+      if (s[i2] === "|" && i2 + 1 < s.length && s[i2 + 1] === "|")
+        return null;
+      if (s[i2] === "|") {
+        let trimmed2 = current.trim();
+        trimmed2 && stages.push(trimmed2), current = "", i2++;
+      } else
+        current += s[i2++];
+    }
+  let trimmed = current.trim();
+  return trimmed && stages.push(trimmed), stages;
+}
+function classifyPipe(firstCmd, baseType) {
+  let allStages = splitByPipe(firstCmd);
+  if (allStages === null) return null;
+  if (allStages.length < 2) return baseType;
+  let pipeStages = allStages.slice(1), pipeTools = pipeStages.map((s) => s.trim().split(/\s+/)[0]), keepsLines = (stage) => {
+    let trimmed = stage.trim();
+    return trimmed.split(/\s+/)[0] === "head" || SED_LINE_DROP_RE.test(trimmed);
+  };
+  return baseType === "cat" ? pipeTools[0] === "head" && pipeTools.slice(1).every((t) => t === "head") ? "head" : (pipeTools[0] === "grep" || pipeTools[0] === "rg") && /(?:^|\s)-[A-Za-z]*n/.test(pipeStages[0]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(pipeStages[0]) && pipeStages.slice(1).every(keepsLines) ? "grep-n" : null : baseType === "head" ? pipeTools.every((t) => t === "head") ? "head" : null : baseType === "grep-n" ? pipeStages.every(keepsLines) ? "grep-n" : null : baseType;
+}
+function redactCmd(cmd) {
+  return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
+}
+function pipeActorDisplay(cmd) {
+  let firstLine = stripShellPreamble(cmd).rest.split(`
+`)[0].split(";")[0], catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/), headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/), sourceMatch = catMatch || headMatch;
+  if (!sourceMatch) return null;
+  let allStages = splitByPipe(firstLine);
+  if (allStages === null || allStages.length < 2 || classifyPipe(firstLine, catMatch ? "cat" : "head") !== null) return null;
+  let filePath = sourceMatch[1], actorTool = allStages[1].trim().split(/\s+/)[0];
+  return {
+    name: actorTool.length > 40 ? actorTool.slice(0, 40) : actorTool,
+    detail: filePath.length > 40 ? filePath.slice(-40) : filePath
+  };
+}
+function bashFeature(command) {
+  if (!command || !String(command).trim()) return { name: "(bash)", detail: "" };
+  let cmd = String(command).trim();
+  if (cmd = cmd.replace(LEADING_COMMENT_RE, "").trim(), !cmd) return { name: "(bash)", detail: "" };
+  let pipeActorResult = pipeActorDisplay(cmd);
+  if (pipeActorResult) return pipeActorResult;
+  for (cmd = cmd.split("|")[0].trim(), cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, ""), cmd = stripShellPreamble(cmd).rest; /^(sudo|env|time|nohup)\s+/.test(cmd); ) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
+  for (; ; ) {
+    let before = cmd;
+    if (cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, ""), cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest, cmd === before) break;
+  }
+  let tokens = cmd.split(`
+`)[0].match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+  if (tokens.length === 0) return { name: "(bash)", detail: "" };
+  let tool = tokens[0];
+  if (tool.includes("/") || tool.includes("=")) return { name: "(script)", detail: "" };
+  let name2, argsStart;
+  if (tool === "git") {
+    let i2 = 1;
+    for (; i2 < tokens.length && tokens[i2].startsWith("-") && (tokens[i2] === "-C" || tokens[i2] === "-c"); )
+      i2 += 2;
+    let sub = i2 < tokens.length ? tokens[i2] : "";
+    name2 = sub ? `git ${sub}` : "git", argsStart = i2 + 1;
+  } else if (tool === "bash" || tool === "sh") {
+    let script = tokens[1] || "", basename3 = script.includes("/") ? script.split("/").pop() : script;
+    name2 = basename3 ? `${tool} ${basename3}` : tool, argsStart = 2;
+  } else if ((tool === "npm" || tool === "pnpm" || tool === "yarn") && tokens.length > 1) {
+    let sub = tokens[1] || "";
+    sub.startsWith("-") ? (name2 = tool, argsStart = 1) : (name2 = `${tool} ${sub}`, argsStart = 2);
+  } else tool === "docker" && tokens.length > 1 && !tokens[1].startsWith("-") ? (name2 = `${tool} ${tokens[1]}`, argsStart = 2) : (name2 = tool, argsStart = 1);
+  name2.length > 40 && (name2 = name2.slice(0, 40));
+  let detail = "";
+  for (let arg of tokens.slice(argsStart)) {
+    if (/^(?:&&|;|>>?|<<?|&)$/.test(arg)) break;
+    if (arg.startsWith("-")) continue;
+    let urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
+    if (urlMatch) {
+      detail = urlMatch[1];
+      break;
+    }
+    if (!arg.startsWith("$") && !arg.startsWith('"') && !arg.startsWith("'")) {
+      detail = arg;
+      break;
+    }
+  }
+  return detail = redactCmd(detail), detail.length > 40 && (detail = detail.slice(0, 40)), { name: name2, detail };
+}
+var LEADING_COMMENT_RE, CD_PREAMBLE_RE, ECHO_PREAMBLE_RE, FN_PREAMBLE_RE, SED_LINE_DROP_RE, init_bash_feature = __esm({
+  "lib/bash-feature.js"() {
+    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/, CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/, ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/, FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
+    SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
+  }
+});
+
+// lib/tool-effects.js
+function lineFragments(lines) {
+  let byLine = /* @__PURE__ */ new Map();
+  for (let [line, tokens] of lines) byLine.set(line, tokens);
+  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
+}
+function effectFor(update, resourceKey) {
+  let spentTokens = update.spent > 0 ? update.spent : 0;
+  return update.type === "grepMultiFile" ? {
+    access: "read",
+    overheadTokens: update.overhead,
+    spentTokens,
+    impacts: Object.entries(update.files).map(([key, entries]) => ({
+      resourceKey: key,
+      mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
+    }))
+  } : update.type === "fullSet" ? {
+    access: "read",
+    overheadTokens: update.overhead,
+    spentTokens,
+    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
+  } : update.type === "write" ? {
+    access: "write",
+    overheadTokens: update.overhead,
+    spentTokens,
+    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
+  } : update.type === "lineUpdate" ? {
+    access: "read",
+    overheadTokens: update.overhead,
+    spentTokens,
+    impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
+  } : {
+    access: "write",
+    overheadTokens: 0,
+    spentTokens,
+    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
+  };
+}
+function pathEventsFor(update, resourceKey, rawPath, toolType) {
+  if (update.type === "grepMultiFile")
+    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
+  if (resourceKey == null) return [];
+  let isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
+  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
+}
+var init_tool_effects = __esm({
+  "lib/tool-effects.js"() {
+  }
+});
+
+// lib/harness/claude-code/native-tools.js
+function canonicalizerFor(context) {
+  let ops = context && context.path;
+  if (!ops) return (raw) => String(raw);
+  let homedir6 = context.homedir;
+  return (raw, base) => {
+    let value = raw;
+    (value === "~" || value.startsWith("~/")) && (value = ops.join(homedir6(), value.slice(1)));
+    let abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
+    return ops.normalize(abs).split("\\").join("/");
+  };
+}
+function baseDirFor(observation, context) {
+  return typeof observation.cwd == "string" && observation.cwd.length > 0 ? observation.cwd : typeof context.sessionCwd == "string" && context.sessionCwd.length > 0 ? context.sessionCwd : context.transcriptDir ?? null;
+}
+function resultTextOf(content) {
+  return typeof content == "string" ? content : Array.isArray(content) ? content.filter((part) => part?.type === "text" && typeof part.text == "string").map((part) => part.text).join(`
+`) : "";
 }
 function hasTrailingSegment(cmd) {
   return cmd.includes(`
@@ -26835,52 +27311,6 @@ function compoundFor(input, base, canon, adapter) {
   });
   return blocks.some((block) => block.target !== null) ? { anchors: plan.anchors, blocks } : null;
 }
-function splitByPipe(s) {
-  let stages = [], current = "", i2 = 0;
-  for (; i2 < s.length; )
-    if (s[i2] === '"') {
-      for (current += s[i2++]; i2 < s.length && s[i2] !== '"'; ) {
-        if (s[i2] === "\\") {
-          current += s[i2++], i2 < s.length && (current += s[i2++]);
-          continue;
-        }
-        current += s[i2++];
-      }
-      i2 < s.length && (current += s[i2++]);
-    } else if (s[i2] === "'") {
-      for (current += s[i2++]; i2 < s.length && s[i2] !== "'"; ) current += s[i2++];
-      i2 < s.length && (current += s[i2++]);
-    } else if (s[i2] === "\\" && i2 + 1 < s.length && s[i2 + 1] === "|") {
-      let trailingBS = 0;
-      for (let k = current.length - 1; k >= 0 && current[k] === "\\"; k--) trailingBS++;
-      if (trailingBS % 2 === 1) {
-        i2++;
-        let trimmed2 = current.trim();
-        trimmed2 && stages.push(trimmed2), current = "", i2++;
-      } else
-        current += s[i2++], current += s[i2++];
-    } else {
-      if (s[i2] === "|" && i2 + 1 < s.length && s[i2 + 1] === "|")
-        return null;
-      if (s[i2] === "|") {
-        let trimmed2 = current.trim();
-        trimmed2 && stages.push(trimmed2), current = "", i2++;
-      } else
-        current += s[i2++];
-    }
-  let trimmed = current.trim();
-  return trimmed && stages.push(trimmed), stages;
-}
-function classifyPipe(firstCmd, baseType) {
-  let allStages = splitByPipe(firstCmd);
-  if (allStages === null) return null;
-  if (allStages.length < 2) return baseType;
-  let pipeStages = allStages.slice(1), pipeTools = pipeStages.map((s) => s.trim().split(/\s+/)[0]), keepsLines = (stage) => {
-    let trimmed = stage.trim();
-    return trimmed.split(/\s+/)[0] === "head" || SED_LINE_DROP_RE.test(trimmed);
-  };
-  return baseType === "cat" ? pipeTools[0] === "head" && pipeTools.slice(1).every((t) => t === "head") ? "head" : (pipeTools[0] === "grep" || pipeTools[0] === "rg") && /(?:^|\s)-[A-Za-z]*n/.test(pipeStages[0]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(pipeStages[0]) && pipeStages.slice(1).every(keepsLines) ? "grep-n" : null : baseType === "head" ? pipeTools.every((t) => t === "head") ? "head" : null : baseType === "grep-n" ? pipeStages.every(keepsLines) ? "grep-n" : null : baseType;
-}
 function stripQuotedStrings(s) {
   let result = "", i2 = 0;
   for (; i2 < s.length; )
@@ -26931,9 +27361,6 @@ function adapterFor(toolName) {
 function isEffectiveUpdate(update, target) {
   return update ? update.type === "grepMultiFile" ? Object.keys(update.files || {}).length > 0 : update.type === "fullSet" || update.type === "lineUpdate" ? target != null && Array.isArray(update.lines) && update.lines.length > 0 : update.type === "write" || update.type === "editDelta" ? target != null : !1 : !1;
 }
-function redactCmd(cmd) {
-  return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
-}
 function mcpDisplay(toolName) {
   if (!toolName || !toolName.startsWith("mcp__")) return toolName;
   let segments = toolName.slice(5).replace(/^plugin_/, "").split("__");
@@ -26948,109 +27375,6 @@ function mcpDisplay(toolName) {
     }
   }
   return segments.join(" ");
-}
-function pipeActorDisplay(cmd) {
-  let firstLine = stripShellPreamble(cmd).rest.split(`
-`)[0].split(";")[0], catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/), headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/), sourceMatch = catMatch || headMatch;
-  if (!sourceMatch) return null;
-  let allStages = splitByPipe(firstLine);
-  if (allStages === null || allStages.length < 2 || classifyPipe(firstLine, catMatch ? "cat" : "head") !== null) return null;
-  let filePath = sourceMatch[1], actorTool = allStages[1].trim().split(/\s+/)[0];
-  return {
-    name: actorTool.length > DISPLAY_CHARS ? actorTool.slice(0, DISPLAY_CHARS) : actorTool,
-    detail: filePath.length > DISPLAY_CHARS ? filePath.slice(-DISPLAY_CHARS) : filePath
-  };
-}
-function bashFeature(command) {
-  if (!command || !String(command).trim()) return { name: "(bash)", detail: "" };
-  let cmd = String(command).trim();
-  if (cmd = cmd.replace(LEADING_COMMENT_RE, "").trim(), !cmd) return { name: "(bash)", detail: "" };
-  let pipeActorResult = pipeActorDisplay(cmd);
-  if (pipeActorResult) return pipeActorResult;
-  for (cmd = cmd.split("|")[0].trim(), cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, ""), cmd = stripShellPreamble(cmd).rest; /^(sudo|env|time|nohup)\s+/.test(cmd); ) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
-  for (; ; ) {
-    let before = cmd;
-    if (cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, ""), cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest, cmd === before) break;
-  }
-  let tokens = cmd.split(`
-`)[0].match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-  if (tokens.length === 0) return { name: "(bash)", detail: "" };
-  let tool = tokens[0];
-  if (tool.includes("/") || tool.includes("=")) return { name: "(script)", detail: "" };
-  let name2, argsStart;
-  if (tool === "git") {
-    let i2 = 1;
-    for (; i2 < tokens.length && tokens[i2].startsWith("-") && (tokens[i2] === "-C" || tokens[i2] === "-c"); )
-      i2 += 2;
-    let sub = i2 < tokens.length ? tokens[i2] : "";
-    name2 = sub ? `git ${sub}` : "git", argsStart = i2 + 1;
-  } else if (tool === "bash" || tool === "sh") {
-    let script = tokens[1] || "", basename3 = script.includes("/") ? script.split("/").pop() : script;
-    name2 = basename3 ? `${tool} ${basename3}` : tool, argsStart = 2;
-  } else if ((tool === "npm" || tool === "pnpm" || tool === "yarn") && tokens.length > 1) {
-    let sub = tokens[1] || "";
-    sub.startsWith("-") ? (name2 = tool, argsStart = 1) : (name2 = `${tool} ${sub}`, argsStart = 2);
-  } else tool === "docker" && tokens.length > 1 && !tokens[1].startsWith("-") ? (name2 = `${tool} ${tokens[1]}`, argsStart = 2) : (name2 = tool, argsStart = 1);
-  name2.length > DISPLAY_CHARS && (name2 = name2.slice(0, DISPLAY_CHARS));
-  let detail = "";
-  for (let arg of tokens.slice(argsStart)) {
-    if (/^(?:&&|;|>>?|<<?|&)$/.test(arg)) break;
-    if (arg.startsWith("-")) continue;
-    let urlMatch = arg.match(/^https?:\/\/([^/\s:@]+)/);
-    if (urlMatch) {
-      detail = urlMatch[1];
-      break;
-    }
-    if (!arg.startsWith("$") && !arg.startsWith('"') && !arg.startsWith("'")) {
-      detail = arg;
-      break;
-    }
-  }
-  return detail = redactCmd(detail), detail.length > DISPLAY_CHARS && (detail = detail.slice(0, DISPLAY_CHARS)), { name: name2, detail };
-}
-function lineFragments(lines) {
-  let byLine = /* @__PURE__ */ new Map();
-  for (let [line, tokens] of lines) byLine.set(line, tokens);
-  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
-}
-function effectFor(update, resourceKey) {
-  let spentTokens = update.spent > 0 ? update.spent : 0;
-  return update.type === "grepMultiFile" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: Object.entries(update.files).map(([key, entries]) => ({
-      resourceKey: key,
-      mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
-    }))
-  } : update.type === "fullSet" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-  } : update.type === "write" ? {
-    access: "write",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-  } : update.type === "lineUpdate" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
-  } : {
-    access: "write",
-    overheadTokens: 0,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
-  };
-}
-function pathEventsFor(update, resourceKey, rawPath, toolType) {
-  if (update.type === "grepMultiFile")
-    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
-  if (resourceKey == null) return [];
-  let isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
-  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
 }
 function residualIdentityFor(toolName, input) {
   let isBash = toolName === "Bash", isMcp = typeof toolName == "string" && toolName.startsWith("mcp__");
@@ -27187,11 +27511,11 @@ function completeClaudeCodeToolResult(awaitResult, observation, context) {
     issuingStepId: correlation.issuingStepId,
     loadToken: correlation.awaitLoadToken ? resolvedLoadToken(resultText) : null,
     pathEvents: []
-  }, nothing = { effects: [], residuals: [], telemetry, skillContinuation: null };
+  }, nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
   if (correlation.kind === "residual") return residualCompletion(correlation.residual, resultText, observation, telemetry);
   if (correlation.kind === "compound") return completeCompound(correlation, observation, resultText, context, telemetry);
-  if (correlation.kind !== "effect") return nothing;
-  let declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing;
+  if (correlation.kind !== "effect") return nothing2;
+  let declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing2;
   if (observation.isError === !0) return declined();
   let adapter = correlation.adapter, update;
   try {
@@ -27268,14 +27592,15 @@ function classifyToolPair(pair, ctp) {
   }
   return isEffectiveUpdate(update, pair.resourceKey ?? null) ? adapter.name === "Skill" ? "skill" : "path" : "residual";
 }
-var LEADING_COMMENT_RE, TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, DISPLAY_CHARS, CD_PREAMBLE_RE, ECHO_PREAMBLE_RE, FN_PREAMBLE_RE, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, SED_LINE_DROP_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS, init_native_tools = __esm({
+var TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS, init_native_tools = __esm({
   "lib/harness/claude-code/native-tools.js"() {
     init_constants();
     init_token_estimate();
     init_serena_parse();
-    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/, TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/, TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/, AGENT_FINISHED_RE = /^Agent "(.+)" finished$/, TASK_ID_PREFIX_CHARS = 8, DISPLAY_CHARS = 40;
-    CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/, ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/, FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
-    SED_READ_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s+([^\s|;><&'"]+)\s*(\|\s*cat\s+-n\s*)?$/, SED_SPEC_PREFIX_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s/, SED_SEGMENT_RE = /^(\d+)(?:,(\d+|\$))?p$/, SED_CAT_PIPE_RE = /^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)['"]?\s*\|\s*sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\2\s*$/, STDERR_DISCARD_RE = /\s+2>\s*\/dev\/null$/, SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
+    init_bash_feature();
+    init_tool_effects();
+    TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/, TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/, AGENT_FINISHED_RE = /^Agent "(.+)" finished$/, TASK_ID_PREFIX_CHARS = 8;
+    SED_READ_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s+([^\s|;><&'"]+)\s*(\|\s*cat\s+-n\s*)?$/, SED_SPEC_PREFIX_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s/, SED_SEGMENT_RE = /^(\d+)(?:,(\d+|\$))?p$/, SED_CAT_PIPE_RE = /^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)['"]?\s*\|\s*sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\2\s*$/, STDERR_DISCARD_RE = /\s+2>\s*\/dev\/null$/;
     HEREDOC_RE = /<<-?\s*['"]?\w/, CD_SEGMENT_RE = /^cd\s+(\S+)$/, BLANK_ECHO_RE = /^echo(?:\s+(?:""|''))?$/, DIRECTORY_CHANGE_RE = /^(?:cd|pushd|popd)\b/, READ_DIAGNOSTIC_RE = /^(?:cat|head|sed|grep|rg): /, ECHO_LITERAL_RE = /^echo\s+(?:"([^"$`\\\n]*)"|'([^'\n]*)'|([^\s"'$`;&|<>]+))$/, HEAD_COUNT_RE = /^head\s+(?:-n\s*|-)(\d+)/, HEAD_DEFAULT_LINES = 10;
     CWD_RESET_LINE_RE = /^Shell cwd was reset to /, PERSISTED_OUTPUT_RE = /^<persisted-output>/;
     NATIVE_ADAPTERS = [
@@ -27614,7 +27939,7 @@ function mergeLedgerIntoStatus(status, ledger, currentKey) {
 function enrichStatusLandmarks(status) {
   status.rateLamp = status.rateLamp || {}, status.rateLamp.rentMeter || (status.rateLamp.rentMeter = RENT_METER_DEFAULT());
   let rl = status.rateLamp;
-  return (rl.B_default > 0 ? rl.B_default : rl.B_post) > 0 && rl.C_RATIO > 0 && (rl.wallP = wallPositionFor(rl.C_RATIO)), status;
+  return rl.B_default > 0 && rl.C_RATIO > 0 && (rl.wallP = wallPositionFor(rl.C_RATIO)), status;
 }
 function mutateLedger(ledger, reason, fn) {
   let before = JSON.stringify(ledger), draft = structuredClone(ledger);
@@ -27671,8 +27996,137 @@ var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenR
   }
 });
 
+// lib/lineage.js
+function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
+  let chain = [], node = headHandoff;
+  for (; node && !seen.has(node.sessionId); )
+    seen.add(node.sessionId), chain.push({
+      sessionId: node.sessionId,
+      sourceLocator: node.transcriptPath || null,
+      sourceLabel: node.transcriptPath || null,
+      handoffId: node.handoffId
+    }), node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
+  return chain.reverse();
+}
+function fromHandoff({ store, handoffId }) {
+  let head = store.getHandoff(handoffId);
+  return head ? walk(store, head.projectId, head) : [];
+}
+function forLoadedHandoff({ store, sessionId }) {
+  let head = store.findLatestDeliveryInSession(sessionId);
+  return head ? fromHandoff({ store, handoffId: head.handoffId }) : [];
+}
+var init_lineage = __esm({
+  "lib/lineage.js"() {
+  }
+});
+
+// lib/turn-browse.js
+function rootHeadline(rows) {
+  let opening = [];
+  for (let row of rows)
+    if (opening.push(row.uText), (row.note ?? "") !== "") break;
+  return opening.join(ROOT_HEADLINE_JOIN);
+}
+function buildTurnBrowse({ store, lineage }) {
+  let sources = labelHistorySources(lineage), sections = [];
+  return sources.forEach((entry, i2) => {
+    let rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
+    if (rows.length === 0) return;
+    let entries = rows.map((row) => {
+      let out2 = { u_text: row.uText };
+      return row.note != null && (out2.note = row.note), out2;
+    }), headline = i2 === 0 ? rootHeadline(rows) : store.getHandoff(sources[i2 - 1].handoffId)?.nextTask ?? "";
+    sections.push({ label: entry.label, headline, entries });
+  }), { sections };
+}
+function lineageHeadlines({ store, lineage }) {
+  return buildTurnBrowse({ store, lineage }).sections.map(({ label, headline }) => ({ label, headline }));
+}
+var ROOT_HEADLINE_JOIN, init_turn_browse = __esm({
+  "lib/turn-browse.js"() {
+    init_turn();
+    ROOT_HEADLINE_JOIN = " \xB7 ";
+  }
+});
+
+// lib/wire.js
+function statusWire(status) {
+  let { sourceLocator, ...rest } = status, rateLamp = status.rateLamp, lamp = rateLamp?.reliable ? lampZone(rateLamp.br, { u: rateLamp.u, mf: rateLamp.mf }) : null;
+  return { ...rest, transcriptPath: sourceLocator ?? null, lamp };
+}
+function statusWireWithLedger(status, ledger) {
+  let payload = statusWire(status), currentKey = payload.rateLamp?.reliable ? stateKeyForStatus(payload) : null;
+  return mergeLedgerIntoStatus(payload, ledger, currentKey), payload;
+}
+function bucketsPayload({ bucketData, status, sessionId, now }) {
+  let paths = bucketData.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
+  return {
+    ...bucketData,
+    paths,
+    session_id: sessionId,
+    segment: bucketData.segment,
+    current_turn: bucketData.currentTurnSeq,
+    generated_at: now,
+    metrics: { br: status.br, mf: status.mf, pp: status.pp, g: status.g, b_total: status.B, c_ratio: status.cRatio }
+  };
+}
+function overrideWarnings(warnings) {
+  return (warnings ?? []).map((w) => w.code === "unknown_resource" ? `ignored: path "${w.resourceKey}" not in current bRebuild` : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`);
+}
+function isOverrideMap(overrides) {
+  return !!overrides && typeof overrides == "object" && !Array.isArray(overrides);
+}
+function pricingResponse({ model, saved, policy, cliRatio }) {
+  let modelRatio = policy.cRatio, presets = policy.pricing.presets, effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
+  if (saved) {
+    if (effectiveRatio = saved.ratio, source = "saved", effectiveRead = saved.readPrice, effectiveWrite = saved.writePrice, saved.presetId) {
+      let preset = presets.find((p) => p.id === saved.presetId);
+      preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice && (source = "preset");
+    }
+  } else cliRatio != null ? (effectiveRatio = cliRatio, source = "cli") : (effectiveRatio = modelRatio, source = "model_default");
+  return {
+    effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
+    saved: saved || null,
+    modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
+    presets
+  };
+}
+function turnPageWire({ turnPage, nextBefore }) {
+  return {
+    turn_page: turnPage,
+    ...nextBefore ? { next_before: nextBefore } : {}
+  };
+}
+async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSource, dialogueProjection, notice }) {
+  try {
+    let sessions = fromHandoff({ store, handoffId: core.handoff_id });
+    return {
+      ...core,
+      lineage: lineageHeadlines({ store, lineage: sessions }),
+      ...turnPageWire(await turnPageBuilder({ store, lineage: sessions, dialogueSource, dialogueProjection, notice }))
+    };
+  } catch (err2) {
+    return process.env.SW_DEBUG && console.error("[turn_page_load]", err2), { ...core, turn_page_error: "turn_page_unavailable" };
+  }
+}
+var INVALID_OVERRIDES_MESSAGE, init_wire = __esm({
+  "lib/wire.js"() {
+    init_rate_lamp_manager();
+    init_bill_regret();
+    init_rate_lamp_store();
+    init_lineage();
+    init_turn_browse();
+    INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
+  }
+});
+
 // lib/project-key.js
 import { resolve as resolve2 } from "node:path";
+function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
+  let raw = claudeProjectDir || cwd;
+  return raw ? resolve2(raw) : null;
+}
 var init_project_key = __esm({
   "lib/project-key.js"() {
   }
@@ -27689,12 +28143,12 @@ var init_legacy_cleanup = __esm({
 
 // lib/model-policy.js
 function ctpFor(modelId) {
-  let id = String(modelId || ""), prefix = Object.keys(CTP_TABLE).find((p) => id.startsWith(p)), ctp = prefix ? CTP_TABLE[prefix] : DEFAULT_CTP;
+  let id = String(modelId || ""), ctp = CTP_TABLE.find((row) => row.match.test(id)) ?? DEFAULT_CTP;
   return { ascii: ctp.ascii, cjk: ctp.cjk, version: CTP_VERSION };
 }
 function cRatioFor(modelId, ttl) {
   let hit = C_RATIO_TABLE.find((r) => r.match.test(modelId));
-  return hit ? typeof hit.ratio == "number" ? hit.ratio : Object.hasOwn(hit.ratio, ttl) ? hit.ratio[ttl] : hit.ratio[DEFAULT_CACHE_TTL] : DEFAULT_C_RATIO;
+  return hit ? typeof hit.ratio == "number" ? hit.ratio : Object.hasOwn(hit.ratio, ttl) ? hit.ratio[ttl] : hit.ratio["5m"] : DEFAULT_C_RATIO;
 }
 function contextCapacityFor(modelId) {
   let hit = CONTEXT_WINDOW_TABLE.find((r) => r.match.test(modelId));
@@ -27733,6 +28187,9 @@ function tryGetStore() {
     return null;
   }
 }
+function sanitizePresetId(presetId) {
+  return typeof presetId == "string" && presetId.length > 0 && presetId.length <= PRESET_ID_MAX_CHARS ? presetId : null;
+}
 function validatePricingInput({ readPrice, writePrice }) {
   if (!Number.isFinite(readPrice) || !Number.isFinite(writePrice))
     throw new Error("readPrice and writePrice must be finite numbers");
@@ -27755,14 +28212,15 @@ function loadPricingOverride(model) {
 function deletePricingOverride(model) {
   getStore().deleteConfig(`pricing:${model}`);
 }
-var init_pricing_store = __esm({
+var PRESET_ID_MAX_CHARS, NO_MODEL_MESSAGE, init_pricing_store = __esm({
   "lib/pricing-store.js"() {
     init_store();
+    PRESET_ID_MAX_CHARS = 80, NO_MODEL_MESSAGE = "Model not yet detected; retry after first API call";
   }
 });
 
 // lib/state-reaper.js
-import { readdirSync as readdirSync2, statSync as statSync3, unlinkSync as unlinkSync2, readFileSync as readFileSync6, rmSync as rmSync2 } from "node:fs";
+import { readdirSync as readdirSync2, statSync as statSync3, unlinkSync as unlinkSync2, readFileSync as readFileSync7, rmSync as rmSync2 } from "node:fs";
 import { join as join7 } from "node:path";
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return !1;
@@ -27775,7 +28233,7 @@ function isPidAlive(pid) {
 function isLivePortFile(sessionId, portDir) {
   if (!portDir || !sessionId || /[/\\\0]/.test(sessionId) || sessionId === ".." || sessionId === ".") return !1;
   try {
-    let p = join7(portDir, `${sessionId}.json`), record = JSON.parse(readFileSync6(p, "utf8"));
+    let p = join7(portDir, `${sessionId}.json`), record = JSON.parse(readFileSync7(p, "utf8"));
     return record.pid && isPidAlive(record.pid);
   } catch {
     return !1;
@@ -27812,7 +28270,7 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
       let st = statSync3(p);
       if (now - st.mtimeMs > maxAgeMs) {
         try {
-          let record = JSON.parse(readFileSync6(p, "utf8"));
+          let record = JSON.parse(readFileSync7(p, "utf8"));
           if (record.pid && isPidAlive(record.pid)) continue;
         } catch {
         }
@@ -27856,7 +28314,7 @@ var MAX_AGE_MS, init_state_reaper = __esm({
 
 // lib/statusline-format.js
 function renderLamp(br, opts) {
-  return Number.isFinite(br) ? opts?.u < 1 ? opts.u >= uLeftAtBr(opts.mf, 0.1) ? "\u{1F7E2}" : "\u26AA" : br >= 0.25 ? "\u{1F534}" : br >= 0.1 ? "\u{1F7E1}" : "\u{1F7E2}" : "\u26AA";
+  return LAMP_EMOJI[lampZone(br, opts)];
 }
 function renderBr(br) {
   if (!Number.isFinite(br) || br < 0) return "b---%";
@@ -27901,13 +28359,13 @@ function formatLine(s) {
   return alertMsg && (line += `
 \u21BB ${alertMsg}`), line;
 }
-var BAR_WIDTH, tagOf, kFmt, init_statusline_format = __esm({
+var BAR_WIDTH, tagOf, kFmt, LAMP_EMOJI, init_statusline_format = __esm({
   "lib/statusline-format.js"() {
     init_bill_regret();
     BAR_WIDTH = 10, tagOf = (model) => {
       let m = model || "";
       return m ? m.match(/opus|sonnet|haiku|deepseek/i)?.[0] || m : "model";
-    }, kFmt = (n) => Number.isFinite(n) ? n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n) : "\u2014";
+    }, kFmt = (n) => Number.isFinite(n) ? n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n) : "\u2014", LAMP_EMOJI = { white: "\u26AA", green: "\u{1F7E2}", amber: "\u{1F7E1}", red: "\u{1F534}" };
   }
 });
 
@@ -28264,7 +28722,12 @@ var import_ignore, init_gitignore_loader = __esm({
 
 // lib/carry-sweep.js
 import { existsSync as existsSync2, statSync as statSync4 } from "node:fs";
-function replaySessionTelemetry(sessionId, transcriptPath, { store, createWatcher } = {}) {
+function replaySessionTelemetry(sessionId, transcriptPath, {
+  store,
+  createWatcher,
+  onDiagnostics = () => {
+  }
+} = {}) {
   if (typeof createWatcher != "function")
     throw new Error("replaySessionTelemetry requires the host's createWatcher composition callback");
   if (!transcriptPath || !existsSync2(transcriptPath)) return null;
@@ -28282,9 +28745,9 @@ function replaySessionTelemetry(sessionId, transcriptPath, { store, createWatche
   for (; advances++ < RECONSTRUCTION_GUARD_MAX; ) {
     let frame = driver.advance({ captureMode: "replay" });
     if (!frame) break;
-    sawFrame = !0, watcher.applyHarnessFrame(frame);
+    sawFrame = !0, onDiagnostics(watcher.applyHarnessFrame(frame).diagnostics);
   }
-  return sawFrame ? (watcher.closeCurrentSegment({ captureMode: "replay" }), !0) : null;
+  return sawFrame ? (onDiagnostics(watcher.closeCurrentSegment().diagnostics), !0) : null;
 }
 var RECONSTRUCTION_GUARD_MAX, init_carry_sweep = __esm({
   "lib/carry-sweep.js"() {
@@ -28298,7 +28761,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.8.0",
+      version: "0.9.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -28353,11 +28816,14 @@ var package_default, init_package = __esm({
       },
       devDependencies: {
         "@playwright/test": "^1.45.0",
+        "chart.js": "^4.5.1",
         esbuild: "^0.28.1",
         "github-slugger": "^2.0.0",
         katex: "^0.17.0",
         marked: "^18.0.7",
         "marked-katex-extension": "^5.1.10",
+        react: "^18.3.1",
+        "react-dom": "^18.3.1",
         "tree-sitter-javascript": "^0.25.0",
         "tree-sitter-python": "^0.25.0",
         "tree-sitter-typescript": "^0.23.2"
@@ -28377,40 +28843,15 @@ var PLUGIN_VERSION, init_version = __esm({
   }
 });
 
-// lib/lineage.js
-function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
-  let chain = [], node = headHandoff;
-  for (; node && !seen.has(node.sessionId); )
-    seen.add(node.sessionId), chain.push({
-      sessionId: node.sessionId,
-      sourceLocator: node.transcriptPath || null,
-      sourceLabel: node.transcriptPath || null,
-      handoffId: node.handoffId
-    }), node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
-  return chain.reverse();
-}
-function fromHandoff({ store, handoffId }) {
-  let head = store.getHandoff(handoffId);
-  return head ? walk(store, head.projectId, head) : [];
-}
-function forLoadedHandoff({ store, sessionId }) {
-  let head = store.findLatestDeliveryInSession(sessionId);
-  return head ? fromHandoff({ store, handoffId: head.handoffId }) : [];
-}
-var init_lineage = __esm({
-  "lib/lineage.js"() {
-  }
-});
-
 // lib/turn-tool-recovery.js
 function withPageRecovery(result) {
   return result?.error === "turn_page_unavailable" ? { ...result, recovery: "Call turn_page again; it reads the transcript and the store afresh on every call. Search and locate have independent projections and may still answer." } : result;
 }
 function withSearchRecovery(result, { hitRecovery } = {}) {
-  return result?.error === "search_unavailable" ? { ...result, recovery: PAGE_IS_THE_FALLBACK } : result?.found === !1 ? { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment, or call turn_locate with a remembered term for candidate turns and the wording actually used." } : result?.truncated === !0 ? { ...result, recovery: "Older matches were dropped to fit the budget, and the cut falls on a match, so the oldest entry may be incomplete. Narrow and search again: a longer literal, the scope of an entry near what you are after, or turn_locate for a candidate." } : result?.found === !0 ? { ...result, recovery: hitRecovery } : result;
+  return result?.error === "search_unavailable" ? { ...result, recovery: PAGE_IS_THE_FALLBACK } : result?.found === !1 ? { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment or a token seen verbatim \u2014 an id, a path, a commit hash \u2014 or call turn_locate with a remembered term for candidate turns and the wording actually used." } : result?.truncated === !0 ? { ...result, recovery: "Older matches were dropped to fit the budget, and the cut falls on a match, so the oldest entry may be incomplete. Narrow and search again: a longer literal, the scope of an entry near what you are after, or turn_locate for a candidate." } : result?.found === !0 ? { ...result, recovery: hitRecovery } : result;
 }
-function withLocateRecovery(result) {
-  return result?.error === "locate_unavailable" ? { ...result, recovery: PAGE_IS_THE_FALLBACK } : result?.found === !1 ? { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." } : result?.found === !0 ? { ...result, recovery: "A hit's transcript_path holds its turn at row T of its scope, as grep -n numbers rows; the other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it." } : result;
+function withLocateRecovery(result, { hitRecovery } = {}) {
+  return result?.error === "locate_unavailable" ? { ...result, recovery: PAGE_IS_THE_FALLBACK } : result?.found === !1 ? { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." } : result?.found === !0 ? { ...result, recovery: hitRecovery } : result;
 }
 var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, PAGE_IS_THE_FALLBACK, init_turn_tool_recovery = __esm({
   "lib/turn-tool-recovery.js"() {
@@ -28422,21 +28863,24 @@ var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, PAGE_IS_THE_F
 });
 
 // lib/turn-page.js
+function invariant5(ok, message) {
+  if (!ok) throw new Error(`turn page invariant: ${message}`);
+}
 function renderRecord(label, record) {
   let address = record.t === null ? null : turnAddress(label, record.t), pad = address === null ? "" : " ".repeat(address.length + 1), rows = physicalLines(record.u).map((line, i2) => `${i2 === 0 && address ? `${address} ` : pad}| U: ${line}`);
   return record.note != null && rows.push(...physicalLines(record.note).map((line) => `${pad}| A: ${line}`)), rows.join(`
 `);
 }
-function renderPage(entries) {
-  let blocks = [TURN_NOTICE], openIndex = null;
+function renderPage(entries, notice) {
+  let blocks = [notice], openIndex = null;
   for (let entry of entries)
     entry.index !== openIndex && (blocks.push(`${entry.label}  ${entry.sourceLabel}`), openIndex = entry.index), blocks.push(renderRecord(entry.label, entry.record));
   return blocks.join(`
 
 `);
 }
-function projectSession(store, entry, readSource) {
-  let { readable, turns } = readSource(entry.sourceLocator), ordinals = readable ? activePathOrdinals(turns) : null, addressable = ordinals !== null && ordinals.size > 0, records = [];
+async function projectSession(store, entry, readSource) {
+  let { readable, turns } = await readSource(entry.sourceLocator), ordinals = readable ? activePathOrdinals(turns) : null, addressable = ordinals !== null && ordinals.size > 0, records = [];
   for (let row of store.listTurnNotes(entry.sessionId)) {
     let record = projectTurnRecord(row, ordinals);
     record.t === null && addressable || records.push({
@@ -28450,16 +28894,17 @@ function projectSession(store, entry, readSource) {
   }
   return records.sort(addressable ? byOrdinal : byAnchor), { readable, records };
 }
-function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection }) {
-  let sources = labelHistorySources(lineage), readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), parsed = /* @__PURE__ */ new Map(), sessionAt = (index) => (parsed.has(index) || parsed.set(index, projectSession(store, sources[index], readSource)), parsed.get(index)), boundary = before == null ? null : resolveBefore(before, sources, sessionAt), newestIndex = boundary ? boundary.index : sources.length - 1, windowAt = (index) => {
-    let { records } = sessionAt(index);
+async function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection, notice }) {
+  invariant5(typeof notice == "string" && notice.length > 0, "notice is required");
+  let sources = labelHistorySources(lineage), readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), parsed = /* @__PURE__ */ new Map(), sessionAt = (index) => (parsed.has(index) || parsed.set(index, projectSession(store, sources[index], readSource)), parsed.get(index)), boundary = before == null ? null : await resolveBefore(before, sources, sessionAt), newestIndex = boundary ? boundary.index : sources.length - 1, windowAt = async (index) => {
+    let { records } = await sessionAt(index);
     return !boundary || index !== boundary.index || boundary.t === null ? records : records.filter((e) => e.record.t < boundary.t);
   }, entries = [], turnPage = "", olderRemains = !1;
   fill:
     for (let index = newestIndex; index >= 0; index--) {
-      let window2 = windowAt(index);
+      let window2 = await windowAt(index);
       for (let i2 = window2.length - 1; i2 >= 0; i2--) {
-        let candidate = [window2[i2], ...entries], rendered = renderPage(candidate);
+        let candidate = [window2[i2], ...entries], rendered = renderPage(candidate, notice);
         if (!isWithinHistoryBudget(estimateWireTokens({ turn_page: rendered }, DEFAULT_CTP))) {
           olderRemains = !0;
           break fill;
@@ -28471,56 +28916,26 @@ function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogue
   let head = entries[0].record, nextBefore = olderRemains && head.t !== null ? turnAddress(entries[0].label, head.t) : null;
   return { turnPage, nextBefore };
 }
-function resolveBefore(before, sources, sessionAt) {
+async function resolveBefore(before, sources, sessionAt) {
   let parsed = parseTurnPageBoundary(before);
   if (!parsed) throw notFound();
   let index = sources.findIndex((entry) => entry.label === parsed.label);
   if (index < 0) throw notFound();
   if (parsed.sourceOrdinal === null) return { index, t: null };
-  let session = sessionAt(index);
-  if (!session.readable) throw notFound();
   let t = parsed.sourceOrdinal;
-  if (!session.records.some((entry) => entry.record.t === t)) throw notFound();
+  if (!(await sessionAt(index)).records.some((entry) => entry.record.t === t)) throw notFound();
   return { index, t };
 }
-var TURN_NOTICE, notFound, physicalLines, byOrdinal, byAnchor, init_turn_page = __esm({
+var notFound, physicalLines, byOrdinal, byAnchor, init_turn_page = __esm({
   "lib/turn-page.js"() {
     init_constants();
     init_turn_history_budget();
     init_turn();
-    TURN_NOTICE = "Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's transcript file, and a row's T is that file's row as grep -n numbers it.", notFound = () => Object.assign(new Error("not_found"), { code: "not_found" }), physicalLines = (text) => String(text).replace(/\r\n?/g, `
+    notFound = () => Object.assign(new Error("not_found"), { code: "not_found" });
+    physicalLines = (text) => String(text).replace(/\r\n?/g, `
 `).split(`
 `);
     byOrdinal = (a, b) => a.record.t - b.record.t, byAnchor = (a, b) => a.anchorUuid < b.anchorUuid ? -1 : a.anchorUuid > b.anchorUuid ? 1 : 0;
-  }
-});
-
-// lib/turn-browse.js
-function rootHeadline(rows) {
-  let opening = [];
-  for (let row of rows)
-    if (opening.push(row.uText), (row.note ?? "") !== "") break;
-  return opening.join(ROOT_HEADLINE_JOIN);
-}
-function buildTurnBrowse({ store, lineage }) {
-  let sources = labelHistorySources(lineage), sections = [];
-  return sources.forEach((entry, i2) => {
-    let rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
-    if (rows.length === 0) return;
-    let entries = rows.map((row) => {
-      let out2 = { u_text: row.uText };
-      return row.note != null && (out2.note = row.note), out2;
-    }), headline = i2 === 0 ? rootHeadline(rows) : store.getHandoff(sources[i2 - 1].handoffId)?.nextTask ?? "";
-    sections.push({ label: entry.label, headline, entries });
-  }), { sections };
-}
-function lineageHeadlines({ store, lineage }) {
-  return buildTurnBrowse({ store, lineage }).sections.map(({ label, headline }) => ({ label, headline }));
-}
-var ROOT_HEADLINE_JOIN, init_turn_browse = __esm({
-  "lib/turn-browse.js"() {
-    init_turn();
-    ROOT_HEADLINE_JOIN = " \xB7 ";
   }
 });
 
@@ -28537,7 +28952,7 @@ function canonicalEntities(fold, includeToolEvidence) {
   let entities = [];
   for (let line of dialogueFoldLines(fold)) {
     if (line.kind === "visible") {
-      typeof line.message.text == "string" && entities.push({ text: line.message.text, line: line.sourceOrdinal });
+      entities.push({ text: line.message.text, line: line.sourceOrdinal });
       continue;
     }
     if (!includeToolEvidence(line.tool)) continue;
@@ -28559,24 +28974,24 @@ function firstHit(entities, needle) {
   }
   return null;
 }
-function* sessionsToScan(sources, scope, readSource) {
+async function* sessionsToScan(sources, scope, readSource) {
   if (scope != null) {
-    yield scopedSession(sources, scope, readSource);
+    yield await scopedSession(sources, scope, readSource);
     return;
   }
   for (let index = sources.length - 1; index >= 0; index--) {
     let entry = sources[index];
     if (!entry.sourceLocator) continue;
-    let read = readSource(entry.sourceLocator);
+    let read = await readSource(entry.sourceLocator);
     read.readable && (yield { entry, folds: read.folds, turns: read.turns });
   }
 }
-function scopedSession(sources, scope, readSource) {
+async function scopedSession(sources, scope, readSource) {
   let parsed = parseTurnAddress(scope);
   if (!parsed) throw scopeNotFound();
   let entry = sources.find((e) => e.label === parsed.label);
   if (!entry || !entry.sourceLocator) throw scopeNotFound();
-  let read = readSource(entry.sourceLocator);
+  let read = await readSource(entry.sourceLocator);
   if (!read.readable) throw scopeNotFound();
   let turns = read.turns.filter((turn) => turn.sourceOrdinal === parsed.sourceOrdinal);
   if (turns.length !== 1) throw scopeNotFound();
@@ -28594,11 +29009,11 @@ function turnByFold(turns) {
       byFold.set(line.foldOrdinal, { turnIndex, sourceEntryId: turn.sourceEntryId });
   }), byFold;
 }
-function recordByTurnHead(store, entry, turns) {
-  let { records } = projectSession(store, entry, () => ({ readable: !0, turns }));
+async function recordByTurnHead(store, entry, turns) {
+  let { records } = await projectSession(store, entry, () => ({ readable: !0, turns }));
   return new Map(records.filter((r) => r.record.t !== null).map((r) => [r.anchorUuid, r.record]));
 }
-function searchTranscripts({
+async function searchTranscripts({
   store,
   lineage,
   q,
@@ -28639,14 +29054,14 @@ function searchTranscripts({
     }));
   }, wireOf = (matches) => wire(groupsOf([...matches].reverse()), !1), retained = [], truncated = !1;
   scan:
-    for (let { entry, folds, turns } of sessionsToScan(sources, scope, readSource)) {
+    for await (let { entry, folds, turns } of sessionsToScan(sources, scope, readSource)) {
       let membership = null, recordByHead = null, headFolds = null;
       for (let i2 = folds.length - 1; i2 >= 0; i2--) {
         let fold = folds[i2], hit = firstHit(canonicalEntities(fold, includeToolEvidence), needle);
         if (!hit || (headFolds ??= headFoldsOf(turns), fold.message && fold.message.role === "human" && !headFolds.has(fold.ordinal))) continue;
         let turnKey = entry.sessionId, record = null;
         if (scope == null) {
-          membership ??= turnByFold(turns), recordByHead ??= recordByTurnHead(store, entry, turns);
+          membership ??= turnByFold(turns), recordByHead ??= await recordByTurnHead(store, entry, turns);
           let member = membership.get(fold.ordinal);
           turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`, record = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
         }
@@ -28667,20 +29082,20 @@ function searchTranscripts({
     }
   return retained.length === 0 && !truncated ? { found: !1 } : wire(groupsOf([...retained].reverse()), truncated);
 }
-function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
+async function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
   if (!store.turnFtsAvailable()) throw locateUnavailable();
   let readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), sessions = new Map(labelHistorySources(lineage).map((entry) => [entry.sessionId, entry])), rows;
   try {
     rows = store.locateTurnNotes([...sessions.keys()], buildFtsMatch(q, "plain"));
-  } catch {
-    throw locateUnavailable();
+  } catch (error) {
+    throw locateUnavailable(error);
   }
   let projected = /* @__PURE__ */ new Map(), accumulated = /* @__PURE__ */ new Map(), hits = 0;
   for (let row of rows) {
     let entry = sessions.get(row.sourceSessionId);
     if (!entry) continue;
     if (!projected.has(entry.sessionId)) {
-      let { readable, records } = projectSession(store, entry, readSource);
+      let { readable, records } = await projectSession(store, entry, readSource);
       projected.set(entry.sessionId, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
     }
     let session = projected.get(entry.sessionId);
@@ -28716,7 +29131,10 @@ var LOCATE_CANDIDATES, LOCATE_WINDOW, scopeNotFound, isHighSurrogate, isLowSurro
       }
       return [min, max];
     };
-    locateUnavailable = () => Object.assign(new Error("locate_unavailable"), { code: "locate_unavailable" }), notePreview = (note) => {
+    locateUnavailable = (cause) => Object.assign(
+      new Error("locate_unavailable", cause === void 0 ? void 0 : { cause }),
+      { code: "locate_unavailable" }
+    ), notePreview = (note) => {
       let cut = truncateToTokens(note, NOTE_PREVIEW_TOKENS, DEFAULT_CTP);
       return cut === note ? note : `${cut}${truncationMarker(note.length)}`;
     }, scopeOf = ({ label, record }) => turnAddress(label, record.t), locateEntry = (projected, isHit, sourceLabel) => {
@@ -28729,11 +29147,79 @@ var LOCATE_CANDIDATES, LOCATE_WINDOW, scopeNotFound, isHighSurrogate, isLowSurro
   }
 });
 
-// lib/harness/claude-code/dialogue-source.js
-import { readFileSync as readFileSync7 } from "node:fs";
-function createClaudeCodeDialogueSource({ readFile = readFileSync7 } = {}) {
+// lib/turn-read-service.js
+function createTurnReadService({
+  store,
+  sessionId,
+  dialogueSource,
+  dialogueProjection,
+  includeToolEvidence,
+  recovery,
+  turnPageBuilder = buildTurnPage
+}) {
+  let history = { dialogueSource, dialogueProjection, notice: recovery.notice };
   return {
-    read(sourceLocator) {
+    async turnPage({ before = null } = {}) {
+      try {
+        let lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        let page = await turnPageBuilder({
+          store: store(),
+          lineage,
+          before: before || null,
+          ...history
+        });
+        return withPageRecovery(turnPageWire(page));
+      } catch (err2) {
+        if (err2 && err2.code === "not_found") throw new Error(STALE_CURSOR_MESSAGE);
+        return process.env.SW_DEBUG && console.error("[turn_page_tool]", err2), withPageRecovery({ error: "turn_page_unavailable", retryable: !0 });
+      }
+    },
+    async turnSearch({ q, scope = null } = {}) {
+      try {
+        let lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        let found = await searchTranscripts({
+          store: store(),
+          lineage,
+          q,
+          scope: scope || null,
+          ...history,
+          includeToolEvidence
+        });
+        return withSearchRecovery(found, { hitRecovery: recovery.searchHit });
+      } catch (err2) {
+        if (err2 && err2.code === "scope_not_found") throw new Error(SCOPE_ABSENT_MESSAGE);
+        return process.env.SW_DEBUG && console.error("[turn_search_tool]", err2), withSearchRecovery({ error: "search_unavailable" });
+      }
+    },
+    async turnLocate({ q } = {}) {
+      try {
+        let lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        let located = await locateRanges({ store: store(), lineage, q, ...history });
+        return withLocateRecovery(located, { hitRecovery: recovery.locateHit });
+      } catch (err2) {
+        return process.env.SW_DEBUG && console.error("[turn_locate_tool]", err2), withLocateRecovery({ error: "locate_unavailable" });
+      }
+    }
+  };
+}
+var init_turn_read_service = __esm({
+  "lib/turn-read-service.js"() {
+    init_lineage();
+    init_turn_tool_recovery();
+    init_turn_page();
+    init_turn_query();
+    init_wire();
+  }
+});
+
+// lib/harness/claude-code/dialogue-source.js
+import { readFileSync as readFileSync8 } from "node:fs";
+function createClaudeCodeDialogueSource({ readFile = readFileSync8 } = {}) {
+  return {
+    async read(sourceLocator) {
       let buffer;
       try {
         buffer = readFile(sourceLocator);
@@ -28832,16 +29318,347 @@ var TAG_BLOCKS, CAPTURE, EXIT_ECHO, EXIT_COMMAND, ASK_TOOL_NAME, ASK_FALLBACK_HE
 });
 
 // lib/harness/claude-code/turn-recovery.js
-var SEARCH_HIT_RECOVERY, init_turn_recovery = __esm({
+var TURN_NOTICE, SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY, init_turn_recovery = __esm({
   "lib/harness/claude-code/turn-recovery.js"() {
-    SEARCH_HIT_RECOVERY = "line is the transcript row an excerpt sits on and span the rows around it, from its fold's anchor to its results, both as grep -n numbers them; read transcript_path there for the full text. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.";
+    TURN_NOTICE = "Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's transcript file, and a row's T is that file's row as grep -n numbers it.", SEARCH_HIT_RECOVERY = "line is the transcript row an excerpt sits on and span the rows around it, from its fold's anchor to its results, both as grep -n numbers them; read transcript_path there for the full text. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.", LOCATE_HIT_RECOVERY = "A hit's transcript_path holds its turn at row T of its scope, as grep -n numbers rows; the other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it.";
+  }
+});
+
+// lib/harness/dsh/dialogue-source.js
+function createDshDialogueSource({ readSession }) {
+  return {
+    async read(sessionId) {
+      let snapshot;
+      try {
+        snapshot = await readSession(sessionId);
+      } catch {
+        return { status: "unavailable", observations: [] };
+      }
+      return { status: "ok", observations: reduceDshSnapshot(snapshot.events).observations };
+    }
+  };
+}
+var init_dialogue_source2 = __esm({
+  "lib/harness/dsh/dialogue-source.js"() {
+    init_transcript_observation2();
+  }
+});
+
+// lib/harness/dsh/native-tools.js
+function canonicalizerFor2(context) {
+  let ops = context && context.path;
+  return ops ? (raw, base) => {
+    let abs = ops.isAbsolute(raw) ? raw : ops.resolve(base || "/", raw);
+    return ops.normalize(abs).split("\\").join("/");
+  } : (raw) => String(raw);
+}
+function baseDirFor2(row, context) {
+  return typeof row.cwd == "string" && row.cwd.length > 0 ? row.cwd : typeof context.sessionCwd == "string" && context.sessionCwd.length > 0 ? context.sessionCwd : null;
+}
+function isEffectiveUpdate2(update, target) {
+  return update.type === "grepMultiFile" ? Object.keys(update.files).length > 0 : update.type === "fullSet" || update.type === "lineUpdate" ? target != null && update.lines.length > 0 : target != null;
+}
+function residualIdentityFor2(name2, input) {
+  let inputLength = JSON.stringify(input).length;
+  if (name2 === "bash") {
+    let feature = bashFeature(input.command);
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail, inputLength };
+  }
+  return name2.startsWith(MCP_PREFIX) ? { groupKey: name2.slice(MCP_PREFIX.length), kind: "mcp", detail: "", inputLength } : { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "", inputLength };
+}
+function isLoadHandoffTool2(name2) {
+  return name2.endsWith("load_handoff");
+}
+function resolvedLoadToken2(text) {
+  try {
+    let parsed = JSON.parse(text);
+    return typeof parsed?.load_token == "string" ? parsed.load_token : null;
+  } catch {
+    return null;
+  }
+}
+function interpretDshToolUse(observation, context) {
+  let { toolUseId, name: name2 } = observation, issuingStepId = observation.messageId ?? null, issuingPolicy = context.resolveModelPolicy(observation.model ?? null), input = observation.input ?? {}, explicitToken = isLoadHandoffTool2(name2) && typeof input.load_token == "string" ? input.load_token : null, awaitLoadToken = isLoadHandoffTool2(name2) && explicitToken === null, telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }, call = { toolUseId, issuingStepId, issuingPolicy, awaitLoadToken }, adapter = EFFECT_ADAPTERS.get(name2), pending = null;
+  if (adapter === void 0)
+    pending = { kind: "residual", ...call, residual: residualIdentityFor2(name2, input) };
+  else {
+    let base = baseDirFor2(observation, context);
+    try {
+      let target = adapter.extractTarget(input, base, canonicalizerFor2(context));
+      pending = { kind: "effect", ...call, adapter, input, base, target, rawPath: input.file_path || target };
+    } catch {
+    }
+  }
+  return { pending, effects: [], residuals: [], telemetry };
+}
+function completeDshToolResult(pending, observation, context) {
+  let text = observation.content, telemetry = {
+    toolUseId: pending.toolUseId,
+    issuingStepId: pending.issuingStepId,
+    loadToken: pending.awaitLoadToken ? resolvedLoadToken2(text) : null,
+    pathEvents: []
+  }, hadError = observation.isError === !0;
+  if (pending.kind === "residual") {
+    let { groupKey, kind, detail, inputLength } = pending.residual;
+    return {
+      effects: [],
+      residuals: [{ groupKey, weight: inputLength + text.length, hadError, meta: { kind, detail } }],
+      telemetry,
+      skillContinuation: null
+    };
+  }
+  let nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
+  if (hadError) return nothing2;
+  let { adapter, input, base, target, rawPath, issuingPolicy } = pending, update;
+  try {
+    update = adapter.computeUpdate(input, text, base, issuingPolicy.ctp, canonicalizerFor2(context));
+  } catch {
+    return nothing2;
+  }
+  return isEffectiveUpdate2(update, target) ? (telemetry.pathEvents = pathEventsFor(update, target, rawPath, adapter.toolType), { effects: [effectFor(update, target)], residuals: [], telemetry, skillContinuation: null }) : nothing2;
+}
+function resolveDshToolTarget(pair, context) {
+  let adapter = EFFECT_ADAPTERS.get(pair.name);
+  if (adapter === void 0) return null;
+  try {
+    return adapter.extractTarget(pair.input ?? {}, baseDirFor2(pair, context), canonicalizerFor2(context));
+  } catch {
+    return null;
+  }
+}
+var READ_LINE_RE, END_OF_FILE_RE, GREP_SECTION_SEPARATOR, GREP_ROW_RE, sumTokens, fileTarget, EFFECT_ADAPTERS, MCP_PREFIX, AGENT_TOOLS, init_native_tools2 = __esm({
+  "lib/harness/dsh/native-tools.js"() {
+    init_constants();
+    init_token_estimate();
+    init_bash_feature();
+    init_tool_effects();
+    READ_LINE_RE = /^(\d+): /, END_OF_FILE_RE = /^\(End of file - total \d+ lines\)$/, GREP_SECTION_SEPARATOR = `
+
+`, GREP_ROW_RE = /^Line (\d+): /, sumTokens = (lines) => lines.reduce((sum, [, tokens]) => sum + tokens, 0), fileTarget = (input, base, canon) => input.file_path ? canon(input.file_path, base) : null, EFFECT_ADAPTERS = /* @__PURE__ */ new Map([
+      ["read", {
+        toolType: "read",
+        extractTarget: fileTarget,
+        computeUpdate: (_input, text, _base, ctp) => {
+          let lines = [], reachedEnd = !1;
+          for (let line of text.split(`
+`)) {
+            let numbered = READ_LINE_RE.exec(line);
+            numbered ? lines.push([Number(numbered[1]), charsToTokens(line, ctp)]) : END_OF_FILE_RE.test(line) && (reachedEnd = !0);
+          }
+          let isFullRead = reachedEnd && lines.length > 0 && lines[0][0] === 1, spent = sumTokens(lines) + TOOL_OVERHEAD.Read;
+          return { type: isFullRead ? "fullSet" : "lineUpdate", lines, overhead: TOOL_OVERHEAD.Read, spent };
+        }
+      }],
+      ["write", {
+        toolType: "write",
+        extractTarget: fileTarget,
+        // Written content is raw and a later read numbers it, so the write prices the read's form and the two
+        // observations of one file agree. `buildWindow` counts a final unterminated line but no line after a
+        // final newline, so neither does this.
+        computeUpdate: (input, _text, _base, ctp) => {
+          let rawLines = String(input.content ?? "").split(`
+`);
+          rawLines.at(-1) === "" && rawLines.pop();
+          let lines = rawLines.map((line, index) => [index + 1, charsToTokens(`${index + 1}: ${line}`, ctp)]);
+          return { type: "write", lines, overhead: TOOL_OVERHEAD.Write, spent: sumTokens(lines) + TOOL_OVERHEAD.Write };
+        }
+      }],
+      ["edit", {
+        toolType: "edit",
+        extractTarget: fileTarget,
+        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
+        // framing overhead because the corrective read that follows most edits charges its own. Each line it
+        // adds or removes carries a line-number prefix in the read's form.
+        computeUpdate: (input, _text, _base, ctp) => {
+          let oldString = input.old_string ?? "", newString = input.new_string ?? "", oldTokens = charsToTokens(oldString, ctp), newTokens = charsToTokens(newString, ctp), lineDelta = (newString.match(/\n/g) || []).length - (oldString.match(/\n/g) || []).length;
+          return { type: "editDelta", value: newTokens - oldTokens + lineDelta * (4 / ctp.ascii), spent: oldTokens + newTokens + TOOL_OVERHEAD.Edit };
+        }
+      }],
+      ["grep", {
+        toolType: "grep",
+        extractTarget: () => null,
+        // the files are named by the result, not by the input
+        computeUpdate: (_input, text, base, ctp, canon) => {
+          let files = /* @__PURE__ */ Object.create(null);
+          for (let section of text.split(GREP_SECTION_SEPARATOR)) {
+            let [path3, ...rows] = section.split(`
+`);
+            if (GREP_ROW_RE.test(path3)) continue;
+            let lines = [];
+            for (let row of rows) {
+              let numbered = GREP_ROW_RE.exec(row);
+              if (!numbered) continue;
+              let rendered = `${numbered[1]}: ${row.slice(numbered[0].length)}`;
+              lines.push([Number(numbered[1]), charsToTokens(rendered, ctp)]);
+            }
+            lines.length !== 0 && (files[canon(path3, base)] = lines);
+          }
+          let spent = Object.values(files).reduce((sum, lines) => sum + sumTokens(lines), TOOL_OVERHEAD.Grep);
+          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
+        }
+      }],
+      ["skill", {
+        toolType: "skill",
+        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
+        extractTarget: (input) => input.name ? "skill:" + input.name : null,
+        computeUpdate: (_input, text, _base, ctp) => {
+          let tokens = charsToTokens(text, ctp);
+          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
+        }
+      }]
+    ]);
+    MCP_PREFIX = "mcp__", AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
+  }
+});
+
+// lib/harness/dsh/history-turn-rules.js
+import { isAbsolute as isAbsolute4, normalize as normalize3, resolve as resolve4 } from "node:path";
+function createDshHumanHeadRule() {
+  return (line) => {
+    if (line.kind !== "visible" || line.message.role !== "human") return PASS;
+    let text = line.message.text.trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+function answerText(result) {
+  let value;
+  try {
+    value = JSON.parse(result);
+  } catch {
+    return "";
+  }
+  let lines = [];
+  for (let answer of Array.isArray(value?.answers) ? value.answers : [])
+    Array.isArray(answer?.selected) && lines.push(...answer.selected), answer?.custom && lines.push(answer.custom);
+  return lines.join(`
+`);
+}
+function createDshAskHeadRule() {
+  return (line) => {
+    if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME2) return PASS;
+    if (line.tool.isError === !0) return ABSORB;
+    let text = answerText(line.tool.result).trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+function createDshDialogueProjection({ sessionCwd }) {
+  let context = { path: { isAbsolute: isAbsolute4, resolve: resolve4, normalize: normalize3 }, sessionCwd }, rules = [
+    createDshHumanHeadRule(),
+    createDshAskHeadRule()
+  ];
+  return {
+    project(observations) {
+      let { folds } = projectDialogue(observations);
+      for (let fold of folds)
+        for (let pair of fold.toolPairs)
+          pair.resourceKey = resolveDshToolTarget(pair, context);
+      return { folds };
+    },
+    groupTurns(lines) {
+      return groupTurns(lines, rules);
+    }
+  };
+}
+var ASK_TOOL_NAME2, init_history_turn_rules2 = __esm({
+  "lib/harness/dsh/history-turn-rules.js"() {
+    init_turn();
+    init_dialogue_fold();
+    init_native_tools2();
+    ASK_TOOL_NAME2 = "ask_user_question";
+  }
+});
+
+// lib/harness/dsh/measurement-projection.js
+import nodePath2 from "node:path";
+function invariant6(ok, message) {
+  if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
+}
+function noSkillPayload() {
+  invariant6(!1, "no skill payload phase in DSH");
+}
+function createDshMeasurementProjection({
+  cwd = null,
+  projectRoot = null,
+  resolveModelPolicy,
+  interpretToolUse,
+  completeToolResult
+} = {}) {
+  return invariant6(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant6(typeof completeToolResult == "function", "completeToolResult must be a function"), createMeasurementProjection({
+    scope: "dsh-measurement-projection",
+    context: { path: nodePath2, sessionCwd: cwd || projectRoot || null, resolveModelPolicy },
+    captureSources: { live: "dsh-live", replay: "dsh-replay" },
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload: noSkillPayload
+  });
+}
+var init_measurement_projection3 = __esm({
+  "lib/harness/dsh/measurement-projection.js"() {
+    init_measurement_projection();
+  }
+});
+
+// dsh/src/composition.js
+var composition_exports = {};
+__export(composition_exports, {
+  DSH_TURN_NOTES_ROOT: () => DSH_TURN_NOTES_ROOT,
+  composeWatcher: () => composeWatcher
+});
+import { tmpdir } from "node:os";
+import { join as join9 } from "node:path";
+function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl }) {
+  let dialogueSource = createDshDialogueSource({ readSession }), dialogueProjection = createDshDialogueProjection({ sessionCwd: cwd });
+  return { watcher: new SessionWatcher({
+    sessionId,
+    sourceLocator: sessionId,
+    projectId: resolveProjectKey({ cwd }),
+    projectRoot: cwd,
+    turnNotesRoot,
+    resourcePolicy: createResourcePolicy({ projectRoot: cwd, isIgnored }),
+    resourceEnrichment: createResourceEnrichment(),
+    handoffComposition: createHandoffComposition(),
+    loaderVersion: PLUGIN_VERSION,
+    store,
+    dialogueSource,
+    dialogueProjection,
+    createEngine: createMeasurementEngine,
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createDshMeasurementProjection({
+      cwd,
+      projectRoot: cwd,
+      resolveModelPolicy,
+      interpretToolUse: interpretDshToolUse,
+      completeToolResult: completeDshToolResult
+    }),
+    modelPolicyFor: (modelId) => {
+      let policy = modelPolicyFor(modelId, cacheTtl() ?? "5m"), saved = loadPricingOverride(modelId);
+      return saved && (policy.cRatio = saved.ratio), policy;
+    }
+  }), dialogueSource, dialogueProjection };
+}
+var DSH_TURN_NOTES_ROOT, init_composition = __esm({
+  "dsh/src/composition.js"() {
+    init_session_watcher();
+    init_resource_policy();
+    init_resource_enrichment();
+    init_handoff();
+    init_engine();
+    init_model_policy();
+    init_pricing_store();
+    init_project_key();
+    init_version();
+    init_constants();
+    init_dialogue_source2();
+    init_history_turn_rules2();
+    init_measurement_projection3();
+    init_native_tools2();
+    DSH_TURN_NOTES_ROOT = join9(tmpdir(), "session-watcher", "turn-notes");
   }
 });
 
 // server.js
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { dirname as dirname3, join as join9 } from "node:path";
+import { dirname as dirname3, join as join10 } from "node:path";
 import { readdirSync as readdirSync3, statSync as statSync5, mkdirSync as mkdirSync3, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 function safeSessionId(sessionId) {
@@ -28859,7 +29676,7 @@ function resolveBySessionId(projectsRoot, sessionId) {
       return;
     }
     for (let e of entries) {
-      let p = join9(dir, e.name);
+      let p = join10(dir, e.name);
       e.isDirectory() ? walk2(p, depth + 1) : e.name === wanted && hits.push(p);
     }
   };
@@ -28891,7 +29708,7 @@ function createWatcherComposition({
     projectRoot,
     // Derived once from the host's existing state directory. `SessionWatcher` has no state-directory
     // fallback, so a composition that forgot this cannot silently write Turn Notes into the real install.
-    turnNotesRoot: join9(stateDir || PORT_DIR, "turn-notes"),
+    turnNotesRoot: join10(stateDir || PORT_DIR, "turn-notes"),
     resourcePolicy,
     resourceEnrichment,
     handoffComposition: createHandoffComposition(),
@@ -28919,34 +29736,22 @@ function createWatcherComposition({
     now
   });
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join9(__dirname2, "public"), store = null, disableTelemetrySweep = !1, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join10(__dirname2, "public"), store = null, disableTelemetrySweep = !1, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
   let app = (0, import_express.default)(), startMs = Date.now(), sseClients = /* @__PURE__ */ new Set(), server = createHttpServer(app), resolveStore = () => store || getStore(), dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource(), dialogueProjection = createClaudeCodeDialogueProjection({
     sessionCwd: projectRoot || process.cwd()
-  }), includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === "residual", history = { dialogueSource, dialogueProjection };
-  function turnPageWire({ turnPage, nextBefore }) {
-    return {
-      turn_page: turnPage,
-      ...nextBefore ? { next_before: nextBefore } : {}
-    };
-  }
-  let formatLoadedHandoff = (core) => {
-    try {
-      let store2 = resolveStore(), sessions = fromHandoff({ store: store2, handoffId: core.handoff_id });
-      return {
-        ...core,
-        lineage: lineageHeadlines({ store: store2, lineage: sessions }),
-        ...turnPageWire(injectedTurnPageBuilder({ store: store2, lineage: sessions, ...history }))
-      };
-    } catch (err2) {
-      return process.env.SW_DEBUG && console.error("[turn_page_load]", err2?.message || err2), { ...core, turn_page_error: "turn_page_unavailable" };
-    }
-  }, activeWatcher = watcher, lastRequestMono = performance.now();
+  }), includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === "residual", history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE }, formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
+    store: resolveStore(),
+    turnPageBuilder: injectedTurnPageBuilder,
+    ...history
+  }), activeWatcher = watcher, activate = (next) => {
+    activeWatcher = next, applyEffectiveRatio();
+  }, lastRequestMono = performance.now();
   app.use((req, res, next) => {
     lastRequestMono = performance.now(), next();
   });
   let currentSessionId = sessionId, effectiveStateDir = stateDir || PORT_DIR, pollTimer = null, lastAdvanceMono = -1 / 0, lastSnapshotMono = -1 / 0, _nowMono = () => _globalTestClockMono ?? performance.now(), ownerMeta = { pid: process.pid, startedAt: startMs, clientPid: process.ppid }, driver = null, candidate = null, RESOLVE_BACKOFF_MS = [1e3, 2e3, 4e3, 8e3, 16e3, 3e4], resolveAttempts = 0, nextResolveMono = -1 / 0, publishedDiscoveryPaths = /* @__PURE__ */ new Set();
   function writeDiscovery(targetSessionId) {
-    let path3 = join9(effectiveStateDir, `${safeSessionId(targetSessionId)}.json`);
+    let path3 = join10(effectiveStateDir, `${safeSessionId(targetSessionId)}.json`);
     try {
       return mkdirSync3(effectiveStateDir, { recursive: !0 }), writeFileSync2(path3, JSON.stringify({
         port: server.address()?.port ?? null,
@@ -28966,15 +29771,18 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   function failOwner(error) {
     ownerFatalNotified || (ownerFatalNotified = !0, pollTimer && (clearInterval(pollTimer), pollTimer = null), onOwnerFatal && onOwnerFatal(error));
   }
+  let reportedDiagnosticCodes = /* @__PURE__ */ new Set();
   function recordDiagnostics(diagnostics) {
-    if (process.env.SW_DEBUG)
-      for (let entry of diagnostics ?? []) {
-        if (entry?.code === "multiple_load_tokens") {
+    for (let entry of diagnostics ?? []) {
+      let code = entry?.code ?? "unknown";
+      if (!(reportedDiagnosticCodes.has(code) && !process.env.SW_DEBUG)) {
+        if (reportedDiagnosticCodes.add(code), code === "multiple_load_tokens") {
           console.error("[telemetry] multiple load_handoff tokens in one step; keeping first");
           continue;
         }
-        console.error(`[${entry?.scope ?? "diagnostic"}] ${entry?.code ?? "unknown"}: ${entry?.message ?? ""}`);
+        console.error(`[${entry?.scope ?? "diagnostic"}] ${code}: ${entry?.message ?? ""}`);
       }
+    }
   }
   function applyFrame(frame) {
     let result = watcher.applyHarnessFrame(frame);
@@ -28982,26 +29790,10 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   }
   app.get("/api/health", (req, res) => {
     res.json({ ok: !0, port: server.address()?.port ?? null, uptime: Math.floor((Date.now() - startMs) / 1e3), pid: ownerMeta.pid, startedAt: ownerMeta.startedAt });
-  });
-  function statusWire(source) {
-    let { sourceLocator: sourceLocator2, ...rest } = source.getStatus();
-    return { ...rest, transcriptPath: sourceLocator2 ?? null };
-  }
-  app.get("/api/status", (req, res, next) => {
+  }), app.get("/api/status", (req, res, next) => {
     try {
-      let status = statusWire(activeWatcher);
-      if (activeWatcher !== watcher && _replayController) {
-        let currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null;
-        mergeLedgerIntoStatus(status, _replayController.ledger, currentKey);
-      } else {
-        let currentKey = status.rateLamp?.reliable ? stateKeyForStatus(status) : null, ledger = getLiveLedger(currentSessionId);
-        mergeLedgerIntoStatus(status, ledger, currentKey);
-      }
-      if (req.query.debug && status.rateLamp?.billingCycle) {
-        let debugLedger = activeWatcher === watcher ? getLiveLedger(currentSessionId) : null;
-        status.rateLamp.billingCycle.cycleCountInSegment = debugLedger?.billCycleCount ?? 0;
-      }
-      if (req.query.fmt === "line") {
+      let ledger = activeWatcher !== watcher && _replayController ? _replayController.ledger : getLiveLedger(currentSessionId), status = statusWireWithLedger(activeWatcher.getStatus(), ledger);
+      if (req.query.debug && status.rateLamp?.billingCycle && (status.rateLamp.billingCycle.cycleCountInSegment = ledger?.billCycleCount ?? 0), req.query.fmt === "line") {
         status.port = server.address()?.port ?? null;
         let line = formatLine(status), port = status.port ?? "", url = port ? ` http://127.0.0.1:${port}` : "", firstNewline = line.indexOf(`
 `);
@@ -29020,16 +29812,8 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     res.json(h);
   }), app.get("/api/buckets", (req, res, next) => {
     try {
-      let includeSymbols = req.query.symbols === "1", bd = activeWatcher.getBucketData({ includeSymbols }), s = activeWatcher.getStatus(), paths = bd.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
-      res.json({
-        ...bd,
-        paths,
-        session_id: currentSessionId,
-        segment: bd.segment,
-        current_turn: bd.currentTurnSeq,
-        generated_at: Date.now(),
-        metrics: { br: s.br, mf: s.mf, pp: s.pp, g: s.g, b_total: s.B, c_ratio: s.cRatio }
-      });
+      let includeSymbols = req.query.symbols === "1", bd = activeWatcher.getBucketData({ includeSymbols }), s = activeWatcher.getStatus();
+      res.json(bucketsPayload({ bucketData: bd, status: s, sessionId: currentSessionId, now: Date.now() }));
     } catch (e) {
       next(e);
     }
@@ -29043,9 +29827,9 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     if (_replayController)
       return res.status(409).json({ error: "replay_active", message: "Cannot modify overrides during replay" });
     let { overrides } = req.body || {};
-    if (!overrides || typeof overrides != "object" || Array.isArray(overrides))
-      return res.status(400).json({ error: "invalid_body", message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
-    let warnings = (watcher.replaceUserOverrides(overrides).warnings ?? []).map((w) => w.code === "unknown_resource" ? `ignored: path "${w.resourceKey}" not in current bRebuild` : `ignored: invalid value "${w.value}" for path "${w.resourceKey}"`);
+    if (!isOverrideMap(overrides))
+      return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
+    let replaced = watcher.replaceUserOverrides(overrides), warnings = overrideWarnings(replaced.warnings);
     if (sseClients.size > 0) {
       let msg = `data: ${JSON.stringify({ type: "scan" })}
 
@@ -29057,40 +29841,53 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
           sseClients.delete(c);
         }
     }
-    let response = statusWire(watcher);
+    let response = statusWire(watcher.getStatus());
     warnings.length > 0 && (response.warnings = warnings), res.json(response);
   }), app.post("/api/preview", (req, res) => {
     if (_replayController)
       return res.status(409).json({ error: "replay_active", message: "Cannot preview overrides during replay" });
     let { overrides } = req.body || {};
-    if (!overrides || typeof overrides != "object" || Array.isArray(overrides))
-      return res.status(400).json({ error: "invalid_body", message: 'Body must contain { overrides: { path: "include"|"exclude" } }' });
+    if (!isOverrideMap(overrides))
+      return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
     res.json({ scenario: watcher.readScenario(overrides) });
   });
   let _replayController = null;
   app.post("/api/replay/start", async (req, res) => {
     let { transcript, speed = 4 } = req.body || {}, replayPath = transcript || driver?.sourceLocator || null;
     if (!replayPath) return res.status(400).json({ error: "no transcript available" });
-    _replayController && (_replayController.stop(), _replayController = null), activeWatcher = watcher;
+    _replayController && (_replayController.stop(), _replayController = null);
     try {
-      let { indexTranscript: indexTranscript2, ReplayController: ReplayController2 } = await Promise.resolve().then(() => (init_replay(), replay_exports)), index = indexTranscript2(replayPath);
+      activate(watcher);
+      let [{ ReplayController: ReplayController2 }, { openReplaySource: openReplaySource2 }] = await Promise.all([
+        Promise.resolve().then(() => (init_replay(), replay_exports)),
+        Promise.resolve().then(() => (init_replay_source(), replay_source_exports))
+      ]), source = openReplaySource2(replayPath), { index } = source;
       if (index.length === 0) return res.status(400).json({ error: "no usage rows in transcript" });
-      let replayWatcher = createWatcherComposition({
-        sessionId: null,
-        sourceLocator: replayPath,
-        projectId,
-        projectRoot,
-        stateDir: effectiveStateDir,
-        store: resolveStore(),
-        isIgnored: null,
-        // This owner's own declared lifetime: playback prices its cache writes the way the live pair beside
-        // it does, so a replayed reading is comparable with a measured one.
-        cacheTtl
-      }), replayDriver = createClaudeCodeSourceDriver({
-        sourceLocator: replayPath,
-        firstReadableTransition: "replace"
-      });
-      activeWatcher = replayWatcher, _replayController = new ReplayController2(replayWatcher, index, {
+      let replayWatcher;
+      if (source.harness === "dsh") {
+        let { composeWatcher: composeWatcher2 } = await Promise.resolve().then(() => (init_composition(), composition_exports));
+        replayWatcher = composeWatcher2({
+          sessionId: null,
+          cwd: source.header.cwd,
+          store: resolveStore(),
+          turnNotesRoot: join10(effectiveStateDir, "turn-notes"),
+          readSession: async () => source.dialogueSnapshot,
+          isIgnored: null,
+          cacheTtl: () => cacheTtl
+        }).watcher;
+      } else
+        replayWatcher = createWatcherComposition({
+          sessionId: null,
+          sourceLocator: replayPath,
+          projectId,
+          projectRoot,
+          stateDir: effectiveStateDir,
+          store: resolveStore(),
+          isIgnored: null,
+          cacheTtl
+        });
+      let replayDriver = source.createDriver();
+      activate(replayWatcher), _replayController = new ReplayController2(replayWatcher, index, {
         driver: replayDriver,
         speed,
         onAdvance: () => {
@@ -29113,7 +29910,7 @@ data: ${JSON.stringify({ type: "scan" })}
       res.status(500).json({ error: e.message });
     }
   }), app.post("/api/replay/stop", (req, res) => {
-    _replayController && (_replayController.stop(), _replayController = null), activeWatcher = watcher, res.json({ ok: !0 });
+    _replayController && (_replayController.stop(), _replayController = null), activate(watcher), res.json({ ok: !0 });
   }), app.post("/api/replay/speed", (req, res) => {
     let { speed } = req.body || {};
     if (!_replayController) return res.status(400).json({ error: "no active replay" });
@@ -29165,41 +29962,41 @@ data: ${JSON.stringify({ type: "scan" })}
       let delivered = await watcher.deliverHandoff(
         load_token ? { loadToken: String(load_token) } : {}
       );
-      return delivered.ok === !1 ? res.status(503).json({ error: delivered.error, retryable: delivered.retryable === !0 }) : delivered.found ? res.json(formatLoadedHandoff(delivered)) : res.json(delivered);
+      return delivered.ok === !1 ? res.status(503).json({ error: delivered.error, retryable: delivered.retryable === !0 }) : delivered.found ? res.json(await formatLoadedHandoff(delivered)) : res.json(delivered);
     } catch (e) {
       next(e);
     }
-  }), app.get("/api/turn/page", (req, res, next) => {
+  }), app.get("/api/turn/page", async (req, res, next) => {
     try {
       let headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        let lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        let store2 = resolveStore(), lineage = fromHandoff({ store: store2, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
-        let result = injectedTurnPageBuilder({
-          store: resolveStore(),
+        let result = await injectedTurnPageBuilder({
+          store: store2,
           lineage,
           before: req.query.before || null,
           ...history
         });
         return res.json(turnPageWire(result));
       } catch (err2) {
-        return err2 && err2.code === "not_found" ? res.status(404).json({ error: "not_found" }) : (process.env.SW_DEBUG && console.error("[turn_page]", err2?.message || err2), res.status(503).json({ error: "turn_page_unavailable", retryable: !0 }));
+        return err2 && err2.code === "not_found" ? res.status(404).json({ error: "not_found" }) : (process.env.SW_DEBUG && console.error("[turn_page]", err2), res.status(503).json({ error: "turn_page_unavailable", retryable: !0 }));
       }
     } catch (e) {
       next(e);
     }
-  }), app.get("/api/turn/search", (req, res, next) => {
+  }), app.get("/api/turn/search", async (req, res, next) => {
     try {
       let headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        let lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
+        let store2 = resolveStore(), lineage = fromHandoff({ store: store2, handoffId: headId });
         if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
         if (!isValidTurnQuery(req.query.q)) return res.status(400).json({ error: "invalid_query" });
         let scope = req.query.scope == null ? null : String(req.query.scope);
-        return scope !== null && parseTurnAddress(scope) === null ? res.status(400).json({ error: "invalid_scope" }) : res.json(searchTranscripts({
-          store: resolveStore(),
+        return scope !== null && parseTurnAddress(scope) === null ? res.status(400).json({ error: "invalid_scope" }) : res.json(await searchTranscripts({
+          store: store2,
           lineage,
           q: req.query.q,
           scope,
@@ -29207,20 +30004,20 @@ data: ${JSON.stringify({ type: "scan" })}
           includeToolEvidence
         }));
       } catch (err2) {
-        return err2 && err2.code === "scope_not_found" ? res.status(404).json({ error: "scope_not_found" }) : (process.env.SW_DEBUG && console.error("[turn_search]", err2?.message || err2), res.status(503).json({ error: "search_unavailable" }));
+        return err2 && err2.code === "scope_not_found" ? res.status(404).json({ error: "scope_not_found" }) : (process.env.SW_DEBUG && console.error("[turn_search]", err2), res.status(503).json({ error: "search_unavailable" }));
       }
     } catch (e) {
       next(e);
     }
-  }), app.get("/api/turn/locate", (req, res, next) => {
+  }), app.get("/api/turn/locate", async (req, res, next) => {
     try {
       let headId = Number(req.query.lineage_head);
       if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
       try {
-        let lineage = fromHandoff({ store: resolveStore(), handoffId: headId });
-        return lineage.length === 0 ? res.status(404).json({ error: "not_found" }) : isValidTurnQuery(req.query.q) ? res.json(locateRanges({ store: resolveStore(), lineage, q: req.query.q, ...history })) : res.status(400).json({ error: "invalid_query" });
+        let store2 = resolveStore(), lineage = fromHandoff({ store: store2, handoffId: headId });
+        return lineage.length === 0 ? res.status(404).json({ error: "not_found" }) : isValidTurnQuery(req.query.q) ? res.json(await locateRanges({ store: store2, lineage, q: req.query.q, ...history })) : res.status(400).json({ error: "invalid_query" });
       } catch (err2) {
-        return process.env.SW_DEBUG && console.error("[turn_locate]", err2?.message || err2), res.status(503).json({ error: "locate_unavailable" });
+        return process.env.SW_DEBUG && console.error("[turn_locate]", err2), res.status(503).json({ error: "locate_unavailable" });
       }
     } catch (e) {
       next(e);
@@ -29230,22 +30027,16 @@ data: ${JSON.stringify({ type: "scan" })}
     return res.json({ sections });
   });
   let cliRatioAtStartup = ratioOverride, buildPricingResponse = () => {
-    let model = watcher.getEpochModel() ?? "", saved = loadPricingOverride(model), policy = modelPolicyFor(model, cacheTtl), modelRatio = policy.cRatio, presets = policy.pricing.presets, effectiveRatio, source, effectiveRead = null, effectiveWrite = null;
-    if (saved) {
-      if (effectiveRatio = saved.ratio, source = "saved", effectiveRead = saved.readPrice, effectiveWrite = saved.writePrice, saved.presetId) {
-        let preset = presets.find((p) => p.id === saved.presetId);
-        preset && preset.readPrice === saved.readPrice && preset.writePrice === saved.writePrice && (source = "preset");
-      }
-    } else cliRatioAtStartup != null ? (effectiveRatio = cliRatioAtStartup, source = "cli") : (effectiveRatio = modelRatio, source = "model_default");
-    return {
-      effective: { ratio: effectiveRatio, readToWrite: 1 / effectiveRatio, source, readPrice: effectiveRead, writePrice: effectiveWrite },
-      saved: saved || null,
-      modelDefault: { model, ratio: modelRatio, readPrice: policy.pricing.readPrice, writePrice: policy.pricing.writePrice },
-      presets
-    };
+    let model = activeWatcher.getEpochModel() ?? "";
+    return pricingResponse({
+      model,
+      saved: loadPricingOverride(model),
+      policy: modelPolicyFor(model, cacheTtl),
+      cliRatio: cliRatioAtStartup
+    });
   }, applyEffectiveRatio = () => {
-    let saved = loadPricingOverride(watcher.getEpochModel() ?? "");
-    watcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup);
+    let saved = loadPricingOverride(activeWatcher.getEpochModel() ?? "");
+    recordDiagnostics(activeWatcher.setRatioOverride(saved ? saved.ratio : cliRatioAtStartup).diagnostics);
   };
   applyEffectiveRatio(), app.get("/api/pricing", (req, res) => {
     res.json(buildPricingResponse());
@@ -29257,15 +30048,15 @@ data: ${JSON.stringify({ type: "scan" })}
       return res.status(400).json({ error: "invalid_input", message: e.message });
     }
     try {
-      let { readPrice, writePrice, presetId } = req.body || {}, safePresetId = typeof presetId == "string" && presetId.length > 0 && presetId.length <= 80 ? presetId : null, model = watcher.getEpochModel() ?? "";
-      if (!model) return res.status(409).json({ error: "no_model", message: "Model not yet detected; retry after first API call" });
+      let { readPrice, writePrice, presetId } = req.body || {}, safePresetId = sanitizePresetId(presetId), model = activeWatcher.getEpochModel() ?? "";
+      if (!model) return res.status(409).json({ error: "no_model", message: NO_MODEL_MESSAGE });
       savePricingOverride(model, { readPrice, writePrice, presetId: safePresetId }), applyEffectiveRatio(), res.json(buildPricingResponse());
     } catch (e) {
       next(e);
     }
   }), app.delete("/api/pricing", (req, res) => {
-    let model = watcher.getEpochModel() ?? "";
-    if (!model) return res.status(409).json({ error: "no_model", message: "Model not yet detected; retry after first API call" });
+    let model = activeWatcher.getEpochModel() ?? "";
+    if (!model) return res.status(409).json({ error: "no_model", message: NO_MODEL_MESSAGE });
     deletePricingOverride(model), applyEffectiveRatio(), res.json(buildPricingResponse());
   }), app.get("/api/debug/rate-lamp/:sid", (req, res) => {
     let remote = req.socket.remoteAddress || "";
@@ -29277,7 +30068,7 @@ data: ${JSON.stringify({ type: "scan" })}
       recentStopEvents: (ledger?.recentStopEvents || []).length
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
-  }), app.get("/", (req, res) => res.sendFile(join9(publicDir, "dashboard.html"))), app.get("/dashboard", (req, res) => res.sendFile(join9(publicDir, "dashboard.html"))), app.use(import_express.default.static(publicDir, {
+  }), app.get("/", (req, res) => res.sendFile(join10(publicDir, "dashboard.html"))), app.get("/dashboard", (req, res) => res.sendFile(join10(publicDir, "dashboard.html"))), app.use(import_express.default.static(publicDir, {
     setHeaders: (res) => {
       res.setHeader("Cache-Control", "no-cache");
     }
@@ -29405,7 +30196,7 @@ data: ${JSON.stringify({ type: "scan" })}
     }
     let oldSessionId = currentSessionId;
     driver = rotated, currentSessionId = newSessionId, lastSnapshotMono = -1 / 0;
-    let oldStateFile = join9(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`), published = writeDiscovery(newSessionId), warning;
+    let oldStateFile = join10(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`), published = writeDiscovery(newSessionId), warning;
     if (published.ok) {
       if (published.path !== oldStateFile)
         try {
@@ -29422,10 +30213,15 @@ data: ${JSON.stringify({ type: "scan" })}
     let port = server.address()?.port, url = port ? `http://127.0.0.1:${port}` : null, out2 = { ok: !0, old_session_id: oldSessionId, new_session_id: newSessionId, url };
     return warning && (out2.warning = warning), out2;
   }
-  app.post("/api/rotate", import_express.default.json(), (req, res) => {
+  app.post("/api/rotate", (req, res) => {
     let { session_id, transcript_path } = req.body || {};
     if (!session_id) return res.status(400).json({ ok: !1, error: "missing_session_id" });
-    let result = doRotation(session_id, transcript_path);
+    let result;
+    try {
+      result = doRotation(session_id, transcript_path);
+    } catch (err2) {
+      return console.error("[rotate]", err2), res.status(500).json({ error: "internal" });
+    }
     res.json(result);
   });
   let sweepTimer = null;
@@ -29447,6 +30243,7 @@ data: ${JSON.stringify({ type: "scan" })}
         // session's resources against a boundary they were never inside.
         replaySession: (sid, txPath) => replaySessionTelemetry(sid, txPath, {
           store: resolveStore(),
+          onDiagnostics: recordDiagnostics,
           createWatcher: ({ store: reconciled, sessionId: sid2, sourceLocator: sourceLocator2 }) => createWatcherComposition({
             sessionId: sid2,
             sourceLocator: sourceLocator2,
@@ -29475,46 +30272,15 @@ data: ${JSON.stringify({ type: "scan" })}
   let turnService = {
     getTurnSkeleton: () => watcher.getTurnSkeleton(),
     submitTurnNotes: (input) => watcher.submitTurnNotes(input || {})
-  }, turnReadService = {
-    turnPage({ before = null } = {}) {
-      try {
-        let lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        return lineage.length === 0 ? NO_HANDOFF_LOADED : withPageRecovery(turnPageWire(injectedTurnPageBuilder({
-          store: resolveStore(),
-          lineage,
-          before: before || null,
-          ...history
-        })));
-      } catch (err2) {
-        if (err2 && err2.code === "not_found") throw new Error(STALE_CURSOR_MESSAGE);
-        return process.env.SW_DEBUG && console.error("[turn_page_tool]", err2?.message || err2), withPageRecovery({ error: "turn_page_unavailable", retryable: !0 });
-      }
-    },
-    turnSearch({ q, scope = null } = {}) {
-      try {
-        let lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        return lineage.length === 0 ? NO_HANDOFF_LOADED : withSearchRecovery(searchTranscripts({
-          store: resolveStore(),
-          lineage,
-          q,
-          scope: scope || null,
-          ...history,
-          includeToolEvidence
-        }), { hitRecovery: SEARCH_HIT_RECOVERY });
-      } catch (err2) {
-        if (err2 && err2.code === "scope_not_found") throw new Error(SCOPE_ABSENT_MESSAGE);
-        return process.env.SW_DEBUG && console.error("[turn_search_tool]", err2?.message || err2), withSearchRecovery({ error: "search_unavailable" });
-      }
-    },
-    turnLocate({ q } = {}) {
-      try {
-        let lineage = forLoadedHandoff({ store: resolveStore(), sessionId: currentSessionId });
-        return lineage.length === 0 ? NO_HANDOFF_LOADED : withLocateRecovery(locateRanges({ store: resolveStore(), lineage, q, ...history }));
-      } catch (err2) {
-        return process.env.SW_DEBUG && console.error("[turn_locate_tool]", err2?.message || err2), withLocateRecovery({ error: "locate_unavailable" });
-      }
-    }
-  };
+  }, turnReadService = createTurnReadService({
+    store: resolveStore,
+    sessionId: () => currentSessionId,
+    dialogueSource,
+    dialogueProjection,
+    includeToolEvidence,
+    recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
+    turnPageBuilder: injectedTurnPageBuilder
+  });
   return runPollTick(), scheduleStartupMaintenance(), {
     app,
     server,
@@ -29541,7 +30307,10 @@ data: ${JSON.stringify({ type: "scan" })}
     // playback status branch merges rather than a copy of it.
     replayController: () => _replayController,
     // Terminal application finalization, for the owner's cleanup sequence.
-    closeCurrentSegment: (options) => watcher.closeCurrentSegment(options)
+    closeCurrentSegment: () => {
+      let result = watcher.closeCurrentSegment();
+      return recordDiagnostics(result.diagnostics), result;
+    }
   };
 }
 var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery, init_server = __esm({
@@ -29552,11 +30321,11 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     init_resource_enrichment();
     init_engine();
     init_source_driver();
-    init_measurement_projection();
+    init_measurement_projection2();
     init_native_tools();
     init_cache_ttl();
     init_rate_lamp_manager();
-    init_rate_lamp_store();
+    init_wire();
     init_constants();
     init_project_key();
     init_store();
@@ -29572,7 +30341,7 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     init_turn();
     init_turn_history_budget();
     init_lineage();
-    init_turn_tool_recovery();
+    init_turn_read_service();
     init_turn_page();
     init_turn_browse();
     init_turn_query();
@@ -29583,30 +30352,31 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     [_major, _minor] = process.versions.node.split(".").map(Number);
     (_major < 22 || _major === 22 && _minor < 16) && (console.error("Session Watcher requires Node >=22.16.0 (node:sqlite)"), process.exit(1));
     __dirname2 = dirname3(fileURLToPath2(import.meta.url));
-    PORT_DIR = process.env.SW_STATE_DIR || join9(homedir5(), ".session-watcher");
+    PORT_DIR = process.env.SW_STATE_DIR || join10(homedir5(), ".session-watcher");
     _globalTestClockMono = null, _idleEnv = Number(process.env.SW_IDLE_TTL_MS), IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 1440 * 60 * 1e3, SNAPSHOT_THROTTLE_MS = 3e4;
     isValidTurnQuery = (q) => typeof q == "string" && q.trim() !== "" && q.length <= HISTORY_EXCERPT_CHARS;
   }
 });
 
 // lib/replay-server.js
-import { dirname as dirname4, join as join10 } from "node:path";
+import { dirname as dirname4, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
-  let index = indexTranscript(transcriptPath);
+  let { harness, index } = openReplaySource(transcriptPath);
   if (index.length === 0)
-    throw new Error(`No usage events found in ${transcriptPath}. Session Watcher 0.8.0 supports Claude Code JSONL transcripts only.`);
+    throw new Error(`No usage events found in ${transcriptPath}.`);
+  let ownerLocator = harness === "dsh" ? null : transcriptPath;
   initStore(":memory:");
   let cleanedUp = !1, cacheTtl = resolveClaudeCodeCacheTtl(), watcher = createWatcherComposition({
     sessionId: "replay",
-    sourceLocator: transcriptPath,
+    sourceLocator: ownerLocator,
     projectId: null,
     projectRoot: process.cwd(),
     stateDir: null,
     store: getStore(),
     isIgnored: null,
     cacheTtl
-  }), publicDir = join10(__dirname3, "..", "public"), { server, stopTimers, sseClients } = createServer({
+  }), publicDir = join11(__dirname3, "..", "public"), { server, stopTimers, sseClients } = createServer({
     watcher,
     pollIntervalMs: 0,
     sessionId: "replay",
@@ -29614,15 +30384,15 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
     onIdleShutdown: null,
     projectsRoot: null,
     projectRoot: process.cwd(),
-    sourceLocator: transcriptPath,
+    sourceLocator: ownerLocator,
     stateDir: null,
     publicDir,
     cacheTtl,
     disableTelemetrySweep: !0
   });
-  await new Promise((resolve5, reject) => {
+  await new Promise((resolve6, reject) => {
     server.once("error", reject), server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", reject), resolve5();
+      server.removeListener("error", reject), resolve6();
     });
   });
   let url = `http://127.0.0.1:${server.address().port}`, startRes = await fetch(`${url}/api/replay/start`, {
@@ -29634,7 +30404,7 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
     let err2 = await startRes.json().catch(() => ({}));
     throw closeStoreGlobal(), server.close(), new Error(`Failed to start replay: ${err2.error || startRes.statusText}`);
   }
-  let stop2 = () => cleanedUp ? Promise.resolve() : (cleanedUp = !0, new Promise((resolve5) => {
+  let stop2 = () => cleanedUp ? Promise.resolve() : (cleanedUp = !0, new Promise((resolve6) => {
     fetch(`${url}/api/replay/stop`, { method: "POST" }).catch(() => {
     }), stopTimers();
     for (let client of sseClients)
@@ -29643,16 +30413,16 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
       } catch {
       }
     server.close(() => {
-      closeStoreGlobal(), resolve5();
+      closeStoreGlobal(), resolve6();
     }), setTimeout(() => {
-      closeStoreGlobal(), resolve5();
+      closeStoreGlobal(), resolve6();
     }, 2e3).unref();
   }));
   return { server, url, totalSteps: index.length, stop: stop2 };
 }
 var __dirname3, init_replay_server = __esm({
   "lib/replay-server.js"() {
-    init_replay();
+    init_replay_source();
     init_server();
     init_cache_ttl();
     init_store();
@@ -29666,22 +30436,22 @@ __export(cli_exports, {
   runCli: () => runCli
 });
 import { existsSync as existsSync3, statSync as statSync6 } from "node:fs";
-import { join as join11, dirname as dirname5 } from "node:path";
+import { join as join12, dirname as dirname5 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { exec } from "node:child_process";
 import { release } from "node:os";
 import { createServer as createHttpServer2 } from "node:http";
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync10 } from "node:fs";
 async function runCli(args2) {
   return args2.command === "demo" ? runStaticDemo(args2) : runReplay(args2);
 }
 async function runStaticDemo(args2) {
   let publicDir = [
-    join11(__dirname4, "..", "public"),
+    join12(__dirname4, "..", "public"),
     // bundled (dist/bin/../public = dist/public)
-    join11(__dirname4, "..", "dist", "public")
+    join12(__dirname4, "..", "dist", "public")
     // source dev fallback
-  ].find((p) => existsSync3(join11(p, "demo.html")));
+  ].find((p) => existsSync3(join12(p, "demo.html")));
   publicDir || (console.error("Error: Demo assets not found. Try reinstalling: npm install -g @nomadop/session-watcher"), process.exit(1));
   let MIME = {
     ".html": "text/html",
@@ -29691,20 +30461,20 @@ async function runStaticDemo(args2) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   }, server = createHttpServer2((req, res) => {
-    let url2 = new URL(req.url, "http://localhost"), filePath = join11(publicDir, url2.pathname === "/" ? "demo.html" : url2.pathname);
+    let url2 = new URL(req.url, "http://localhost"), filePath = join12(publicDir, url2.pathname === "/" ? "demo.html" : url2.pathname);
     if (!filePath.startsWith(publicDir)) {
       res.writeHead(403), res.end();
       return;
     }
     try {
-      let data = readFileSync9(filePath), ext = filePath.slice(filePath.lastIndexOf("."));
+      let data = readFileSync10(filePath), ext = filePath.slice(filePath.lastIndexOf("."));
       res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache" }), res.end(data);
     } catch {
       res.writeHead(404), res.end("Not found");
     }
   });
-  await new Promise((resolve5, reject) => {
-    server.listen(args2.port, "127.0.0.1", () => resolve5()), server.on("error", reject);
+  await new Promise((resolve6, reject) => {
+    server.listen(args2.port, "127.0.0.1", () => resolve6()), server.on("error", reject);
   });
   let url = `http://127.0.0.1:${server.address().port}`, cleanup = () => {
     server.close(), process.exit(0);
@@ -29719,7 +30489,7 @@ async function runReplay(args2) {
   } catch (e) {
     throw e.code === "EACCES" && (console.error(`Error: Permission denied: ${transcriptPath}`), process.exit(1)), e;
   }
-  transcriptPath.endsWith(".jsonl") || console.error(`Warning: ${transcriptPath} does not have .jsonl extension \u2014 attempting parse anyway.`);
+  REPLAY_EXTENSIONS.some((extension) => transcriptPath.endsWith(extension)) || console.error(`Warning: ${transcriptPath} does not end in ${REPLAY_EXTENSIONS.join(", ")} \u2014 attempting parse anyway.`);
   let instance2;
   try {
     instance2 = await startReplayServer({
@@ -29800,10 +30570,10 @@ function openBrowser(url) {
   isWSL ? cmd = `cmd.exe /c start "" "${url}"` : process.platform === "darwin" ? cmd = `open "${url}"` : process.platform === "win32" ? cmd = `start "" "${url}"` : cmd = `xdg-open "${url}"`, exec(cmd, () => {
   });
 }
-var __dirname4, init_cli = __esm({
+var __dirname4, REPLAY_EXTENSIONS, init_cli = __esm({
   "lib/cli.js"() {
     init_replay_server();
-    __dirname4 = dirname5(fileURLToPath4(import.meta.url));
+    __dirname4 = dirname5(fileURLToPath4(import.meta.url)), REPLAY_EXTENSIONS = [".jsonl", ".jsonl.gz", ".zstd"];
   }
 });
 
@@ -29841,14 +30611,14 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.8.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.9.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]
 
 Commands:
   demo                        Replay built-in demo transcript
-  replay <path>               Replay a Claude Code transcript
+  replay <path>               Replay a Claude Code transcript or a DSH session log
 
 Options:
   --speed N                   Replay speed multiplier (default: 20)

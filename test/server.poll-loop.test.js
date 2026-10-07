@@ -7,16 +7,10 @@
 // catches its own failure, so a disk or client fault cannot stop later ticks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-
-// Isolate ledger/gate state writes to a temp CLAUDE_PLUGIN_DATA (read lazily per call by the stores, so
-// setting it before importing the server suffices).
-const TMP = mkdtempSync(join(tmpdir(), 'sw-pollloop-'));
-process.env.CLAUDE_PLUGIN_DATA = TMP;
-process.on('exit', () => { try { rmSync(TMP, { recursive: true, force: true }); } catch { /* best effort */ } });
 
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
 import { _setServerTestClock, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS } from '../server.js';
@@ -212,19 +206,11 @@ function stepRows(tag, cacheRead) {
 // (`load_token_conflict` where the Projection emits `multiple_load_tokens`), so the channel was dead and every
 // code was silently discarded. These pin that it is live, and that the one line the baseline printed is that
 // line verbatim.
-test('a frame diagnostic reaches stderr under SW_DEBUG, with the baseline text for the load-token case', async (t) => {
+test('a frame diagnostic reaches stderr, with the baseline text for the load-token case', async (t) => {
   _resetRateLampManagerForTest();
   t.after(() => _resetRateLampManagerForTest());
 
-  const lines = [];
-  const realError = console.error;
-  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
-  const realDebug = process.env.SW_DEBUG;
-  process.env.SW_DEBUG = '1';
-  t.after(() => {
-    console.error = realError;
-    if (realDebug === undefined) delete process.env.SW_DEBUG; else process.env.SW_DEBUG = realDebug;
-  });
+  const lines = captureStderr(t, { debug: false });
 
   // Two DIFFERENT load tokens in one issuing step: the shape the Projection reports, reached from the Source.
   const composed = composeForTranscript({
@@ -237,19 +223,11 @@ test('a frame diagnostic reaches stderr under SW_DEBUG, with the baseline text f
     `the baseline line was written verbatim; saw ${JSON.stringify(lines)}`);
 });
 
-test('a diagnostic code the specific branch does not name still reaches the debug sink', async (t) => {
+test('a diagnostic code the specific branch does not name still reaches the sink', async (t) => {
   _resetRateLampManagerForTest();
   t.after(() => _resetRateLampManagerForTest());
 
-  const lines = [];
-  const realError = console.error;
-  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
-  const realDebug = process.env.SW_DEBUG;
-  process.env.SW_DEBUG = '1';
-  t.after(() => {
-    console.error = realError;
-    if (realDebug === undefined) delete process.env.SW_DEBUG; else process.env.SW_DEBUG = realDebug;
-  });
+  const lines = captureStderr(t, { debug: false });
 
   const composed = composeForTranscript({
     transcriptPath: writeMeasuredTranscript({ steps: 1 }), sessionId: `diag2-${randomUUID()}`,
@@ -273,6 +251,68 @@ test('a diagnostic code the specific branch does not name still reaches the debu
     `the general sink wrote the diagnostic; saw ${JSON.stringify(lines)}`);
   assert.ok(lines.some(line => line.startsWith('[measurement-engine]')),
     'and tagged it with the diagnostic\'s own scope');
+});
+
+// Stderr captured with SW_DEBUG in the state the case names, both restored after it.
+function captureStderr(t, { debug }) {
+  const lines = [];
+  const realError = console.error;
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  const realDebug = process.env.SW_DEBUG;
+  if (debug) process.env.SW_DEBUG = '1'; else delete process.env.SW_DEBUG;
+  t.after(() => {
+    console.error = realError;
+    if (realDebug === undefined) delete process.env.SW_DEBUG; else process.env.SW_DEBUG = realDebug;
+  });
+  return lines;
+}
+
+// A LOWER-total revision of step `sm0`, which the Engine answers with `usage_revision_ignored`.
+const lowerRevision = (n) => [
+  assistantToolUse({
+    uuid: `u-rev${n}`, messageId: 'sm0', toolUseId: `t-rev${n}`, name: 'Bash',
+    input: { command: 'echo rev' }, timestamp: ts(9),
+    usage: usage({ input: 1, output: 1, cacheRead: 1 }),
+  }),
+  toolResult({ uuid: `r-rev${n}`, toolUseId: `t-rev${n}`, content: 'ok' }),
+];
+
+test('a diagnostic code reaches stderr on its first occurrence without SW_DEBUG, and its repeats only under it', async (t) => {
+  _resetRateLampManagerForTest();
+  t.after(() => _resetRateLampManagerForTest());
+  const lines = captureStderr(t, { debug: false });
+
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({ steps: 1 }), sessionId: `diag3-${randomUUID()}`,
+  });
+  t.after(() => composed.teardown());
+  const written = () => lines.filter(line => line.includes('usage_revision_ignored')).length;
+
+  composed.appendRows(lowerRevision(1), { parentUuid: 'sr0' });
+  assert.equal(written(), 1, `the first occurrence was written; saw ${JSON.stringify(lines)}`);
+  composed.appendRows(lowerRevision(2), { parentUuid: 'r-rev1' });
+  assert.equal(written(), 1, 'a repeat stays silent without SW_DEBUG');
+  process.env.SW_DEBUG = '1';
+  composed.appendRows(lowerRevision(3), { parentUuid: 'r-rev2' });
+  assert.equal(written(), 2, 'a repeat is written under SW_DEBUG');
+});
+
+test('the owner’s terminal close reports its diagnostics through the same sink', async (t) => {
+  _resetRateLampManagerForTest();
+  t.after(() => _resetRateLampManagerForTest());
+  const lines = captureStderr(t, { debug: false });
+
+  const composed = composeForTranscript({
+    transcriptPath: writeMeasuredTranscript({ steps: 3 }), sessionId: `diag4-${randomUUID()}`,
+  });
+  t.after(() => composed.teardown());
+  composed.store.archiveSegmentTelemetry = () => ({ status: 'failed_retryable' });
+
+  const result = composed.handle.closeCurrentSegment();
+  assert.ok(result.diagnostics.some(entry => entry.code === 'segment_telemetry_persist_failed'),
+    'precondition: the close produced the retryable-telemetry diagnostic');
+  assert.equal(lines.filter(line => line.includes('segment_telemetry_persist_failed')).length, 1,
+    `the close wrote it once; saw ${JSON.stringify(lines)}`);
 });
 
 // One issuing step carrying two load_handoff tool uses with DIFFERENT explicit tokens.

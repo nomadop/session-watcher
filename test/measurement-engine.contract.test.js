@@ -95,6 +95,23 @@ test('[delta] miss L is total stock', () => {
   assert.deepEqual(engine.getHistory().map(point => point.miss), [false, true]);
 });
 
+test('[delta] an eviction beside a small stock dip is a miss whose L is total stock', () => {
+  // A recorded deepseek-v4-pro pair: the re-read content arrives as input while total stock dips.
+  const engine = makeEngine();
+  engine.ingest([step('m1', { input: 196, output: 1, cacheRead: 98304, cacheWrite: 0 })]);
+  engine.ingest([step('m2', { input: 93915, output: 1, cacheRead: 0, cacheWrite: 0 })]);
+  assert.deepEqual(engine.getHistory().map(point => point.miss), [false, true]);
+  assert.equal(engine.getStatus().L, 93915);
+});
+
+test('[delta] the first step after an epoch is not a miss, whatever its cache read', () => {
+  const engine = makeEngine();
+  engine.ingest([step('m1', { input: 0, output: 1, cacheRead: 80000, cacheWrite: 0 }), { type: 'epoch' }]);
+  engine.ingest([step('m2', { input: 0, output: 1, cacheRead: 3000, cacheWrite: 3000 })]);
+  assert.deepEqual(engine.getHistory().map(point => point.miss), [false, false]);
+  assert.equal(engine.getStatus().L, 3000);
+});
+
 test('the first measured step establishes turn one without a prior boundary', () => {
   const engine = makeEngine();
   assert.equal(engine.getStatus().turnSeq, 0);

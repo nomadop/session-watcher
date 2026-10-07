@@ -1,12 +1,11 @@
-// The shared SessionWatcher application Interface, driven entirely through fakes: a fake Engine,
-// Measurement Projection, Store and DialogueSource. What is under test here is the application's own
-// ownership — frame transitions, which runtime a batch reaches, when a segment closes, what the archive
-// call receives, and the exact shape of every named read. Measurement itself belongs to the Engine tests
-// and native interpretation to the Projection's, so nothing here asserts a token number.
+// The shared SessionWatcher application Interface, driven through fakes: a fake Measurement Projection, Store and DialogueSource, and a fake Engine wherever a case does not read the Engine's own answer.
+// What is under test here is the application's own ownership — frame transitions, which runtime a batch reaches, when a segment closes, what the archive call receives, and the exact shape of every named read.
+// Measurement itself belongs to the Engine tests and native interpretation to the Projection's, so nothing here asserts a token number.
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SessionWatcher } from '../lib/session-watcher.js';
+import { createMeasurementEngine } from '../lib/measurement/engine.js';
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
 
@@ -146,7 +145,7 @@ const REQUIRED = () => ({
   handoffComposition: {},
   loaderVersion: '9.9.9',
   store: makeStore(),
-  dialogueSource: { read: () => ({ status: 'unavailable', observations: [] }) },
+  dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
   dialogueProjection: {},
   createEngine: () => makeEngine(),
   createMeasurementProjection: (locator) => makeProjection(locator),
@@ -500,8 +499,88 @@ describe('segment archival', () => {
     return { watcher, store, projections };
   }
 
+  const LIVE_FRAME = { transition: 'append', batches: [], sourceObserved: true, captureMode: 'live' };
+  const REPLAY_FRAME = { ...LIVE_FRAME, captureMode: 'replay' };
+  const sources = store => store.profiles.map(profile => [profile.segment, profile.snapshot.archiveSource]);
+
+  // An Engine whose epoch record closes `segment` 0 and whose explicit close closes `segment` 1, behind a Projection that turns every observation into an epoch record.
+  function epochHarness() {
+    return archiveHarness({
+      deps: {
+        createEngine: () => makeEngine({
+          ingest: records => (records[0].type === 'epoch' ? { closedSegments: [closedSegment({ segment: 0 })] } : {}),
+          close: () => ({ closedSegments: [closedSegment({ segment: 1 })] }),
+        }),
+        createMeasurementProjection: l => makeProjection(l, { project: () => ({ records: [{ type: 'epoch' }] }) }),
+      },
+    });
+  }
+
+  test('an explicit close after replay frames alone archives as replay', () => {
+    const { watcher, store } = archiveHarness();
+    watcher.applyHarnessFrame(replaceFrame('/t/a.jsonl', [], { captureMode: 'replay' }));
+    watcher.applyHarnessFrame(REPLAY_FRAME);
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'replay']]);
+  });
+
+  test('an explicit close after a live frame archives as live', () => {
+    const { watcher, store } = archiveHarness();
+    watcher.applyHarnessFrame(REPLAY_FRAME);
+    watcher.applyHarnessFrame(LIVE_FRAME);
+    watcher.applyHarnessFrame(REPLAY_FRAME);
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'live']]);
+  });
+
+  test('a live frame whose batch crosses an epoch archives the old segment under the frame\'s mode and marks the new one, so the close that follows archives as live', () => {
+    const { watcher, store } = epochHarness();
+    watcher.applyHarnessFrame({ ...LIVE_FRAME, batches: [[{ type: 'epoch-boundary' }]] });
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'live'], [1, 'live']]);
+  });
+
+  test('a replay replace after a live frame clears the mark, so the close archives as replay', () => {
+    const { watcher, store } = archiveHarness();
+    watcher.applyHarnessFrame(LIVE_FRAME);
+    watcher.applyHarnessFrame(replaceFrame('/t/a.jsonl', [], { captureMode: 'replay' }));
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'replay']]);
+  });
+
+  test('a live replace after replay frames sets the mark again, so the close archives as live', () => {
+    const { watcher, store } = archiveHarness();
+    watcher.applyHarnessFrame(REPLAY_FRAME);
+    watcher.applyHarnessFrame(replaceFrame('/t/a.jsonl'));
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'live']]);
+  });
+
+  test('a live rotate archives the old segment under the rotate frame\'s mode and the close that follows archives as live', () => {
+    const closes = [closedSegment({ segment: 0 }), closedSegment({ segment: 1 })];
+    const { watcher, store } = archiveHarness({
+      deps: { createEngine: () => makeEngine({ close: () => ({ closedSegments: [closes.shift()] }) }) },
+    });
+    watcher.applyHarnessFrame(REPLAY_FRAME);
+    watcher.applyHarnessFrame(rotateFrame('sid-a', '/t/b.jsonl'));
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'live'], [1, 'live']]);
+  });
+
+  test('a close clears the mark, so a second close after no frame archives as replay', () => {
+    const closes = [closedSegment({ segment: 0 }), closedSegment({ segment: 1 })];
+    const { watcher, store } = archiveHarness({
+      deps: { createEngine: () => makeEngine({ close: () => ({ closedSegments: [closes.shift()] }) }) },
+    });
+    watcher.applyHarnessFrame(LIVE_FRAME);
+    watcher.closeCurrentSegment();
+    watcher.closeCurrentSegment();
+    assert.deepEqual(sources(store), [[0, 'live'], [1, 'replay']]);
+  });
+
   test('live archival uses the injected now() for archivedAt', () => {
     const { watcher, store } = archiveHarness();
+    watcher.applyHarnessFrame(LIVE_FRAME);
     watcher.closeCurrentSegment();
     assert.equal(store.profiles[0].snapshot.archivedAt, 7000);
     assert.equal(store.profiles[0].snapshot.archiveSource, 'live');
@@ -516,18 +595,19 @@ describe('segment archival', () => {
       ],
     });
     const first = archiveHarness({}, withTimes);
-    first.watcher.closeCurrentSegment({ captureMode: 'replay' });
+    first.watcher.closeCurrentSegment();
     assert.equal(first.store.profiles[0].snapshot.archivedAt, 222);
     assert.equal(first.store.profiles[0].snapshot.archiveSource, 'replay');
 
     const noTimes = archiveHarness({}, closedSegment({ steps: [{ id: 'a', foldedSeq: 1, timestamp: null, usage: {} }] }));
-    noTimes.watcher.closeCurrentSegment({ captureMode: 'replay' });
+    noTimes.watcher.closeCurrentSegment();
     assert.equal(noTimes.store.profiles[0].snapshot.archivedAt, 7000);
   });
 
   test('the profile archive is passed to the Store as exact sessionId, segment, snapshot and paths arguments', () => {
     const closed = closedSegment({ segment: 6, epochModel: 'model-z', metrics: { bTotal: 11, lPeak: 22, cRatio: 9 }, paths: [{ path: '/proj/x.js', tokens: 3 }] });
     const { watcher, store } = archiveHarness({}, closed);
+    watcher.applyHarnessFrame(LIVE_FRAME);
     watcher.closeCurrentSegment();
     assert.equal(store.profiles.length, 1);
     assert.equal(store.profiles[0].sessionId, 'sid-a');
@@ -656,6 +736,26 @@ describe('named reads', () => {
     assert.equal(watcher.getStatus().cRatio, DEFAULT_RATIO);
   });
 
+  test('refreshReadPolicies re-resolves the epoch policy when the resolver\'s answer changed', () => {
+    // The real Engine: the fake answers every refresh as a change, and only the Engine's own policy
+    // signature can say that an unchanged resolver answer moved nothing.
+    let ratio = 11;
+    const watcher = build({
+      modelPolicyFor: () => ({ ctp: { ascii: 3, cjk: 1, version: 1 }, cRatio: ratio, contextCapacity: 200000, pricing: {} }),
+      createEngine: createMeasurementEngine,
+      createMeasurementProjection: (l) => makeProjection(l, {
+        project: () => ({ records: [{ type: 'step', id: 'm1', model: 'model-a', timestamp: 1, usage: { input: 0, output: 1, cacheRead: 1000, cacheWrite: 0 } }] }),
+      }),
+    });
+    watcher.applyHarnessFrame(appendFrame([[{ type: 'usage' }]]));
+    assert.equal(watcher.getStatus().cRatio, 11, 'precondition: the measured step resolved the epoch policy');
+
+    ratio = 47;
+    assert.equal(watcher.refreshReadPolicies().changed, true);
+    assert.equal(watcher.getStatus().cRatio, 47);
+    assert.equal(watcher.refreshReadPolicies().changed, false, 'an unchanged answer is no change');
+  });
+
   test('a resolved epoch policy is never masked by the read-model ratio', () => {
     const watcher = build({
       modelPolicyFor: () => ({ ctp: { ascii: 3, cjk: 1, version: 1 }, cRatio: 11, contextCapacity: 1, pricing: {} }),
@@ -707,6 +807,23 @@ describe('named reads', () => {
     assert.deepEqual(enriched.paths[0].activeSymbols, ['alpha']);
     assert.equal('activeSymbols' in enriched.paths[1], false, 'a non-default-selected row is never enriched');
     assert.equal('activeSymbols' in enriched.skills[0], false, 'a skill row is never enriched');
+  });
+
+  test('getBucketData maps a tool-kind residual group into residual.tool and no other family', () => {
+    const bucket = {
+      dead: 0,
+      paths: [],
+      residual: [
+        { groupKey: 'session_event_read', tokens: 8, count: 1, lastTurn: 1, lastCallSeq: 1, touchSeqs: [1], meta: { kind: 'tool', detail: 'read' } },
+      ],
+      totalB: 8, totalL: 8, bDefault: 0, totalResidualRaw: 8, totalResidual: 8, currentTurnSeq: 1, segment: 0,
+    };
+    const watcher = build({ createEngine: () => makeEngine({ bucket }) });
+    const plain = watcher.getBucketData();
+    assert.deepEqual(plain.residual.tool, [{ name: 'session_event_read', detail: 'read', tokens: 8, count: 1, lastTurn: 1, lastCallSeq: 1, touchSeqs: [1] }]);
+    assert.deepEqual(plain.residual.bash, []);
+    assert.deepEqual(plain.residual.mcp, []);
+    assert.deepEqual(plain.residual.agent, []);
   });
 
   test('every public read is detached', () => {
@@ -837,7 +954,7 @@ describe('named reads', () => {
     assert.deepEqual([...surface].sort(), [
       'applyHarnessFrame', 'closeCurrentSegment', 'deliverHandoff', 'getBucketData', 'getCurrentCtp',
       'getCurrentModel', 'getEpochModel', 'getHistory', 'getStatus', 'getTerminalSnapshot', 'getTurnSkeleton',
-      'prepareHandoff', 'readRateLampFrame', 'readScenario', 'replaceUserOverrides', 'searchHandoffs',
+      'prepareHandoff', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceUserOverrides', 'searchHandoffs',
       'setRatioOverride', 'submitTurnNotes',
     ]);
   });
@@ -866,7 +983,7 @@ describe('Turn Note orchestration', () => {
         project: () => ({ folds: [] }),
         groupTurns: () => [turnOf(4, 'anchor-1'), turnOf(6, 'anchor-2')],
       };
-      const dialogueSource = { read: () => ({ status: 'ok', observations: [] }) };
+      const dialogueSource = { read: async () => ({ status: 'ok', observations: [] }) };
       let committed = 0;
       const store = makeStore();
       store.upsertTurnNotes = () => { committed += 1; if (committed === 1) throw new Error('db down'); };
@@ -877,17 +994,17 @@ describe('Turn Note orchestration', () => {
         dialogueProjection,
         store,
       });
-      const skeleton = watcher.getTurnSkeleton();
+      const skeleton = await watcher.getTurnSkeleton();
       assert.ok(skeleton.skeleton_path.startsWith(root + '/'), 'skeleton lives under the injected root');
       assert.ok(skeleton.notes_path.startsWith(root + '/'), 'notes live under the injected root');
       assert.equal(readdirSync(root).length, 1);
       const { writeFileSync } = await import('node:fs');
       writeFileSync(skeleton.notes_path, '## NOTE[4]\n\nthe note body\n');
-      const failed = watcher.submitTurnNotes({ snapshot_id: skeleton.snapshot_id });
+      const failed = await watcher.submitTurnNotes({ snapshot_id: skeleton.snapshot_id });
       assert.equal(failed.committed, false);
       assert.equal(failed.retryable, true);
       assert.ok(existsSync(skeleton.notes_path), 'a retryable failure retains the epoch directory');
-      const ok = watcher.submitTurnNotes({ snapshot_id: skeleton.snapshot_id });
+      const ok = await watcher.submitTurnNotes({ snapshot_id: skeleton.snapshot_id });
       assert.equal(ok.committed, true);
       assert.equal(existsSync(skeleton.notes_path), false, 'a successful submission removes the epoch directory');
     } finally {

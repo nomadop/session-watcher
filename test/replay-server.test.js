@@ -2,6 +2,7 @@
 import { describe, it, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { constants, zstdCompressSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +11,12 @@ import { indexTranscript, ReplayController } from '../lib/replay.js';
 import { createWatcherComposition } from '../server.js';
 import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-driver.js';
 import { openStore, closeStore } from '../lib/store.js';
+import { indexDshLog } from '../lib/harness/dsh/playback.js';
 import { bootTestServer } from './helpers/server-boot.js';
+import { hasDshFixture, readDshFixture, expectationsOf } from './helpers/dsh-fixtures.js';
+import * as E from './helpers/dsh-events.js';
+import { modelPolicyFor } from '../lib/model-policy.js';
+import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Use the smallest available real fixture for testing
@@ -32,7 +38,7 @@ test('replay index keeps the final byte offset for repeated usage snapshots', ()
   const index = indexTranscript(path);
 
   assert.equal(index.length, 2);
-  assert.deepEqual(index.map(step => step.byteEnd), [
+  assert.deepEqual(index.map(step => step.limit), [
     Buffer.byteLength(first + middle + final),
     Buffer.byteLength(first + middle + final + next),
   ]);
@@ -226,20 +232,6 @@ describe('replay-server', () => {
     assert.equal((await res.json()).error, 'replay_active');
   });
 
-  it('does not create port-discovery state files', async () => {
-    const { readdirSync } = await import('node:fs');
-    const { homedir } = await import('node:os');
-    const stateDir = join(homedir(), '.session-watcher');
-    try {
-      const files = readdirSync(stateDir);
-      const port = new URL(instance.url).port;
-      const match = files.find(f => f.includes(port));
-      assert.equal(match, undefined, 'should not write port-discovery files');
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e;
-    }
-  });
-
   it('stop() is idempotent', async () => {
     await instance.stop();
     await instance.stop(); // second call must not throw
@@ -333,5 +325,199 @@ describe('playback status', () => {
     assert.equal(body.rateLamp.rentMeter.cycleProgress, ledger.billProgress);
     assert.equal(body.rateLamp.rentMeter.depthProgress, ledger.walletPhase);
     assert.equal(body.rateLamp.rentMeter.depthActive, true);
+  });
+});
+
+function compactedLog() {
+  const first = E.reusedCallIdAcrossSteps();
+  return E.sessionLog([
+    ...first, E.compactCheckpoint({ startSeq: first[0].seq, endSeq: first.at(-1).seq }), ...E.reusedCallIdAcrossSteps(),
+  ]);
+}
+
+// A DSH session log as DSH writes it under its default compression: the header line as one checksummed zstd frame
+// and the events as another, in a temp file. Unless given its events, the log carries a compaction, so its replay
+// closes a segment.
+function writeDshLog({ cwd = '/repo-dsh-replay', events: given } = {}) {
+  const events = given ?? compactedLog();
+  const header = E.header({ id: 'session-dsh-replay', cwd });
+  const frame = records => zstdCompressSync(records.map(record => `${JSON.stringify(record)}\n`).join(''),
+    { params: { [constants.ZSTD_c_checksumFlag]: 1 } });
+  const dir = mkdtempSync(join(tmpdir(), 'sw-replay-dsh-'));
+  const path = join(dir, 'session.v4.jsonl.zstd');
+  writeFileSync(path, Buffer.concat([frame([header]), frame(events)]));
+  return { path, dir, header, events };
+}
+
+async function untilDone(url) {
+  for (;;) {
+    const progress = await (await fetch(`${url}/api/replay/status`)).json();
+    if (progress.done) return progress;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+
+test('the replay server starts on a dsh log and answers totalSteps and the replay total of its index', async () => {
+  const log = writeDshLog();
+  const instance = await startReplayServer({ transcriptPath: log.path, speed: 100, port: 0 });
+  try {
+    const steps = indexDshLog(log.events).length;
+    assert.equal(instance.totalSteps, steps);
+    const progress = await (await fetch(`${instance.url}/api/replay/status`)).json();
+    assert.equal(progress.active, true);
+    assert.equal(progress.total, steps);
+  } finally {
+    await instance.stop();
+    rmSync(log.dir, { recursive: true, force: true });
+  }
+});
+
+test('a dsh replay that ends measures the fixture\'s segment, measured calls and latest model', {
+  skip: !hasDshFixture('subagent'),
+}, async () => {
+  const { application } = expectationsOf('subagent');
+  const transcriptPath = join(__dirname, '..', 'fixtures', 'dsh', 'subagent.jsonl.gz');
+  const instance = await startReplayServer({ transcriptPath, speed: 100, port: 0 });
+  try {
+    assert.equal(instance.totalSteps, indexDshLog(readDshFixture('subagent').events).length);
+    await untilDone(instance.url);
+    const status = await (await fetch(`${instance.url}/api/status`)).json();
+    const history = await (await fetch(`${instance.url}/api/history`)).json();
+    assert.equal(status.segment, application.segment, 'segment');
+    assert.equal(history.length, application.measuredCalls, 'measured calls');
+    assert.equal(status.model, application.latestModel, 'latest model');
+  } finally {
+    await instance.stop();
+  }
+});
+
+test('a dsh replay\'s pricing answers the log\'s model and its model default', async () => {
+  const log = writeDshLog();
+  const instance = await startReplayServer({ transcriptPath: log.path, speed: 100, port: 0 });
+  try {
+    await untilDone(instance.url);
+    const status = await (await fetch(`${instance.url}/api/status`)).json();
+    const pricing = await (await fetch(`${instance.url}/api/pricing`)).json();
+    assert.ok(status.model, 'the replay measured a model');
+    assert.equal(pricing.modelDefault.model, status.model);
+    assert.equal(pricing.effective.source, 'model_default');
+    assert.equal(pricing.effective.ratio, status.cRatio, 'the reported ratio is the one the replay charges');
+    assert.equal(pricing.effective.ratio, pricing.modelDefault.ratio);
+  } finally {
+    await instance.stop();
+    rmSync(log.dir, { recursive: true, force: true });
+  }
+});
+
+// One process has one declared cache lifetime: the replayed DSH application measures at the lifetime the route
+// reports its price under, which only a model priced apart per lifetime can show.
+test('a dsh replay under a declared cache lifetime measures at the ratio its pricing reports', async () => {
+  const model = 'claude-opus-4-8';
+  const declared = LONG_CACHE_TTL;
+  const atDeclared = modelPolicyFor(model, declared).cRatio;
+  assert.notEqual(atDeclared, modelPolicyFor(model, DEFAULT_CACHE_TTL).cRatio,
+    'this model must be priced apart on the two lifetimes, or the case discriminates nothing');
+  const log = writeDshLog({
+    events: E.sessionLog([
+      E.turnStart(), E.userMessage({ text: 'hi' }), E.stepStart({ step: 1 }),
+      E.assistantMessage({
+        text: 'a', model, step: 1, usage: { inputTokens: 3, outputTokens: 40, totalTokens: 9643, cacheWriteTokens: 9600 },
+      }),
+      E.stepEnd({ step: 1 }), E.turnEnd(),
+    ]),
+  });
+  const savedDeclaration = process.env.CLAUDE_CODE_PROMPT_CACHE_TTL;
+  process.env.CLAUDE_CODE_PROMPT_CACHE_TTL = declared;
+  let instance;
+  try {
+    instance = await startReplayServer({ transcriptPath: log.path, speed: 100, port: 0 });
+    await untilDone(instance.url);
+    const status = await (await fetch(`${instance.url}/api/status`)).json();
+    const pricing = await (await fetch(`${instance.url}/api/pricing`)).json();
+    assert.equal(status.model, model);
+    assert.equal(pricing.effective.ratio, atDeclared);
+    assert.equal(status.cRatio, pricing.effective.ratio, 'the replay charges the ratio the route reports');
+  } finally {
+    await instance?.stop();
+    if (savedDeclaration === undefined) delete process.env.CLAUDE_CODE_PROMPT_CACHE_TTL;
+    else process.env.CLAUDE_CODE_PROMPT_CACHE_TTL = savedDeclaration;
+    rmSync(log.dir, { recursive: true, force: true });
+  }
+});
+
+test('a price saved and cleared during a dsh replay is keyed by the log\'s model', async () => {
+  const log = writeDshLog();
+  const instance = await startReplayServer({ transcriptPath: log.path, speed: 100, port: 0 });
+  const pricing = (method, body) => fetch(`${instance.url}/api/pricing`, {
+    method, headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const cRatio = async () => (await (await fetch(`${instance.url}/api/status`)).json()).cRatio;
+  try {
+    await untilDone(instance.url);
+    const measured = await cRatio();
+
+    const saved = await pricing('POST', { readPrice: 1, writePrice: 12 });
+    assert.equal(saved.status, 200, 'the write found the playback\'s model');
+    assert.equal((await saved.json()).effective.source, 'saved');
+    assert.equal(await cRatio(), 12, 'the saved ratio prices the playback');
+
+    const cleared = await pricing('DELETE');
+    assert.equal(cleared.status, 200);
+    assert.equal((await cleared.json()).effective.source, 'model_default');
+    assert.equal(await cRatio(), measured, 'clearing it restores the playback\'s own price');
+  } finally {
+    await instance.stop();
+    rmSync(log.dir, { recursive: true, force: true });
+  }
+});
+
+test('an empty index fails the preflight without naming a harness', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sw-replay-empty-'));
+  try {
+    const transcript = join(dir, 'transcript.jsonl');
+    writeFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } })}\n`);
+    const dshLog = join(dir, 'session.v4.jsonl');
+    writeFileSync(dshLog, [E.header(), ...E.sessionLog([E.turnStart(), E.userMessage({ text: 'hi' }), E.turnEnd()])]
+      .map(record => `${JSON.stringify(record)}\n`).join(''));
+    for (const path of [transcript, dshLog]) {
+      await assert.rejects(startReplayServer({ transcriptPath: path, speed: 100, port: 0 }),
+        { message: `No usage events found in ${path}.` });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('the replay route on a dsh log', () => {
+  let ctx;
+  let log;
+
+  before(async () => { ctx = await bootTestServer({ sessionId: 'sess-replay-dsh' }); });
+  after(async () => {
+    await ctx.teardown();
+    if (log) rmSync(log.dir, { recursive: true, force: true });
+  });
+
+  it('the replay route composes a dsh log under its header\'s cwd and writes no profile row', async () => {
+    const profileRows = () => ctx.store._db.prepare('SELECT COUNT(*) AS n FROM profile').get().n;
+    const rowsBefore = profileRows();
+    log = writeDshLog({ cwd: join(ctx.cwd, 'dsh-project') });
+
+    const start = await ctx.requestRaw('/api/replay/start', {
+      method: 'POST', body: { transcript: log.path, speed: 4 },
+    });
+    assert.equal(start.status, 200, 'start');
+    assert.equal((await start.json()).total, indexDshLog(log.events).length);
+    await ctx.requestRaw('/api/replay/pause', { method: 'POST' });
+    const controller = ctx.replayController();
+    while (!controller.progress.done) stepOnce(controller);
+
+    const status = await ctx.get('/api/status');
+    assert.equal(status.segment, 1, 'the compaction closed the first segment');
+    const buckets = await ctx.get('/api/buckets');
+    assert.deepEqual(buckets.paths.map(entry => entry.path).sort(),
+      [join(log.header.cwd, 'src/a.js'), join(log.header.cwd, 'src/b.js')],
+      'a relative read resolves under the header\'s cwd');
+    assert.equal(profileRows(), rowsBefore, 'the closed segment archived no profile row');
   });
 });

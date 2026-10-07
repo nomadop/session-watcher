@@ -188,7 +188,16 @@ function sortByTokensDesc(nodes) {
   }
 }
 
-// foldResidual: convert a bash/mcp list into BucketNode[].
+// The residual families as [kind, nameOf], in the order buildTree emits them.
+const RESIDUAL_FAMILIES = [
+  ['bash', b => b.name],
+  ['mcp', m => m.tool],
+  ['agent', a => a.name],
+  ['tool', t => t.name],
+];
+const RESIDUAL_KINDS = new Set(RESIDUAL_FAMILIES.map(([kind]) => kind));
+
+// foldResidual: convert one residual family's list into BucketNode[].
 // >1 → dir node + per-feature children; =1 → single inline leaf; 0 → nothing.
 function foldResidual(kind, list, nameOf) {
   if (!list || list.length === 0) return [];
@@ -254,7 +263,7 @@ function foldResidual(kind, list, nameOf) {
 
 /**
  * Convert the §11.3.1 bucketData object into an array of BucketNode for the panel UI.
- * Groups: system / paths / output (bash + mcp + others).
+ * Groups: system / paths / output (the residual families + others).
  * @param {object|null|undefined} bucketData
  * @returns {BucketNode[]}
  */
@@ -309,21 +318,16 @@ export function buildTree(bucketData) {
   tree.push(...foldPaths(bucketData.paths || []));
 
   // ── OUTPUT ──
-  const bash = bucketData.residual?.bash || [];
-  const mcp = bucketData.residual?.mcp || [];
-  const agent = bucketData.residual?.agent || [];
-
-  tree.push(...foldResidual('bash', bash, b => b.name));
-  tree.push(...foldResidual('mcp', mcp, m => m.tool));
-  tree.push(...foldResidual('agent', agent, a => a.name));
-
-  const sumBash = bash.reduce((s, b) => s + (b.tokens ?? 0), 0);
-  const sumMcp = mcp.reduce((s, m) => s + (m.tokens ?? 0), 0);
-  const sumAgent = agent.reduce((s, a) => s + (a.tokens ?? 0), 0);
+  let sumResidual = 0;
+  for (const [kind, nameOf] of RESIDUAL_FAMILIES) {
+    const list = bucketData.residual?.[kind] || [];
+    tree.push(...foldResidual(kind, list, nameOf));
+    sumResidual += list.reduce((s, item) => s + (item.tokens ?? 0), 0);
+  }
 
   // totalResidualRaw rather than the clamped total, so the drift signal survives to the warning below
   const totalRaw = bucketData.totalResidualRaw ?? bucketData.totalResidual ?? 0;
-  const othersRaw = totalRaw - sumBash - sumMcp - sumAgent;
+  const othersRaw = totalRaw - sumResidual;
 
   // Drift-warn: if raw goes deeply negative, something is misaccounted
   if (othersRaw < -(OTHERS_DRIFT_WARN_PCT * (bucketData.totalL || 0))) {
@@ -459,27 +463,17 @@ export function applyOverrides(tree, overrides) {
 }
 
 /**
- * True if ANY selectable leaf has selected !== defaultSelected.
- * NOTE: With backend overrides active, returns true for committed overrides too.
- * For local-ghost-only dirty check, use selectionOverrides.size > 0 instead.
- * @deprecated Prefer selectionOverrides.size > 0 for "has unsaved local changes"
- */
-export function computeDirty(tree) {
-  return flattenLeaves(tree).some(n => n.selectable && n.selected !== n.defaultSelected);
-}
-
-/**
  * Build the override payload for POST /api/user-overrides.
  * Includes all non-default states: local toggles + backend overrides the frontend has rendered.
- * F2 fix: preserves backend overrides for leaves without local toggles (prevents one-shot inference loss).
- * F3 fix: skips output-group leaves (bash/mcp/agent) which aren't valid override targets.
- * F12 fix: single source of truth for Apply + Handoff auto-apply.
+ * Backend overrides on leaves without a local toggle are carried, so a one-shot inference is not lost.
+ * Output-group leaves (the residual families) are skipped: their labels are not override targets.
+ * Apply, the Handoff auto-apply and the preview publisher all build their payload here.
  */
 export function buildOverridePayload(tree) {
   const overrides = {};
   for (const leaf of flattenLeaves(tree)) {
     if (!leaf.selectable) continue;
-    if (leaf.group === 'output') continue; // F3: bash/mcp/agent labels aren't valid paths
+    if (leaf.group === 'output') continue; // residual-family labels aren't valid paths
     if (leaf.selected && !leaf.defaultSelected) {
       overrides[leaf.label] = 'include';
     } else if (!leaf.selected && leaf.defaultSelected) {
@@ -527,12 +521,12 @@ export function buildCompactInstruction(tree) {
   }
   if (discardedSkills.length) clauses.push(`discard skill context: ${discardedSkills.join(', ')}`);
 
-  // 3. Unchecked bash/mcp → discard (redacted). Iterate leaves so a bash DIR's children are covered too.
+  // 3. Unchecked residual-family leaves → discard (redacted). Iterate leaves so a bash DIR's children are covered too.
   //    leaf.name is already the SERVER-EXTRACTED feature; redactCmd is defense-in-depth. The detail comes
   //    along because the feature alone leaves same-command invocations indistinguishable.
   const discards = [];
   for (const leaf of flattenLeaves(tree)) {
-    if ((leaf.kind === 'bash' || leaf.kind === 'mcp' || leaf.kind === 'agent') && leaf.selectable && !leaf.selected) {
+    if (RESIDUAL_KINDS.has(leaf.kind) && leaf.selectable && !leaf.selected) {
       const bashLabel = [leaf.name, leaf.detail].filter(Boolean).join(' ');
       const label = leaf.kind === 'bash' ? redactCmd(bashLabel)
         : leaf.kind === 'agent' ? (leaf.detail || leaf.name)
@@ -599,7 +593,7 @@ function nameClass(node) {
   if (node.kind === 'system') return 'is-system';
   if (node.kind === 'skill') return 'is-skill';
   if (node.kind === 'dir') return 'is-dir-name';
-  if (node.kind === 'bash' || node.kind === 'mcp' || node.kind === 'agent') return 'is-special';
+  if (RESIDUAL_KINDS.has(node.kind)) return 'is-special';
   if (node.kind === 'others') return 'is-others';
   return '';
 }
@@ -709,7 +703,7 @@ export function mount(root, ctx) {
     sectionCollapsed: { system: false, paths: false, output: true }, // section-level fold
     prevSegment: null,
     lastGoodBucketData: null,        // last non-null bd — fallback for transient failures
-    _bodyTips: [],                   // tooltip elements appended to document.body (for cleanup)
+    _bodyTips: [],                   // tooltip elements appended to ctx.overlayRoot (for cleanup)
   };
 
   /** Toggle helper — auto-removes entry if target matches committed state (eliminates phantom dirty). */
@@ -744,24 +738,24 @@ export function mount(root, ctx) {
   // 4 circles: track + system + selected + discarded
   const circleTrack = document.createElementNS(SVG_NS, 'circle');
   circleTrack.setAttribute('cx', '18'); circleTrack.setAttribute('cy', '18'); circleTrack.setAttribute('r', '14');
-  circleTrack.setAttribute('fill', 'none'); circleTrack.setAttribute('stroke', 'rgba(255,255,255,0.04)');
+  circleTrack.setAttribute('fill', 'none'); circleTrack.style.stroke = 'var(--sw-hairline, rgba(255,255,255,0.04))';
   circleTrack.setAttribute('stroke-width', '4.5');
 
   const circleSystem = document.createElementNS(SVG_NS, 'circle');
   circleSystem.setAttribute('cx', '18'); circleSystem.setAttribute('cy', '18'); circleSystem.setAttribute('r', '14');
-  circleSystem.setAttribute('fill', 'none'); circleSystem.setAttribute('stroke', '#5a6a75');
+  circleSystem.setAttribute('fill', 'none'); circleSystem.style.stroke = 'var(--sw-faint, #5a6a75)';
   circleSystem.setAttribute('stroke-width', '4.5');
   circleSystem.className.baseVal = 'donut-system';
 
   const circleSelected = document.createElementNS(SVG_NS, 'circle');
   circleSelected.setAttribute('cx', '18'); circleSelected.setAttribute('cy', '18'); circleSelected.setAttribute('r', '14');
-  circleSelected.setAttribute('fill', 'none'); circleSelected.setAttribute('stroke', '#4fe0b0');
+  circleSelected.setAttribute('fill', 'none'); circleSelected.style.stroke = 'var(--sw-ok, #4fe0b0)';
   circleSelected.setAttribute('stroke-width', '4.5');
   circleSelected.className.baseVal = 'donut-selected';
 
   const circleDiscarded = document.createElementNS(SVG_NS, 'circle');
   circleDiscarded.setAttribute('cx', '18'); circleDiscarded.setAttribute('cy', '18'); circleDiscarded.setAttribute('r', '14');
-  circleDiscarded.setAttribute('fill', 'none'); circleDiscarded.setAttribute('stroke', '#ff7566');
+  circleDiscarded.setAttribute('fill', 'none'); circleDiscarded.style.stroke = 'var(--sw-bad, #ff7566)';
   circleDiscarded.setAttribute('stroke-width', '4.5'); circleDiscarded.setAttribute('opacity', '0.7');
   circleDiscarded.className.baseVal = 'donut-discarded';
 
@@ -854,8 +848,8 @@ export function mount(root, ctx) {
 
   // ── Event dispatchers ──────────────────────────────────────────────────────
   const dispatchPreview = createPreviewPublisher({
-    fetchImpl: (url, init) => fetch(url, init),
-    emit: (detail) => document.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail })),
+    fetchImpl: ctx.request,
+    emit: (detail) => ctx.bus.dispatchEvent(new CustomEvent('sw-bucket-preview', { detail })),
     hasSelection: () => state.selectionOverrides.size > 0,
     overridesOf: () => buildOverridePayload(state.tree),
   });
@@ -863,7 +857,7 @@ export function mount(root, ctx) {
   let _hoveredNodeId = null; // track currently hovered row across re-renders
 
   function dispatchHover(detail) {
-    document.dispatchEvent(new CustomEvent('sw-bucket-hover', { detail }));
+    ctx.bus.dispatchEvent(new CustomEvent('sw-bucket-hover', { detail }));
   }
 
   // ── Render helpers ─────────────────────────────────────────────────────────
@@ -939,7 +933,7 @@ export function mount(root, ctx) {
     if (node.userOverride) nameEl.dataset.override = node.userOverride;
     nameWrap.appendChild(nameEl);
 
-    if (node.count > 1 && (node.kind === 'bash' || node.kind === 'mcp' || node.kind === 'agent')) {
+    if (node.count > 1 && RESIDUAL_KINDS.has(node.kind)) {
       const badge = document.createElement('span');
       badge.className = 'bucket-count';
       badge.textContent = String(node.count);
@@ -1035,7 +1029,7 @@ export function mount(root, ctx) {
         effRow.appendChild(effBar);
         tip.appendChild(effRow);
       }
-      document.body.appendChild(tip);
+      ctx.overlayRoot.appendChild(tip);
       state._bodyTips.push(tip);
     }
 
@@ -1443,7 +1437,7 @@ export function mount(root, ctx) {
     // 9b. Update sync state chip/sweep
     updateSyncState();
 
-    // 10. H4: the ghost stands for the local override map — a backend override is NOT dirty. An empty map is a
+    // 10. The ghost stands for the local override map — a backend override is NOT dirty. An empty map is a
     // withdrawal, including when step 7's own collection emptied it, and the publisher is silent when there is
     // nothing published to withdraw.
     dispatchPreview();
@@ -1556,13 +1550,13 @@ export function mount(root, ctx) {
     applyBtn.disabled = true;
     applyBtn.textContent = 'Applying…';
     try {
-      const res = await fetch('/api/user-overrides', {
+      const res = await ctx.request('/api/user-overrides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ overrides }),
       });
       if (res.ok) {
-        // Success — clear local ghost state (SSE scan will trigger refresh)
+        // Success — clear local ghost state
         state.selectionOverrides.clear();
         dispatchPreview(true);
         // Show transient notice if output-group toggles were dropped
@@ -1574,7 +1568,7 @@ export function mount(root, ctx) {
       console.error('[override apply]', e);
     }
     applyBtn.textContent = 'Apply';
-    // H1 fix: always restore disabled state based on current ghost — prevents stuck button on error/409
+    // Disabled state is restored from the current ghost on every outcome, error and 409 included
     applyBtn.disabled = (state.selectionOverrides.size === 0);
   });
 
@@ -1613,13 +1607,13 @@ export function mount(root, ctx) {
       resetBtn.disabled = true;
       resetBtn.textContent = 'Resetting…';
       try {
-        await fetch('/api/user-overrides', {
+        await ctx.request('/api/user-overrides', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ overrides: {} }),
         });
         state.selectionOverrides.clear();
-        // F8: clear stale leaf.userOverride before SSE refresh to prevent setLocalSelection mis-commit
+        // Stale leaf.userOverride is cleared before the next data round so setLocalSelection cannot commit it
         for (const leaf of flattenLeaves(state.tree)) { leaf.userOverride = null; }
         render();
         dispatchPreview(true);
@@ -1637,7 +1631,7 @@ export function mount(root, ctx) {
     if (state.selectionOverrides.size > 0) {
       const overrides = buildOverridePayload(state.tree);
       try {
-        const res = await fetch('/api/user-overrides', {
+        const res = await ctx.request('/api/user-overrides', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ overrides }),

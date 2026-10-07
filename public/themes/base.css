@@ -2,9 +2,14 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+/* Every capsule or circle radius is paired with `corner-shape: round`, in both sheets: the DSH host sets a superellipse corner-shape on every element, which squares off such ends. */
+
+/* The page gutter. The DSH tab root reads it through the scoper's :root → :scope rewrite. */
+:root { --sw-gutter: 24px 26px 50px; }
+
 body {
   margin: 0;
-  padding: 24px 26px 50px;
+  padding: var(--sw-gutter);
   -webkit-font-smoothing: antialiased;
   font-family: "Inter", system-ui, sans-serif;
 }
@@ -62,12 +67,12 @@ body {
   position: absolute;
   top: -4px;
   bottom: -4px;
-  border: 2px solid rgba(238, 243, 246, 0.7);
-  background: rgba(238, 243, 246, 0.04);
+  border: 2px solid var(--sw-highlight, rgba(238, 243, 246, 0.7));
+  background: var(--sw-hover, rgba(238, 243, 246, 0.04));
   border-radius: 4px;
   pointer-events: none;
   z-index: 2;
-  box-shadow: 0 0 6px rgba(238, 243, 246, 0.3);
+  box-shadow: var(--sw-glow, 0 0 6px rgba(238, 243, 246, 0.3));
 }
 
 .sw-aux-bar-wrap {
@@ -91,8 +96,8 @@ body {
   top: -6px;
   bottom: -6px;
   width: 2px;
-  background: #fff;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+  background: var(--sw-highlight, #fff);
+  box-shadow: var(--sw-glow, 0 0 6px rgba(255, 255, 255, 0.6));
   transition: opacity 0.15s;
 }
 
@@ -103,7 +108,7 @@ body {
   top: -4px;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
-  border-top: 6px solid #fff;
+  border-top: 6px solid var(--sw-highlight, #fff);
 }
 
 .sw-aux-marker::after {
@@ -122,7 +127,7 @@ body {
   transform: translateX(-50%);
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;
-  background: rgba(13, 18, 20, 0.95);
+  background: var(--sw-overlay, rgba(13, 18, 20, 0.95));
   border: 1px solid var(--amber-dim, #7a5a20);
   color: var(--amber, #ffc24d);
   border-radius: 5px;
@@ -130,7 +135,7 @@ body {
   white-space: nowrap;
 }
 
-.sw-aux-flag b { color: #fff; }
+.sw-aux-flag b { color: var(--sw-highlight, #fff); }
 
 .sw-aux-zone-label {
   position: absolute;
@@ -333,7 +338,7 @@ body {
 }
 
 #sw-buckets .bucket-row:hover {
-  background-color: rgba(79, 224, 176, 0.04);
+  background-color: var(--sw-hover, rgba(79, 224, 176, 0.04));
 }
 
 #sw-buckets .bucket-row.is-dir {
@@ -341,7 +346,7 @@ body {
 }
 
 #sw-buckets .bucket-row.is-dir:hover {
-  background-color: rgba(79, 224, 176, 0.06);
+  background-color: var(--sw-hover, rgba(79, 224, 176, 0.06));
 }
 
 /* Indent — dynamic depth (IDE-style: no hard cap).
@@ -381,7 +386,7 @@ body {
   left: 3px;
   width: 4px;
   height: 6.5px;
-  border: solid #052018;
+  border: solid var(--sw-on-mint, #052018);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
 }
@@ -475,8 +480,9 @@ body {
   font-size: 8.5px;
   font-weight: 500;
   color: var(--amber);
-  background: rgba(255, 194, 77, 0.12);
+  background: var(--sw-wash, rgba(255, 194, 77, 0.12));
   border-radius: 100px;
+  corner-shape: round;
   padding: 1px 5px;
   min-width: 16px;
   text-align: center;
@@ -558,10 +564,10 @@ body {
   overflow: visible;
 }
 #sw-buckets .bucket-name[data-override="include"] {
-  text-decoration-color: rgba(79, 224, 176, 0.4);
+  text-decoration-color: var(--sw-ok, rgba(79, 224, 176, 0.4));
 }
 #sw-buckets .bucket-name[data-override="exclude"] {
-  text-decoration-color: rgba(255, 117, 102, 0.4);
+  text-decoration-color: var(--sw-bad, rgba(255, 117, 102, 0.4));
 }
 
 /* ── Footer ─── */
@@ -583,20 +589,20 @@ body {
   border: 1px solid var(--mint);
   border-radius: 8px;
   padding: 6px 12px;
-  color: #052018;
+  color: var(--sw-on-mint, #052018);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 #sw-buckets .bucket-copy-btn:hover {
-  opacity: 0.85;
+  opacity: var(--sw-hover-opacity, 0.85);
 }
 
 #sw-buckets .bucket-copy-btn.copied {
   background: var(--mint-dim);
   border-color: var(--mint);
-  color: var(--mint);
+  color: var(--sw-on-fill, var(--mint));
 }
 
 #sw-buckets .bucket-reset-btn {
@@ -623,14 +629,14 @@ body {
   border: 1px solid var(--mint);
   border-radius: 8px;
   padding: 6px 12px;
-  color: #052018;
+  color: var(--sw-on-mint, #052018);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 #sw-buckets .bucket-apply-btn:hover:not(:disabled) {
-  opacity: 0.85;
+  opacity: var(--sw-hover-opacity, 0.85);
 }
 
 #sw-buckets .bucket-apply-btn:disabled {
@@ -652,7 +658,7 @@ body {
   position: absolute;
   inset: 0;
   border-radius: 18px;
-  background: rgba(23, 30, 35, 0.96);
+  background: var(--sw-overlay, rgba(23, 30, 35, 0.96));
   border: 1px solid var(--edge);
   display: flex;
   flex-direction: column;
@@ -702,14 +708,14 @@ body {
 }
 
 #sw-buckets .skel {
-  background: linear-gradient(
+  background: var(--sw-skeleton, linear-gradient(
     90deg,
     var(--edge)                0%,
     rgba(255,255,255,0.045)   42%,
     rgba(79, 224, 176, 0.09)  50%,
     rgba(255,255,255,0.045)   58%,
     var(--edge)               100%
-  );
+  ));
   background-size: 380px 100%;
   animation: sw-shimmer 1.9s ease-in-out infinite;
   border-radius: 3px;
@@ -824,6 +830,7 @@ body {
   font-size: 9px;
   letter-spacing: 0.05em;
   border-radius: 100px;
+  corner-shape: round;
   padding: 3px 9px 3px 7px;
   white-space: nowrap;
   flex-shrink: 0;
@@ -833,13 +840,14 @@ body {
   width: 5px;
   height: 5px;
   border-radius: 50%;
+  corner-shape: round;
   flex-shrink: 0;
 }
 
 /* Syncing chip — sky-tinted */
 #sw-buckets .status-chip.chip-syncing {
-  background: rgba(108, 198, 240, 0.09);
-  border: 1px solid rgba(108, 198, 240, 0.22);
+  background: var(--sw-wash, rgba(108, 198, 240, 0.09));
+  border: 1px solid var(--sw-wash-edge, rgba(108, 198, 240, 0.22));
   color: var(--sky);
 }
 #sw-buckets .status-chip.chip-syncing .status-dot {
@@ -857,8 +865,8 @@ body {
 
 /* Stale chip — amber-tinted */
 #sw-buckets .status-chip.chip-stale {
-  background: rgba(255, 194, 77, 0.07);
-  border: 1px solid rgba(255, 194, 77, 0.22);
+  background: var(--sw-wash, rgba(255, 194, 77, 0.07));
+  border: 1px solid var(--sw-wash-edge, rgba(255, 194, 77, 0.22));
   color: var(--amber);
 }
 #sw-buckets .status-chip.chip-stale .status-dot {
@@ -928,7 +936,7 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: rgba(238, 243, 246, 0.4);
+  background: var(--sw-highlight, rgba(238, 243, 246, 0.4));
 }
 
 .sw-crosshair-label {
@@ -936,11 +944,11 @@ body {
   padding: 2px 6px;
   font-size: 10px;
   font-family: "JetBrains Mono", monospace;
-  background: rgba(10, 26, 24, 0.85);
-  border: 1px solid rgba(238, 243, 246, 0.2);
+  background: var(--sw-overlay, rgba(10, 26, 24, 0.85));
+  border: 1px solid var(--sw-hairline, rgba(238, 243, 246, 0.2));
   border-radius: 3px;
   white-space: nowrap;
-  color: #eef3f6;
+  color: var(--sw-highlight, #eef3f6);
 }
 
 /* ── Pricing preset select ─────────────────────────────────────────────────── */
@@ -965,7 +973,7 @@ body {
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   color: var(--txt, #eef3f6);
-  background: #0d1214;
+  background: var(--sw-field, #0d1214);
   border: 1px solid var(--edge, #252f37);
   border-radius: 8px;
   padding: 8px 10px;
@@ -991,6 +999,7 @@ body {
   width: 14px;
   height: 14px;
   border-radius: 50%;
+  corner-shape: round;
   border: 1px solid rgba(238, 243, 246, 0.3);
   cursor: pointer;
   padding: 0;
@@ -1060,11 +1069,11 @@ body {
   vertical-align: middle;
 }
 .sw-hero-group-pill.pill-amber {
-  background: rgba(255, 194, 77, 0.15);
+  background: var(--sw-wash, rgba(255, 194, 77, 0.15));
   color: var(--amber, #ffc24d);
 }
 .sw-hero-group-pill.pill-mint {
-  background: rgba(79, 224, 176, 0.15);
+  background: var(--sw-wash, rgba(79, 224, 176, 0.15));
   color: var(--mint, #4fe0b0);
 }
 
@@ -1083,7 +1092,7 @@ body {
   color: var(--txt-dim, #93a1ab);
   white-space: nowrap;
   pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  box-shadow: var(--sw-shadow-float, 0 4px 16px rgba(0,0,0,0.3));
 }
 .sw-bucket-tip .tooltip-row { margin-bottom: 2px; }
 .sw-bucket-tip .tooltip-eff {
@@ -1164,7 +1173,7 @@ body {
 }
 
 .sw-history-trigger:hover {
-  background: rgba(79, 224, 176, 0.06);
+  background: var(--sw-hover, rgba(79, 224, 176, 0.06));
   color: var(--txt);
 }
 
@@ -1184,7 +1193,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(4, 7, 9, 0.46);
+  background: var(--sw-scrim, rgba(4, 7, 9, 0.46));
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease-out;
@@ -1205,7 +1214,7 @@ body {
   flex-direction: column;
   border-left: 1px solid var(--edge);
   background: var(--card);
-  box-shadow: -26px 0 64px rgba(0, 0, 0, 0.46);
+  box-shadow: var(--sw-shadow-drawer, -26px 0 64px rgba(0, 0, 0, 0.46));
   transform: translateX(100%);
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1), visibility 0s linear 180ms;
   visibility: hidden;
@@ -1252,7 +1261,7 @@ body {
 }
 
 .sw-history-close:hover {
-  background: rgba(27, 35, 42, 0.7);
+  background: var(--sw-hover, rgba(27, 35, 42, 0.7));
   color: var(--txt);
 }
 
@@ -1271,7 +1280,7 @@ body {
 
 .sw-history-search:focus-within {
   border-color: var(--mint-dim);
-  box-shadow: 0 0 0 1px rgba(79, 224, 176, 0.14);
+  box-shadow: var(--sw-focus-ring, 0 0 0 1px rgba(79, 224, 176, 0.14));
 }
 
 .sw-history-search svg {
@@ -1438,12 +1447,12 @@ body {
    section whose headline is empty leaves no block highlighted behind it. */
 .sw-history-row:hover,
 .sw-history-section[data-expanded="true"] .sw-history-divider:hover {
-  background: rgba(27, 35, 42, 0.58);
+  background: var(--sw-hover, rgba(27, 35, 42, 0.58));
 }
 
 .sw-history-section[data-expanded="false"]:hover {
   border-radius: 9px;
-  background: rgba(27, 35, 42, 0.58);
+  background: var(--sw-hover, rgba(27, 35, 42, 0.58));
 }
 
 .sw-history-role {
@@ -1454,6 +1463,7 @@ body {
   place-items: center;
   border: 1px solid var(--edge);
   border-radius: 50%;
+  corner-shape: round;
   color: var(--sky);
 }
 
@@ -1512,7 +1522,7 @@ body {
 
 .sw-history-row[data-expanded="true"] {
   margin: 3px 0 7px;
-  background: rgba(27, 35, 42, 0.7);
+  background: var(--sw-hover, rgba(27, 35, 42, 0.7));
   box-shadow: inset 0 0 0 1px var(--edge);
 }
 

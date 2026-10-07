@@ -6,7 +6,7 @@ Stable externally-observable behavior of the measurement system. Implementation 
 
 ## Input Contract
 
-The measurement system requires a stream of structured events. The current implementation consumes Claude Code JSONL transcripts; the input schema below describes the logical contract that any future adapter would fulfill.
+The measurement system requires a stream of structured events. The implementation consumes Claude Code JSONL transcripts and DeepSeek Harness session event logs; the input schema below describes the logical contract both fulfill and any further adapter would.
 
 **Usage snapshot:** Each API interaction produces a snapshot containing:
 
@@ -84,19 +84,17 @@ The session-start hook fires on `startup`, `resume`, `clear`, and `compact`. Its
 
 ## MCP Tools
 
-Stable commands exposed to the agent:
+Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin register the same tools, except where the table says otherwise.
 
 | Tool | Purpose |
 |------|---------|
-| `start_watcher` | Ensure measurement is active; returns server endpoint |
-| `stop_watcher` | Request measurement shutdown (may be a no-op when lifecycle is process-bound) |
-| `watcher_status` | Query whether the measurement server is reachable |
-| `get_bucket_summary` | Per-path token breakdown (B composition) |
-| `get_turn_skeleton` | Render the turns of the capture epoch, one block per turn, as the slots a note can fill |
-| `submit_turn_notes` | Return the producing session's notes through the slots the skeleton defines |
-| `prepare_handoff` | Package paths + summary for the next session |
-| `load_handoff` | Retrieve a handoff package by token or search |
-| `rotate_session` | Switch the server to a new session/transcript |
+| `watcher_status` | Report whether the watcher is running. The Claude Code reply also carries the dashboard URL; the DSH reply carries none, since DSH serves no dashboard |
+| `get_bucket_summary` | The handoff decision's view of the context buckets: each file or skill row with its token size, read and edit counts, default selection with its reason, the user's override and, for a default-selected file, its active symbols, beside the session id, the segment and `br`. No other metric is returned |
+| `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
+| `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
+| `prepare_handoff` | Persist the kept paths and a summary as a handoff package; returns a load token |
+| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. A delivered package carries the lineage headlines and the newest page of turns |
+| `rotate_session` | Claude Code only: switch the watcher to a new session and transcript |
 | `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
 | `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
 | `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |

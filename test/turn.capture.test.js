@@ -698,7 +698,7 @@ test('[delta] Turn Head sourceEntryId persists as anchor_uuid', async () => {
     userMessage({ uuid: 'ad-cur', text: 'prepare the handoff', timestamp: ts(6) }),
   ]));
   ctx.switchSource(path);
-  const { snapshot_id, notes_path } = ctx.turnService.getTurnSkeleton();
+  const { snapshot_id, notes_path } = await ctx.turnService.getTurnSkeleton();
   const keys = [...readFileSync(notes_path, 'utf8').matchAll(/^## NOTE\[(\d+)\]$/gm)].map(m => m[1]);
   writeFileSync(notes_path, keys.map(k => `## NOTE[${k}]\n\nbody ${k}\n`).join('\n'));
   // The stored set belongs to the session every case here shares, so the identities are read as this
@@ -732,7 +732,7 @@ test('[delta] malformed Turn Head fails before skeleton or notes files are writt
   ]));
   ctx.switchSource(path);
   const before = epochDirs();
-  assert.throws(() => ctx.turnService.getTurnSkeleton(), /identity/i);
+  await assert.rejects(() => ctx.turnService.getTurnSkeleton(), /identity/i);
   assert.deepEqual(epochDirs(), before, 'no epoch directory, no skeleton and no notes file were written');
 
   // The same fault on the submission side is still a snapshot rejection rather than a partial write.
@@ -752,13 +752,13 @@ test('[delta] malformed Turn Head fails before skeleton or notes files are writt
   ]));
   ctx.switchSource(headless);
   const captured = captureCurrentEpochTurns({
-    observations: createClaudeCodeDialogueSource().read(headless).observations,
+    observations: (await createClaudeCodeDialogueSource().read(headless)).observations,
     dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: ctx.cwd }),
   }).turns;
   assert.deepEqual(captured.map(t => t.sourceEntryId), [null],
     'fixture 自证：捕获里真的有一个没有 identity 的头');
   const beforeHeadless = epochDirs();
-  assert.throws(() => ctx.turnService.getTurnSkeleton(), /identity/i);
+  await assert.rejects(() => ctx.turnService.getTurnSkeleton(), /identity/i);
   assert.deepEqual(epochDirs(), beforeHeadless);
 });
 
@@ -770,7 +770,7 @@ test('current handoff Turn growth does not change the capture snapshot', async (
     userMessage({ uuid: 'gr-cur', text: 'prepare the handoff', timestamp: ts(3) }),
   ]));
   ctx.switchSource(path);
-  const { snapshot_id, notes_path } = ctx.turnService.getTurnSkeleton();
+  const { snapshot_id, notes_path } = await ctx.turnService.getTurnSkeleton();
   const keys = [...readFileSync(notes_path, 'utf8').matchAll(/^## NOTE\[(\d+)\]$/gm)].map(m => m[1]);
   writeFileSync(notes_path, keys.map(k => `## NOTE[${k}]\n\nbody ${k}\n`).join('\n'));
   // The asking Turn grows a whole tool pair while the producer writes notes.

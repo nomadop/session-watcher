@@ -77,6 +77,8 @@ export function mount(root, _ctx) {
   // frame instead of leaving a stale bar (review fold, GPT #15).
   const EMPTY_RM = { cycleProgress: 0, depthActive: false, depthProgress: 0, backstopInterval: null, backstopLapCount: 0, depthHot: false };
 
+  // `?? 0` and the clamps pass NaN through. Server-side ledger validation keeps both progresses finite, and
+  // the JSON the snapshot arrives as writes a NaN as null.
   function update(snapshot) {
     const rm = snapshot?.status?.rateLamp?.rentMeter || EMPTY_RM;
     const cyclePct = Math.round(Math.min(1, Math.max(0, rm.cycleProgress ?? 0)) * 100);

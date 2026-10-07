@@ -39,11 +39,8 @@ is retired; `.serena/memories/domain_model.md` keeps it as history and marks it 
   nothing a tool returns re-enters the model as a measurement.
 - **Sidecar pattern** (the name `.serena/memories/core.md` uses for it): measurement state lives in the process
   that owns the transcript, and the MCP face, the dashboard and the statusline are stateless readers of it.
-- **The harness is the only layer that knows the agent.** Native rows, content blocks, byte cursors and
-  branch topology stop inside `lib/harness/claude-code/`; everything below consumes normalized
-  observations and names no transcript format.
-- **A native usage field is read in exactly one place** — `normalizeClaudeCodeUsage`, module-private to
-  the observation reducer. No other layer reaches a raw usage field.
+- **The harness is the only layer that knows the agent.** Native rows, content blocks, byte cursors and branch topology stop inside that agent's directory under `lib/harness/`; everything below consumes normalized observations and names no transcript format.
+- **A native usage field is read in exactly one place per harness** — its observation reducer, module-private (`normalizeClaudeCodeUsage` for Claude Code). No other layer reaches a raw usage field.
 - **The dedup key is the message id, not the row uuid**, and an accepted revision folds into the step it
   revises rather than becoming a new one.
 - **Only explicit source topology creates an epoch.** A drop in reported token totals never does.

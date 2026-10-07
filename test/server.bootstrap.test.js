@@ -37,12 +37,16 @@ test("D5: writeStateFileExclusive succeeds on a fresh path", () => {
   }
 });
 
+// The owner child's whole environment: a temp HOME with SW_STATE_DIR beneath it, so nothing inherited
+// from the developer's shell resolves PORT_DIR or the store to the real install.
+const ownerEnv = (home) => ({
+  PATH: process.env.PATH, HOME: home, SW_STATE_DIR: join(home, ".session-watcher"), SW_NO_OPEN: "1",
+});
+
 // Drive the REAL CLI bootstrap (the `server.listen` callback that owns the state-file write) as a
-// child process. Levers: server.js computes PORT_DIR = join(homedir(), '.session-watcher') at load
-// and does NOT read SW_STATE_DIR (only statusline.js does), so we redirect the child's state dir by
-// overriding $HOME (os.homedir() honors it). `--project <emptyDir>` gives the watcher no transcript
-// (resolveJsonl returns the dir; the initial poll is try/caught), `--port 0` binds ephemeral — exactly
-// the path the existing health-e2e spawn test exercises, which is where the state-file write lives.
+// child process. `--project <emptyDir>` gives the watcher no transcript (resolveJsonl returns the dir;
+// the initial poll is try/caught), `--port 0` binds ephemeral — exactly the path the existing
+// health-e2e spawn test exercises, which is where the state-file write lives.
 // We pre-create the state file so the child hits EEXIST and must exit non-zero with actionable stderr.
 async function runBootstrapWithStaleStateFile() {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +66,7 @@ async function runBootstrapWithStaleStateFile() {
     const child = spawn(
       process.execPath,
       [serverPath, "--port", "0", "--project", projectDir, "--session", sessionId],
-      { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: home, SW_NO_OPEN: "1" } },
+      { stdio: ["ignore", "pipe", "pipe"], env: ownerEnv(home) },
     );
     return await new Promise((resolve, reject) => {
       let stderr = "";
@@ -82,13 +86,13 @@ async function runBootstrapWithStaleStateFile() {
 
 test("D5: bare `node server.js` against a STALE state file exits non-zero with actionable guidance (B15/E14)", async () => {
   // Pre-create the state file, then spawn the bootstrap; assert exit code !== 0 AND stderr names the
-  // remedy: restart via startWatcher (auto-clears a dead-port file) OR manually delete <path>. Pins B15:
-  // the EEXIST branch is a guided exit, not a dead-end. (spawn server.js as a child; capture code+stderr.)
+  // remedy: manually delete <path>. Pins B15: the EEXIST branch is a guided exit, not a dead-end.
+  // (spawn server.js as a child; capture code+stderr.)
   const { code, stderr } = await runBootstrapWithStaleStateFile();
   assert.notEqual(code, 0, "refuses to start against an existing owner");
   assert.match(
     stderr,
-    /startWatcher|manually delete/,
+    /manually delete .*\.json/,
     'stderr is actionable, not a bare "already owned"',
   );
 });
@@ -144,7 +148,7 @@ describe("cutover: the host acquires its Source and serves every wire off the sh
     assert.equal(loaded.found, true);
     assert.equal(loaded.load_token, prepared.token);
 
-    const skeleton = ctx.turnService.getTurnSkeleton();
+    const skeleton = await ctx.turnService.getTurnSkeleton();
     assert.equal(typeof skeleton.snapshot_id, "string");
     assert.ok(skeleton.skeleton_path.startsWith(join(ctx.stateDir, "turn-notes") + "/"));
   });
@@ -239,7 +243,7 @@ test("the CLI owner's post-startup blocking error exits nonzero and stops advert
   const serverPath = join(dirname(fileURLToPath(import.meta.url)), "..", "server.js");
   const child = spawn(process.execPath,
     [serverPath, "--port", "0", "--transcript", transcript, "--session", sessionId, "--project", projectDir],
-    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: home, SW_NO_OPEN: "1" } });
+    { stdio: ["ignore", "pipe", "pipe"], env: ownerEnv(home) });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });

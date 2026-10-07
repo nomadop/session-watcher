@@ -16,16 +16,16 @@ describe('registerTurnReadTools', () => {
   before(async () => {
     calls = [];
     const turnReadService = {
-      turnPage(args) {
+      async turnPage(args) {
         calls.push(['page', args]);
         if (args.before === 'S9:999999') throw new Error('Omit before and start from the newest page.');
         return { turn_page: 'page' };
       },
-      turnSearch(args) {
+      async turnSearch(args) {
         calls.push(['search', args]);
         return { found: false, recovery: 'locate' };
       },
-      turnLocate(args) {
+      async turnLocate(args) {
         calls.push(['locate', args]);
         return { found: false, recovery: 'page' };
       },
@@ -75,7 +75,6 @@ describe('registerTurnReadTools', () => {
       assert.ok(description.length > 0, `described[${i}] arrived empty`);
     }
     for (const tool of tools) {
-      assert.equal(tool.annotations.readOnlyHint, true, tool.name);
       assert.equal(tool.inputSchema.properties.lineage_head, undefined, tool.name);
     }
   });

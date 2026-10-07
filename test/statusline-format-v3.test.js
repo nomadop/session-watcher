@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderLB, renderDelta, renderLamp, renderBackstopProgress, renderU, renderMeterV3 } from '../lib/statusline-format.js';
-import { uLeftAtBr, BR_AMBER } from '../lib/bill-regret.js';
+import { uLeftAtBr, BR_AMBER, lampZone } from '../lib/bill-regret.js';
 
 test('renderLB uses B as denominator label', () => {
   assert.ok(renderLB(142000, 25300).includes('b25')); // L142k/b25.3k form
@@ -20,6 +20,16 @@ test('renderLamp arms by u: left arm white below the amber-left root, green at o
   assert.equal(renderLamp(0.15, { u: 2, mf }), '🟡');
   assert.equal(renderLamp(0.01, { u: 1.2, mf }), '🟢');
   assert.equal(renderLamp(null, { u: 0, mf: null }), '⚪', 'the first frame');
+});
+
+test('renderLamp draws the emoji of lampZone\'s zone for every input', () => {
+  const mf = 0.3, left = uLeftAtBr(mf, BR_AMBER);
+  const emoji = { white: '⚪', green: '🟢', amber: '🟡', red: '🔴' };
+  const inputs = [
+    [0.15, { u: left - 0.05, mf }], [0.05, { u: left + 0.05, mf }], [0.3, { u: 2, mf }],
+    [0.15, { u: 2, mf }], [0.01, { u: 1.2, mf }], [null, { u: 0, mf: null }], [NaN, { u: 2, mf }],
+  ];
+  for (const [br, opts] of inputs) assert.equal(renderLamp(br, opts), emoji[lampZone(br, opts)], `br ${br}, u ${opts.u}`);
 });
 
 test('renderU prints the stamped u', () => {

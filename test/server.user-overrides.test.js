@@ -13,6 +13,7 @@ process.on('exit', () => {
 });
 
 import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { lampZone } from '../lib/bill-regret.js';
 
 // Both paths become resident the way production makes them resident: real Read tool pairs in the Source,
 // under the project root, so the override route's validation sees the Engine's own resource keys.
@@ -46,6 +47,34 @@ test('POST /api/user-overrides sets overrides and returns status', async () => {
     const data = await res.json();
     assert.equal(typeof data.B, 'number');
     assert.equal(overridesOf(w).get('/workspace/src/app.js'), 'exclude');
+  });
+});
+
+test('POST /api/user-overrides returns the wire spelling with no ledger merge', async () => {
+  await withServer(async (port, w) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: { '/workspace/src/app.js': 'exclude' } }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.deepEqual(data.rateLamp, w.getStatus().rateLamp, 'the route returns the wire spelling and no merge');
+  });
+});
+
+test('POST /api/user-overrides replies with the lamp of the status it answers', async () => {
+  await withServer(async (port, w) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/user-overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides: { '/workspace/src/app.js': 'exclude' } }),
+    });
+    const data = await res.json();
+    const { rateLamp } = w.getStatus();
+    assert.equal(rateLamp.reliable, true, 'the fixture measures');
+    assert.ok('lamp' in data);
+    assert.equal(data.lamp, lampZone(rateLamp.br, { u: rateLamp.u, mf: rateLamp.mf }));
   });
 });
 

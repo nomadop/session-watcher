@@ -4,12 +4,13 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INDEX_JS = join(__dirname, '..', 'index.js');
+const HOLD_RATE_LAMP_WRITES = join(__dirname, 'helpers', 'hold-rate-lamp-writes.js');
 
 function usageLine(cacheRead) {
   return JSON.stringify({
@@ -86,9 +87,11 @@ async function waitFor(predicate, timeoutMs = 8000) {
   }
 }
 
-function spawnMcp(env) {
-  return spawn(process.execPath, [INDEX_JS], {
-    env: { ...process.env, ...env, SW_NO_OPEN: '1' },
+// The owner child's whole environment is the case's own plus PATH: nothing inherited from the developer's shell,
+// so an exported SW_PROBE or SW_STATE_DIR has nothing to reach.
+function spawnMcp(env, { preload = null } = {}) {
+  return spawn(process.execPath, [...(preload ? ['--import', pathToFileURL(preload).href] : []), INDEX_JS], {
+    env: { PATH: process.env.PATH, ...env, SW_NO_OPEN: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -164,6 +167,8 @@ test('SW_INPROCESS=1: state file removed on SIGTERM (exit cleanup)', async () =>
 // The delta: a normal shutdown flushes pending Rate Lamp progress BEFORE the Store closes, and a restart
 // restores that integral without re-integrating the samples it already covers. Baseline lost the pending
 // write-behind state at Store close, so the integral was only ever as current as the last coalesced write.
+// The first owner runs with its coalesced write-behind held: one checkpoint is placed on demand, live
+// progress then moves past it, and only the shutdown flush can close the gap.
 test('[delta] normal shutdown persists pending Rate Lamp progress before Store close', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'sw-inproc-flush-'));
   const stateDir = join(dir, 'state');
@@ -172,16 +177,17 @@ test('[delta] normal shutdown persists pending Rate Lamp progress before Store c
   mkdirSync(projDir, { recursive: true });
   const sessionId = `test-flush-${Date.now()}`;
   const transcriptPath = join(projDir, `${sessionId}.jsonl`);
-  const env = { SW_STATE_DIR: stateDir, CLAUDE_CODE_SESSION_ID: sessionId, HOME: dir };
+  const flushMark = join(dir, 'flush-mark');
+  const env = { SW_STATE_DIR: stateDir, CLAUDE_CODE_SESSION_ID: sessionId, HOME: dir, SW_TEST_FLUSH_MARK: flushMark };
 
   // The Source opens with one step. The owner's first frame is a stream discontinuity, so it anchors at that
   // tail and integrates nothing; the two appends below are the calls that actually produce an integral.
   writeFileSync(transcriptPath, measuredStep(null, 20000));
 
-  const first = spawnMcp(env);
+  const first = spawnMcp(env, { preload: HOLD_RATE_LAMP_WRITES });
   const stateFile = join(stateDir, `${sessionId}.json`);
   let watcher = null;
-  let liveAtShutdown = 0;
+  let liveAtShutdown = null;
   try {
     assert.ok(await waitFor(() => existsSync(stateFile)), 'the owner started');
     // An attached SSE client, as an open dashboard is. The idle gate suppresses an installed-driver tick whose
@@ -193,16 +199,27 @@ test('[delta] normal shutdown persists pending Rate Lamp progress before Store c
     await sleep(1400);
     appendFileSync(transcriptPath, measuredStep(leafOf(), 600000));
     await sleep(1400);
-    // A THIRD call, so there is a newest integral for the flush to be responsible for.
-    appendFileSync(transcriptPath, measuredStep(leafOf(), 900000));
-    await sleep(1100);
-    // The LIVE integral, read over HTTP while the owner still holds it in memory. This is the by-construction
-    // anchor: what must survive is not "more than the write-behind happened to manage", which depends on a
-    // timer cadence, but the live value ITSELF — and only a flush before Store close can promise that.
     const { port } = JSON.parse(readFileSync(stateFile, 'utf8'));
-    const status = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
-    liveAtShutdown = status.rateLamp?.billProgress ?? 0;
-    assert.ok(liveAtShutdown > 0, 'precondition: the owner really is holding an integral in memory');
+    // Progress wraps into a cycle count, so position along the bill is the two read together.
+    const livePosition = async () => {
+      const rateLamp = (await (await fetch(`http://127.0.0.1:${port}/api/status`)).json()).rateLamp ?? {};
+      return { billCycleCount: rateLamp.billCycleCount ?? 0, billProgress: rateLamp.billProgress ?? 0 };
+    };
+    const along = ({ billCycleCount, billProgress }) => billCycleCount + billProgress;
+    const checkpointed = await waitFor(async () => along(await livePosition()) > 0);
+    assert.ok(checkpointed, 'precondition: the owner really is holding an integral in memory');
+    // The one checkpoint the write-behind is allowed: it lands now, at the live value it reads.
+    first.kill('SIGUSR2');
+    assert.equal(await waitFor(() => existsSync(flushMark) && readFileSync(flushMark, 'utf8')), 'flushed',
+      'the held write-behind wrote its checkpoint');
+    const atCheckpoint = along(await livePosition());
+    // A THIRD call moves live progress past the checkpoint, and nothing but the shutdown flush writes it.
+    appendFileSync(transcriptPath, measuredStep(leafOf(), 900000));
+    liveAtShutdown = await waitFor(async () => {
+      const live = await livePosition();
+      return along(live) > atCheckpoint ? live : null;
+    });
+    assert.ok(liveAtShutdown, 'precondition: live progress moved past the checkpoint');
   } finally {
     if (watcher) watcher.abort();
     first.kill('SIGTERM');
@@ -212,13 +229,10 @@ test('[delta] normal shutdown persists pending Rate Lamp progress before Store c
 
   const persisted = await readLedger(dir, sessionId);
   assert.ok(persisted, 'the ledger was persisted before the Store closed');
-  assert.ok(persisted.billProgress > 0,
-    `the latest integral survived a normal shutdown (got ${persisted.billProgress})`);
-  // BY CONSTRUCTION: what persisted is the value the owner was holding LIVE at shutdown, not merely whatever
-  // the write-behind had last managed. No coalesced-write cadence can promise that — only a flush ordered
-  // before Store close can — so this holds regardless of how the timer happened to interleave.
-  assert.equal(persisted.billProgress, liveAtShutdown,
-    'the persisted integral is the one the owner held at shutdown');
+  // The write-behind's only checkpoint lags the live position, so only the flush ordered before Store close
+  // can have written the position the owner held at shutdown.
+  assert.deepEqual({ billCycleCount: persisted.billCycleCount, billProgress: persisted.billProgress },
+    liveAtShutdown, 'the persisted position is the one the owner held at shutdown');
 
   // Restart on the SAME store and Source. The persisted ledger is the sole accumulated-integral authority, and
   // the restart's first frame is an unseen revision — so it reanchors at the history tail and integrates
@@ -434,7 +448,7 @@ test('the in-process owner archives its bootstrap segment as a replay and a late
 
     const afterLive = await waitFor(async () => {
       const seen = await provenanceOf(box.dir, box.sessionId);
-      return seen[1] ? seen : null;
+      return seen[1]?.[1] ? seen : null;
     });
     assert.ok(afterLive, 'the appended epoch closed segment 1');
     assert.deepEqual(afterLive, { 0: ['replay', 'cc-replay'], 1: ['live', 'cc-live'] },
@@ -451,10 +465,22 @@ test('normal MCP shutdown archives the terminal segment and removes discovery', 
   // finalization normal shutdown performs.
   writeFileSync(box.transcriptPath, measuredStep(null, 20000) + measuredStep('r-ix' + stepSeq, 22000));
   const child = spawnMcp(box.env);
+  let watcher = null;
   try {
     assert.ok(await waitFor(() => existsSync(box.stateFile)), 'the owner started');
     assert.equal((await profilesOf(box.dir, box.sessionId)).length, 0,
       'precondition: nothing archived yet — the segment is still open');
+
+    // A live poll tick applies to the open segment before shutdown; it needs a connected client, or the idle
+    // gate suppresses it.
+    const { port } = JSON.parse(readFileSync(box.stateFile, 'utf8'));
+    watcher = await attachSseClient(box.stateFile);
+    const before = (await (await fetch(`http://127.0.0.1:${port}/api/status`)).json()).apiCalls;
+    appendFileSync(box.transcriptPath, measuredStep(leafOf(), 24000));
+    assert.ok(await waitFor(async () => {
+      const now = (await (await fetch(`http://127.0.0.1:${port}/api/status`)).json()).apiCalls;
+      return now > before ? now : null;
+    }), 'precondition: the append was polled and measured');
 
     child.kill('SIGTERM');
     const code = await exitCodeOf(child, 6000);
@@ -465,6 +491,7 @@ test('normal MCP shutdown archives the terminal segment and removes discovery', 
     assert.equal(archived.length, 1, 'the terminal segment was archived exactly once');
     assert.equal(archived[0].archiveSource, 'live', 'a normal shutdown finalizes a LIVE segment');
   } finally {
+    if (watcher) watcher.abort();
     try { child.kill('SIGKILL'); } catch { /* already gone */ }
   }
 });
@@ -497,7 +524,7 @@ test('the built SessionStart entry rotates the running owner onto the session it
 
     hook = spawn(process.execPath, [BUILT_HOOK_ENTRY], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...box.env },
+      env: { PATH: process.env.PATH, ...box.env },
     });
     let emitted = '';
     hook.stdout.on('data', (d) => { emitted += d; });

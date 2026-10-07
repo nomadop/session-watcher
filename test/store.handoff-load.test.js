@@ -106,7 +106,7 @@ test('delivery 记录失败时 fail-closed：无任何内容字段', async () =>
   await seed();
   const token = 'carry-lyric-gear';
   const failingStore = store;
-  const origRun = failingStore._stmts.insertHandoffLoad.run;
+  const original = failingStore._stmts.insertHandoffLoad;
   failingStore._stmts.insertHandoffLoad = { run() { throw new Error('injected delivery failure'); } };
   try {
     const res = failingStore.deliverHandoffByToken(token, { sessionId: 'sess-consumer' });
@@ -118,7 +118,7 @@ test('delivery 记录失败时 fail-closed：无任何内容字段', async () =>
     }
     assert.equal(failingStore._db.prepare('SELECT COUNT(*) c FROM handoff_load').get().c, 0);
   } finally {
-    failingStore._stmts.insertHandoffLoad = { run: origRun };
+    failingStore._stmts.insertHandoffLoad = original;
   }
 });
 
@@ -167,10 +167,10 @@ test('delivery failure for a secondary consumer: fail-closed, primary binding un
   const id = await seed();
   store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerA', loaderVersion: '0.5.0' });
   // Force the CAS/insert txn to throw for consumerB by breaking the attempt-insert statement.
-  const origRun = store._stmts.insertHandoffLoad.run;
+  const original = store._stmts.insertHandoffLoad;
   store._stmts.insertHandoffLoad = { run() { throw new Error('injected txn failure'); } };
   const h = store.deliverHandoffByToken('carry-lyric-gear', { sessionId: 'consumerB', loaderVersion: '0.5.0' });
-  store._stmts.insertHandoffLoad = { run: origRun };
+  store._stmts.insertHandoffLoad = original;
   // Fail-closed: no content returned, no claim metadata fields present.
   assert.equal(h.ok, false, 'fail-closed: no content on delivery failure');
   assert.equal(h.error, 'handoff_delivery_unavailable');

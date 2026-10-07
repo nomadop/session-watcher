@@ -22,7 +22,7 @@ if (isMain) {
 
 Commands:
   demo                        Replay built-in demo transcript
-  replay <path>               Replay a Claude Code transcript
+  replay <path>               Replay a Claude Code transcript or a DSH session log
 
 Options:
   --speed N                   Replay speed multiplier (default: 20)

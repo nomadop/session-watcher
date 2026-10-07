@@ -51,3 +51,16 @@ test('savePricingOverride stores presetId', async () => {
   savePricingOverride('opus', { readPrice: 15, writePrice: 75, presetId: 'opus-4' });
   assert.equal(loadPricingOverride('opus').presetId, 'opus-4');
 });
+
+test('sanitizePresetId keeps a short non-empty string and answers null for anything else', async () => {
+  const { sanitizePresetId, PRESET_ID_MAX_CHARS } = await import('../lib/pricing-store.js');
+  const longest = 'p'.repeat(PRESET_ID_MAX_CHARS);
+  assert.equal(sanitizePresetId('deepseek-v3'), 'deepseek-v3');
+  assert.equal(sanitizePresetId(longest), longest);
+  assert.equal(sanitizePresetId(longest + 'p'), null);
+  assert.equal(sanitizePresetId(''), null);
+  assert.equal(sanitizePresetId(undefined), null);
+  assert.equal(sanitizePresetId(null), null);
+  assert.equal(sanitizePresetId(42), null);
+  assert.equal(sanitizePresetId({ id: 'x' }), null);
+});

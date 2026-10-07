@@ -38,6 +38,10 @@ export function computeYMax(hist) {
 // Projection line helper (spec §6.1): compute two endpoints from last data point extending at slope.
 // Pure function — closure vars (lastGEma) passed explicitly so this can run under node --test.
 // Returns [] when no meaningful projection can be drawn (empty points or zero slope).
+// The slope is gEma — growth with resident arrivals taken out — and not the stock's own increment, although
+// the unreduced increment predicts where the L line ends up. The line has to leave the current point without
+// a kink, and after an arrival's step the L line before the step must run parallel to the asymptote after it;
+// both hold only if the arrivals are left out of the slope.
 export function buildProjectionData(points, lastGEma, currentRatchetX, currentRatchetY) {
   if (points.length === 0) return [];
   const slope = (lastGEma > 0) ? lastGEma : (points[points.length - 1]?.g > 0 ? points[points.length - 1].g : 0);

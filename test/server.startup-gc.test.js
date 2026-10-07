@@ -137,6 +137,31 @@ test('the startup maintenance carries another project’s session on a neutral c
     + 'attribution nor its measurements');
 });
 
+test('the startup carry reports a reconstruction diagnostic through the owner’s stderr sink', async (t) => {
+  const lines = [];
+  const realError = console.error;
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  const realDebug = process.env.SW_DEBUG;
+  delete process.env.SW_DEBUG;
+  t.after(() => {
+    console.error = realError;
+    if (realDebug === undefined) delete process.env.SW_DEBUG; else process.env.SW_DEBUG = realDebug;
+  });
+
+  const ctx = bootOwnerOverForeignSession(t, {
+    projectsRoot: writeForeignProjectSource(), sessionId: 'owner-reporting', projectId: null, projectRoot: null,
+  });
+  // The rebuild's own archival refuses, which its application reports rather than throws.
+  const archive = ctx.store.archiveSegmentProfile.bind(ctx.store);
+  ctx.store.archiveSegmentProfile = (sessionId, ...rest) => {
+    if (sessionId === FOREIGN_SESSION) throw new Error('fixture archive refusal');
+    return archive(sessionId, ...rest);
+  };
+
+  await waitForEffect(() => lines.some(line => line.includes('segment_profile_persist_failed')),
+    'reported the reconstruction diagnostic');
+});
+
 test('the startup maintenance reaps an abandoned turn-note epoch under the injected state dir', async (t) => {
   const ctx = bootOwnerWithMaintenance(t);
   const epochDir = join(ctx.stateDir, 'turn-notes', 'epoch-abandoned');

@@ -223,9 +223,9 @@ export async function bootTestServer(opts = {}) {
     sessionId = 'sid-primary',
     projectId = 'proj-boot',
     disableTelemetrySweep = true,
-    // throwingTurnPage: inject a turnPageBuilder that always throws, for failure-isolation tests.
+    // throwingTurnPage: inject a turnPageBuilder that always rejects, for failure-isolation tests.
     throwingTurnPage = false,
-    // dialogueSource: inject a DialogueSource Adapter — a throwing or unavailable one — for the tests that
+    // dialogueSource: inject a DialogueSource Adapter — a rejecting or unavailable one — for the tests that
     // pin which operations read a Source at all.
     dialogueSource = null,
     // Entries the transcript already holds when the owner boots. The default is one complete step, so the
@@ -288,7 +288,7 @@ export async function bootTestServer(opts = {}) {
   });
 
   const resolvedTurnPageBuilder = throwingTurnPage
-    ? () => { throw new Error('turn page unavailable'); }
+    ? async () => { throw new Error('turn page unavailable'); }
     : undefined;
   // The host is handed the GUARDED facade, not the watcher: if any wire reached for a state field or wrote
   // one, every test that boots through here would redden on that read.
@@ -447,7 +447,7 @@ export async function bootTestServer(opts = {}) {
 
         // Close the consumer's current segment through the shared archival path, so the segment the load was
         // stamped against persists its profile and telemetry to the shared db file.
-        closeSegment() { secondWatcher.closeCurrentSegment({ captureMode: 'live' }); return secondWatcher; },
+        closeSegment() { secondWatcher.closeCurrentSegment(); return secondWatcher; },
 
         // A `load_handoff` MCP tool use carrying the token EXPLICITLY, then the segment's archival. The token
         // reaches Segment Telemetry as the issuing step's first load token, which is what the offline join
@@ -456,7 +456,7 @@ export async function bootTestServer(opts = {}) {
         foldLoadHandoffThenArchive(token) {
           appendFileSync(secondTranscript, loadHandoffRows({ explicitToken: token, parentUuid: secondLeafUuid }).map(r => JSON.stringify(r) + '\n').join(''));
           pumpTick(second);
-          secondWatcher.closeCurrentSegment({ captureMode: 'live' });
+          secondWatcher.closeCurrentSegment();
           return secondWatcher;
         },
 
@@ -465,7 +465,7 @@ export async function bootTestServer(opts = {}) {
         foldAutoMatchLoadThenArchive(resolvedToken) {
           appendFileSync(secondTranscript, loadHandoffRows({ resolvedToken, parentUuid: secondLeafUuid }).map(r => JSON.stringify(r) + '\n').join(''));
           pumpTick(second);
-          secondWatcher.closeCurrentSegment({ captureMode: 'live' });
+          secondWatcher.closeCurrentSegment();
           return secondWatcher;
         },
 

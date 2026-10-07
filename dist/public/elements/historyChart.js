@@ -4,6 +4,7 @@
 
 import { computeYMax, buildMissMarkers, buildProjectionData, computeYRatchet, RATCHET_Y_INIT } from '../chart-helpers.js';
 import { computeCrosshairLabel, computeLabelOffset } from '../lib/crosshairHelpers.js';
+import Chart from '../lib/chart.js';
 import { projectedX } from '../lib/xScale.js';
 import { HOVER_LINE_COLOR, MAX_TOUCH_MARKERS } from '../lib/uiConstants.js';
 
@@ -49,19 +50,17 @@ function fitColdStart(points) {
  * Priority: entry (green) → amber (yellow) → red (stays visible once passed).
  * Returns {value, color, label} or null.
  */
-function pickThresholdLine(currentL, entryL, exitL, redL, colors) {
+export function pickThresholdLine(currentL, entryL, exitL, redL, colors) {
   if (entryL != null && currentL < entryL) {
     return { value: entryL, color: colors.mint, label: `entry ${Math.round(entryL / 1000)}k` };
   }
   if (exitL != null && currentL < exitL) {
     return { value: exitL, color: colors.amber, label: `b10 ${Math.round(exitL / 1000)}k` };
   }
-  // Red line: always visible once past amber (stays as reference even when crossed)
+  // Red line: always visible once past amber (stays as reference even when crossed). The landmarks are
+  // all-or-nothing on the fit and a positive mf, so an exit line never stands without a red one beside it.
   if (redL != null) {
     return { value: redL, color: colors.coral, label: `b25 ${Math.round(redL / 1000)}k` };
-  }
-  if (exitL != null) {
-    return { value: exitL, color: colors.amber, label: `b10 ${Math.round(exitL / 1000)}k` };
   }
   return null;
 }
@@ -209,6 +208,19 @@ export function thresholdLinesOf(source, bDefault, anchorL) {
   return { entry: toL(source?.xBrAmberL), exit: toL(source?.xBrAmberR), red: toL(source?.xBrRedR) };
 }
 
+/** The threshold lines of the group the hero shows (`sw-active-group`): a dirty preview's scenario while the
+ *  preview group is shown, the snapshot's own landmarks otherwise. A preview replaces the default only once its
+ *  own fit landed: every line derives from the reference, so a reliable scenario whose fit was refused carries
+ *  all-null landmarks and would blank the line while `shownGroupOf` in `heroDiptych.js` and `markerModel` in
+ *  `depthAux.js` keep the default group's. */
+export function shownThresholdLinesOf(defaultLandmarks, previewState, activeGroup, anchorL) {
+  const scenario = previewState?.dirty && previewState.scenario?.reliable === true && previewState.scenario.reference
+    ? previewState.scenario : null;
+  return activeGroup === 'mint' && scenario
+    ? thresholdLinesOf(scenario, scenario.bDefault, anchorL)
+    : thresholdLinesOf(defaultLandmarks, defaultLandmarks?.B_default, anchorL);
+}
+
 /**
  * mount(root, ctx) — history chart element
  */
@@ -222,12 +234,11 @@ export function mount(root, ctx) {
   let ratchetX = RATCHET_X_INIT;
   let ratchetY = RATCHET_Y_INIT;
   let defaultLandmarks = null;                                 // latest snapshot's rateLamp: the default landmark source
-  let previewScenario = null;                                  // fitted scenario while a preview is dirty
+  let previewState = null;                                     // latest `sw-bucket-preview` detail
+  let activeGroup = 'amber';                                   // the group the hero shows: 'amber' | 'mint'
   // The landmark source is retained rather than its converted lines, because the conversion needs the anchor the
   // caller holds.
-  const activeLines = (anchorL) => previewScenario
-    ? thresholdLinesOf(previewScenario, previewScenario.bDefault, anchorL)
-    : thresholdLinesOf(defaultLandmarks, defaultLandmarks?.B_default, anchorL);
+  const activeLines = (anchorL) => shownThresholdLinesOf(defaultLandmarks, previewState, activeGroup, anchorL);
   let lastGEma = null;           // per-call EMA growth rate (gEma from rateLamp)
   let hoverTouchMap = null;      // Map<localSeq, 'r'|'w'> — active during path-bucket hover for L-line coloring
 
@@ -330,6 +341,7 @@ export function mount(root, ctx) {
     coralAlpha: coral.startsWith('#') ? coral + '80' : 'rgba(255,117,102,0.5)',
     sky,
     txtDim,
+    highlight: cssVar(root, '--sw-highlight', '#ffffff'),
   };
 
   // Apply theme colors to legend swatches
@@ -435,7 +447,7 @@ export function mount(root, ctx) {
     // Apply white dot at snapped index (or turn current amber to white)
     if (isDataPoint) {
       ds0.pointRadius[idx] = 4;
-      ds0.pointBackgroundColor[idx] = '#ffffff';
+      ds0.pointBackgroundColor[idx] = colors.highlight;
       ds0._crosshairIdx = idx;
       chart.update('none');
     } else {
@@ -536,17 +548,23 @@ export function mount(root, ctx) {
     }
   }
 
-  document.addEventListener('sw-bucket-hover', onBucketHover);
+  ctx.bus.addEventListener('sw-bucket-hover', onBucketHover);
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // ── Bucket preview → threshold line update (§10.3) ───────────────────────────
+  // ── Bucket preview and shown group → threshold line ──────────────────────────
   function onBucketPreview(e) {
-    const detail = e.detail ?? null;
-    // A preview replaces the default only once its own fit landed: every threshold line derives from the
-    // reference, so a reliable scenario whose fit was refused carries all-null landmarks and would blank the line
-    // while `shownGroupOf` in `heroDiptych.js` and `markerModel` in `depthAux.js` keep the default group's.
-    previewScenario = (detail?.dirty && detail.scenario?.reliable === true && detail.scenario.reference)
-      ? detail.scenario : null;
+    previewState = e.detail ?? null;
+    redrawThresholdLine();
+  }
+
+  function onActiveGroup(e) {
+    const newGroup = e.detail?.activeGroup ?? 'amber';
+    if (newGroup === activeGroup) return;
+    activeGroup = newGroup;
+    redrawThresholdLine();
+  }
+
+  function redrawThresholdLine() {
     if (!chart || !follow) return;
     const currentL = currentPoints.length > 0 ? currentPoints[currentPoints.length - 1]?.L ?? 0 : 0;
     const lines = activeLines(currentL);
@@ -557,7 +575,8 @@ export function mount(root, ctx) {
     chart.update('none');
   }
 
-  document.addEventListener('sw-bucket-preview', onBucketPreview);
+  ctx.bus.addEventListener('sw-bucket-preview', onBucketPreview);
+  ctx.bus.addEventListener('sw-active-group', onActiveGroup);
   // ─────────────────────────────────────────────────────────────────────────────
 
   function updateControls() {
@@ -618,7 +637,7 @@ export function mount(root, ctx) {
       if (!chart) {
         const config = buildChartConfig([], ratchetX, ratchetY, null, colors);
         chart = new Chart(canvas, config);
-        if (window.__SW_dashboard) window.__SW_dashboard.charts.history = chart;
+        ctx.charts.history = chart;
       }
       updateControls();
       updateFootnote(points);
@@ -654,7 +673,7 @@ export function mount(root, ctx) {
     }
 
     // Expose chart instance for e2e
-    if (window.__SW_dashboard) window.__SW_dashboard.charts.history = chart;
+    ctx.charts.history = chart;
 
     updateControls();
     updateFootnote(points);
@@ -693,7 +712,7 @@ export function mount(root, ctx) {
     const hiIdx = chart.data.datasets[0]._crosshairIdx;
     if (hiIdx != null && hiIdx < lPointRadius.length) {
       lPointRadius[hiIdx] = 4;
-      lPointColor[hiIdx] = '#ffffff';
+      lPointColor[hiIdx] = colors.highlight;
     }
     chart.data.datasets[1].data = thresholdData;
     chart.data.datasets[1].borderColor = tLine?.color ?? colors.amber;
@@ -740,7 +759,7 @@ export function mount(root, ctx) {
       if (!chart) {
         const config = buildChartConfig([], ratchetX, ratchetY, null, colors);
         chart = new Chart(canvas, config);
-        if (window.__SW_dashboard) window.__SW_dashboard.charts.history = chart;
+        ctx.charts.history = chart;
       }
       updateControls();
       updateFootnote([]);
@@ -785,8 +804,9 @@ export function mount(root, ctx) {
     nextBtn.removeEventListener('click', handleNext);
     canvas.removeEventListener('mousemove', onChartMouseMove);
     canvas.removeEventListener('mouseleave', onChartMouseLeave);
-    document.removeEventListener('sw-bucket-hover', onBucketHover);
-    document.removeEventListener('sw-bucket-preview', onBucketPreview);
+    ctx.bus.removeEventListener('sw-bucket-hover', onBucketHover);
+    ctx.bus.removeEventListener('sw-bucket-preview', onBucketPreview);
+    ctx.bus.removeEventListener('sw-active-group', onActiveGroup);
     root.innerHTML = '';
   }
 
