@@ -605,7 +605,7 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 
 | Tool | Purpose |
 |------|---------|
-| `watcher_status` | Report whether the watcher is running. The Claude Code reply also carries the dashboard URL; the DSH reply carries none, since DSH serves no dashboard |
+| `watcher_status` | Report whether the watcher is running and one session's current reading: lamp, wallet-clock phase, `br`, `u`, `gEma`, `L`, `B`, model and alert, the quantities the statusline shows; while the session is still measuring, `reliable` is false and `lamp`, `phase`, `br`, `u`, `gEma` and `alert` are null, with `model`, `L` and `B` still reported. The Claude Code reply reads its own session and also carries the dashboard URL. The DSH reply carries no URL, since DSH serves no dashboard, and an optional `sessionId` names the session to read: any session the host has run or persisted, a settled one rebuilt first |
 | `get_bucket_summary` | The handoff decision's view of the context buckets: each file or skill row with its token size, read and edit counts, default selection with its reason, the user's override and, for a default-selected file, its active symbols, beside the session id, the segment and `br`. No other metric is returned |
 | `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
 | `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
@@ -654,7 +654,7 @@ The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-
 
 Each session the host lists, creates or appends to gets its own watcher, subagent sessions included. A session the plugin first meets is read in full from the host's session log, then followed event by event. While that first read is in progress, the tools wait for it, and the tab and the dock show that the session is being read.
 
-A session that is not running, because it has settled or has not run again since the host restarted, has no watcher until the tab or the dock first asks for it. The host then looks the session up among the sessions it has persisted and builds its watcher the same way, so an old session reads in the tab and the dock. A session the host has not persisted stays unobserved.
+A session that is not running, because it has settled or has not run again since the host restarted, has no watcher until the tab, the dock or `watcher_status` first asks for it. The host then looks the session up among the sessions it has persisted and builds its watcher the same way, so an old session reads in the tab and the dock. A session the host has not persisted stays unobserved.
 
 If a session's watcher fails, it stops measuring that session and keeps the diagnostic that made it fail. The tab, the dock and the tools report that diagnostic, and other sessions are not affected.
 
@@ -716,7 +716,7 @@ The tab and the dock are supported on `dsh web`. Whether a page's `EventSource` 
 
 ### Tools
 
-The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
+The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
 
 ### Skills
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.1 (2026-10-10) — The status reading and the handoff patch
+
+### DSH plugin
+
+- **`prepare_handoff` patches an undelivered handoff** — given the `load_token` of an undelivered handoff it changes only the parameters it is passed, and the others keep their stored values. A new handoff must pass `summary` and `paths_to_keep`; a call missing either gets an error naming the recovery action. Revising no longer clears an omitted `next_task` or `skills_to_keep`; pass `""` or `[]` to clear.
+- **`watcher_status` reads a session's current reading** — it takes an optional `sessionId` naming any session the host has run or persisted, the calling session by default, and replies `{ running: true, sessionId, reading }`. `reading` carries the lamp, the wallet clock's phase, `br`, `u`, `gEma`, `L`, `B`, the model and the alert, the quantities the statusline shows; while the session is still measuring, `reliable` is false and `lamp`, `phase`, `br`, `u`, `gEma` and `alert` are null, with `model`, `L` and `B` still reported. A settled session is rebuilt first, as the tab does, and a session the host has neither running nor persisted is a tool error.
+
+### Claude Code
+
+- **`prepare_handoff` patches an undelivered handoff** — given the `load_token` of an undelivered handoff it changes only the parameters it is passed, and the others keep their stored values. A new handoff must pass `summary` and `paths_to_keep`; a call missing either gets an error naming the recovery action. Revising no longer clears an omitted `next_task` or `skills_to_keep`; pass `""` or `[]` to clear.
+- **`watcher_status` carries the session's current reading** — the reply is `{ running: true, url, sessionId, reading }`, `sessionId` being the session the watcher currently follows and `reading` the same quantities the DSH reply carries.
+- **`watcher_status`, `get_bucket_summary`, `prepare_handoff` and `load_handoff` lose their `sessionId` parameter** — a caller still sending it gets its own session's answer as before, the undeclared key being dropped.
+- **The probe's `mcp` event no longer carries `session_id_arg`.**
+
+---
+
 ## 0.9.0 (2026-10-07) — Session Watcher for DSH
 
 ### DSH plugin

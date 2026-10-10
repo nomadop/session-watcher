@@ -121,7 +121,7 @@ dsh plugin --profile <name> add @nomadop/session-watcher-dsh
 
 - **The Session Watcher tab** — a view in the conversation view strip that mounts the dashboard's elements for that session.
 - **The composer dock** — a pill below the composer showing the lamp, the bill premium and the alert clock, with the position and the context stock in its popover.
-- **Tools** — the [MCP tools](#mcp-tools), each answering for the calling agent's own session.
+- **Tools** — the [MCP tools](#mcp-tools), each answering for the calling agent's own session, except that `watcher_status` can name another.
 - **Skills** — `sw-handoff`, `sw-load` and `sw-explain`, registered with the host.
 - **Handoff across sessions** — an agent that starts or resumes gets a message listing the pending handoffs other sessions prepared for its project.
 - **Replay** — `npx -y @nomadop/session-watcher replay <path>` plays a DSH session log back on the dashboard.

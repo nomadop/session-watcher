@@ -225,6 +225,14 @@ test('the plugin loads on a real context, measures an appended session, serves i
   assert.equal(await events.next(), `data: ${JSON.stringify({ sessionId })}\n\n`, 'the append signals its session');
 
   assert.deepEqual(ctx.tools.schemas().map(schema => schema.name).sort(), EXPECTED_TOOLS);
+  const { parameters } = ctx.tools.schemas().find(schema => schema.name === 'watcher_status');
+  assert.deepEqual(Object.keys(parameters.properties), ['sessionId']);
+  assert.equal(parameters.properties.sessionId.type, 'string');
+  assert.equal(parameters.required, undefined, 'sessionId is optional');
+  // `test/dsh.host.tools.test.js` defines tools on an identity `defineTool` that never compiles a schema, so a `required: true` left on either parameter is seen here alone.
+  const prepare = ctx.tools.schemas().find(schema => schema.name === 'prepare_handoff').parameters;
+  assert.ok('paths_to_keep' in prepare.properties && 'summary' in prepare.properties);
+  assert.equal(prepare.required, undefined, 'neither paths_to_keep nor summary is required');
   assert.deepEqual((await ctx.skills.list()).map(skill => skill.name).sort(), EXPECTED_SKILLS);
 
   await fiber.dispose();

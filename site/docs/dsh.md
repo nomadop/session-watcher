@@ -18,7 +18,7 @@ The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-
 
 Each session the host lists, creates or appends to gets its own watcher, subagent sessions included. A session the plugin first meets is read in full from the host's session log, then followed event by event. While that first read is in progress, the tools wait for it, and the tab and the dock show that the session is being read.
 
-A session that is not running, because it has settled or has not run again since the host restarted, has no watcher until the tab or the dock first asks for it. The host then looks the session up among the sessions it has persisted and builds its watcher the same way, so an old session reads in the tab and the dock. A session the host has not persisted stays unobserved.
+A session that is not running, because it has settled or has not run again since the host restarted, has no watcher until the tab, the dock or `watcher_status` first asks for it. The host then looks the session up among the sessions it has persisted and builds its watcher the same way, so an old session reads in the tab and the dock. A session the host has not persisted stays unobserved.
 
 If a session's watcher fails, it stops measuring that session and keeps the diagnostic that made it fail. The tab, the dock and the tools report that diagnostic, and other sessions are not affected.
 
@@ -80,7 +80,7 @@ The tab and the dock are supported on `dsh web`. Whether a page's `EventSource` 
 
 ## Tools
 
-The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
+The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
 
 ## Skills
 

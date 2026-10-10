@@ -7,7 +7,7 @@ description: Use when the user asks what a Session Watcher metric means (br, mf,
 
 When the user asks about a metric:
 
-1. Call `watcher_status` to confirm the watcher is running, and point the user at where the host shows the metric values: in Claude Code the dashboard at the URL the reply carries, in DSH the Session Watcher tab. The `watcher_status` reply carries no metric values.
+1. Call `watcher_status`. Read `br`, `u` (the arm it puts the session on), the lamp and the wallet clock's `phase` from the reply's `reading`; a false `reading.reliable` means the session is still measuring, so say that instead of quoting values. `mf`, `pp`, `wall` and `sweet / valley` are not in `reading`: point the user at where the host shows them, in Claude Code the dashboard at the URL the reply carries, in DSH the Session Watcher tab. `mf` is the hero chart's movable reading; the others are landmarks with no numeric readout.
 2. Explain the requested metric in plain language.
 3. Contextualize against the flat-valley / AM-GM bound where relevant.
 

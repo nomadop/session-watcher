@@ -29,7 +29,7 @@ function noAdapterLlm() {
 
 /**
  * A fake context.
- * `sessions` are the sessions `sessions.list()` answers. `readSession` backs `sessionQuery.readSession` and `listSessions` backs `sessionQuery.listSessions`, which answers `[]` without it; like the real methods, each works only when called on its service.
+ * `sessions` are the sessions `sessions.list()` answers. `readSession` backs `sessionQuery.readSession` and `listSessions` backs `sessionQuery.listSessions`, which answers `[]` without it and forwards its `signal` argument; like the real methods, each works only when called on its service.
  * `llm` is a top-level service, on the context itself; without one given it is a service whose `resolveModelInfo` rejects with the llm service's `NO_ADAPTER` Error and whose `listConfigurableProviders` answers `[]`.
  * `connection` and `settings` are the optional services, present when given and reachable only on an `inject` child: reading one on the context itself throws, as Cordis does for a service the plugin does not inject.
  * `inject(deps, callback)` calls back at once when every named service is present, with a child `{ ...services, effect, root }` whose `root.get(name)` answers any present service; `unprovide(name)` runs the disposers of every child that injects `name` and drops the service.
@@ -49,9 +49,9 @@ export function createFakeContext({
       if (this !== sessionQuery) return Promise.reject(new TypeError('readSession called without its service'));
       return readSession(sessionId);
     },
-    async listSessions() {
+    async listSessions(signal) {
       if (this !== sessionQuery) throw new TypeError('listSessions called without its service');
-      return listSessions();
+      return listSessions(signal);
     },
   };
 

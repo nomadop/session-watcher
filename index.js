@@ -7,7 +7,7 @@ import { probeMcp } from './lib/probe.js';
 import { PLUGIN_VERSION } from './lib/version.js';
 import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { TURN_ADDRESS_RE, TURN_PAGE_BOUNDARY_RE } from './lib/turn.js';
-import { bucketSummaryPayload } from './lib/wire.js';
+import { bucketSummaryPayload, statusDigest } from './lib/wire.js';
 // Re-export launcher functions for backward compatibility (tests, manual usage)
 export { stateFileFor, sessionIdOf, probeHealth, readState, watcherStatus, getBucketSummary, prepareHandoff, loadHandoff, rotateSession } from './lib/launcher.js';
 
@@ -136,7 +136,7 @@ if (__selfReal === __argvReal) {
       process.exit(1);
     }
     const {
-      server, startPolling, sseClients, stopTimers, doRotation,
+      server, startPolling, sseClients, stopTimers, doRotation, currentSessionId,
       turnService, turnReadService, publishDiscovery, publishedDiscoveryPaths, closeCurrentSegment,
     } = handle;
 
@@ -208,11 +208,10 @@ if (__selfReal === __argvReal) {
     // Register MCP tools that delegate to the in-process server via loopback
     const mcpServer = new McpServer({ name: 'session-watcher', version: PLUGIN_VERSION });
     const reply = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
-    const probeCall = (tool, args) => probeMcp({
-      tool, sessionIdArg: args?.sessionId,
+    const probeCall = (tool) => probeMcp({
+      tool,
       envSessionId: process.env.CLAUDE_CODE_SESSION_ID,
     });
-    const SessionIdSchema = { sessionId: z.string().optional().describe('Override session ID (used when resume changes the ID)') };
 
     const inprocFetch = async (path, opts = {}) => {
       // Wait briefly for the server to be ready (port assigned after listen callback)
@@ -229,41 +228,43 @@ if (__selfReal === __argvReal) {
     };
 
     mcpServer.registerTool('watcher_status', {
-      description: 'Report whether the Session Watcher is running, and the dashboard URL where the host serves one.',
-      inputSchema: SessionIdSchema,
+      description: "Report whether the Session Watcher is running, the dashboard URL where the host serves one, and one session's current reading: lamp, phase (the wallet clock's), br, u, gEma (smoothed context growth, tokens per call), L, B, model and alert.",
+      inputSchema: {},
       annotations: { readOnlyHint: true },
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall('watcher_status', { sessionId: _sid });
+    }, async () => {
+      probeCall('watcher_status');
       const port = server.address()?.port;
       if (!port) return reply({ running: false });
-      return reply({ running: true, url: `http://127.0.0.1:${port}` });
+      // A failed status read is not caught: the SDK turns the throw into an `isError` result, and a body that is no status payload makes `statusDigest` throw rather than pass for a measuring reading.
+      // The session id is read after the status, which carries none, so a rotation between the two can pair a reading with the other id.
+      const reading = statusDigest(await inprocFetch('/api/status'));
+      return reply({ running: true, url: `http://127.0.0.1:${port}`, sessionId: currentSessionId(), reading });
     });
     mcpServer.registerTool('get_bucket_summary', {
       description: "Return the current context bucket structure (files, skills) with each row's token size and the session's br, so the agent can decide what to carry over before the context reset the host offers.",
-      inputSchema: SessionIdSchema,
+      inputSchema: {},
       annotations: { readOnlyHint: true },
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall('get_bucket_summary', { sessionId: _sid });
+    }, async () => {
+      probeCall('get_bucket_summary');
       const body = await inprocFetch('/api/buckets?symbols=1');
       return reply(body.error ? body : bucketSummaryPayload(body));
     });
     mcpServer.registerTool('prepare_handoff', {
       description: 'Persist a keep/discard decision + structured summary before the context reset the host offers; returns a human-readable token to restore context in the next segment.',
       inputSchema: {
-        ...SessionIdSchema,
         paths_to_keep: z.array(z.object({
           path: z.string().describe('File path (project-relative)'),
           symbols: z.array(z.string()).optional().describe('Key symbols to focus on in this file (function/class names)'),
-        })).describe('Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data'),
+        })).optional().describe('Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data'),
         skills_to_keep: z.array(z.string()).optional().describe('Skill names to carry over (e.g. "systematic-debugging", "brainstorming")'),
-        load_token: z.string().optional().describe('Existing token to revise; kept if undelivered, replaced by a new token if already delivered. Omit to create new'),
-        summary: z.string().describe('Structured summary of current work state'),
+        load_token: z.string().optional().describe('Existing token to revise. An undelivered handoff keeps its token and changes only the parameters passed — the others keep their stored values, and `skills_to_keep: []` or `next_task: ""` clears its own. A delivered handoff is immutable, so passing its token creates a new handoff from the parameters given, under a new token. Omit to create new'),
+        summary: z.string().optional().describe('Structured summary of current work state'),
         next_task: z.string().optional().describe('What comes next'),
         observed_segment: z.number().int().optional().describe('Segment index from get_bucket_summary, for a consistency check'),
       },
       annotations: { readOnlyHint: false },
-    }, async ({ sessionId: _sid, ...input } = {}) => {
-      probeCall('prepare_handoff', { sessionId: _sid });
+    }, async (input) => {
+      probeCall('prepare_handoff');
       return reply(await inprocFetch('/api/handoff/prepare', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -276,23 +277,20 @@ if (__selfReal === __argvReal) {
         + 'the lineage behind it as one headline per session, oldest to newest, beside the newest page of its '
         + 'turns.',
       inputSchema: {
-        ...SessionIdSchema,
         load_token: z.string().optional().describe('Semantic token from prepare_handoff (exact match)'),
         query: z.string().optional().describe('Free-text search when the token is unknown; returns top matches'),
         query_mode: z.enum(['plain', 'advanced']).optional().describe('plain (default) escapes input; advanced passes raw FTS5 syntax'),
       },
       annotations: { readOnlyHint: false },
-    }, async ({ sessionId: _sid, ...input } = {}) => {
-      probeCall('load_handoff', { sessionId: _sid });
+    }, async (input) => {
+      probeCall('load_handoff');
       const qs = new URLSearchParams(Object.entries(input).filter(([, v]) => v != null)).toString();
       return reply(withLoadRecovery(await inprocFetch(`/api/handoff/load${qs ? '?' + qs : ''}`)));
     });
 
     // Turn queue capture. Both tools call the in-process turnService directly (no HTTP route exists for
-    // them), and both omit probeCall / SessionIdSchema — the capture is bound to this process's own
-    // watcher, so an overridden session id would name a transcript it cannot read. submit_turn_notes
-    // returns its four expected failures as data; anything else propagates as a standard MCP error
-    // rather than a fifth response shape.
+    // them) and omit probeCall. submit_turn_notes returns its four expected failures as data; anything
+    // else propagates as a standard MCP error rather than a fifth response shape.
     mcpServer.registerTool('get_turn_skeleton', {
       description: 'Write the current context epoch to a turn skeleton file and a notes file whose `## NOTE[T]` headings are the slot set, and return both paths, the snapshot id to submit against, and the protocol for filling them.',
       inputSchema: {},

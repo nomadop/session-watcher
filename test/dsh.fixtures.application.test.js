@@ -120,7 +120,7 @@ describe('DSH fixtures through a composed SessionWatcher', () => {
         watcher.closeCurrentSegment();
         assertArchived(fixture, () => 'dsh-replay');
 
-        const prepared = watcher.prepareHandoff({ summary: 'Fixture summary.', nextTask: 'Fixture next task.' });
+        const prepared = watcher.prepareHandoff({ pathsToKeep: [], summary: 'Fixture summary.', nextTask: 'Fixture next task.' });
         assert.equal(prepared.status, 'ready');
         const row = { ...store._db.prepare('SELECT transcript_path, project_id FROM handoff WHERE load_token = ?')
           .get(prepared.load_token) };

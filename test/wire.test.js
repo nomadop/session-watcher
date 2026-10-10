@@ -2,8 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  statusWire, statusWireWithLedger, bucketsPayload, bucketSummaryPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap,
+  statusWire, statusWireWithLedger, statusDigest, bucketsPayload, bucketSummaryPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap,
 } from '../lib/wire.js';
+import { formatLine, renderBr, renderU, renderDelta, renderLB, renderMeterV3, renderBackstopProgress } from '../lib/statusline-format.js';
 import { stateKeyForStatus } from '../lib/rate-lamp-store.js';
 import { lampZone } from '../lib/bill-regret.js';
 
@@ -214,4 +215,67 @@ test('isOverrideMap accepts a plain object and rejects arrays, null and primitiv
   for (const value of [[], [['/a.js', 'exclude']], null, undefined, '', 'overrides', 0, 1, true, false]) {
     assert.equal(isOverrideMap(value), false, `rejects ${JSON.stringify(value)}`);
   }
+});
+
+// A reliable status the way the hosts hand it to `statusWireWithLedger`: the ledger, keyed to the status's segment, turns the wallet clock on and carries the stop event.
+const digestStatus = ({ withBDefault = true, rateLamp = {} } = {}) => ({
+  model: 'claude-sonnet-4-5', L: 120000, B: 80000, ...(withBDefault ? { bDefault: 90000 } : {}),
+  segment: 3, sourceLocator: '/x.jsonl',
+  rateLamp: { reliable: true, br: 0.15, u: 2, mf: 0.3, gEma: 1500, billingCycle: {}, ...rateLamp },
+});
+const digestLedger = (extra = {}) => ({
+  stateKey: stateKeyForStatus({ segment: 3 }), billProgress: 0.5, billCycleCount: 2, currentTurnSeq: 7,
+  walletPhase: 0.37, walletLapCount: 0, ...extra,
+});
+
+test('statusDigest gives the ten keys of the statusline reading, each the value its renderer draws into the line', () => {
+  const ledger = digestLedger({ lastStopEvent: { message: 'ctx is heavy' } });
+  const payload = statusWireWithLedger(digestStatus(), ledger);
+  const digest = statusDigest(payload);
+  const line = formatLine(payload);
+
+  assert.deepEqual(Object.keys(digest).sort(), ['B', 'L', 'alert', 'br', 'gEma', 'lamp', 'model', 'phase', 'reliable', 'u'].sort());
+  assert.equal(digest.reliable, true);
+  assert.equal(digest.model, payload.model);
+  assert.equal(digest.lamp, payload.lamp);
+  assert.equal(digest.lamp, 'amber');
+  assert.equal(digest.B, payload.bDefault);
+  assert.equal(digest.phase, payload.rateLamp.rentMeter.depthProgress);
+  assert.equal(digest.phase, 0.37);
+  assert.equal(digest.alert, 'ctx is heavy');
+  for (const segment of [
+    renderBr(digest.br), renderU({ u: digest.u }), renderDelta(digest.gEma), renderLB(digest.L, digest.B), renderMeterV3(digest.phase),
+  ]) assert.ok(line.includes(segment), `the line holds ${JSON.stringify(segment)}`);
+  assert.ok(line.endsWith(digest.alert), 'the alert is the second line');
+});
+
+test('statusDigest reads B from the payload when there is no bDefault', () => {
+  const payload = statusWireWithLedger(digestStatus({ withBDefault: false }), digestLedger());
+  assert.equal('bDefault' in payload, false);
+  const digest = statusDigest(payload);
+  assert.equal(digest.B, payload.B);
+  assert.ok(formatLine(payload).includes(renderLB(digest.L, digest.B)));
+});
+
+test('statusDigest gives a null phase and the empty bar when the wallet clock is inactive, and a null alert without a stop event', () => {
+  const payload = statusWireWithLedger(digestStatus(), null);
+  assert.equal(payload.rateLamp.rentMeter.depthActive, false);
+  const digest = statusDigest(payload);
+  assert.equal(digest.phase, null);
+  assert.equal(digest.alert, null);
+  assert.ok(formatLine(payload).includes(renderBackstopProgress(payload.rateLamp)));
+  assert.ok(formatLine(payload).includes('░░░░░░░░░░--%'));
+  assert.equal(digest.reliable, true);
+  assert.equal(digest.br, payload.rateLamp.br);
+});
+
+test('statusDigest of an unreliable payload nulls the measures and keeps model, L and B', () => {
+  const payload = statusWireWithLedger(digestStatus({ rateLamp: { reliable: false } }), digestLedger({ lastStopEvent: { message: 'x' } }));
+  const digest = statusDigest(payload);
+  assert.deepEqual(digest, { reliable: false, model: payload.model, lamp: null, phase: null, br: null, u: null, gEma: null, L: 120000, B: 90000, alert: null });
+});
+
+test('statusDigest throws on a body that carries no rateLamp, a route error body included', () => {
+  assert.throws(() => statusDigest({ error: 'not_found' }), TypeError);
+  assert.throws(() => statusDigest({ model: 'm', L: 1, B: 2 }), TypeError);
 });

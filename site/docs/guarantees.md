@@ -88,7 +88,7 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 
 | Tool | Purpose |
 |------|---------|
-| `watcher_status` | Report whether the watcher is running. The Claude Code reply also carries the dashboard URL; the DSH reply carries none, since DSH serves no dashboard |
+| `watcher_status` | Report whether the watcher is running and one session's current reading: lamp, wallet-clock phase, `br`, `u`, `gEma`, `L`, `B`, model and alert, the quantities the statusline shows; while the session is still measuring, `reliable` is false and `lamp`, `phase`, `br`, `u`, `gEma` and `alert` are null, with `model`, `L` and `B` still reported. The Claude Code reply reads its own session and also carries the dashboard URL. The DSH reply carries no URL, since DSH serves no dashboard, and an optional `sessionId` names the session to read: any session the host has run or persisted, a settled one rebuilt first |
 | `get_bucket_summary` | The handoff decision's view of the context buckets: each file or skill row with its token size, read and edit counts, default selection with its reason, the user's override and, for a default-selected file, its active symbols, beside the session id, the segment and `br`. No other metric is returned |
 | `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
 | `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |

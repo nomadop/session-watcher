@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { applyHost } from '../dsh/src/host.js';
 import { createTools } from '../dsh/src/tools.js';
 import { getStore, closeStoreGlobal } from '../lib/store.js';
-import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
-import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload } from '../lib/wire.js';
+import { _resetRateLampManagerForTest, getLiveLedger } from '../lib/rate-lamp-manager.js';
+import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload, statusDigest, statusWireWithLedger } from '../lib/wire.js';
 import { buildTurnPage } from '../lib/turn-page.js';
 import { createTurnReadService } from '../lib/turn-read-service.js';
 import { withLoadRecovery } from '../lib/turn-tool-recovery.js';
@@ -146,10 +146,151 @@ test('every tool selects the watcher of exec.agent.session.id', async (t) => {
   live.ctx.dispose();
 });
 
-test('watcher_status answers exactly { running: true } on a live watcher', async () => {
-  const { ctx, tool } = mountHost({ sessions: [fakeSession({ id: 's-live' })] });
+// The reading `watcher_status` owes `sessionId`: the digest of the payload the RPC `status` endpoint builds, through the tool's JSON round trip.
+const readingOf = (table, sessionId) => JSON.parse(JSON.stringify(
+  statusDigest(statusWireWithLedger(table.get(sessionId).watcher.getStatus(), getLiveLedger(sessionId))),
+));
+
+// A persisted session's listing record, as `sessionQuery.listSessions` answers it.
+const persisted = id => ({ header: header({ id }), live: false, persisted: true });
+
+// A snapshot read that answers `snapshots` and counts its calls per id.
+function countingReader(snapshots = {}) {
+  const reads = {};
+  const readSession = async (sessionId) => {
+    reads[sessionId] = (reads[sessionId] ?? 0) + 1;
+    return { session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] };
+  };
+  return { reads, readSession };
+}
+
+test('watcher_status replies { running: true, sessionId, reading } with the digest of the RPC status payload', async () => {
+  const { ctx, table, tool } = mountHost({
+    sessions: [fakeSession({ id: 's-live' }), fakeSession({ id: 's-empty' })], snapshots: { 's-live': reusedCallIdAcrossSteps() },
+  });
   await settled();
-  assert.deepEqual(await run(tool('watcher_status'), {}, 's-live'), { running: true });
+  const reply = await run(tool('watcher_status'), {}, 's-live');
+  assert.equal(reply.reading.reliable, true, 'a metered session reads reliable, so the case cannot pass on an all-null digest');
+  assert.deepEqual(reply, { running: true, sessionId: 's-live', reading: readingOf(table, 's-live') });
+
+  const empty = await run(tool('watcher_status'), {}, 's-empty');
+  assert.equal(empty.reading.reliable, false);
+  assert.deepEqual(empty, { running: true, sessionId: 's-empty', reading: readingOf(table, 's-empty') });
+  ctx.dispose();
+});
+
+test('watcher_status writes a non-finite measure as null, as the Claude Code text does', async (t) => {
+  const { ctx, table, tool } = mountHost({
+    sessions: [fakeSession({ id: 's-live' })], snapshots: { 's-live': reusedCallIdAcrossSteps() },
+  });
+  await settled();
+  const { watcher } = table.get('s-live');
+  const status = watcher.getStatus();
+  t.mock.method(watcher, 'getStatus', () => ({ ...status, rateLamp: { ...status.rateLamp, gEma: Number.NaN } }));
+  const { reading } = await run(tool('watcher_status'), {}, 's-live');
+  assert.equal(reading.reliable, true);
+  assert.equal(reading.gEma, null);
+  ctx.dispose();
+});
+
+test('watcher_status named at another live session replies that session\'s digest and waits on the caller\'s watcher never', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const held = deferred();
+  const listed = [];
+  const { ctx, table, tool } = mountHost({
+    sessions: ['s-failing', 's-booting', 's-target'].map(id => fakeSession({ id })),
+    listSessions: () => { listed.push(true); return []; },
+    readSession: (sessionId) => {
+      if (sessionId === 's-failing') return Promise.reject(new Error('read refused'));
+      if (sessionId === 's-booting') return held.promise;
+      return Promise.resolve({ session: {}, inheritedEventCount: 0, events: reusedCallIdAcrossSteps() });
+    },
+  });
+  await settled();
+  assert.equal(table.get('s-failing').state, 'failed');
+  assert.equal(table.get('s-booting').state, 'bootstrapping');
+  for (const caller of ['s-failing', 's-booting']) {
+    const reply = await run(tool('watcher_status'), { sessionId: 's-target' }, caller);
+    assert.equal(reply.sessionId, 's-target', caller);
+    assert.equal(reply.reading.reliable, true, caller);
+    assert.deepEqual(reply.reading, readingOf(table, 's-target'), caller);
+  }
+  assert.equal(table.get('s-booting').state, 'bootstrapping', 'the caller\'s entry was left unresolved');
+  assert.equal(listed.length, 0, 'an entry the table holds is not listed');
+  held.resolve({ session: {}, inheritedEventCount: 0, events: [] });
+  await settled();
+  ctx.dispose();
+});
+
+test('watcher_status named at a persisted session the table lacks reads it once, waits for live and replies its digest', async () => {
+  const { reads, readSession } = countingReader({ 's-stored': reusedCallIdAcrossSteps() });
+  const { ctx, table, tool } = mountHost({
+    sessions: [fakeSession({ id: 's-caller' })], listSessions: () => [persisted('s-other'), persisted('s-stored')], readSession,
+  });
+  await settled();
+  assert.deepEqual(table.get('s-stored'), { state: 'unobserved' });
+  const replies = await Promise.all([
+    run(tool('watcher_status'), { sessionId: 's-stored' }, 's-caller'),
+    run(tool('watcher_status'), { sessionId: 's-stored' }, 's-caller'),
+  ]);
+  assert.equal(reads['s-stored'], 1, 'two concurrent calls build one watcher');
+  assert.equal(reads['s-other'], undefined, 'only the named record is ensured');
+  assert.equal(table.get('s-stored').state, 'live');
+  for (const reply of replies) {
+    assert.equal(reply.reading.reliable, true);
+    assert.deepEqual(reply, { running: true, sessionId: 's-stored', reading: readingOf(table, 's-stored') });
+  }
+  ctx.dispose();
+});
+
+test('watcher_status named at a session the listing lacks rejects with its id and creates no entry', async () => {
+  const { reads, readSession } = countingReader();
+  const { ctx, table, tool } = mountHost({
+    sessions: [fakeSession({ id: 's-caller' })], listSessions: () => [persisted('s-other')], readSession,
+  });
+  await settled();
+  await assert.rejects(run(tool('watcher_status'), { sessionId: 's-nowhere' }, 's-caller'),
+    error => error instanceof Error && error.message.includes('s-nowhere') && /neither running nor persisted/.test(error.message));
+  assert.equal(reads['s-nowhere'], undefined);
+  assert.deepEqual(table.get('s-nowhere'), { state: 'unobserved' });
+  ctx.dispose();
+});
+
+test('watcher_status named at a failed session rejects with its diagnostic', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const { ctx, tool } = mountHost({
+    sessions: ['s-caller', 's-failed'].map(id => fakeSession({ id })),
+    readSession: sessionId => (sessionId === 's-failed'
+      ? Promise.reject(new Error('read refused'))
+      : Promise.resolve({ session: {}, inheritedEventCount: 0, events: [] })),
+  });
+  await settled();
+  await assert.rejects(run(tool('watcher_status'), { sessionId: 's-failed' }, 's-caller'),
+    error => error instanceof Error && error.message === 'read refused');
+  ctx.dispose();
+});
+
+test('an abort while the listing is pending ends watcher_status with the abort and ensures nothing', async (t) => {
+  const { reads, readSession } = countingReader();
+  let listedSignal;
+  const { ctx, table, tool } = mountHost({
+    sessions: [fakeSession({ id: 's-caller' })], readSession,
+    listSessions: signal => new Promise((_resolve, reject) => {
+      listedSignal = signal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  });
+  await settled();
+  const ensure = t.mock.method(table, 'ensure');
+  const controller = new AbortController();
+  const reading = run(tool('watcher_status'), { sessionId: 's-stored' }, 's-caller', controller.signal);
+  await settled();
+  assert.equal(listedSignal, controller.signal, 'the listing is handed the call\'s signal');
+  controller.abort();
+  await assert.rejects(reading, { name: 'AbortError' });
+  assert.equal(ensure.mock.callCount(), 0);
+  assert.equal(reads['s-stored'], undefined);
+  assert.deepEqual(table.get('s-stored'), { state: 'unobserved' });
   ctx.dispose();
 });
 
@@ -218,6 +359,24 @@ test('an aborted signal ends the wait with an abort error', async () => {
   const { ctx, tool } = mountHost({ sessions: [fakeSession({ id: 's-waiting' })], readSession: () => snapshot.promise });
   const controller = new AbortController();
   const waiting = run(tool('watcher_status'), {}, 's-waiting', controller.signal);
+  controller.abort();
+  await assert.rejects(waiting, /aborted/);
+  snapshot.resolve({ session: {}, inheritedEventCount: 0, events: [] });
+  await settled();
+  ctx.dispose();
+});
+
+test('an aborted signal ends the wait on another session\'s bootstrapping watcher with an abort error', async () => {
+  const snapshot = deferred();
+  const { ctx, tool } = mountHost({
+    sessions: ['s-caller', 's-waiting'].map(id => fakeSession({ id })),
+    readSession: sessionId => (sessionId === 's-waiting'
+      ? snapshot.promise
+      : Promise.resolve({ session: {}, inheritedEventCount: 0, events: [] })),
+  });
+  await settled();
+  const controller = new AbortController();
+  const waiting = run(tool('watcher_status'), { sessionId: 's-waiting' }, 's-caller', controller.signal);
   controller.abort();
   await assert.rejects(waiting, /aborted/);
   snapshot.resolve({ session: {}, inheritedEventCount: 0, events: [] });
@@ -357,6 +516,19 @@ test('prepare_handoff maps its snake-case input and returns an error result as d
   }, 's-src');
   assert.equal(revised.load_token, prepared.load_token, 'an undelivered token is revised in place');
   assert.equal(rowOf(prepared.load_token).summary, 'the revised summary');
+
+  const before = rowOf(prepared.load_token);
+  const patched = await run(tool('prepare_handoff'), { load_token: prepared.load_token, next_task: 'the patched next task' }, 's-src');
+  assert.equal(patched.status, 'ready');
+  assert.deepEqual(patched.patched, ['next_task']);
+  const after = rowOf(prepared.load_token);
+  assert.equal(after.next_task, 'the patched next task');
+  assert.equal(after.summary, before.summary);
+  assert.equal(after.paths_to_keep, before.paths_to_keep);
+
+  const withoutPaths = await run(tool('prepare_handoff'), { summary: 'a summary without paths' }, 's-src');
+  assert.equal(withoutPaths.status, 'error');
+  assert.equal(withoutPaths.error, 'paths_to_keep_required');
   ctx.dispose();
 });
 

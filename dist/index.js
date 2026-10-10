@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.9.0",
+      version: "0.9.1",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -453,7 +453,7 @@ var init_constants = __esm({
       // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
       // precedes the broader one whose pattern also matches its ids.
       { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
-      { match: /opus.?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
+      { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
       { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
@@ -671,21 +671,38 @@ function createHandoffComposition({
       return null;
     }
   }
-  function composePrepared({ input, measurement, filePaths, ctp, projectRoot, symbolRangesFor, rateForKept }) {
-    const { pathsToKeep = [], skillsToKeep, summary = "", nextTask = null } = input ?? {};
-    if (!Array.isArray(pathsToKeep)) return { status: "error", error: "invalid_paths_to_keep" };
-    if (pathsToKeep.length > HANDOFF_MAX_PATHS) {
+  function normalizeSkills(skillsToKeep) {
+    return Array.isArray(skillsToKeep) ? [...new Set(skillsToKeep.filter((name2) => typeof name2 === "string" && name2.length > 0))] : [];
+  }
+  function payloadOf(entries, skills) {
+    return skills.length ? { paths: entries, skills } : entries;
+  }
+  function readPayload(json) {
+    const payload = JSON.parse(json);
+    return Array.isArray(payload) ? { entries: payload, skills: [] } : { entries: payload.paths, skills: payload.skills ?? [] };
+  }
+  const redactNextTask = (nextTask) => nextTask != null && String(nextTask) !== "" ? redactSecrets(String(nextTask)) : null;
+  function checkInput({ pathsToKeep, summary, nextTask }, { creating }) {
+    if (pathsToKeep == null) {
+      if (creating) return { status: "error", error: "paths_to_keep_required", instruction: newHandoffInstruction };
+    } else if (!Array.isArray(pathsToKeep)) {
+      return { status: "error", error: "invalid_paths_to_keep" };
+    } else if (pathsToKeep.length > HANDOFF_MAX_PATHS) {
       return { status: "error", error: "too_many_paths", max_paths: HANDOFF_MAX_PATHS, actual_paths: pathsToKeep.length };
     }
-    if (typeof summary !== "string" || summary.length === 0) return { status: "error", error: "summary_required" };
-    if (summary.length > HANDOFF_MAX_SUMMARY_CHARS) {
-      return {
-        status: "error",
-        error: "summary_too_long",
-        max_chars: HANDOFF_MAX_SUMMARY_CHARS,
-        actual_chars: summary.length,
-        instruction: "Compress the summary and call prepare_handoff again."
-      };
+    if (summary != null || creating) {
+      if (typeof summary !== "string" || summary.length === 0) {
+        return { status: "error", error: "summary_required", instruction: newHandoffInstruction };
+      }
+      if (summary.length > HANDOFF_MAX_SUMMARY_CHARS) {
+        return {
+          status: "error",
+          error: "summary_too_long",
+          max_chars: HANDOFF_MAX_SUMMARY_CHARS,
+          actual_chars: summary.length,
+          instruction: "Compress the summary and call prepare_handoff again."
+        };
+      }
     }
     if (nextTask != null && String(nextTask).length > HANDOFF_MAX_NEXT_TASK_CHARS) {
       return {
@@ -695,8 +712,15 @@ function createHandoffComposition({
         actual_chars: String(nextTask).length
       };
     }
-    const redSummary = redactSecrets(summary);
-    const redNext = nextTask != null ? redactSecrets(String(nextTask)) : null;
+    return null;
+  }
+  function composeText({ summary, nextTask, ctp }) {
+    return {
+      summaryTokens: Math.round(charsToTokens(summary, ctp || DEFAULT_CTP)),
+      searchTerms: [cjkBigrams(summary), nextTask ? cjkBigrams(nextTask) : ""].filter(Boolean).join(" ")
+    };
+  }
+  function composePaths({ pathsToKeep, skills, measurement, filePaths, ctp, projectRoot, symbolRangesFor, rateForKept }) {
     const snapshotPaths = filePaths.map((row, index) => ({
       id: "b" + index,
       raw_path: row.path,
@@ -818,7 +842,6 @@ function createHandoffComposition({
     for (const row of filePaths) allPathTokens += row.tokens || 0;
     const discardedTokens = Math.max(0, allPathTokens - keptTokens);
     const m = measurement.measurement;
-    const summaryTokens = Math.round(charsToTokens(redSummary, ctp || DEFAULT_CTP));
     const bDefault = m.B > 0 && m.cRatio > 0 ? m.bDefault : m.B;
     const dead = m.dead;
     const sessionFloor = m.sessionFloor || dead;
@@ -844,40 +867,148 @@ function createHandoffComposition({
       const brKept = dhatKept > 0 && Number.isFinite(mfKept) ? computeBr(xKept, dhatKept, mfKept) : null;
       return { b_kept: bKept, dead, session_floor: sessionFloor, g: gKept, mf: mfKept, br: brKept, pp: computePp(xKept, dhatKept), dhat: dhatKept, x: xKept };
     })() : null;
-    const searchTerms = [cjkBigrams(redSummary), redNext ? cjkBigrams(redNext) : ""].filter(Boolean).join(" ");
-    const keptSkills = Array.isArray(skillsToKeep) ? [...new Set(skillsToKeep.filter((name2) => typeof name2 === "string" && name2.length > 0))] : [];
-    const pathsPayload = JSON.stringify(keptSkills.length ? { paths: keptEntries, skills: keptSkills } : keptEntries);
+    return {
+      payload: JSON.stringify(payloadOf(keptEntries, skills)),
+      keptPaths: keptEntries.length,
+      keptTokens,
+      discardedTokens,
+      preparedAtTurn: measurement.turnSeq,
+      previousStats: JSON.stringify(previousStats),
+      preparedStats: preparedStats ? JSON.stringify(preparedStats) : null,
+      bucketSnapshot,
+      unknownPaths,
+      invalidPaths,
+      resolvedPaths
+    };
+  }
+  function composePrepared({ input, measurement, filePaths, ctp, projectRoot, symbolRangesFor, rateForKept }) {
+    const { pathsToKeep, skillsToKeep, summary, nextTask } = input ?? {};
+    const invalid = checkInput({ pathsToKeep, summary, nextTask }, { creating: true });
+    if (invalid) return invalid;
+    const redSummary = redactSecrets(summary);
+    const redNext = redactNextTask(nextTask);
+    const text = composeText({ summary: redSummary, nextTask: redNext, ctp });
+    const paths = composePaths({
+      pathsToKeep,
+      skills: normalizeSkills(skillsToKeep),
+      measurement,
+      filePaths,
+      ctp,
+      projectRoot,
+      symbolRangesFor,
+      rateForKept
+    });
     return {
       row: {
-        pathsToKeep: pathsPayload,
+        pathsToKeep: paths.payload,
         summary: redSummary,
         nextTask: redNext,
-        summaryTokens,
-        keptTokens,
-        discardedTokens,
-        preparedAtTurn: measurement.turnSeq,
-        previousStats: JSON.stringify(previousStats),
-        preparedStats: preparedStats ? JSON.stringify(preparedStats) : null,
-        searchTerms,
-        bucketSnapshot
+        summaryTokens: text.summaryTokens,
+        keptTokens: paths.keptTokens,
+        discardedTokens: paths.discardedTokens,
+        preparedAtTurn: paths.preparedAtTurn,
+        previousStats: paths.previousStats,
+        preparedStats: paths.preparedStats,
+        searchTerms: text.searchTerms,
+        bucketSnapshot: paths.bucketSnapshot
       },
       response: {
-        kept_paths: keptEntries.length,
-        kept_tokens: keptTokens,
-        discarded_tokens: discardedTokens,
-        summary_tokens: summaryTokens,
-        unknown_paths: unknownPaths,
-        invalid_paths: invalidPaths
+        kept_paths: paths.keptPaths,
+        kept_tokens: paths.keptTokens,
+        discarded_tokens: paths.discardedTokens,
+        summary_tokens: text.summaryTokens,
+        unknown_paths: paths.unknownPaths,
+        invalid_paths: paths.invalidPaths
       },
-      resolvedPaths,
+      resolvedPaths: paths.resolvedPaths,
       tokenSeed: { summary: redSummary, nextTask: redNext }
     };
+  }
+  function composePatched({
+    stored,
+    input,
+    measurement,
+    filePaths,
+    ctp,
+    projectRoot,
+    symbolRangesFor,
+    rateForKept,
+    transcriptPath
+  }) {
+    const { pathsToKeep, skillsToKeep, summary, nextTask } = input ?? {};
+    const patched = [["summary", summary], ["next_task", nextTask], ["paths_to_keep", pathsToKeep], ["skills_to_keep", skillsToKeep]].filter(([, value]) => value != null).map(([name2]) => name2);
+    if (patched.length === 0) return { status: "error", error: "nothing_to_patch", instruction: nothingToPatchInstruction };
+    const invalid = checkInput({ pathsToKeep, summary, nextTask }, { creating: false });
+    if (invalid) return invalid;
+    const row = {
+      pathsToKeep: stored.pathsToKeep,
+      summary: stored.summary,
+      nextTask: stored.nextTask,
+      summaryTokens: stored.summaryTokens,
+      keptTokens: stored.keptTokens,
+      discardedTokens: stored.discardedTokens,
+      preparedAtTurn: stored.preparedAtTurn,
+      previousStats: stored.previousStats,
+      preparedStats: stored.preparedStats,
+      searchTerms: stored.searchTerms,
+      bucketSnapshot: stored.bucketSnapshot,
+      transcriptPath: stored.transcriptPath
+    };
+    if (summary != null || nextTask != null) {
+      const effective = {
+        summary: summary != null ? redactSecrets(summary) : stored.summary,
+        nextTask: nextTask != null ? redactNextTask(nextTask) : stored.nextTask
+      };
+      Object.assign(row, effective, composeText({ ...effective, ctp }));
+    }
+    let paths = null;
+    let keptPaths;
+    if (pathsToKeep != null) {
+      paths = composePaths({
+        pathsToKeep,
+        skills: skillsToKeep != null ? normalizeSkills(skillsToKeep) : readPayload(stored.pathsToKeep).skills,
+        measurement,
+        filePaths,
+        ctp,
+        projectRoot,
+        symbolRangesFor,
+        rateForKept
+      });
+      Object.assign(row, {
+        pathsToKeep: paths.payload,
+        keptTokens: paths.keptTokens,
+        discardedTokens: paths.discardedTokens,
+        preparedAtTurn: paths.preparedAtTurn,
+        previousStats: paths.previousStats,
+        preparedStats: paths.preparedStats,
+        bucketSnapshot: paths.bucketSnapshot,
+        transcriptPath
+      });
+      keptPaths = paths.keptPaths;
+    } else {
+      const { entries } = readPayload(stored.pathsToKeep);
+      if (skillsToKeep != null) row.pathsToKeep = JSON.stringify(payloadOf(entries, normalizeSkills(skillsToKeep)));
+      keptPaths = entries.length;
+    }
+    const response = {
+      kept_paths: keptPaths,
+      kept_tokens: row.keptTokens,
+      discarded_tokens: row.discardedTokens,
+      summary_tokens: row.summaryTokens
+    };
+    if (paths) {
+      response.unknown_paths = paths.unknownPaths;
+      response.invalid_paths = paths.invalidPaths;
+    }
+    return { row, response, resolvedPaths: paths ? paths.resolvedPaths : [], patched };
   }
   function* candidateTokens(tokenSeed) {
     for (let attempt = 0; attempt < HANDOFF_TOKEN_MAX_RETRIES; attempt++) {
       yield generateLoadToken(tokenSeed.summary, tokenSeed.nextTask, randomInt);
     }
   }
+  const newHandoffInstruction = "A new handoff needs both summary and paths_to_keep; to revise an undelivered handoff, pass its load_token with only the parameters to change.";
+  const nothingToPatchInstruction = "Pass at least one of summary, next_task, paths_to_keep, skills_to_keep.";
   const instructionFor = (loadToken) => `Handoff prepared. Token: ${loadToken}. Please use the context reset the host offers when ready.`;
   const searchExpression = (query, queryMode) => buildFtsMatch(String(query ?? ""), queryMode === "advanced" ? "advanced" : "plain");
   function searchResponse(results) {
@@ -976,6 +1107,7 @@ function createHandoffComposition({
   }
   return {
     composePrepared,
+    composePatched,
     candidateTokens,
     createdAt: () => now(),
     instructionFor,
@@ -2095,9 +2227,10 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
         (session_id, segment, load_token, created_at, paths_to_keep, summary, next_task,
          summary_tokens, kept_tokens, discarded_tokens, prepared_at_turn, previous_stats, prepared_stats, search_terms, project_id, bucket_snapshot, transcript_path)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-          // Step 3d: `AND delivered_at IS NULL` makes a DELIVERED handoff's telemetry immutable — a
-          // re-prepare with an already-consumed token gets changes===0 and the caller mints a fresh token
-          // via the insert path (never rewrites bucket_snapshot/hp at a different instant than delivery).
+          // `AND delivered_at IS NULL` makes a DELIVERED handoff's telemetry immutable. `SessionWatcher.prepareHandoff` sends a
+          // token it reads as delivered to the insert path without calling this, so changes===0 means the delivery landed
+          // between that read and this write, and the call becomes a new handoff (never rewrites bucket_snapshot/hp at a
+          // different instant than delivery).
           updateHandoff: db.prepare(`UPDATE handoff SET paths_to_keep = ?, summary = ?, next_task = ?,
          summary_tokens = ?, kept_tokens = ?, discarded_tokens = ?, prepared_at_turn = ?,
          previous_stats = ?, prepared_stats = ?, search_terms = ?, bucket_snapshot = ?, transcript_path = ?
@@ -2106,7 +2239,6 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           // handoff_id so a load-side stamp does not need the token in scope.
           stampPathsToKeep: db.prepare("UPDATE handoff SET paths_to_keep = ? WHERE handoff_id = ?"),
           loadHandoffToken: db.prepare("SELECT * FROM handoff WHERE load_token = ?"),
-          handoffExists: db.prepare("SELECT 1 FROM handoff WHERE load_token = ?"),
           loadHandoffSession: db.prepare("SELECT * FROM handoff WHERE session_id = ? AND (project_id = ? OR ? IS NULL) ORDER BY created_at DESC LIMIT 1"),
           loadHandoffByProject: db.prepare(`SELECT * FROM handoff
         WHERE project_id = ? AND delivered_at IS NULL AND session_id <> ? AND created_at > ?
@@ -2827,8 +2959,9 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
         out2.claimedNow = claimedNow;
         return out2;
       }
-      hasHandoff(token) {
-        return !!this._stmts.handoffExists.get(token);
+      // The row a load_token names, delivered or not, or null. `getHandoff` is the lookup by handoff_id.
+      getHandoffByToken(token) {
+        return _Store._camelizeHandoff(this._stmts.loadHandoffToken.get(token));
       }
       // R1-H: project-scoped — filters by project_id when provided (NULL = any project).
       loadHandoffBySession(sid, { projectId = null } = {}) {
@@ -3513,6 +3646,21 @@ function statusWireWithLedger(status, ledger) {
   const currentKey = payload.rateLamp?.reliable ? stateKeyForStatus(payload) : null;
   mergeLedgerIntoStatus(payload, ledger, currentKey);
   return payload;
+}
+function statusDigest(payload) {
+  const rl = payload.rateLamp;
+  const reliable = Boolean(rl.reliable);
+  const base = { reliable, model: payload.model, L: payload.L, B: payload.bDefault ?? payload.B };
+  if (!reliable) return { ...base, lamp: null, phase: null, br: null, u: null, gEma: null, alert: null };
+  return {
+    ...base,
+    lamp: payload.lamp,
+    phase: rl.rentMeter?.depthActive ? rl.rentMeter.depthProgress : null,
+    br: rl.br,
+    u: rl.u,
+    gEma: rl.gEma,
+    alert: rl.lastStopEvent?.message ?? null
+  };
 }
 function bucketsPayload({ bucketData, status, sessionId, now }) {
   const paths = bucketData.paths.map((p) => ({ ...p, last_active_turn: p.lastTurn }));
@@ -49054,14 +49202,23 @@ var init_session_watcher = __esm({
             instruction: "Call get_bucket_summary again before preparing handoff."
           };
         }
+        const hasToken = typeof loadToken === "string" && loadToken.length > 0;
+        const stored = hasToken ? this._store.getHandoffByToken(loadToken) : null;
+        if (hasToken && !stored) {
+          return {
+            status: "error",
+            error: "token_not_found",
+            instruction: "The provided load_token does not exist. Omit it to create a new handoff."
+          };
+        }
         const filePaths = measurement.paths.filter((row2) => !row2.path.startsWith(SKILL_RESOURCE_PREFIX));
-        const composed = this._handoff.composePrepared({
+        const request = {
           input: { pathsToKeep, skillsToKeep, summary, nextTask },
           measurement,
           filePaths,
           ctp: this._resolveModelPolicy(measurement.epochModel).ctp,
           projectRoot: this._projectRoot,
-          symbolRangesFor: (request) => this._enrichment.symbolRanges(request),
+          symbolRangesFor: (symbolRequest) => this._enrichment.symbolRanges(symbolRequest),
           // The kept scenario: every file resource the handoff keeps is carried, every other one is left out
           // as excess. Skills keep their default selection — the kept-token total counts files alone.
           rateForKept: (keptKeys) => {
@@ -49071,7 +49228,13 @@ var init_session_watcher = __esm({
             const scenario = this._engine.readScenario(overrides);
             return scenario.reliable ? scenario.gBar : 0;
           }
-        });
+        };
+        if (stored && stored.deliveredAt == null) {
+          const patch = this._handoff.composePatched({ ...request, stored, transcriptPath: this._sourceLocator ?? null });
+          if (patch.status === "error") return patch;
+          if (this._store.updateHandoff(loadToken, patch.row)) return this._readyReply(loadToken, patch);
+        }
+        const composed = this._handoff.composePrepared(request);
         if (composed.status === "error") return composed;
         const row = {
           ...composed.row,
@@ -49080,31 +49243,20 @@ var init_session_watcher = __esm({
           projectId: this._projectId || null,
           transcriptPath: this._sourceLocator ?? null
         };
-        const written = this._writeHandoffRow(row, loadToken, composed);
+        const written = this._writeHandoffRow(row, composed);
         if (written.status === "error") return written;
-        const out2 = {
-          status: "ready",
-          load_token: written.loadToken,
-          ...composed.response,
-          instruction: this._handoff.instructionFor(written.loadToken)
-        };
+        return this._readyReply(written.loadToken, composed);
+      }
+      _readyReply(loadToken, composed) {
+        const out2 = { status: "ready", load_token: loadToken, ...composed.response };
+        if (composed.patched) out2.patched = composed.patched;
+        out2.instruction = this._handoff.instructionFor(loadToken);
         if (composed.resolvedPaths.length > 0) out2.resolved_paths = composed.resolvedPaths;
         return out2;
       }
-      // Update in place when the caller named a token, else mint one. A token that exists but was already
-      // DELIVERED has immutable telemetry, so it falls through to a fresh insert rather than being rewritten at
-      // a different instant than its recorded delivery.
-      _writeHandoffRow(row, existingToken, composed) {
-        if (typeof existingToken === "string" && existingToken.length > 0) {
-          if (this._store.updateHandoff(existingToken, row)) return { loadToken: existingToken };
-          if (!this._store.hasHandoff(existingToken)) {
-            return {
-              status: "error",
-              error: "token_not_found",
-              instruction: "The provided load_token does not exist. Omit it to create a new handoff."
-            };
-          }
-        }
+      // Always an insert under a freshly minted token: a patch is `updateHandoff`'s, and a delivered row has
+      // immutable telemetry, so it is never rewritten at a different instant than its recorded delivery.
+      _writeHandoffRow(row, composed) {
         for (const candidate of this._handoff.candidateTokens(composed.tokenSeed)) {
           try {
             this._store.insertHandoff({ ...row, loadToken: candidate, createdAt: this._handoff.createdAt() });
@@ -59692,10 +59844,10 @@ data: ${JSON.stringify({ type: "scan" })}
   app.post("/api/handoff/prepare", (req, res, next) => {
     try {
       const {
-        paths_to_keep = [],
+        paths_to_keep,
         skills_to_keep,
-        summary = "",
-        next_task = null,
+        summary,
+        next_task,
         observed_segment,
         load_token: existingToken
       } = req.body || {};
@@ -60370,12 +60522,11 @@ function emit(source, data) {
   } catch {
   }
 }
-function probeMcp({ tool, sessionIdArg, envSessionId, serverSessionId, serverTranscript }) {
+function probeMcp({ tool, envSessionId, serverSessionId, serverTranscript }) {
   if (!ACTIVE) return;
   emit("mcp", {
     tool,
     session_id_env: envSessionId?.slice(0, 12) || null,
-    session_id_arg: sessionIdArg?.slice(0, 12) || null,
     server_session_id: serverSessionId?.slice(0, 12) || null,
     server_transcript: serverTranscript ? serverTranscript.split("/").slice(-2).join("/") : null,
     pid: process.pid
@@ -60631,6 +60782,7 @@ if (__selfReal === __argvReal) {
       sseClients,
       stopTimers,
       doRotation,
+      currentSessionId,
       turnService,
       turnReadService,
       publishDiscovery,
@@ -60707,12 +60859,10 @@ if (__selfReal === __argvReal) {
     });
     const mcpServer = new McpServer2({ name: "session-watcher", version: PLUGIN_VERSION });
     const reply = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
-    const probeCall = (tool, args2) => probeMcp({
+    const probeCall = (tool) => probeMcp({
       tool,
-      sessionIdArg: args2?.sessionId,
       envSessionId: process.env.CLAUDE_CODE_SESSION_ID
     });
-    const SessionIdSchema = { sessionId: z.string().optional().describe("Override session ID (used when resume changes the ID)") };
     const inprocFetch = async (path3, opts = {}) => {
       let retries = 0;
       while (!server.listening && retries < 30) {
@@ -60726,41 +60876,41 @@ if (__selfReal === __argvReal) {
       return res.json();
     };
     mcpServer.registerTool("watcher_status", {
-      description: "Report whether the Session Watcher is running, and the dashboard URL where the host serves one.",
-      inputSchema: SessionIdSchema,
+      description: "Report whether the Session Watcher is running, the dashboard URL where the host serves one, and one session's current reading: lamp, phase (the wallet clock's), br, u, gEma (smoothed context growth, tokens per call), L, B, model and alert.",
+      inputSchema: {},
       annotations: { readOnlyHint: true }
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall("watcher_status", { sessionId: _sid });
+    }, async () => {
+      probeCall("watcher_status");
       const port = server.address()?.port;
       if (!port) return reply({ running: false });
-      return reply({ running: true, url: `http://127.0.0.1:${port}` });
+      const reading = statusDigest(await inprocFetch("/api/status"));
+      return reply({ running: true, url: `http://127.0.0.1:${port}`, sessionId: currentSessionId(), reading });
     });
     mcpServer.registerTool("get_bucket_summary", {
       description: "Return the current context bucket structure (files, skills) with each row's token size and the session's br, so the agent can decide what to carry over before the context reset the host offers.",
-      inputSchema: SessionIdSchema,
+      inputSchema: {},
       annotations: { readOnlyHint: true }
-    }, async ({ sessionId: _sid } = {}) => {
-      probeCall("get_bucket_summary", { sessionId: _sid });
+    }, async () => {
+      probeCall("get_bucket_summary");
       const body2 = await inprocFetch("/api/buckets?symbols=1");
       return reply(body2.error ? body2 : bucketSummaryPayload(body2));
     });
     mcpServer.registerTool("prepare_handoff", {
       description: "Persist a keep/discard decision + structured summary before the context reset the host offers; returns a human-readable token to restore context in the next segment.",
       inputSchema: {
-        ...SessionIdSchema,
         paths_to_keep: z.array(z.object({
           path: z.string().describe("File path (project-relative)"),
           symbols: z.array(z.string()).optional().describe("Key symbols to focus on in this file (function/class names)")
-        })).describe("Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data"),
+        })).optional().describe("Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data"),
         skills_to_keep: z.array(z.string()).optional().describe('Skill names to carry over (e.g. "systematic-debugging", "brainstorming")'),
-        load_token: z.string().optional().describe("Existing token to revise; kept if undelivered, replaced by a new token if already delivered. Omit to create new"),
-        summary: z.string().describe("Structured summary of current work state"),
+        load_token: z.string().optional().describe('Existing token to revise. An undelivered handoff keeps its token and changes only the parameters passed \u2014 the others keep their stored values, and `skills_to_keep: []` or `next_task: ""` clears its own. A delivered handoff is immutable, so passing its token creates a new handoff from the parameters given, under a new token. Omit to create new'),
+        summary: z.string().optional().describe("Structured summary of current work state"),
         next_task: z.string().optional().describe("What comes next"),
         observed_segment: z.number().int().optional().describe("Segment index from get_bucket_summary, for a consistency check")
       },
       annotations: { readOnlyHint: false }
-    }, async ({ sessionId: _sid, ...input } = {}) => {
-      probeCall("prepare_handoff", { sessionId: _sid });
+    }, async (input) => {
+      probeCall("prepare_handoff");
       return reply(await inprocFetch("/api/handoff/prepare", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -60770,14 +60920,13 @@ if (__selfReal === __argvReal) {
     mcpServer.registerTool("load_handoff", {
       description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns.",
       inputSchema: {
-        ...SessionIdSchema,
         load_token: z.string().optional().describe("Semantic token from prepare_handoff (exact match)"),
         query: z.string().optional().describe("Free-text search when the token is unknown; returns top matches"),
         query_mode: z.enum(["plain", "advanced"]).optional().describe("plain (default) escapes input; advanced passes raw FTS5 syntax")
       },
       annotations: { readOnlyHint: false }
-    }, async ({ sessionId: _sid, ...input } = {}) => {
-      probeCall("load_handoff", { sessionId: _sid });
+    }, async (input) => {
+      probeCall("load_handoff");
       const qs = new URLSearchParams(Object.entries(input).filter(([, v]) => v != null)).toString();
       return reply(withLoadRecovery2(await inprocFetch(`/api/handoff/load${qs ? "?" + qs : ""}`)));
     });

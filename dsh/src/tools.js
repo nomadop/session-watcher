@@ -1,6 +1,7 @@
-// dsh/src/tools.js — the session watcher's agent tools on the DSH host: the Claude Code MCP tool set minus `rotate_session`, each answering for the calling agent's own session.
-// Descriptions and parameter descriptions are `index.js`'s, word for word; a returned value is the JSON the Claude Code tool's text encodes, `watcher_status`'s without its `url`, and a watcher method's throw propagates as the tool's error.
-import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload } from '../../lib/wire.js';
+// dsh/src/tools.js — the session watcher's agent tools on the DSH host: the Claude Code MCP tool set minus `rotate_session`, each answering for the calling agent's own session, `watcher_status` also for any session it names.
+// Descriptions and the parameter descriptions `index.js` declares are `index.js`'s, word for word; `watcher_status`'s `sessionId` exists on this host alone. A returned value is the JSON the Claude Code tool's text encodes, `watcher_status`'s without its `url`, and a watcher method's throw propagates as the tool's error.
+import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload, statusDigest, statusWireWithLedger } from '../../lib/wire.js';
+import { getLiveLedger } from '../../lib/rate-lamp-manager.js';
 import { buildTurnPage } from '../../lib/turn-page.js';
 import { createTurnReadService } from '../../lib/turn-read-service.js';
 import { withLoadRecovery } from '../../lib/turn-tool-recovery.js';
@@ -34,15 +35,20 @@ function assertQuery(q) {
   }
 }
 
+// The registry fails a value that is not lossless JSON, and the Claude Code text drops an `undefined` field and writes a non-finite number as `null`.
+const lossless = value => JSON.parse(JSON.stringify(value));
+
 /**
  * The tool definitions over `table`.
- * Each call waits for the calling session's watcher to leave `bootstrapping` and lets the wait's rejection — a failed watcher's diagnostic message, an abort, a missing entry — propagate as the tool's error.
+ * Each call waits for its target session's watcher to leave `bootstrapping` — the calling session's, or the one `watcher_status` names — and lets the wait's rejection — a failed watcher's diagnostic message, an abort, a missing entry — propagate as the tool's error.
+ * A `sessionId` the table has not observed goes through `resolvePersisted(sessionId, signal)`, which ensures the persisted record it finds and answers it, or null when the host has no such session, which the tool reports as an error naming the id.
  * `store` is the store the deliveries and turn reads go through; `now` stamps `get_bucket_summary`.
  *
- * @param {{ defineTool: Function, table: { waitLive: Function }, store: object, now?: () => number }} options
+ * @param {{ defineTool: Function, table: { get: Function, waitLive: Function }, store: object, now?: () => number,
+ *   resolvePersisted?: (sessionId: string, signal: AbortSignal) => Promise<object|null> }} options
  * @returns {object[]}
  */
-export function createTools({ defineTool, table, store, now = Date.now }) {
+export function createTools({ defineTool, table, store, now = Date.now, resolvePersisted = async () => null }) {
   const recovery = createDshTurnRecovery();
 
   const tool = ({ name, description, parameters = {}, check = () => {}, run }) => defineTool({
@@ -51,8 +57,7 @@ export function createTools({ defineTool, table, store, now = Date.now }) {
       check(args);
       const sessionId = exec.agent.session.id;
       const entry = await table.waitLive(sessionId, exec.signal);
-      // The registry fails a value that is not lossless JSON, and the Claude Code text drops an `undefined` field and writes a non-finite number as `null`.
-      return JSON.parse(JSON.stringify(await run(args, { ...entry, sessionId })));
+      return lossless(await run(args, { ...entry, sessionId }));
     },
   });
 
@@ -71,10 +76,24 @@ export function createTools({ defineTool, table, store, now = Date.now }) {
   }
 
   return [
-    tool({
+    defineTool({
       name: 'watcher_status',
-      description: 'Report whether the Session Watcher is running, and the dashboard URL where the host serves one.',
-      run: () => ({ running: true }),
+      description: "Report whether the Session Watcher is running, the dashboard URL where the host serves one, and one session's current reading: lamp, phase (the wallet clock's), br, u, gEma (smoothed context growth, tokens per call), L, B, model and alert.",
+      parameters: {
+        sessionId: { type: 'string', description: 'Session to read. Defaults to the calling session; any session this host has run or persisted is readable, and one that has ended is reconstructed first.' },
+      },
+      output: OUTPUT,
+      async execute({ sessionId }, exec) {
+        const target = sessionId ?? exec.agent.session.id;
+        if (sessionId !== undefined && table.get(sessionId).state === 'unobserved'
+          && await resolvePersisted(sessionId, exec.signal) === null) {
+          throw new Error(`session ${sessionId} is neither running nor persisted on this host`);
+        }
+        const { watcher } = await table.waitLive(target, exec.signal);
+        return lossless({
+          running: true, sessionId: target, reading: statusDigest(statusWireWithLedger(watcher.getStatus(), getLiveLedger(target))),
+        });
+      },
     }),
     tool({
       name: 'get_bucket_summary',
@@ -89,7 +108,6 @@ export function createTools({ defineTool, table, store, now = Date.now }) {
       parameters: {
         paths_to_keep: {
           type: 'array',
-          required: true,
           description: 'Files to carry over with optional symbol hints; lines are auto-populated from B_rebuild data',
           items: {
             type: 'object',
@@ -101,13 +119,13 @@ export function createTools({ defineTool, table, store, now = Date.now }) {
           },
         },
         skills_to_keep: { type: 'array', items: { type: 'string' }, description: 'Skill names to carry over (e.g. "systematic-debugging", "brainstorming")' },
-        load_token: { type: 'string', description: 'Existing token to revise; kept if undelivered, replaced by a new token if already delivered. Omit to create new' },
-        summary: { type: 'string', required: true, description: 'Structured summary of current work state' },
+        load_token: { type: 'string', description: 'Existing token to revise. An undelivered handoff keeps its token and changes only the parameters passed — the others keep their stored values, and `skills_to_keep: []` or `next_task: ""` clears its own. A delivered handoff is immutable, so passing its token creates a new handoff from the parameters given, under a new token. Omit to create new' },
+        summary: { type: 'string', description: 'Structured summary of current work state' },
         next_task: { type: 'string', description: 'What comes next' },
         observed_segment: { type: 'integer', description: 'Segment index from get_bucket_summary, for a consistency check' },
       },
       run: ({
-        paths_to_keep = [], skills_to_keep, summary = '', next_task = null, observed_segment, load_token,
+        paths_to_keep, skills_to_keep, summary, next_task, observed_segment, load_token,
       }, { watcher }) => watcher.prepareHandoff({
         pathsToKeep: paths_to_keep, skillsToKeep: skills_to_keep, summary, nextTask: next_task,
         observedSegment: observed_segment, loadToken: load_token,

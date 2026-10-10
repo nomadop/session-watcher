@@ -19,15 +19,15 @@ const live = payload => ({ ok: true, value: { state: 'live', payload } });
 /**
  * The channel's handler over `table`.
  * Every payload carries `sessionId`; a session whose entry is not `live` answers its state, and a `failed` one its diagnostic, without reaching a watcher.
- * A session the table has not observed is looked up through `resolvePersisted(sessionId)`: a record it answers is ensured from its header, and the request answers what the table then holds for the id, `bootstrapping` for the entry just ensured and `unobserved` when no record was found.
- * A throw from that lookup or from the ensure is written as a `handler_failed` line under the session and answered as `{ ok: false }` under `handler_failed`, leaving no entry.
+ * A session the table has not observed goes through `resolvePersisted(sessionId)`, which ensures the persisted record it finds and answers it or null; the request answers what the table then holds for the id, `bootstrapping` for the entry just ensured and `unobserved` when no record was found.
+ * A throw from that call is written as a `handler_failed` line under the session and answered as `{ ok: false }` under `handler_failed`, leaving no entry.
  * A `live` entry answers its endpoint's payload, or the route's 4xx as a failure under the route's code and message.
  * A pricing save or delete under the caller's epoch model refreshes the read policies of every live watcher, writes each refresh diagnostic to stderr under its session and publishes each session whose read policies changed.
  * A user-overrides apply publishes the caller's session; no other endpoint publishes.
  * `store` is the store the lineage and the turn browse read; `now` stamps the buckets payload; `publish(sessionId)` signals that a session's readings changed.
  *
- * @param {{ table: { get: Function, live: Function, ensure: Function }, store: object, now?: () => number, publish?: (sessionId: string) => void,
- *   resolvePersisted?: (sessionId: string) => Promise<{ header: { id: string, cwd?: string } }|null> }} options
+ * @param {{ table: { get: Function, live: Function }, store: object, now?: () => number, publish?: (sessionId: string) => void,
+ *   resolvePersisted?: (sessionId: string) => Promise<object|null> }} options
  * @returns {(endpoint: string, payload: unknown) => Promise<object>}
  */
 export function createRpcHandler({ table, store, now = Date.now, publish = () => {}, resolvePersisted = async () => null }) {
@@ -98,8 +98,7 @@ export function createRpcHandler({ table, store, now = Date.now, publish = () =>
     if (entry.state === 'unobserved') {
       // A rejected handler reaches the client as a transport failure, so a failure here is answered as an envelope.
       try {
-        const record = await resolvePersisted(body.sessionId);
-        if (record != null) table.ensure({ id: record.header.id, header: record.header });
+        await resolvePersisted(body.sessionId);
       } catch (error) {
         const diagnostic = handlerFailed(error);
         writeDiagnostic(body.sessionId, diagnostic);

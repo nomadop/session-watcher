@@ -35,8 +35,8 @@ is retired; `.serena/memories/domain_model.md` keeps it as history and marks it 
 
 - **Never hardcode environment values.** The context floor, the growth rate and the warm-up length are
   computed live; empirical anchors belong to test fixtures only.
-- **Zero context pollution**: MCP tools return status and data shapes, never metric numbers, and
-  nothing a tool returns re-enters the model as a measurement.
+- **Zero context pollution**: ambient injection (hook stdout, the catalog message) carries no metric numbers;
+  an explicit tool call may carry a reading.
 - **Sidecar pattern** (the name `.serena/memories/core.md` uses for it): measurement state lives in the process
   that owns the transcript, and the MCP face, the dashboard and the statusline are stateless readers of it.
 - **The harness is the only layer that knows the agent.** Native rows, content blocks, byte cursors and branch topology stop inside that agent's directory under `lib/harness/`; everything below consumes normalized observations and names no transcript format.

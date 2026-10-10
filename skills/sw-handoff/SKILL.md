@@ -50,7 +50,7 @@ Prepare a handoff package so the next session can resume without re-reading what
 
    Check `resolved_paths` in the response — where a path resolved wrong, re-issue with the absolute path.
 
-   **Revise an existing handoff** (fix paths, update summary): pass its `load_token` and report whichever `load_token` comes back — an undelivered handoff keeps its token, a delivered one is immutable so the revision arrives under a new one.
+   **Revise an existing handoff** (fix paths, update summary): pass its `load_token` with only the parameters being changed; a passed `paths_to_keep` is the whole kept list, `skills_to_keep: []` clears the skills and `next_task: ""` clears the next task. Report whichever `load_token` comes back — an undelivered handoff keeps its token, a delivered one is immutable, so the revision is a new handoff under a new token.
 
    The tools are the only path to the handoff: when the `prepare_handoff` call returns an error instead of a reply, report the failure to the user.
 

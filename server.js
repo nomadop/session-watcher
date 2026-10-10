@@ -620,7 +620,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   app.post('/api/handoff/prepare', (req, res, next) => {
     try {
       const {
-        paths_to_keep = [], skills_to_keep, summary = '', next_task = null,
+        paths_to_keep, skills_to_keep, summary, next_task,
         observed_segment, load_token: existingToken,
       } = req.body || {};
       const out = watcher.prepareHandoff({

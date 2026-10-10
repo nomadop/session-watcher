@@ -16,8 +16,8 @@ import { catalogMessageFor } from './catalog.js';
 export const HOST_INJECT = ['sessions', 'sessionQuery', 'tools', 'skills', 'llm'];
 
 /**
- * Mount the host on `ctx`: open the store at `storePath`, keep one watcher per session the context lists, creates or appends to, and build one on demand when the RPC channel names a session the table lacks and the session listing holds, archive each on its session's disposal, and archive every live one and close the store when `ctx` unloads.
- * The agent tools answer each calling session from its watcher, the skills are registered from the `SKILL.md` files under `skillsDir`, and an agent created at startup or resume is injected the pending-handoff catalog of its session's project; with a connection present, the `/session-watcher` RPC channel answers from the watcher table, and the `/api/session-watcher.events` route streams the id of each session whose entry changes state, applies a frame or has its readings changed over the channel.
+ * Mount the host on `ctx`: open the store at `storePath`, keep one watcher per session the context lists, creates or appends to, and build one on demand when the RPC channel or `watcher_status` names a session the table lacks and the session listing holds, archive each on its session's disposal, and archive every live one and close the store when `ctx` unloads.
+ * The agent tools answer each calling session from its watcher, `watcher_status` any session the host has run or persisted, the skills are registered from the `SKILL.md` files under `skillsDir`, and an agent created at startup or resume is injected the pending-handoff catalog of its session's project; with a connection present, the `/session-watcher` RPC channel answers from the watcher table, and the `/api/session-watcher.events` route streams the id of each session whose entry changes state, applies a frame or has its readings changed over the channel.
  * Each model call is measured under the `llm` catalog name of its provider and model id once `llm.resolveModelInfo` has answered one, and under the id until then; a pair keeps the first name it resolves to until the plugin remounts. The plugin requires `llm`, and a re-provided `llm` remounts the whole host, as a re-provided `sessions` does.
  * `turnNotesRoot` is the Turn Notes root; `loadIsIgnored(cwd)` answers a session's ignore matcher.
  * No handler or disposer throws into the host: a failure is a watcher's diagnostic or a stderr line.
@@ -35,9 +35,6 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
   let readCacheRetention = () => null;
   // `readSession` reads its service's own state, so it is called on the service and never passed bare.
   const readSession = sessionId => ctx.sessionQuery.readSession(sessionId);
-  // A listing record carries its id only in its header.
-  const resolvePersisted = async sessionId => (await ctx.sessionQuery.listSessions())
-    .find(record => record.header.id === sessionId) ?? null;
   // Async, so a synchronous throw from the service is a rejection the warm-up settles rather than a throw on the feed path (test/dsh.host.lifecycle.test.js `throws synchronously leaves the entry live`).
   const modelNames = createModelNames({ resolve: async (provider, id) => ctx.llm.resolveModelInfo(provider, id) });
   const table = createWatcherTable({
@@ -48,6 +45,12 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
       sessionId, cwd, cacheTtl, store: getStore(), turnNotesRoot, readSession, isIgnored: loadIsIgnored(cwd),
     }),
   });
+  // The one resolution of a session the table has not observed, for the RPC channel and the tools: it ensures the listing's record for `sessionId`, whose id is only in its header, and answers the record or null; `signal` aborts the listing, and a throw from the listing or the ensure propagates.
+  const resolvePersisted = async (sessionId, signal) => {
+    const record = (await ctx.sessionQuery.listSessions(signal)).find(each => each.header.id === sessionId) ?? null;
+    if (record !== null) table.ensure({ id: record.header.id, header: record.header });
+    return record;
+  };
   const hub = createSignalHub();
   table.onChange(sessionId => hub.publish(sessionId));
 
@@ -71,7 +74,7 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
     });
     if (message !== null) agent.inject(message);
   }));
-  for (const definition of createTools({ defineTool, table, store: getStore() })) ctx.tools.register(definition);
+  for (const definition of createTools({ defineTool, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
   registerSkills(ctx, { skillsDir });
 
   // Handed a plugin caller, `rpc.handle` reads `webServer` from Connection's own fiber, which does not inject it; called from the root, the read is permitted.

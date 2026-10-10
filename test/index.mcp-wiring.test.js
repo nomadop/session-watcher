@@ -20,7 +20,12 @@
 //   * a store read and a store write both answer over the in-process HTTP surface, so initStore() has
 //     run by the time the server serves (a store that is not initialized makes the turn-page route
 //     answer 503 from its own catch, and prepare_handoff could not commit at all);
-//   * every reply that goes through the in-process HTTP surface proves inprocFetch is intact.
+//   * every reply that goes through the in-process HTTP surface proves inprocFetch is intact;
+//   * no tool's input schema declares a `sessionId` (`rotate_session`'s `session_id` is its own parameter), and
+//     the probe log, which the child writes under SW_PROBE, records each `mcp` event without a
+//     `session_id_arg` key;
+//   * watcher_status answers `{ running, url, sessionId, reading }`, `reading` being `statusDigest` of the
+//     `GET /api/status` body and `sessionId` the server handle's current id, which `rotate_session` changes.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -31,7 +36,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { userMessage, assistantObservation, ts } from './helpers/transcript-fixtures.js';
+import { userMessage, assistantObservation, usage, ts } from './helpers/transcript-fixtures.js';
+import { statusDigest } from '../lib/wire.js';
 
 const INDEX_JS = join(dirname(fileURLToPath(import.meta.url)), '..', 'index.js');
 
@@ -60,7 +66,7 @@ const EXPECTED_TOOLS = [
 ];
 
 describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout: 120_000 }, () => {
-  let dir, sessionId, port, client, transport, dbPath;
+  let dir, sessionId, port, client, transport, dbPath, projDir, stateDir;
   // Bounded tail of the child's stderr, so a boot that never completes reports the child's own reason
   // instead of only the timeout.
   let childStderr = '';
@@ -94,11 +100,11 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'sw-mcp-wiring-'));
     try {
-      const stateDir = join(dir, 'state');
+      stateDir = join(dir, 'state');
       mkdirSync(stateDir, { recursive: true });
       // resolveBySessionId looks under join(HOME, '.claude', 'projects'); the store lands in
       // join(HOME, '.session-watcher'). Both are inside the temp dir, so nothing touches a real install.
-      const projDir = join(dir, '.claude', 'projects', 'enc');
+      projDir = join(dir, '.claude', 'projects', 'enc');
       mkdirSync(projDir, { recursive: true });
       const cwd = join(dir, 'work');
       mkdirSync(cwd, { recursive: true });
@@ -119,6 +125,7 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
           SW_STATE_DIR: stateDir,
           CLAUDE_CODE_SESSION_ID: sessionId,
           SW_NO_OPEN: '1',
+          SW_PROBE: '1',
           SW_GRACE_MS: '1',
         },
       });
@@ -220,6 +227,19 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
     assert.ok(prepared.load_token.length > 0);
   });
 
+  test('prepare_handoff accepts a partial argument set through the zod layer', async () => {
+    const { load_token } = await call('prepare_handoff', { paths_to_keep: [], summary: 'wiring patch summary' });
+    // `call` fails on an MCP error envelope, so a reply here is data and not a protocol error.
+    const patched = await call('prepare_handoff', { load_token, summary: 'wiring patched summary' });
+    assert.equal(patched.status, 'ready');
+    assert.deepEqual(patched.patched, ['summary']);
+    assert.equal(patched.load_token, load_token);
+
+    const created = await call('prepare_handoff', { summary: 'wiring create without paths' });
+    assert.equal(created.status, 'error');
+    assert.equal(created.error, 'paths_to_keep_required');
+  });
+
   test('load_handoff reaches the real load route and returns its own outcomes', async () => {
     // No token, no query, nothing delivered into this project: the auto-match path's own answer.
     assert.deepEqual(await call('load_handoff', {}), { found: false });
@@ -263,5 +283,64 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
     assert.equal(wrapped.retryable, true);
     assert.equal(typeof wrapped.recovery, 'string');
     assert.ok(wrapped.recovery.length > 0);
+  });
+
+  // The reply's `reading` against the digest of the status body the server answers straight after.
+  const readingMatchesStatus = async (reply) => {
+    const { status, body } = await childRequest('/api/status');
+    assert.equal(status, 200);
+    assert.deepEqual(reply.reading, JSON.parse(JSON.stringify(statusDigest(body))));
+  };
+
+  test('no tool declares a sessionId parameter, and rotate_session keeps its own session_id', async () => {
+    const { tools } = await client.listTools(undefined, { timeout: REQUEST_TIMEOUT_MS });
+    for (const { name, inputSchema } of tools) {
+      assert.equal('sessionId' in (inputSchema.properties ?? {}), false, name);
+    }
+    const rotate = tools.find(({ name }) => name === 'rotate_session');
+    assert.ok('session_id' in rotate.inputSchema.properties);
+  });
+
+  test('watcher_status answers its url, the session id and the digest of /api/status', async () => {
+    const reply = await call('watcher_status', {});
+    assert.deepEqual(Object.keys(reply).sort(), ['reading', 'running', 'sessionId', 'url']);
+    assert.equal(reply.running, true);
+    assert.equal(reply.url, `http://127.0.0.1:${port}`);
+    assert.equal(reply.sessionId, sessionId);
+    assert.deepEqual(Object.keys(reply.reading).sort(),
+      ['B', 'L', 'alert', 'br', 'gEma', 'lamp', 'model', 'phase', 'reliable', 'u']);
+    await readingMatchesStatus(reply);
+  });
+
+  test('the probe log holds the mcp events and none carries a session_id_arg key', async () => {
+    await call('watcher_status', {});
+    const events = readFileSync(join(stateDir, 'lifecycle-probe.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map(line => JSON.parse(line));
+    assert.ok(events.some(event => event.source === 'mcp' && event.tool === 'watcher_status'));
+    for (const event of events) assert.equal('session_id_arg' in event, false, JSON.stringify(event));
+  });
+
+  test('after rotate_session, watcher_status answers the new session id and its reading', async () => {
+    const rotatedId = `${sessionId}-rotated`;
+    writeFileSync(join(projDir, `${rotatedId}.jsonl`), [
+      userMessage({ uuid: 'u-rot-1', parentUuid: null, text: 'after the rotation', timestamp: ts(10) }),
+      assistantObservation({
+        uuid: 'a-rot-1', parentUuid: 'u-rot-1', messageId: 'm-rot-1', timestamp: ts(11),
+        blocks: [{ type: 'text', text: 'answered again' }], usage: usage({ input: 3, output: 40, cacheWrite: 9600 }),
+      }),
+      userMessage({ uuid: 'u-rot-2', parentUuid: 'a-rot-1', text: 'and once more', timestamp: ts(12) }),
+      assistantObservation({
+        uuid: 'a-rot-2', parentUuid: 'u-rot-2', messageId: 'm-rot-2', timestamp: ts(13),
+        blocks: [{ type: 'text', text: 'answered once more' }],
+        usage: usage({ input: 3, output: 40, cacheRead: 9600, cacheWrite: 400 }),
+      }),
+    ].map(entry => JSON.stringify(entry) + '\n').join(''));
+
+    assert.equal((await call('rotate_session', { session_id: rotatedId })).ok, true);
+    const reply = await call('watcher_status', {});
+    assert.equal(reply.sessionId, rotatedId);
+    assert.equal(reply.url, `http://127.0.0.1:${port}`);
+    assert.equal(reply.reading.reliable, true, 'a metered session, so the equality below cannot pass on an all-null digest');
+    await readingMatchesStatus(reply);
   });
 });

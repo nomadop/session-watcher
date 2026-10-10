@@ -21,8 +21,8 @@ test('probeHealth returns true for a live /api/health, false otherwise', async (
 // so watcherStatus exercises its real return path WITHOUT spawning a server.
 const noServerEnv = () => ({ CLAUDE_CODE_SESSION_ID: `qf3-test-${randomUUID()}` });
 
-// Metric identifiers that MUST NEVER surface in an MCP tool reply / return shape.
-// (The zero-pollution invariant: the dashboard shows metrics; the MCP surface exposes only URLs/state.)
+// Metric identifiers that MUST NEVER surface in a launcher reply / return shape (`lib/launcher.js`).
+// (The launcher's own exports expose only URLs and state; a reading comes from an explicit tool call, `watcher_status` included, never from them.)
 const FORBIDDEN_METRIC_KEYS = [
   'L', 'Lstar', 'LstarFit', 'kAvg', 'kFitSlope', 'paybackP', 'phi', 'rho',
   'timingWeight', 'regret', 'etaCalls', 'Lthreshold', 'metricsReliable',
@@ -48,9 +48,9 @@ test('handoff launcher helpers return {error:no_server} when no live server', as
   assert.equal((await prepareHandoff(env, { paths_to_keep: [], summary: 'x' })).error, 'no_server');
 });
 
-// Zero pollution over the launcher's own surface: the dashboard shows metrics, a caller of these helpers
-// gets URLs and state. These are the launcher's own exports, re-exported from index.js — every MCP
-// handler in index.js builds its reply inline and reaches none of these.
+// These pin the launcher's own exports, re-exported from index.js: a caller of these helpers gets URLs and
+// state. Every MCP handler in index.js builds its reply inline and reaches none of these, so the tools'
+// replies are not covered here.
 test('every no-server launcher reply is free of metric keys', async () => {
   const replies = await Promise.all([
     watcherStatus(noServerEnv()),

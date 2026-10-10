@@ -13,7 +13,7 @@ const row = (over = {}) => ({ sessionId: 's1', segment: 0, loadToken: 'auth-mw-f
   nextTask: 'fix token refresh', summaryTokens: 5, keptTokens: 100, discardedTokens: 200,
   preparedAtTurn: 12, previousStats: JSON.stringify({ b_total: 60000 }), searchTerms: '', ...over });
 
-// The in-place revision `prepare_handoff` performs when it is handed a load_token: same row, new text.
+// The row a patch of an undelivered handoff writes through `updateHandoff`: the same handoff, new text.
 const revision = (over = {}) => ({ pathsToKeep: '[]', summary: 'a revised summary', summaryTokens: 5,
   nextTask: 'a revised next task', searchTerms: '', ...over });
 
@@ -315,10 +315,41 @@ test('handoff_fts_update 只在索引列变化时点火：投递戳不碰索引�
   assert.equal(loaded.claimResult, 'primary');
 });
 
+test('updateHandoff: a delivered handoff is not rewritten', async () => {
+  const { openStore } = await import('../lib/store.js');
+  store = openStore(join(dir, 't.sqlite'));
+  store.insertHandoff(row());
+  store.deliverHandoffByToken('auth-mw-fox', { sessionId: 'consumer-sess' });
+  assert.equal(store.updateHandoff('auth-mw-fox', revision({ summary: 'rewritten after delivery' })), false);
+  assert.equal(store.getHandoffByToken('auth-mw-fox').summary, 'refactor auth middleware');
+});
+
 test('deliverHandoffByToken returns null for unknown token', async () => {
   const { openStore } = await import('../lib/store.js');
   store = openStore(join(dir, 't.sqlite'));
   assert.equal(store.deliverHandoffByToken('nonexistent'), null);
+});
+
+test('getHandoffByToken: answers the camelized row with its delivery stamp, and null for an unknown token', async () => {
+  const { openStore } = await import('../lib/store.js');
+  store = openStore(join(dir, 't.sqlite'));
+  const { handoffId } = store.insertHandoff(row());
+
+  const pending = store.getHandoffByToken('auth-mw-fox');
+  assert.equal(pending.handoffId, handoffId);
+  assert.equal(pending.loadToken, 'auth-mw-fox');
+  assert.equal(pending.summary, 'refactor auth middleware');
+  assert.equal(pending.nextTask, 'fix token refresh');
+  assert.deepEqual(JSON.parse(pending.pathsToKeep), ['/a.js']);
+  assert.equal(pending.preparedAtTurn, 12);
+  assert.equal(pending.deliveredAt, null);
+
+  store.deliverHandoffByToken('auth-mw-fox', { sessionId: 'consumer-sess' });
+  const delivered = store.getHandoffByToken('auth-mw-fox');
+  assert.equal(typeof delivered.deliveredAt, 'number');
+  assert.equal(delivered.deliveredSessionId, 'consumer-sess');
+
+  assert.equal(store.getHandoffByToken('nonexistent'), null);
 });
 
 test('loadHandoffBySession returns null for unknown session', async () => {

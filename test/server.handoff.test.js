@@ -295,6 +295,50 @@ test('skills_to_keep omitted from load when not provided in prepare', async () =
   });
 });
 
+test('POST prepare with a load_token patches only the passed parameters; GET load shows the patch', async () => {
+  await withServer(async (port) => {
+    const post = async (body) => {
+      const res = await fetch(`http://127.0.0.1:${port}/api/handoff/prepare`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const created = await post({ paths_to_keep: [{ path: 'src/app.js', symbols: ['handleAuth'] }], summary: 'old summary', next_task: 'old next' });
+    assert.equal(created.body.status, 'ready');
+    const patched = await post({ load_token: created.body.load_token, summary: 'new summary' });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.body.status, 'ready');
+    assert.deepEqual(patched.body.patched, ['summary']);
+    assert.equal(patched.body.load_token, created.body.load_token, 'a patch keeps the token');
+    // The load delivers the row and a delivered token is create mode, so it comes after every patch.
+    const load = await (await fetch(`http://127.0.0.1:${port}/api/handoff/load?load_token=${created.body.load_token}`)).json();
+    assert.equal(load.found, true);
+    assert.equal(load.summary, 'new summary');
+    assert.deepEqual(load.paths_to_keep.map(entry => [entry.path, entry.symbols]), [['src/app.js', ['handleAuth']]]);
+  });
+});
+
+test('POST prepare answers 400 for a patch with nothing to patch and for a create missing a required parameter', async () => {
+  await withServer(async (port) => {
+    const post = async (body) => {
+      const res = await fetch(`http://127.0.0.1:${port}/api/handoff/prepare`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const created = await post({ paths_to_keep: [], summary: 'to be patched' });
+    const empty = await post({ load_token: created.body.load_token });
+    assert.equal(empty.status, 400);
+    assert.equal(empty.body.error, 'nothing_to_patch');
+    const noPaths = await post({ summary: 'no paths' });
+    assert.equal(noPaths.status, 400);
+    assert.equal(noPaths.body.error, 'paths_to_keep_required');
+    const noSummary = await post({ paths_to_keep: [] });
+    assert.equal(noSummary.status, 400);
+    assert.equal(noSummary.body.error, 'summary_required');
+  });
+});
+
 // ── Auto-match (no-params) endpoint tests ───────────────────────────────────
 
 test('GET /api/handoff/load (no params): single pending from other session → auto-match + stamp', async () => {
