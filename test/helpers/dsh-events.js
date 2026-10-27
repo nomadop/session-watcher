@@ -72,6 +72,22 @@ export function userMessage({ text, kind = 'user', form } = {}) {
 }
 
 /**
+ * A `system/message`, the surface head DSH renders the system prompt into: `{ turn, step, message }`, the message
+ * `{ role: 'system', content, source: { kind: 'system-prompt' }, id }` under `data.message`, appended to the surface.
+ */
+export function systemMessage({ text = 'You are a coding agent.', turn = 1, step = 1 } = {}) {
+  const { seq, time } = stamp();
+  return {
+    type: 'system/message', seq, time,
+    data: {
+      turn, step,
+      message: { role: 'system', content: textBlocks(text), source: { kind: 'system-prompt' }, id: messageId(seq) },
+    },
+    surfaceOp: 'append',
+  };
+}
+
+/**
  * An appended `assistant/message` in step `step` of turn `turn`: `{ turn, step, message, usage?, stream: [],
  * interrupted? }`. The message's content is a text block when `text` is given, then one `tool-call` block per entry
  * of `toolCalls` (`arguments` the raw JSON string, `'{}'` unless given); its source is `{ kind: 'model', provider,
@@ -347,11 +363,23 @@ export function retryWithUsage() {
   ]);
 }
 
+/** The files `reusedCallIdAcrossSteps` reads: the path it names for each, relative to the session directory, and its lines. */
+export const REUSED_CALL_ID_FILES = {
+  'src/a.js': ['export const a = 1;'],
+  'src/b.js': ['export const b = 2;', 'export default b;'],
+};
+
+/** The same two paths with declarations an outline reads as symbols, for a case whose read files must carry them. */
+export const REUSED_CALL_ID_SYMBOL_FILES = {
+  'src/a.js': ['export function a() { return 1; }'],
+  'src/b.js': ['export function b() { return 2; }', 'export default b;'],
+};
+
 /**
  * One turn of two consecutive steps, each a `read` of a different file under the same provider call id with its own
- * result: DSH keeps a call id unique within a step only.
+ * result: DSH keeps a call id unique within a step only. The reads show the lines of `files`.
  */
-export function reusedCallIdAcrossSteps() {
+export function reusedCallIdAcrossSteps({ files = REUSED_CALL_ID_FILES } = {}) {
   const id = 'call_read';
   return sessionLog([
     turnStart(),
@@ -362,7 +390,7 @@ export function reusedCallIdAcrossSteps() {
       usage: { inputTokens: 3, outputTokens: 40, totalTokens: 9643, cacheWriteTokens: 9600 },
     }),
     toolCall({ step: 1, callId: id, name: 'read', arguments: readArguments('src/a.js') }),
-    readResult({ step: 1, callId: id, path: 'src/a.js', lines: ['export const a = 1;'] }),
+    readResult({ step: 1, callId: id, path: 'src/a.js', lines: files['src/a.js'] }),
     stepEnd({ step: 1 }),
     stepStart({ step: 2 }),
     assistantMessage({
@@ -370,7 +398,7 @@ export function reusedCallIdAcrossSteps() {
       usage: { inputTokens: 2, outputTokens: 40, totalTokens: 9752, cacheReadTokens: 9600, cacheWriteTokens: 110 },
     }),
     toolCall({ step: 2, callId: id, name: 'read', arguments: readArguments('src/b.js') }),
-    readResult({ step: 2, callId: id, path: 'src/b.js', lines: ['export const b = 2;', 'export default b;'] }),
+    readResult({ step: 2, callId: id, path: 'src/b.js', lines: files['src/b.js'] }),
     stepEnd({ step: 2 }),
     turnEnd(),
   ]);

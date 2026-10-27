@@ -11,8 +11,9 @@ import { getStore, openStore, closeStore, closeStoreGlobal } from '../lib/store.
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
-import { reusedCallIdAcrossSteps, FIRST_STEP_END, requestHeader, sessionLog } from './helpers/dsh-events.js';
+import { reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, FIRST_STEP_END, requestHeader, sessionLog } from './helpers/dsh-events.js';
 import { createFakeContext, fakeSession } from './helpers/dsh-fake-context.js';
+import { writeFilesUnder } from './helpers/attribution-fixtures.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 
@@ -311,19 +312,23 @@ test('the lifetime reader answers the default after the settings child unloads',
 });
 
 test('an ignored path is unselected by default through the host\'s ignore loader', async () => {
-  const session = fakeSession({ id: 's-ignored', cwd: '/repo' });
+  // The host composes a watcher that attributes by the lines a call shows, so the session's directory holds the
+  // files the log reads.
+  const cwd = join(dir, 'repo');
+  writeFilesUnder(cwd, REUSED_CALL_ID_FILES);
+  const session = fakeSession({ id: 's-ignored', cwd });
   const { ctx, table } = mountHost({
-    sessions: [session], loadIsIgnored: cwd => (cwd === '/repo' ? rel => rel === 'src/b.js' : null),
+    sessions: [session], loadIsIgnored: root => (root === cwd ? rel => rel === 'src/b.js' : null),
   });
   await settled();
   emitLog(ctx, session, reusedCallIdAcrossSteps());
   const { paths } = table.get('s-ignored').watcher.getBucketData();
 
-  const kept = paths.find(row => row.path === '/repo/src/a.js');
+  const kept = paths.find(row => row.path === `${cwd}/src/a.js`);
   assert.ok(kept, 'the kept path is present');
   assert.equal(kept.defaultSelected, true);
   assert.equal(kept.defaultDiscardReason, null);
-  const ignored = paths.find(row => row.path === '/repo/src/b.js');
+  const ignored = paths.find(row => row.path === `${cwd}/src/b.js`);
   assert.ok(ignored, 'the ignored path is present');
   assert.equal(ignored.defaultSelected, false);
   assert.equal(ignored.defaultDiscardReason, 'gitignore');

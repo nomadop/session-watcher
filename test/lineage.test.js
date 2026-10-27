@@ -1,5 +1,5 @@
 // test/lineage.test.js — the Lineage Resolver (fromHandoff / forLoadedHandoff). It alone owns the
-// handoff-graph traversal, the session deduplication and the oldest-to-newest order; the transient `S{k}`
+// handoff-keyed traversal, the cycle stop and the oldest-to-newest order; the transient `S{k}`
 // view is derived from that order by Turn History, and the stored transcript path is copied into
 // `sourceLocator` and `sourceLabel` without being interpreted.
 import { describe, test, beforeEach, afterEach } from 'node:test';
@@ -76,6 +76,67 @@ describe('lineage resolver', () => {
     assert.ok(!chain.some(s => s.sessionId === 'sess-A'));
   });
 
+  // 每个 handoff 都是链上的一个成员：session 自载入后再 prepare，得到的是它的下一个 epoch。
+  const windowsOf = (chain) => chain.map(e => [e.window.after, e.window.through]);
+
+  test('Y 的 handoff 载入 X，X 三次 prepare 并自载入：Y, X, X, X；forLoadedHandoff 同答，X 的窗口首尾相接', () => {
+    const hY = seedHandoff({ sessionId: 'sess-Y', loadToken: 'tY', createdAt: 1000 });
+    seedDelivery({ handoffId: hY, sessionId: 'sess-X', loadedAt: 1100 });
+    const own = [];
+    for (let i = 1; i <= 3; i++) {
+      const createdAt = 1000 + i * 1000;
+      const id = seedHandoff({ sessionId: 'sess-X', loadToken: `t${i}`, createdAt });
+      seedDelivery({ handoffId: id, sessionId: 'sess-X', loadedAt: createdAt + 100 });
+      own.push({ id, createdAt });
+    }
+    const expected = [['S1', 'sess-Y'], ['S2', 'sess-X'], ['S3', 'sess-X'], ['S4', 'sess-X']];
+    const chain = fromHandoff({ store, handoffId: own[2].id });
+    assert.deepEqual(labelled(chain), expected);
+    assert.deepEqual(chain.map(e => e.handoffId), [hY, own[0].id, own[1].id, own[2].id]);
+    assert.deepEqual(windowsOf(chain), [
+      [null, 1000], [null, 2000], [2000, 3000], [3000, 4000],
+    ]);
+    assert.deepEqual(forLoadedHandoff({ store, sessionId: 'sess-X' }), chain);
+  });
+
+  test('没有外来祖先的 session 自载入两次：X, X, X', () => {
+    const h0 = seedHandoff({ sessionId: 'sess-X', loadToken: 't0', createdAt: 1000 });
+    seedDelivery({ handoffId: h0, sessionId: 'sess-X', loadedAt: 1100 });
+    const h1 = seedHandoff({ sessionId: 'sess-X', loadToken: 't1', createdAt: 2000 });
+    seedDelivery({ handoffId: h1, sessionId: 'sess-X', loadedAt: 2100 });
+    const h2 = seedHandoff({ sessionId: 'sess-X', loadToken: 't2', createdAt: 3000 });
+    const chain = fromHandoff({ store, handoffId: h2 });
+    assert.deepEqual(labelled(chain), [['S1', 'sess-X'], ['S2', 'sess-X'], ['S3', 'sess-X']]);
+    assert.deepEqual(windowsOf(chain), [[null, 1000], [1000, 2000], [2000, 3000]]);
+  });
+
+  test('重放：X 在更晚的自有 handoff 之后重载较旧的那个再 prepare，链跳过中间的 epoch，新成员的窗口自被重放者的 createdAt 起', () => {
+    const hY = seedHandoff({ sessionId: 'sess-Y', loadToken: 'tY', createdAt: 1000 });
+    seedDelivery({ handoffId: hY, sessionId: 'sess-X', loadedAt: 1100 });
+    const c1 = seedHandoff({ sessionId: 'sess-X', loadToken: 'c1', createdAt: 2000 });
+    seedDelivery({ handoffId: c1, sessionId: 'sess-X', loadedAt: 2100 });
+    const c2 = seedHandoff({ sessionId: 'sess-X', loadToken: 'c2', createdAt: 3000 });
+    seedDelivery({ handoffId: c2, sessionId: 'sess-X', loadedAt: 3100 });
+    seedDelivery({ handoffId: c1, sessionId: 'sess-X', loadedAt: 4000 });          // replay of the older one
+    const c3 = seedHandoff({ sessionId: 'sess-X', loadToken: 'c3', createdAt: 5000 });
+    const chain = fromHandoff({ store, handoffId: c3 });
+    assert.deepEqual(chain.map(e => e.handoffId), [hY, c1, c3]);
+    assert.deepEqual(windowsOf(chain), [[null, 1000], [null, 2000], [2000, 5000]]);
+  });
+
+  test('epoch 中途载入的外来 handoff 取代更早的 delivery 成为父边，被取代的自载入 epoch 不并入', () => {
+    const hY = seedHandoff({ sessionId: 'sess-Y', loadToken: 'tY', createdAt: 1000 });
+    seedDelivery({ handoffId: hY, sessionId: 'sess-X', loadedAt: 1100 });
+    const c1 = seedHandoff({ sessionId: 'sess-X', loadToken: 'c1', createdAt: 2000 });
+    seedDelivery({ handoffId: c1, sessionId: 'sess-X', loadedAt: 2100 });
+    const hZ = seedHandoff({ sessionId: 'sess-Z', loadToken: 'tZ', createdAt: 2200 });
+    seedDelivery({ handoffId: hZ, sessionId: 'sess-X', loadedAt: 2500 });          // foreign, mid-epoch
+    const c2 = seedHandoff({ sessionId: 'sess-X', loadToken: 'c2', createdAt: 3000 });
+    const chain = fromHandoff({ store, handoffId: c2 });
+    assert.deepEqual(labelled(chain), [['S1', 'sess-Z'], ['S2', 'sess-X']]);
+    assert.deepEqual(windowsOf(chain), [[null, 2200], [null, 3000]]);
+  });
+
   test('fromHandoff: 跨项目不串链', () => {
     const hA = seedHandoff({ sessionId: 'sess-A', loadToken: 'tA', projectId: 'other', createdAt: 1000 });
     seedDelivery({ handoffId: hA, sessionId: 'sess-B', loadedAt: 1500 });
@@ -102,14 +163,15 @@ describe('lineage resolver', () => {
     assert.deepEqual(fromHandoff({ store, handoffId: 9999 }), []);
   });
 
-  test('A→B→A 链只得到一个 A 的 S（session 级截断，保留较新出现）', () => {
+  test('A→B→A 链得到 A, B, A，两个 A 的窗口首尾相接且不相交', () => {
     const h1 = seedHandoff({ sessionId: 'sess-A', loadToken: 't1', createdAt: 100 });
     seedDelivery({ handoffId: h1, sessionId: 'sess-B', loadedAt: 150 });
     const h2 = seedHandoff({ sessionId: 'sess-B', loadToken: 't2', createdAt: 200 });
     seedDelivery({ handoffId: h2, sessionId: 'sess-A', loadedAt: 250 });
     const h3 = seedHandoff({ sessionId: 'sess-A', loadToken: 't3', createdAt: 300 });
-    assert.deepEqual(labelled(fromHandoff({ store, handoffId: h3 })),
-      [['S1', 'sess-B'], ['S2', 'sess-A']]);
+    const chain = fromHandoff({ store, handoffId: h3 });
+    assert.deepEqual(labelled(chain), [['S1', 'sess-A'], ['S2', 'sess-B'], ['S3', 'sess-A']]);
+    assert.deepEqual(windowsOf(chain), [[null, 100], [null, 200], [100, 300]]);
   });
 
   test('父边指回自身的退化 fixture 仍终止', () => {
@@ -171,7 +233,7 @@ describe('lineage resolver', () => {
 // ============== The History Source shape ==============
 
 describe('the History Source shape', () => {
-  test('an entry carries exactly the four canonical members', () => {
+  test('an entry carries exactly the five canonical members', () => {
     const hA = seedHandoff({ sessionId: 'sess-A', loadToken: 'tA', createdAt: 1000,
       transcriptPath: '/transcripts/sess-A.jsonl' });
     const chain = fromHandoff({ store, handoffId: hA });
@@ -180,7 +242,16 @@ describe('the History Source shape', () => {
       sourceLocator: '/transcripts/sess-A.jsonl',
       sourceLabel: '/transcripts/sess-A.jsonl',
       handoffId: hA,
+      window: { after: null, through: 1000 },
     }]);
+  });
+
+  test('every entry of a multi-session lineage is bounded above by its own handoff createdAt', () => {
+    const hA = seedHandoff({ sessionId: 'sess-A', loadToken: 'tA', createdAt: 1000 });
+    seedDelivery({ handoffId: hA, sessionId: 'sess-B', loadedAt: 1500 });
+    const hB = seedHandoff({ sessionId: 'sess-B', loadToken: 'tB', createdAt: 2000 });
+    assert.deepEqual(fromHandoff({ store, handoffId: hB }).map(s => [s.sessionId, s.window]),
+      [['sess-A', { after: null, through: 1000 }], ['sess-B', { after: null, through: 2000 }]]);
   });
 
   test('the stored path is copied into both members uninterpreted', () => {
@@ -214,22 +285,22 @@ describe('the History Source shape', () => {
     const h = seedHandoff({ sessionId: 'sess-A', loadToken: 'tA', createdAt: 1000 });
     for (const entry of fromHandoff({ store, handoffId: h })) {
       assert.deepEqual(Object.keys(entry).sort(),
-        ['handoffId', 'sessionId', 'sourceLabel', 'sourceLocator']);
+        ['handoffId', 'sessionId', 'sourceLabel', 'sourceLocator', 'window']);
     }
   });
 
   test('labelHistorySources derives labels and positions from order alone', () => {
     const lineage = [
-      { sessionId: 'a', sourceLocator: 'la', sourceLabel: 'la', handoffId: 1 },
-      { sessionId: 'b', sourceLocator: 'lb', sourceLabel: 'lb', handoffId: 2 },
-      { sessionId: 'c', sourceLocator: 'lc', sourceLabel: 'lc', handoffId: 3 },
+      { sessionId: 'a', sourceLocator: 'la', sourceLabel: 'la', handoffId: 1, window: { after: null, through: 10 } },
+      { sessionId: 'b', sourceLocator: 'lb', sourceLabel: 'lb', handoffId: 2, window: { after: null, through: 20 } },
+      { sessionId: 'c', sourceLocator: 'lc', sourceLabel: 'lc', handoffId: 3, window: { after: null, through: 30 } },
     ];
     const sources = labelHistorySources(lineage);
     assert.deepEqual(sources.map(s => [s.label, s.index, s.sessionId]),
       [['S1', 0, 'a'], ['S2', 1, 'b'], ['S3', 2, 'c']]);
     // The input keeps every member and gains nothing: the view is transient.
     assert.deepEqual(lineage.map(e => Object.keys(e).sort()),
-      lineage.map(() => ['handoffId', 'sessionId', 'sourceLabel', 'sourceLocator']));
+      lineage.map(() => ['handoffId', 'sessionId', 'sourceLabel', 'sourceLocator', 'window']));
   });
 });
 

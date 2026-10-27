@@ -10,10 +10,12 @@ const rowOf = (turnNoteId, anchorUuid, over = {}) => ({
   uOriginalChars: `u ${anchorUuid}`.length, note: `note ${anchorUuid}`,
   sourceTimestamp: 1, ...over,
 });
+// A window that holds every fixture row: the cases that are not about windows read the whole session.
+const OPEN_WINDOW = { after: null, through: Number.MAX_SAFE_INTEGER };
 // No `label`: the transient `S{k}` view is derived from lineage position, so a fixture cannot supply one.
 const lineage = [
-  { sessionId: 'old', sourceLocator: '/t/old.jsonl', sourceLabel: '/t/old.jsonl', handoffId: 41 },
-  { sessionId: 'new', sourceLocator: '/t/new.jsonl', sourceLabel: '/t/new.jsonl', handoffId: 42 },
+  { sessionId: 'old', sourceLocator: '/t/old.jsonl', sourceLabel: '/t/old.jsonl', handoffId: 41, window: OPEN_WINDOW },
+  { sessionId: 'new', sourceLocator: '/t/new.jsonl', sourceLabel: '/t/new.jsonl', handoffId: 42, window: OPEN_WINDOW },
 ];
 const rowsBySession = {
   old: [rowOf(7, 'o1')],
@@ -32,9 +34,9 @@ test('三段 lineage 得到三个 section，label 由 lineage 位置派生，自
   const { sections } = buildTurnBrowse({
     store: { listTurnNotes: (sid) => [rowOf(1, sid)], getHandoff: () => null },
     lineage: [
-      { sessionId: 'a', sourceLocator: null, sourceLabel: null, handoffId: 91 },
-      { sessionId: 'b', sourceLocator: null, sourceLabel: null, handoffId: 92 },
-      { sessionId: 'c', sourceLocator: null, sourceLabel: null, handoffId: 93 },
+      { sessionId: 'a', sourceLocator: null, sourceLabel: null, handoffId: 91, window: OPEN_WINDOW },
+      { sessionId: 'b', sourceLocator: null, sourceLabel: null, handoffId: 92, window: OPEN_WINDOW },
+      { sessionId: 'c', sourceLocator: null, sourceLabel: null, handoffId: 93, window: OPEN_WINDOW },
     ],
   });
   assert.deepEqual(sections.map(s => s.label), ['S1', 'S2', 'S3']);
@@ -160,4 +162,44 @@ test('零笔记 session 不产生项，后继项的 label 仍由 lineage 位置�
 
 test('空 lineage 得到空列表，不抛错', () => {
   assert.deepEqual(lineageHeadlines({ store, lineage: [] }), []);
+});
+
+// ── Members of one session ─────────────────────────────────────────────────────
+
+// Three members name one session and carry adjacent windows; the middle window holds no row.
+const memberLineage = [
+  { sessionId: 'one', sourceLocator: '/t/one.jsonl', sourceLabel: '/t/one.jsonl', handoffId: 51,
+    window: { after: null, through: 100 } },
+  { sessionId: 'one', sourceLocator: '/t/one.jsonl', sourceLabel: '/t/one.jsonl', handoffId: 52,
+    window: { after: 100, through: 200 } },
+  { sessionId: 'one', sourceLocator: '/t/one.jsonl', sourceLabel: '/t/one.jsonl', handoffId: 53,
+    window: { after: 200, through: 300 } },
+];
+const memberRows = [
+  rowOf(1, 'm-a', { sourceTimestamp: 50 }),
+  rowOf(2, 'm-b', { sourceTimestamp: 100 }),      // `through` is inclusive
+  rowOf(3, 'm-c', { sourceTimestamp: 201 }),
+  rowOf(4, 'm-d', { sourceTimestamp: 300 }),
+  rowOf(5, 'm-late', { sourceTimestamp: 301 }),   // after the last window
+];
+const memberHandoffs = {
+  51: { handoffId: 51, nextTask: '第一成员交出的任务' },
+  52: { handoffId: 52, nextTask: '第二成员交出的任务' },
+  53: { handoffId: 53, nextTask: '第三成员交出的任务' },
+};
+const memberStore = { listTurnNotes: () => memberRows, getHandoff: (id) => memberHandoffs[id] ?? null };
+
+test('同一 session 的三个成员：窗口里没有行的中间成员不出 section，其余各取自己窗口内的行', () => {
+  const { sections } = buildTurnBrowse({ store: memberStore, lineage: memberLineage });
+  assert.deepEqual(sections.map(s => s.label), ['S1', 'S3']);
+  assert.deepEqual(sections[0].entries.map(e => e.u_text), ['u m-a', 'u m-b']);
+  assert.deepEqual(sections[1].entries.map(e => e.u_text), ['u m-c', 'u m-d']);
+  assert.equal(sections[1].headline, memberHandoffs[52].nextTask);
+});
+
+test('lineageHeadlines 与成员窗口一致：无行的成员不产生项', () => {
+  assert.deepEqual(lineageHeadlines({ store: memberStore, lineage: memberLineage }), [
+    { label: 'S1', headline: 'u m-a' },
+    { label: 'S3', headline: memberHandoffs[52].nextTask },
+  ]);
 });

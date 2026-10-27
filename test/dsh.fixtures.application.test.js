@@ -1,8 +1,9 @@
 // Every local DSH fixture run end to end: the log's events enter a composed `SessionWatcher` through the DSH
 // source driver in each of the three ways a watcher can take them, and what the watcher measures, archives and
 // hands off is compared with the `application` expectations `scripts/dsh-fixture-expect.mjs` derived from the
-// events alone, and the bucket data of the two other entries with the whole snapshot's. A fixture absent on
-// this machine skips its cases.
+// events alone, and the bucket data of the two other entries with the whole snapshot's. The watcher attributes by
+// the lines a call shows, matched against the working tree `scripts/synthesize-working-tree.mjs` made from the log.
+// A fixture or tree absent on this machine skips its cases.
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { resolveProjectKey } from '../lib/project-key.js';
 import { openStore, closeStore } from '../lib/store.js';
 import { composeWatcher } from '../dsh/src/composition.js';
 import { hasDshFixture, readDshFixture, expectationsOf } from './helpers/dsh-fixtures.js';
+import { hasWorkingTreeFixture, readWorkingTreeFixture } from './helpers/working-tree-fixtures.js';
 
 const FIXTURES = ['compaction-prune', 'plain-ask', 'subagent'];
 
@@ -28,7 +30,7 @@ async function withFixtureWatcher(name, run) {
   try {
     const { watcher } = composeWatcher({
       sessionId, cwd: header.cwd, store, turnNotesRoot: join(stateDir, 'turn-notes'), readSession,
-      isIgnored: null, cacheTtl: () => null,
+      isIgnored: null, cacheTtl: () => null, workingTree: readWorkingTreeFixture(name),
     });
     const diagnostics = [];
     const driver = createDshSourceDriver({ sessionId, onDiagnostics: reported => diagnostics.push(...reported) });
@@ -109,7 +111,7 @@ function bootstrapSplit(events, { reducer }) {
 
 describe('DSH fixtures through a composed SessionWatcher', () => {
   for (const name of FIXTURES) {
-    const skip = !hasDshFixture(name);
+    const skip = !hasDshFixture(name) || !hasWorkingTreeFixture(name);
 
     test(`${name}: the whole snapshot measures, archives as a replay and hands off under the session id`,
       { skip }, () => withFixtureWatcher(name, async (fixture) => {

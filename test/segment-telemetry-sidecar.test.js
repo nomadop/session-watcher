@@ -5,18 +5,13 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createClaudeCodeMeasurementProjection } from '../lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse,
-  completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload,
-  interpretClaudeCodeTaskNotification,
-} from '../lib/harness/claude-code/native-tools.js';
 import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../lib/harness/claude-code/transcript-observation.js';
 import { createMeasurementEngine } from '../lib/measurement/engine.js';
 import { charsToTokens } from '../lib/token-estimate.js';
 import {
   ts, chain, usage, userMessage, assistantObservation, assistantToolUse, toolResult, skillPayloadRow,
 } from './helpers/transcript-fixtures.js';
+import { ccRig, linesText } from './helpers/attribution-fixtures.js';
 
 const FAST_MODEL = 'test-model-fast';
 const SLOW_MODEL = 'test-model-slow';
@@ -32,21 +27,24 @@ function resolveModelPolicy(modelId) {
 }
 
 const LOAD_TOOL = 'mcp__plugin_session-watcher_session-watcher__load_handoff';
-const READ_LINES = ['1\tconst alpha = 1;', '2\tconst beta = 2;', '3\tconst gamma = 3;'];
+const READ_TEXT = ['const alpha = 1;', 'const beta = 2;', 'const gamma = 3;'];
+const READ_LINES = READ_TEXT.map((line, index) => `${index + 1}\t${line}`);
 const READ_RESULT = READ_LINES.join('\n');
 const SKILL_LAUNCH = 'Launching skill: sw-handoff';
 const STEP_USAGE = usage({ input: 7, output: 11, cacheRead: 13, cacheWrite: 17 });
+
+// The files the Reads below show, declared once: the results are numbered from them and the tree holds the same.
+const FILES = Object.fromEntries(
+  ['a', 'b', 'c'].map(name => [`/repo/lib/${name}.js`, linesText(READ_TEXT)]),
+);
+const { interpreters } = ccRig({ files: FILES, cwd: '/repo' });
 
 function makeProjection(overrides = {}) {
   return createClaudeCodeMeasurementProjection({
     cwd: '/repo',
     projectRoot: '/repo',
-    sourceLocator: '/transcripts/session.jsonl',
     resolveModelPolicy,
-    interpretToolUse: interpretClaudeCodeToolUse,
-    completeToolResult: completeClaudeCodeToolResult,
-    interpretSkillPayload: interpretClaudeCodeSkillPayload,
-    interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    ...interpreters,
     ...overrides,
   });
 }
@@ -402,7 +400,7 @@ describe('Segment Telemetry sidecar', () => {
     const payload = finished.artifact.payload;
     assert.deepEqual(payload.steps.map(step => [step.foldedSeq, step.toolCalls]), [[1, 1], [2, 1]]);
     assert.deepEqual(payload.events, [{
-      foldedSeq: 1, eventOrdinal: 0, path: '/repo/lib/a.js', rawPath: 'lib/a.js', toolType: 'Read', isFullRead: 1,
+      foldedSeq: 1, eventOrdinal: 0, path: '/repo/lib/a.js', rawPath: '/repo/lib/a.js', toolType: 'Read', isFullRead: 1,
     }]);
     // Detached: mutating the returned value cannot reach the Projection's own state.
     payload.steps[0].toolCalls = 99;

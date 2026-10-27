@@ -45,7 +45,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // lib/constants.js
-var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, init_constants = __esm({
+var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS, init_constants = __esm({
   "lib/constants.js"() {
     C_RATIO_TABLE = [
       // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
@@ -104,7 +104,14 @@ var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE,
       // Anthropic tokenizer (n=5881)
       { match: /deepseek/i, ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 }, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5;
+    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, SKILL_FRAMING_TOKENS = 40, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5, WORKING_TREE_CACHE_ENTRIES = 256, WORKING_TREE_CACHE_CHARS = 8e6, ATTRIBUTION_LIMITS = {
+      candidates: 64,
+      fileBytes: 1e6,
+      sideChars: 1e5,
+      decodeDepth: 6,
+      alignCells: 4e6,
+      evidenceFloor: 3
+    };
   }
 });
 
@@ -197,6 +204,14 @@ function ensureV5Shape(db) {
   )`), db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_note_session
     ON turn_note(source_session_id, source_timestamp)`);
 }
+function ensureAttributionRecordShape(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS attribution_record (
+    session_id  TEXT NOT NULL,
+    tool_use_id TEXT NOT NULL,
+    record      TEXT NOT NULL,
+    PRIMARY KEY (session_id, tool_use_id)
+  ) WITHOUT ROWID`);
+}
 function addColumnIfMissing(db, table, name2, type) {
   db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name).includes(name2) || db.exec(`ALTER TABLE ${table} ADD COLUMN ${name2} ${type}`);
 }
@@ -256,7 +271,7 @@ function migrate(db) {
         path       TEXT NOT NULL,
         tokens     REAL NOT NULL,
         PRIMARY KEY (session_id, path)
-      ) WITHOUT ROWID`), migrateProfileToSegment(db), migrateProfilePaths(db), createHandoffTable(db), db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run()), version < 3 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), version < 4 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), ensureV2Shape(db), ensureV3Shape(db), ensureV5Shape(db), version < 5 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), db.exec("COMMIT");
+      ) WITHOUT ROWID`), migrateProfileToSegment(db), migrateProfilePaths(db), createHandoffTable(db), db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '2') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run()), version < 3 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), version < 4 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), ensureV2Shape(db), ensureV3Shape(db), ensureV5Shape(db), ensureAttributionRecordShape(db), version < 5 && db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(), db.exec("COMMIT");
   } catch (err2) {
     throw db.exec("ROLLBACK"), err2;
   }
@@ -415,6 +430,9 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
           deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
           deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
+          deleteSessionAttributions: db.prepare("DELETE FROM attribution_record WHERE session_id = ?"),
+          loadAttribution: db.prepare("SELECT record FROM attribution_record WHERE session_id = ? AND tool_use_id = ?"),
+          insertAttribution: db.prepare("INSERT OR IGNORE INTO attribution_record (session_id, tool_use_id, record) VALUES (?, ?, ?)"),
           // Config CRUD
           loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
           saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
@@ -500,9 +518,10 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
         (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
         VALUES (?,?,?,?,?,?,?)`),
-          // Lineage: the parent edge is the delivery a session consumed before it prepared its own
-          // handoff. LIMIT 1 is replacement semantics, not a query optimization — when one child
-          // session loaded several handoffs, only the newest qualifying delivery is its parent, and
+          // Lineage: the parent edge is the newest delivery a session consumed no later than a node's
+          // creation, a delivery of the session's own handoff included — that is how a continued session
+          // reaches its previous epoch. LIMIT 1 is replacement semantics, not a query optimization — when one
+          // child session loaded several handoffs, only the newest qualifying delivery is its parent, and
           // the earlier ones' ancestor chains are NOT merged in. Same millisecond breaks by handoff_id.
           findParentDelivery: db.prepare(`SELECT h.* FROM handoff_load AS hl
         JOIN handoff AS h ON h.handoff_id = hl.handoff_id
@@ -620,9 +639,24 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
       deleteSession(sessionId) {
         this._db.exec("BEGIN IMMEDIATE");
         try {
-          this._stmts.deleteSessionState.run(sessionId), this._stmts.deleteSessionPaths.run(sessionId), this._stmts.deleteSessionLines.run(sessionId), this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId), this._stmts.deleteSessionRecord.run(sessionId), this._db.exec("COMMIT");
+          this._stmts.deleteSessionState.run(sessionId), this._stmts.deleteSessionPaths.run(sessionId), this._stmts.deleteSessionLines.run(sessionId), this._stmts.deleteSessionAttributions.run(sessionId), this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId), this._stmts.deleteSessionRecord.run(sessionId), this._db.exec("COMMIT");
         } catch (e) {
           throw this._db.exec("ROLLBACK"), e;
+        }
+      }
+      // --- Attribution Record ---
+      // INSERT OR IGNORE: the first write for a key stays.
+      rememberAttribution(sessionId, toolUseId, record) {
+        this._stmts.insertAttribution.run(sessionId, toolUseId, JSON.stringify(record));
+      }
+      recallAttribution(sessionId, toolUseId) {
+        let row = this._stmts.loadAttribution.get(sessionId, toolUseId);
+        if (!row) return null;
+        try {
+          let parsed = JSON.parse(row.record);
+          return parsed !== null && typeof parsed == "object" && !Array.isArray(parsed) ? parsed : null;
+        } catch {
+          return null;
         }
       }
       // --- Config CRUD ---
@@ -6000,10 +6034,10 @@ var require_raw_body = __commonJS({
       if (!done && !global.Promise)
         throw new TypeError("argument callback is required");
       var encoding = opts.encoding !== !0 ? opts.encoding : "utf-8", limit = bytes.parse(opts.limit), length = opts.length != null && !isNaN(opts.length) ? parseInt(opts.length, 10) : null;
-      return done ? readStream(stream, encoding, length, limit, wrap(done)) : new Promise(function(resolve6, reject) {
+      return done ? readStream(stream, encoding, length, limit, wrap(done)) : new Promise(function(resolve4, reject) {
         readStream(stream, encoding, length, limit, function(err2, buf) {
           if (err2) return reject(err2);
-          resolve6(buf);
+          resolve4(buf);
         });
       });
     }
@@ -14968,7 +15002,7 @@ var require_type_is = __commonJS({
     module2.exports = typeofrequest;
     module2.exports.is = typeis;
     module2.exports.hasBody = hasbody;
-    module2.exports.normalize = normalize4;
+    module2.exports.normalize = normalize3;
     module2.exports.match = mimeMatch;
     function typeis(value, types_) {
       var i2, types = types_, val = tryNormalizeType(value);
@@ -14981,7 +15015,7 @@ var require_type_is = __commonJS({
         return val;
       var type;
       for (i2 = 0; i2 < types.length; i2++)
-        if (mimeMatch(normalize4(type = types[i2]), val))
+        if (mimeMatch(normalize3(type = types[i2]), val))
           return type[0] === "+" || type.indexOf("*") !== -1 ? val : type;
       return !1;
     }
@@ -15000,7 +15034,7 @@ var require_type_is = __commonJS({
       var value = req.headers["content-type"];
       return typeis(value, types);
     }
-    function normalize4(type) {
+    function normalize3(type) {
       if (typeof type != "string")
         return !1;
       switch (type) {
@@ -17998,7 +18032,7 @@ var require_query = __commonJS({
 var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports, module2) {
     "use strict";
-    var debug = require_src()("express:view"), path3 = __require("path"), fs3 = __require("fs"), dirname6 = path3.dirname, basename3 = path3.basename, extname3 = path3.extname, join13 = path3.join, resolve6 = path3.resolve;
+    var debug = require_src()("express:view"), path3 = __require("path"), fs3 = __require("fs"), dirname6 = path3.dirname, basename3 = path3.basename, extname3 = path3.extname, join12 = path3.join, resolve4 = path3.resolve;
     module2.exports = View;
     function View(name2, options) {
       var opts = options || {};
@@ -18019,7 +18053,7 @@ var require_view = __commonJS({
       var path4, roots = [].concat(this.root);
       debug('lookup "%s"', name2);
       for (var i2 = 0; i2 < roots.length && !path4; i2++) {
-        var root = roots[i2], loc = resolve6(root, name2), dir = dirname6(loc), file = basename3(loc);
+        var root = roots[i2], loc = resolve4(root, name2), dir = dirname6(loc), file = basename3(loc);
         path4 = this.resolve(dir, file);
       }
       return path4;
@@ -18028,8 +18062,8 @@ var require_view = __commonJS({
       debug('render "%s"', this.path), this.engine(this.path, options, callback);
     };
     View.prototype.resolve = function(dir, file) {
-      var ext = this.ext, path4 = join13(dir, file), stat = tryStat(path4);
-      if (stat && stat.isFile() || (path4 = join13(dir, basename3(file, ext), "index" + ext), stat = tryStat(path4), stat && stat.isFile()))
+      var ext = this.ext, path4 = join12(dir, file), stat = tryStat(path4);
+      if (stat && stat.isFile() || (path4 = join12(dir, basename3(file, ext), "index" + ext), stat = tryStat(path4), stat && stat.isFile()))
         return path4;
     };
     function tryStat(path4) {
@@ -18456,7 +18490,7 @@ var require_range_parser = __commonJS({
 var require_send = __commonJS({
   "node_modules/send/index.js"(exports, module2) {
     "use strict";
-    var createError = require_http_errors(), debug = require_src()("send"), deprecate = require_depd()("send"), destroy = require_destroy(), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), etag = require_etag(), fresh = require_fresh(), fs3 = __require("fs"), mime = require_mime(), ms = require_ms2(), onFinished = require_on_finished(), parseRange = require_range_parser(), path3 = __require("path"), statuses = require_statuses(), Stream = __require("stream"), util = __require("util"), extname3 = path3.extname, join13 = path3.join, normalize4 = path3.normalize, resolve6 = path3.resolve, sep = path3.sep, BYTES_RANGE_REGEXP = /^ *bytes=/, MAX_MAXAGE = 3600 * 24 * 365 * 1e3, UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+    var createError = require_http_errors(), debug = require_src()("send"), deprecate = require_depd()("send"), destroy = require_destroy(), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), etag = require_etag(), fresh = require_fresh(), fs3 = __require("fs"), mime = require_mime(), ms = require_ms2(), onFinished = require_on_finished(), parseRange = require_range_parser(), path3 = __require("path"), statuses = require_statuses(), Stream = __require("stream"), util = __require("util"), extname3 = path3.extname, join12 = path3.join, normalize3 = path3.normalize, resolve4 = path3.resolve, sep = path3.sep, BYTES_RANGE_REGEXP = /^ *bytes=/, MAX_MAXAGE = 3600 * 24 * 365 * 1e3, UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
     function send(req, path4, options) {
@@ -18467,7 +18501,7 @@ var require_send = __commonJS({
       var opts = options || {};
       if (this.options = opts, this.path = path4, this.req = req, this._acceptRanges = opts.acceptRanges !== void 0 ? !!opts.acceptRanges : !0, this._cacheControl = opts.cacheControl !== void 0 ? !!opts.cacheControl : !0, this._etag = opts.etag !== void 0 ? !!opts.etag : !0, this._dotfiles = opts.dotfiles !== void 0 ? opts.dotfiles : "ignore", this._dotfiles !== "ignore" && this._dotfiles !== "allow" && this._dotfiles !== "deny")
         throw new TypeError('dotfiles option must be "allow", "deny", or "ignore"');
-      this._hidden = !!opts.hidden, opts.hidden !== void 0 && deprecate("hidden: use dotfiles: '" + (this._hidden ? "allow" : "ignore") + "' instead"), opts.dotfiles === void 0 && (this._dotfiles = void 0), this._extensions = opts.extensions !== void 0 ? normalizeList(opts.extensions, "extensions option") : [], this._immutable = opts.immutable !== void 0 ? !!opts.immutable : !1, this._index = opts.index !== void 0 ? normalizeList(opts.index, "index option") : ["index.html"], this._lastModified = opts.lastModified !== void 0 ? !!opts.lastModified : !0, this._maxage = opts.maxAge || opts.maxage, this._maxage = typeof this._maxage == "string" ? ms(this._maxage) : Number(this._maxage), this._maxage = isNaN(this._maxage) ? 0 : Math.min(Math.max(0, this._maxage), MAX_MAXAGE), this._root = opts.root ? resolve6(opts.root) : null, !this._root && opts.from && this.from(opts.from);
+      this._hidden = !!opts.hidden, opts.hidden !== void 0 && deprecate("hidden: use dotfiles: '" + (this._hidden ? "allow" : "ignore") + "' instead"), opts.dotfiles === void 0 && (this._dotfiles = void 0), this._extensions = opts.extensions !== void 0 ? normalizeList(opts.extensions, "extensions option") : [], this._immutable = opts.immutable !== void 0 ? !!opts.immutable : !1, this._index = opts.index !== void 0 ? normalizeList(opts.index, "index option") : ["index.html"], this._lastModified = opts.lastModified !== void 0 ? !!opts.lastModified : !0, this._maxage = opts.maxAge || opts.maxage, this._maxage = typeof this._maxage == "string" ? ms(this._maxage) : Number(this._maxage), this._maxage = isNaN(this._maxage) ? 0 : Math.min(Math.max(0, this._maxage), MAX_MAXAGE), this._root = opts.root ? resolve4(opts.root) : null, !this._root && opts.from && this.from(opts.from);
     }
     util.inherits(SendStream, Stream);
     SendStream.prototype.etag = deprecate.function(function(val) {
@@ -18481,7 +18515,7 @@ var require_send = __commonJS({
       return debug("index %o", paths), this._index = index2, this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function(path4) {
-      return this._root = resolve6(String(path4)), debug("root %s", this._root), this;
+      return this._root = resolve4(String(path4)), debug("root %s", this._root), this;
     };
     SendStream.prototype.from = deprecate.function(
       SendStream.prototype.root,
@@ -18589,13 +18623,13 @@ var require_send = __commonJS({
         return this.error(400), res;
       var parts2;
       if (root !== null) {
-        if (path4 && (path4 = normalize4("." + sep + path4)), UP_PATH_REGEXP.test(path4))
+        if (path4 && (path4 = normalize3("." + sep + path4)), UP_PATH_REGEXP.test(path4))
           return debug('malicious path "%s"', path4), this.error(403), res;
-        parts2 = path4.split(sep), path4 = normalize4(join13(root, path4));
+        parts2 = path4.split(sep), path4 = normalize3(join12(root, path4));
       } else {
         if (UP_PATH_REGEXP.test(path4))
           return debug('malicious path "%s"', path4), this.error(403), res;
-        parts2 = normalize4(path4).split(sep), path4 = resolve6(path4);
+        parts2 = normalize3(path4).split(sep), path4 = resolve4(path4);
       }
       if (containsDotFile(parts2)) {
         var access = this._dotfiles;
@@ -18672,7 +18706,7 @@ var require_send = __commonJS({
       function next(err2) {
         if (++i2 >= self._index.length)
           return err2 ? self.onStatError(err2) : self.error(404);
-        var p = join13(path4, self._index[i2]);
+        var p = join12(path4, self._index[i2]);
         debug('stat "%s"', p), fs3.stat(p, function(err3, stat) {
           if (err3) return next(err3);
           if (stat.isDirectory()) return next();
@@ -19400,7 +19434,7 @@ var require_utils2 = __commonJS({
 var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports, module2) {
     "use strict";
-    var finalhandler = require_finalhandler(), Router = require_router(), methods = require_methods(), middleware = require_init(), query = require_query(), debug = require_src()("express:application"), View = require_view(), http = __require("http"), compileETag = require_utils2().compileETag, compileQueryParser = require_utils2().compileQueryParser, compileTrust = require_utils2().compileTrust, deprecate = require_depd()("express"), flatten = require_array_flatten(), merge = require_utils_merge(), resolve6 = __require("path").resolve, setPrototypeOf = require_setprototypeof(), hasOwnProperty = Object.prototype.hasOwnProperty, slice = Array.prototype.slice, app = exports = module2.exports = {}, trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
+    var finalhandler = require_finalhandler(), Router = require_router(), methods = require_methods(), middleware = require_init(), query = require_query(), debug = require_src()("express:application"), View = require_view(), http = __require("http"), compileETag = require_utils2().compileETag, compileQueryParser = require_utils2().compileQueryParser, compileTrust = require_utils2().compileTrust, deprecate = require_depd()("express"), flatten = require_array_flatten(), merge = require_utils_merge(), resolve4 = __require("path").resolve, setPrototypeOf = require_setprototypeof(), hasOwnProperty = Object.prototype.hasOwnProperty, slice = Array.prototype.slice, app = exports = module2.exports = {}, trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app.init = function() {
       this.cache = {}, this.engines = {}, this.settings = {}, this.defaultConfiguration();
     };
@@ -19411,7 +19445,7 @@ var require_application = __commonJS({
         value: !0
       }), debug("booting in %s mode", env), this.on("mount", function(parent) {
         this.settings[trustProxyDefaultSymbol] === !0 && typeof parent.settings["trust proxy fn"] == "function" && (delete this.settings["trust proxy"], delete this.settings["trust proxy fn"]), setPrototypeOf(this.request, parent.request), setPrototypeOf(this.response, parent.response), setPrototypeOf(this.engines, parent.engines), setPrototypeOf(this.settings, parent.settings);
-      }), this.locals = /* @__PURE__ */ Object.create(null), this.mountpath = "/", this.locals.settings = this.settings, this.set("view", View), this.set("views", resolve6("views")), this.set("jsonp callback name", "callback"), env === "production" && this.enable("view cache"), Object.defineProperty(this, "router", {
+      }), this.locals = /* @__PURE__ */ Object.create(null), this.mountpath = "/", this.locals.settings = this.settings, this.set("view", View), this.set("views", resolve4("views")), this.set("jsonp callback name", "callback"), env === "production" && this.enable("view cache"), Object.defineProperty(this, "router", {
         get: function() {
           throw new Error(`'app.router' is deprecated!
 Please see the 3.x to 4.x migration guide for details on how to update your app.`);
@@ -20360,7 +20394,7 @@ var require_vary = __commonJS({
 var require_response = __commonJS({
   "node_modules/express/lib/response.js"(exports, module2) {
     "use strict";
-    var Buffer2 = require_safe_buffer().Buffer, contentDisposition = require_content_disposition(), createError = require_http_errors(), deprecate = require_depd()("express"), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), http = __require("http"), isAbsolute6 = require_utils2().isAbsolute, onFinished = require_on_finished(), path3 = __require("path"), statuses = require_statuses(), merge = require_utils_merge(), sign = require_cookie_signature().sign, normalizeType = require_utils2().normalizeType, normalizeTypes = require_utils2().normalizeTypes, setCharset = require_utils2().setCharset, cookie = require_cookie(), send = require_send(), extname3 = path3.extname, mime = send.mime, resolve6 = path3.resolve, vary = require_vary(), res = Object.create(http.ServerResponse.prototype);
+    var Buffer2 = require_safe_buffer().Buffer, contentDisposition = require_content_disposition(), createError = require_http_errors(), deprecate = require_depd()("express"), encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), http = __require("http"), isAbsolute4 = require_utils2().isAbsolute, onFinished = require_on_finished(), path3 = __require("path"), statuses = require_statuses(), merge = require_utils_merge(), sign = require_cookie_signature().sign, normalizeType = require_utils2().normalizeType, normalizeTypes = require_utils2().normalizeTypes, setCharset = require_utils2().setCharset, cookie = require_cookie(), send = require_send(), extname3 = path3.extname, mime = send.mime, resolve4 = path3.resolve, vary = require_vary(), res = Object.create(http.ServerResponse.prototype);
     module2.exports = res;
     var charsetRegExp = /;\s*charset\s*=/;
     res.status = function(code) {
@@ -20418,7 +20452,7 @@ var require_response = __commonJS({
         throw new TypeError("path argument is required to res.sendFile");
       if (typeof path4 != "string")
         throw new TypeError("path must be a string to res.sendFile");
-      if (typeof options == "function" && (done = options, opts = {}), !opts.root && !isAbsolute6(path4))
+      if (typeof options == "function" && (done = options, opts = {}), !opts.root && !isAbsolute4(path4))
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       var pathname = encodeURI(path4), file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err2) {
@@ -20453,7 +20487,7 @@ var require_response = __commonJS({
           key.toLowerCase() !== "content-disposition" && (headers[key] = opts.headers[key]);
         }
       opts = Object.create(opts), opts.headers = headers;
-      var fullPath = opts.root ? path4 : resolve6(path4);
+      var fullPath = opts.root ? path4 : resolve4(path4);
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function(type) {
@@ -20611,7 +20645,7 @@ var require_response = __commonJS({
 var require_serve_static = __commonJS({
   "node_modules/serve-static/index.js"(exports, module2) {
     "use strict";
-    var encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), parseUrl = require_parseurl(), resolve6 = __require("path").resolve, send = require_send(), url = __require("url");
+    var encodeUrl = require_encodeurl(), escapeHtml = require_escape_html(), parseUrl = require_parseurl(), resolve4 = __require("path").resolve, send = require_send(), url = __require("url");
     module2.exports = serveStatic;
     module2.exports.mime = send.mime;
     function serveStatic(root, options) {
@@ -20622,7 +20656,7 @@ var require_serve_static = __commonJS({
       var opts = Object.create(options || null), fallthrough = opts.fallthrough !== !1, redirect = opts.redirect !== !1, setHeaders = opts.setHeaders;
       if (setHeaders && typeof setHeaders != "function")
         throw new TypeError("option setHeaders must be function");
-      opts.maxage = opts.maxage || opts.maxAge || 0, opts.root = resolve6(root);
+      opts.maxage = opts.maxage || opts.maxAge || 0, opts.root = resolve4(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -20764,7 +20798,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     let relative = root ? path.relative(root, absolute) : resourceKey;
     return relative && ignoreMatcher && ignoreMatcher(relative) ? "gitignore" : null;
   }
-  function resolve6(resourceKey) {
+  function resolve4(resourceKey) {
     let defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -20796,7 +20830,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve6, infer };
+  return { resolve: resolve4, infer };
 }
 var SKILL_RESOURCE_PREFIX, init_resource_policy = __esm({
   "lib/resource-policy.js"() {
@@ -20885,10 +20919,10 @@ function pairFor(toolUseId, use, pendingResults) {
     sourceOrdinal: use.sourceOrdinal,
     sourceEntryId: use.sourceEntryId,
     timestamp: use.timestamp,
-    // A tool use's own working directory, carried uninterpreted: the Harness Adapter resolves the native
-    // target from this pair and attaches the `resourceKey` shared Turn History reads.
+    // A tool use's own working directory, carried uninterpreted: whatever resolves a pair's resources does it
+    // from this pair. `resourceKeys` is the one list shared Turn History reads.
     cwd: use.cwd,
-    resourceKey: null,
+    resourceKeys: [],
     // null means "no result row paired with this tool use", which is not the same as a result row that
     // carried no annotation — that one has a `resultMeta` whose annotation is absent.
     result: result === void 0 ? null : result.content,
@@ -21896,11 +21930,18 @@ function parseTurnPageBoundary(raw) {
 function labelHistorySources(lineage) {
   return lineage.map((entry, index) => ({ ...entry, label: `S${index + 1}`, index }));
 }
+function admitsTurn({ window: window2 }, timestamp) {
+  return timestamp == null ? !0 : timestamp <= window2.through && (window2.after === null || timestamp > window2.after);
+}
 async function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
   let read = await dialogueSource.read(sourceLocator);
   if (read.status !== "ok") return { readable: !1, folds: [], turns: [] };
   let { folds } = dialogueProjection.project(read.observations);
   return { readable: !0, folds, turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)) };
+}
+function createHistoryReader(history) {
+  let reads = /* @__PURE__ */ new Map();
+  return (sourceLocator) => (reads.has(sourceLocator) || reads.set(sourceLocator, readHistorySource(history, sourceLocator)), reads.get(sourceLocator));
 }
 function applyHeadRules(line, rules) {
   for (let rule of rules) {
@@ -21941,8 +21982,11 @@ function buildSkeleton(turns, sessionId) {
         return headCut(normalized2, U_HEAD_CHARS).split(`
 `).map((part) => `T ${t} | U   : ${part}`);
       }
-      if (line.kind === "tool")
-        return toolCalls++, line.tool.resourceKey && basenames.add(basename(line.tool.resourceKey)), [];
+      if (line.kind === "tool") {
+        toolCalls++;
+        for (let key of line.tool.resourceKeys) basenames.add(basename(key));
+        return [];
+      }
       if (line.message.role !== "human" && !shown.has(i2)) return [];
       let role = line.message.role === "human" ? "U  " : "A  ", normalized = line.message.text.replace(/\r\n?/g, `
 `);
@@ -21999,7 +22043,7 @@ function snapshotDigest(turns) {
     anchor: turn.sourceEntryId,
     ts: turn.timestamp,
     u: turn.cleanedU,
-    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKey ?? null } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
+    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKeys } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
   }));
   return createHash2("sha256").update(stableStringify(canonical)).digest("hex");
 }
@@ -22010,7 +22054,8 @@ function buildSearchTerms({ uText, note, turn }) {
   let bigrams = cjkBigrams(`${uText}
 ${note ?? ""}`), keys = /* @__PURE__ */ new Set();
   for (let line of turn.lines)
-    line.kind === "tool" && line.tool.resourceKey && keys.add(line.tool.resourceKey);
+    if (line.kind === "tool")
+      for (let key of line.tool.resourceKeys) keys.add(key);
   return [bigrams, ...keys].filter(Boolean).join(" ");
 }
 function projectTurnRecord(row, ordinals) {
@@ -22039,11 +22084,14 @@ var U_HEAD_CHARS, A_CUT_CHARS, AGG_PATH_CAP, U_TEXT_TOKENS, TURN_ADDRESS_RE, tur
 });
 
 // lib/turn-note.js
-function captureCurrentEpochTurns({ observations, dialogueProjection }) {
+function captureCurrentEpochTurns({ observations, dialogueProjection, resourceKeysOf }) {
   let boundaryAt = -1;
   for (let i2 = 0; i2 < observations.length; i2++)
     observations[i2].type === "epoch-boundary" && (boundaryAt = i2);
   let { folds } = dialogueProjection.project(observations.slice(boundaryAt + 1));
+  if (resourceKeysOf)
+    for (let fold of folds)
+      for (let pair of fold.toolPairs) pair.resourceKeys = resourceKeysOf(pair);
   return { turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)).slice(0, -1) };
 }
 function captureIsPersistable(turns) {
@@ -22147,6 +22195,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         createEngine,
         createMeasurementProjection: createMeasurementProjection2,
         modelPolicyFor: modelPolicyFor2,
+        resourceKeysOf = null,
         now = () => Date.now()
       } = {}) {
         invariant(store !== null && typeof store == "object", "store is required"), invariant(dialogueProjection !== null && typeof dialogueProjection == "object", "dialogueProjection is required"), invariant(
@@ -22155,7 +22204,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         ), invariant(
           resourcePolicy !== null && typeof resourcePolicy == "object" && typeof resourcePolicy.resolve == "function" && typeof resourcePolicy.infer == "function",
           "resourcePolicy is required and exposes resolve and infer"
-        ), invariant(resourceEnrichment !== null && typeof resourceEnrichment == "object", "resourceEnrichment is required"), invariant(handoffComposition !== null && typeof handoffComposition == "object", "handoffComposition is required"), invariant(typeof loaderVersion == "string" && loaderVersion.length > 0, "loaderVersion is required"), invariant(typeof turnNotesRoot == "string" && turnNotesRoot.length > 0, "turnNotesRoot is required and has no fallback"), invariant(typeof createEngine == "function", "createEngine must be a function"), invariant(typeof createMeasurementProjection2 == "function", "createMeasurementProjection must be a function"), invariant(typeof modelPolicyFor2 == "function", "modelPolicyFor must be a function"), invariant(typeof now == "function", "now must be a function"), this._projectId = projectId, this._projectRoot = projectRoot, this._turnNotesRoot = turnNotesRoot, this._loaderVersion = loaderVersion, this._store = store, this._dialogueSource = dialogueSource, this._dialogueProjection = dialogueProjection, this._policy = resourcePolicy, this._enrichment = resourceEnrichment, this._handoff = handoffComposition, this._createEngine = createEngine, this._createProjection = createMeasurementProjection2, this._modelPolicyFor = modelPolicyFor2, this._now = now, this._startMs = now(), this._sessionId = sessionId, this._sourceLocator = sourceLocator, this._ratioOverride = null, this._hasObservedSource = !1, this._streamRevision = 0, this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._applying = !1, this._liveMark = !1, this._resolveModelPolicy = (modelId) => {
+        ), invariant(resourceEnrichment !== null && typeof resourceEnrichment == "object", "resourceEnrichment is required"), invariant(handoffComposition !== null && typeof handoffComposition == "object", "handoffComposition is required"), invariant(typeof loaderVersion == "string" && loaderVersion.length > 0, "loaderVersion is required"), invariant(typeof turnNotesRoot == "string" && turnNotesRoot.length > 0, "turnNotesRoot is required and has no fallback"), invariant(typeof createEngine == "function", "createEngine must be a function"), invariant(typeof createMeasurementProjection2 == "function", "createMeasurementProjection must be a function"), invariant(typeof modelPolicyFor2 == "function", "modelPolicyFor must be a function"), invariant(resourceKeysOf === null || typeof resourceKeysOf == "function", "resourceKeysOf must be a function"), invariant(typeof now == "function", "now must be a function"), this._projectId = projectId, this._projectRoot = projectRoot, this._turnNotesRoot = turnNotesRoot, this._loaderVersion = loaderVersion, this._store = store, this._dialogueSource = dialogueSource, this._dialogueProjection = dialogueProjection, this._policy = resourcePolicy, this._enrichment = resourceEnrichment, this._handoff = handoffComposition, this._createEngine = createEngine, this._createProjection = createMeasurementProjection2, this._modelPolicyFor = modelPolicyFor2, this._resourceKeysOf = resourceKeysOf, this._now = now, this._startMs = now(), this._sessionId = sessionId, this._sourceLocator = sourceLocator, this._ratioOverride = null, this._hasObservedSource = !1, this._streamRevision = 0, this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._applying = !1, this._liveMark = !1, this._resolveModelPolicy = (modelId) => {
           let policy = readPolicy(this._modelPolicyFor, modelId);
           return policy === null && (policy = readPolicy(this._modelPolicyFor, null) ?? this._modelPolicyFor(null)), this._ratioOverride == null ? policy : { ...policy, cRatio: this._ratioOverride };
         }, this._resolveResourcePolicy = (resourceKey) => this._policy.resolve(resourceKey), this._engine = this._createEngine({
@@ -22184,10 +22233,10 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
             let observedBefore = this._hasObservedSource;
             this._hasObservedSource = observedBefore || frame.sourceObserved === !0, !observedBefore && this._hasObservedSource && (this._streamRevision += 1);
           }
-          let newCalls = 0, revisedCalls = 0;
+          let frameCtx = this._frameContext(frame, diagnostics), newCalls = 0, revisedCalls = 0;
           for (let batch of frame.batches ?? [])
             for (let observation of batch) {
-              let projected = this._projection.project(observation);
+              let projected = this._projection.project(observation, frameCtx);
               for (let entry of projected.diagnostics) diagnostics.push(entry);
               for (let record of projected.records) {
                 record.type === "epoch" && this._flushResourcePolicy(diagnostics);
@@ -22216,6 +22265,51 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
         let result = this._engine.closeCurrentSegment();
         for (let entry of result.diagnostics) diagnostics.push(entry);
         return this._consumeClosedSegment(result, captureMode, diagnostics), { diagnostics };
+      }
+      // The attribution store bound to the session this frame belongs to, for native interpretation to recall a
+      // call's record and offer one to keep. A store failure never reaches interpretation as an exception: a
+      // recall that fails is a miss and a remember that fails keeps nothing, each as a diagnostic of the frame.
+      // `remember` exists only on a live append, with `captureMode` read from the frame itself: the local default
+      // `applyHarnessFrame` applies would make an absent one live.
+      _frameContext(frame, diagnostics) {
+        let sessionId = this._sessionId;
+        if (!sessionId) return {};
+        let frameCtx = {
+          recall: this._recallFor(sessionId, (toolUseId, error) => {
+            diagnostics.push(diagnostic(
+              "attribution_recall_failed",
+              `attribution record for tool use ${toolUseId} could not be recalled: ${error.message}`
+            ));
+          })
+        };
+        return frame.transition === "append" && frame.captureMode === "live" && (frameCtx.remember = (toolUseId, record) => {
+          try {
+            this._store.rememberAttribution(sessionId, toolUseId, record);
+          } catch (error) {
+            diagnostics.push(diagnostic(
+              "attribution_remember_failed",
+              `attribution record for tool use ${toolUseId} could not be kept: ${error.message}`
+            ));
+          }
+        }), frameCtx;
+      }
+      // The context a capture operation hands `resourceKeysOf`: the same session-bound `recall` a frame gets,
+      // and no `remember`, because capture only reads what ingestion kept. Capture has no diagnostics exit, so a
+      // failed read is just a miss.
+      _captureContext() {
+        let sessionId = this._sessionId;
+        return sessionId ? { recall: this._recallFor(sessionId) } : {};
+      }
+      // The one store read behind every `recall`. The store method is looked up at call time, so a store without
+      // it fails like any other read does. A failure answers a miss and goes to `onFailure` when there is one.
+      _recallFor(sessionId, onFailure) {
+        return (toolUseId) => {
+          try {
+            return this._store.recallAttribution(sessionId, toolUseId);
+          } catch (error) {
+            return onFailure?.(toolUseId, error), null;
+          }
+        };
       }
       _installFreshRuntime(sourceLocator) {
         this._pendingNewResourceKeys = /* @__PURE__ */ new Set(), this._liveMark = !1, this._sourceLocator = sourceLocator ?? null, this._engine = this._createEngine({
@@ -22561,7 +22655,16 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
       // indistinguishable from a genuinely empty epoch whose submission would commit nothing.
       async _captureTurns() {
         let read = await this._dialogueSource.read(this._sourceLocator);
-        return read.status !== "ok" ? { status: read.status, turns: [] } : { status: "ok", ...captureCurrentEpochTurns({ observations: read.observations, dialogueProjection: this._dialogueProjection }) };
+        if (read.status !== "ok") return { status: read.status, turns: [] };
+        let context = this._captureContext();
+        return {
+          status: "ok",
+          ...captureCurrentEpochTurns({
+            observations: read.observations,
+            dialogueProjection: this._dialogueProjection,
+            resourceKeysOf: this._resourceKeysOf ? (pair) => this._resourceKeysOf(pair, context) : void 0
+          })
+        };
       }
       // The two files' one address, derived here and nowhere else. The key is the Context Epoch — this session
       // plus the epoch's first anchor — so a re-fetch after the epoch grew still finds the notes already
@@ -22764,11 +22867,11 @@ async function Module2(moduleArg = {}) {
       );
     }, "readBinary")), readAsync = /* @__PURE__ */ __name(async (url) => {
       if (isFileURI(url))
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve4, reject) => {
           var xhr = new XMLHttpRequest();
           xhr.open("GET", url, !0), xhr.responseType = "arraybuffer", xhr.onload = () => {
             if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-              resolve6(xhr.response);
+              resolve4(xhr.response);
               return;
             }
             reject(xhr.status);
@@ -22901,9 +23004,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module.instantiateWasm)
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve4, reject) => {
         Module.instantiateWasm(info2, (mod, inst) => {
-          resolve6(receiveInstance(mod, inst));
+          resolve4(receiveInstance(mod, inst));
         });
       });
     wasmBinaryFile ??= findWasmBinary();
@@ -23170,12 +23273,12 @@ async function Module2(moduleArg = {}) {
         }), (replace || GOT[symName].value == 0) && (typeof value == "function" ? GOT[symName].value = addFunction(value) : typeof value == "number" ? GOT[symName].value = value : err(`unhandled export type for '${symName}': ${typeof value}`));
       }
   }, "updateGOT"), relocateExports = /* @__PURE__ */ __name((exports, memoryBase2, replace) => {
-    var relocated = {};
+    var relocated2 = {};
     for (var e in exports) {
       var value = exports[e];
-      typeof value == "object" && (value = value.value), typeof value == "number" && (value += memoryBase2), relocated[e] = value;
+      typeof value == "object" && (value = value.value), typeof value == "number" && (value += memoryBase2), relocated2[e] = value;
     }
-    return updateGOT(relocated, replace), relocated;
+    return updateGOT(relocated2, replace), relocated2;
   }, "relocateExports"), isSymbolDefined = /* @__PURE__ */ __name((symName) => {
     var existing = wasmImports[symName];
     return !(!existing || existing.stub);
@@ -23646,8 +23749,8 @@ async function Module2(moduleArg = {}) {
   }
   __name(run, "run");
   var wasmExports;
-  return wasmExports = await createWasm(), run(), runtimeInitialized ? moduleRtn = Module : moduleRtn = new Promise((resolve6, reject) => {
-    readyPromiseResolve = resolve6, readyPromiseReject = reject;
+  return wasmExports = await createWasm(), run(), runtimeInitialized ? moduleRtn = Module : moduleRtn = new Promise((resolve4, reject) => {
+    readyPromiseResolve = resolve4, readyPromiseReject = reject;
   }), moduleRtn;
 }
 async function initializeBinding(moduleOptions) {
@@ -26747,7 +26850,7 @@ function createMeasurementProjection({
   captureSources,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload
+  interpretSkillPayload: interpretSkillPayload2
 }) {
   let invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
   function invariant7(ok, message) {
@@ -26756,7 +26859,7 @@ function createMeasurementProjection({
   function diagnostic3(code, message) {
     return { scope, code, message };
   }
-  let callByToolUseId = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map();
+  let callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map();
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     return facts || (facts = emptyFacts(), sidecarByStepId.set(stepId, facts)), facts;
@@ -26776,13 +26879,13 @@ function createMeasurementProjection({
     for (let effect of interpreted.effects) records.push({ type: "effect", ...effect });
     for (let residual of interpreted.residuals) records.push({ type: "residual", ...residual });
   }
-  function projectToolUse(observation, records, diagnostics) {
+  function projectToolUse(observation, frameCtx, records, diagnostics) {
     let id = observation.toolUseId, entry = callByToolUseId.get(id);
     if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
-    let interpreted = interpretToolUse(observation, context);
-    mergeTelemetry(interpreted.telemetry, diagnostics), callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" }), pushRecords(interpreted, records), entry && entry.phase === "held" && projectToolResult(entry.result, records, diagnostics);
+    let interpreted = interpretToolUse(observation, context, { scratch, frameCtx });
+    mergeTelemetry(interpreted.telemetry, diagnostics), callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" }), pushRecords(interpreted, records), entry && entry.phase === "held" && projectToolResult(entry.result, frameCtx, records, diagnostics);
   }
-  function projectToolResult(observation, records, diagnostics) {
+  function projectToolResult(observation, frameCtx, records, diagnostics) {
     let id = observation.toolUseId, entry = callByToolUseId.get(id);
     if (!entry) {
       callByToolUseId.set(id, { phase: "held", result: observation });
@@ -26793,7 +26896,7 @@ function createMeasurementProjection({
       return;
     }
     if (entry.phase !== "await-result") return;
-    let completed = completeToolResult(entry.pending, observation, context);
+    let completed = completeToolResult(entry.pending, observation, context, { scratch, frameCtx });
     mergeTelemetry(completed.telemetry, diagnostics), callByToolUseId.set(id, completed.skillContinuation ? {
       phase: "await-skill-payload",
       resourceKey: completed.skillContinuation.resourceKey,
@@ -26804,18 +26907,18 @@ function createMeasurementProjection({
     let entry = callByToolUseId.get(observation.toolUseId);
     if (!entry || entry.phase !== "await-skill-payload") return;
     callByToolUseId.set(observation.toolUseId, { phase: "completed" });
-    let interpreted = interpretSkillPayload(
+    let interpreted = interpretSkillPayload2(
       { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
       observation
     );
     mergeTelemetry(interpreted.telemetry, diagnostics), pushRecords(interpreted, records);
   }
-  function project(observation) {
+  function project(observation, frameCtx) {
     invariant7(observation !== null && typeof observation == "object", "observation must be an object");
     let records = [], diagnostics = [];
     switch (observation.type) {
       case "epoch-boundary":
-        callByToolUseId = /* @__PURE__ */ new Map(), records.push({ type: "epoch" });
+        callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), records.push({ type: "epoch" });
         break;
       case "turn-boundary":
         records.push({ type: "turn-boundary" });
@@ -26835,10 +26938,10 @@ function createMeasurementProjection({
         });
         break;
       case "tool-use":
-        projectToolUse(observation, records, diagnostics);
+        projectToolUse(observation, frameCtx, records, diagnostics);
         break;
       case "tool-result":
-        projectToolResult(observation, records, diagnostics);
+        projectToolResult(observation, frameCtx, records, diagnostics);
         break;
       case "skill-payload":
         projectSkillPayload(observation, records, diagnostics);
@@ -26852,7 +26955,7 @@ function createMeasurementProjection({
   }
   function finishSegment(closedSegment, { captureMode = "live" } = {}) {
     let closing = sidecarByStepId;
-    sidecarByStepId = /* @__PURE__ */ new Map(), callByToolUseId = /* @__PURE__ */ new Map();
+    sidecarByStepId = /* @__PURE__ */ new Map(), callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map();
     let diagnostics = [];
     if (closedSegment == null) return { artifact: null, diagnostics };
     let payload;
@@ -26877,33 +26980,30 @@ var init_measurement_projection = __esm({
 });
 
 // lib/harness/claude-code/measurement-projection.js
-import nodePath from "node:path";
-import { homedir as homedir3 } from "node:os";
 function invariant4(ok, message) {
   if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
 }
 function createClaudeCodeMeasurementProjection({
   cwd = null,
   projectRoot = null,
-  sourceLocator = null,
   resolveModelPolicy,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload,
-  interpretTaskNotification
+  interpretSkillPayload: interpretSkillPayload2,
+  interpretTaskNotification: interpretTaskNotification2
 } = {}) {
-  invariant4(typeof resolveModelPolicy == "function", "resolveModelPolicy must be a function"), invariant4(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant4(typeof completeToolResult == "function", "completeToolResult must be a function"), invariant4(typeof interpretSkillPayload == "function", "interpretSkillPayload must be a function"), invariant4(typeof interpretTaskNotification == "function", "interpretTaskNotification must be a function");
-  let sessionCwd = cwd || projectRoot || null, transcriptDir = typeof sourceLocator == "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null, shared = createMeasurementProjection({
+  invariant4(typeof resolveModelPolicy == "function", "resolveModelPolicy must be a function"), invariant4(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant4(typeof completeToolResult == "function", "completeToolResult must be a function"), invariant4(typeof interpretSkillPayload2 == "function", "interpretSkillPayload must be a function"), invariant4(typeof interpretTaskNotification2 == "function", "interpretTaskNotification must be a function");
+  let shared = createMeasurementProjection({
     scope: "claude-code-measurement-projection",
-    context: { path: nodePath, homedir: homedir3, sessionCwd, transcriptDir, resolveModelPolicy },
+    context: { sessionCwd: cwd || projectRoot || null, resolveModelPolicy },
     captureSources: { live: "cc-live", replay: "cc-replay" },
     interpretToolUse,
     completeToolResult,
-    interpretSkillPayload
+    interpretSkillPayload: interpretSkillPayload2
   });
-  function project(observation) {
+  function project(observation, frameCtx) {
     if (observation?.type === "task-notification") {
-      let interpreted = interpretTaskNotification(observation);
+      let interpreted = interpretTaskNotification2(observation);
       return {
         records: [
           ...interpreted.effects.map((effect) => ({ type: "effect", ...effect })),
@@ -26912,7 +27012,7 @@ function createClaudeCodeMeasurementProjection({
         diagnostics: []
       };
     }
-    return shared.project(observation);
+    return shared.project(observation, frameCtx);
   }
   return { project, finishSegment: shared.finishSegment };
 }
@@ -26922,99 +27022,24 @@ var init_measurement_projection2 = __esm({
   }
 });
 
-// lib/serena-parse.js
-function isSerenaError(resultText) {
-  if (!resultText || typeof resultText != "string") return !1;
-  if (ERROR_PATTERNS.test(resultText) || /^Error: /.test(resultText)) return !0;
-  try {
-    let raw = JSON.parse(resultText)?.result;
-    if (typeof raw == "string" && ERROR_PATTERNS.test(raw)) return !0;
-  } catch {
-  }
-  return !1;
-}
-function parseSerenaFindSymbol(resultText) {
-  try {
-    let raw = JSON.parse(resultText)?.result ?? "";
-    if (typeof raw != "string") return { items: [], truncated: !1 };
-    if (raw.startsWith("Matched ")) return { items: [], truncated: !0 };
-    let items = [], arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return { items: [], truncated: !1 };
-    for (let item of arr) {
-      if (!item || typeof item != "object") continue;
-      let path3 = normPath(item.relative_path || "");
-      path3 && items.push({
-        path: path3,
-        startLine: item.body_location?.start_line ?? 0,
-        endLine: item.body_location?.end_line ?? 0,
-        body: typeof item.body == "string" ? item.body : null
-      });
-    }
-    return { items, truncated: !1 };
-  } catch {
-    return { items: [], truncated: !1 };
-  }
-}
-function parseSerenaReferencing(resultText) {
-  try {
-    let raw = JSON.parse(resultText)?.result ?? "";
-    if (typeof raw != "string") return { files: {} };
-    let dict = JSON.parse(raw);
-    if (typeof dict != "object" || dict === null || Array.isArray(dict)) return { files: {} };
-    let files = /* @__PURE__ */ Object.create(null);
-    for (let [filePath, kinds] of Object.entries(dict)) {
-      if (typeof kinds != "object" || kinds === null) continue;
-      let entries = [];
-      for (let refs of Object.values(kinds))
-        if (Array.isArray(refs))
-          for (let ref of refs)
-            !ref || typeof ref != "object" || entries.push({
-              startLine: ref.body_location?.start_line ?? 0,
-              endLine: ref.body_location?.end_line ?? 0,
-              context: ref.content_around_reference || ""
-            });
-      entries.length > 0 && (files[normPath(filePath)] = entries);
-    }
-    return { files };
-  } catch {
-    return { files: {} };
-  }
-}
-function parseSerenaPlainText(resultText) {
-  try {
-    let raw = JSON.parse(resultText)?.result;
-    return typeof raw == "string" ? raw : resultText;
-  } catch {
-    return resultText;
-  }
-}
-function normPath(p) {
-  return p ? p.replace(/\\\\/g, "/").replace(/\\/g, "/") : "";
-}
-var ERROR_PATTERNS, init_serena_parse = __esm({
-  "lib/serena-parse.js"() {
-    ERROR_PATTERNS = /^Error executing tool[:\s]|^No \w+ found matching/;
-  }
-});
-
 // lib/bash-feature.js
 function stripShellPreamble(command) {
-  let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim(), effectiveCwd = null, headerLines = 0;
+  let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim();
   for (; ; ) {
     let m = rest.match(CD_PREAMBLE_RE);
     if (m) {
-      effectiveCwd = m[1], rest = rest.slice(m[0].length);
+      rest = rest.slice(m[0].length);
       continue;
     }
     if (m = rest.match(ECHO_PREAMBLE_RE), m) {
-      headerLines += 1, rest = rest.slice(m[0].length);
+      rest = rest.slice(m[0].length);
       continue;
     }
     if (m = rest.match(FN_PREAMBLE_RE), m) {
       rest = rest.slice(m[0].length);
       continue;
     }
-    return { rest, effectiveCwd, headerLines };
+    return rest;
   }
 }
 function splitByPipe(s) {
@@ -27067,7 +27092,7 @@ function redactCmd(cmd) {
   return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
 }
 function pipeActorDisplay(cmd) {
-  let firstLine = stripShellPreamble(cmd).rest.split(`
+  let firstLine = stripShellPreamble(cmd).split(`
 `)[0].split(";")[0], catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/), headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/), sourceMatch = catMatch || headMatch;
   if (!sourceMatch) return null;
   let allStages = splitByPipe(firstLine);
@@ -27084,10 +27109,10 @@ function bashFeature(command) {
   if (cmd = cmd.replace(LEADING_COMMENT_RE, "").trim(), !cmd) return { name: "(bash)", detail: "" };
   let pipeActorResult = pipeActorDisplay(cmd);
   if (pipeActorResult) return pipeActorResult;
-  for (cmd = cmd.split("|")[0].trim(), cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, ""), cmd = stripShellPreamble(cmd).rest; /^(sudo|env|time|nohup)\s+/.test(cmd); ) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
+  for (cmd = cmd.split("|")[0].trim(), cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, ""), cmd = stripShellPreamble(cmd); /^(sudo|env|time|nohup)\s+/.test(cmd); ) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
   for (; ; ) {
     let before = cmd;
-    if (cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, ""), cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest, cmd === before) break;
+    if (cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, ""), cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")), cmd === before) break;
   }
   let tokens = cmd.split(`
 `)[0].match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
@@ -27127,559 +27152,57 @@ function bashFeature(command) {
 }
 var LEADING_COMMENT_RE, CD_PREAMBLE_RE, ECHO_PREAMBLE_RE, FN_PREAMBLE_RE, SED_LINE_DROP_RE, init_bash_feature = __esm({
   "lib/bash-feature.js"() {
-    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/, CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/, ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/, FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
+    LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/, CD_PREAMBLE_RE = /^cd\s+\S+\s*(?:&&|;)\s*/, ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/, FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
     SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
   }
 });
 
-// lib/tool-effects.js
-function lineFragments(lines) {
-  let byLine = /* @__PURE__ */ new Map();
-  for (let [line, tokens] of lines) byLine.set(line, tokens);
-  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
-}
-function effectFor(update, resourceKey) {
-  let spentTokens = update.spent > 0 ? update.spent : 0;
-  return update.type === "grepMultiFile" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: Object.entries(update.files).map(([key, entries]) => ({
-      resourceKey: key,
-      mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
-    }))
-  } : update.type === "fullSet" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-  } : update.type === "write" ? {
-    access: "write",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-  } : update.type === "lineUpdate" ? {
-    access: "read",
-    overheadTokens: update.overhead,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
-  } : {
-    access: "write",
-    overheadTokens: 0,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
-  };
-}
-function pathEventsFor(update, resourceKey, rawPath, toolType) {
-  if (update.type === "grepMultiFile")
-    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
-  if (resourceKey == null) return [];
-  let isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
-  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
-}
-var init_tool_effects = __esm({
-  "lib/tool-effects.js"() {
-  }
-});
-
-// lib/harness/claude-code/native-tools.js
-function canonicalizerFor(context) {
-  let ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  let homedir6 = context.homedir;
-  return (raw, base) => {
-    let value = raw;
-    (value === "~" || value.startsWith("~/")) && (value = ops.join(homedir6(), value.slice(1)));
-    let abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor(observation, context) {
-  return typeof observation.cwd == "string" && observation.cwd.length > 0 ? observation.cwd : typeof context.sessionCwd == "string" && context.sessionCwd.length > 0 ? context.sessionCwd : context.transcriptDir ?? null;
-}
-function resultTextOf(content) {
-  return typeof content == "string" ? content : Array.isArray(content) ? content.filter((part) => part?.type === "text" && typeof part.text == "string").map((part) => part.text).join(`
-`) : "";
-}
-function hasTrailingSegment(cmd) {
-  return cmd.includes(`
-`) ? !0 : /;|&&/.test(stripQuotedStrings(cmd));
-}
-function sedSegmentsOf(spec) {
-  let parts2 = String(spec).split(";").map((s) => s.trim()).filter((s) => s.length > 0);
-  if (parts2.length === 0) return null;
-  let segments = [];
-  for (let part of parts2) {
-    let m = part.match(SED_SEGMENT_RE);
-    if (!m) return null;
-    let start2 = Number(m[1]);
-    if (start2 < 1) return null;
-    let end = m[2] === void 0 ? start2 : m[2] === "$" ? null : Number(m[2]);
-    if (end !== null && end < start2) return null;
-    segments.push({ start: start2, end });
-  }
-  if (segments.length > 1 && segments.some((s) => s.end === null)) return null;
-  segments.sort((a, b) => a.start - b.start);
-  for (let i2 = 1; i2 < segments.length; i2++) if (segments[i2].start <= segments[i2 - 1].end) return null;
-  return segments;
-}
-function sedPromisedWidth(segments) {
-  let width = 0;
-  for (let s of segments) {
-    if (s.end === null) return null;
-    width += s.end - s.start + 1;
-  }
-  return width;
-}
-function sedLineKeys(segments, count) {
-  let keys = [];
-  for (let s of segments) {
-    let end = s.end === null ? 1 / 0 : s.end;
-    for (let line = s.start; line <= end && keys.length < count; line++) keys.push(line);
-    if (keys.length >= count) break;
-  }
-  let next = keys.length ? keys[keys.length - 1] + 1 : 1;
-  for (; keys.length < count; ) keys.push(next++);
-  return keys;
-}
-function sedKeysFor(segments, printed, count) {
-  return segments.length > 1 && printed !== sedPromisedWidth(segments) ? null : sedLineKeys(segments, count);
-}
-function parseBashFileRead(command) {
-  let preamble = stripShellPreamble(command), effectiveCwd = preamble.effectiveCwd, headerLines = preamble.headerLines, cmd = preamble.rest;
-  if (!cmd) return null;
-  /^sed\s/.test(cmd) && (cmd = cmd.replace(STDERR_DISCARD_RE, ""));
-  let m = cmd.match(SED_CAT_PIPE_RE);
-  if (m && !hasShellExpansion(m[1]) && !hasTrailingSegment(cmd)) {
-    let segments = sedSegmentsOf(m[3]);
-    if (segments) return { type: "sed", path: m[1], effectiveCwd, headerLines, segments, numbered: !1 };
-  }
-  if (m = cmd.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/), m && !hasShellExpansion(m[1])) {
-    if (hasTrailingSegment(cmd)) return null;
-    let pipeType = classifyPipe(cmd, "cat");
-    return pipeType === null ? null : { type: pipeType, path: m[1], effectiveCwd, headerLines };
-  }
-  if (m = cmd.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/), m && !hasShellExpansion(m[1])) {
-    if (hasTrailingSegment(cmd)) return null;
-    let pipeType = classifyPipe(cmd, "head");
-    return pipeType === null ? null : { type: pipeType, path: m[1], effectiveCwd, headerLines };
-  }
-  if (m = cmd.match(SED_READ_RE), m && !hasShellExpansion(m[3])) {
-    if (hasTrailingSegment(cmd)) return null;
-    let segments = sedSegmentsOf(m[2]);
-    if (segments) return { type: "sed", path: m[3], effectiveCwd, headerLines, segments, numbered: m[4] != null };
-  }
-  if (m = cmd.match(/^(grep|rg)\s+(.*)/), m) {
-    if (!(/(?:^|\s)-[A-Za-z]*n/.test(m[2]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(m[2]))) return null;
-    let tokens = stripQuotedStrings(m[2]).split("|")[0].replace(/\s*\d*>{1,2}.*$/, "").trim().split(/\s+/).filter(Boolean), filePath = null;
-    for (let i2 = tokens.length - 1; i2 >= 0; i2--) {
-      let t = tokens[i2];
-      if (!t.startsWith("-")) {
-        if (/[./]/.test(t)) {
-          filePath = t;
-          break;
-        }
-        break;
-      }
-    }
-    if (filePath && !isUnresolvablePath(filePath)) {
-      if (hasTrailingSegment(cmd)) return null;
-      let pipeType = classifyPipe(cmd, "grep-n");
-      return pipeType === null ? null : { type: pipeType, path: filePath, effectiveCwd, headerLines };
-    }
-  }
-  let heredocMatch = cmd.split(`
-`)[0].match(/^cat\s+<<-?\s*['"]?([\w-]+)['"]?\s*>\s*['"]?([^\s'"]+)['"]?\s*$/);
-  if (heredocMatch) {
-    let marker = heredocMatch[1], writePath = heredocMatch[2];
-    if (hasShellExpansion(writePath)) return null;
-    let allLines = String(command || "").split(`
-`), startIdx = 0;
-    for (let i2 = 0; i2 < allLines.length; i2++)
-      if (allLines[i2].includes("<<") && allLines[i2].includes(marker)) {
-        startIdx = i2;
-        break;
-      }
-    let endIdx = -1;
-    for (let i2 = startIdx + 1; i2 < allLines.length; i2++)
-      if (allLines[i2].trim() === marker) {
-        endIdx = i2;
-        break;
-      }
-    return endIdx < 0 ? null : { type: "cat-write", path: writePath, effectiveCwd, headerLines, heredocBody: allLines.slice(startIdx + 1, endIdx).join(`
-`) };
-  }
-  return null;
-}
-function splitShellSegments(cmd) {
-  if (HEREDOC_RE.test(cmd)) return null;
-  let segments = [], current = "", i2 = 0;
-  for (; i2 < cmd.length; ) {
-    let ch = cmd[i2];
-    if (ch === "'") {
-      let end = cmd.indexOf("'", i2 + 1);
-      if (end < 0) {
-        current += cmd.slice(i2);
-        break;
-      }
-      current += cmd.slice(i2, end + 1), i2 = end + 1;
-      continue;
-    }
-    if (ch === '"') {
-      let j = i2 + 1;
-      for (; j < cmd.length && cmd[j] !== '"'; )
-        cmd[j] === "\\" && j++, j++;
-      current += cmd.slice(i2, j + 1), i2 = j + 1;
-      continue;
-    }
-    if (ch === "\\" && i2 + 1 < cmd.length) {
-      current += cmd.slice(i2, i2 + 2), i2 += 2;
-      continue;
-    }
-    if (ch === `
-` || ch === ";") {
-      segments.push(current), current = "", i2++;
-      continue;
-    }
-    if ((ch === "&" || ch === "|") && cmd[i2 + 1] === ch) {
-      segments.push(current), current = "", i2 += 2;
-      continue;
-    }
-    current += ch, i2++;
-  }
-  return segments.push(current), segments.map((s) => s.trim()).filter((s) => s.length > 0 && !s.startsWith("#"));
-}
-function blockOf(items) {
-  let commands = items.filter((item) => item.kind === "command");
-  if (commands.length !== 1) return { command: null, lead: 0, trail: 0 };
-  let at = items.indexOf(commands[0]);
-  return { command: commands[0].text, lead: at, trail: items.length - at - 1 };
-}
-function parseBashCompound(command) {
-  let cmd = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim(), segments = splitShellSegments(cmd);
-  if (!segments || segments.length < 2) return null;
-  let items = [], cwd = null;
-  for (let text of segments) {
-    let m;
-    if (m = text.match(CD_SEGMENT_RE)) {
-      cwd = m[1];
-      continue;
-    }
-    if (DIRECTORY_CHANGE_RE.test(text)) return null;
-    if (BLANK_ECHO_RE.test(text)) {
-      items.push({ kind: "blank" });
-      continue;
-    }
-    if (m = text.match(ECHO_LITERAL_RE)) {
-      items.push({ kind: "anchor", literal: m[1] ?? m[2] ?? m[3] });
-      continue;
-    }
-    items.push({ kind: "command", text: cwd ? `cd ${cwd} && ${text}` : text });
-  }
-  let anchors = items.filter((item) => item.kind === "anchor").map((item) => item.literal);
-  if (anchors.length === 0) return null;
-  let blocks = [], run2 = [];
-  for (let item of items)
-    item.kind === "anchor" ? (blocks.push(blockOf(run2)), run2 = []) : run2.push(item);
-  return blocks.push(blockOf(run2)), { anchors, blocks };
-}
-function anchorLinesOf(anchors, lines) {
-  let at = [], from = 0;
-  for (let literal of anchors) {
-    let hit = -1;
-    for (let i2 = 0; i2 < lines.length; i2++)
-      if (lines[i2] === literal) {
-        if (hit >= 0) return null;
-        hit = i2;
-      }
-    if (hit < from) return null;
-    at.push(hit), from = hit + 1;
-  }
-  return at;
-}
-function promisedLineCount(command) {
-  let read = stripShellPreamble(command).rest, m = read.match(SED_SPEC_PREFIX_RE);
-  if (m) {
-    let segments = sedSegmentsOf(m[2]);
-    if (segments) return sedPromisedWidth(segments);
-  }
-  if (m = read.match(SED_CAT_PIPE_RE), m) {
-    let segments = sedSegmentsOf(m[3]);
-    if (segments) return sedPromisedWidth(segments);
-  }
-  return m = read.match(HEAD_COUNT_RE), m ? Number(m[1]) : /^head\s/.test(read) ? HEAD_DEFAULT_LINES : null;
-}
-function blockPassesGuards(parsed, content, command) {
-  if (content.length === 1 && READ_DIAGNOSTIC_RE.test(content[0])) return !1;
-  let promised = promisedLineCount(command);
-  return promised != null && content.length > promised ? !1 : parsed.type === "grep-n" ? content.every((line) => line === "" || /^\d+:/.test(line)) : !0;
-}
-function stripHarnessLines(lines) {
-  return lines.length && CWD_RESET_LINE_RE.test(lines[lines.length - 1]) && lines.pop(), lines;
-}
-function compoundFor(input, base, canon, adapter) {
-  let plan = parseBashCompound(input.command);
-  if (!plan) return null;
-  let blocks = plan.blocks.map((block) => {
-    let target = null;
-    if (block.command !== null)
-      try {
-        target = adapter.extractTarget({ command: block.command }, base, canon);
-      } catch {
-        target = null;
-      }
-    return { ...block, target };
-  });
-  return blocks.some((block) => block.target !== null) ? { anchors: plan.anchors, blocks } : null;
-}
-function stripQuotedStrings(s) {
-  let result = "", i2 = 0;
-  for (; i2 < s.length; )
-    if (s[i2] === "'") {
-      let end = s.indexOf("'", i2 + 1);
-      if (end === -1) break;
-      i2 = end + 1;
-    } else if (s[i2] === '"') {
-      let j = i2 + 1;
-      for (; j < s.length; ) {
-        if (s[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (s[j] === '"') break;
-        j++;
-      }
-      if (j >= s.length) break;
-      i2 = j + 1;
-    } else
-      result += s[i2], i2++;
-  return result;
-}
-function hasShellExpansion(p) {
-  if (p === "~" || p.startsWith("~/")) {
-    let rest = p.slice(1);
-    return /\$[({A-Za-z_]|`/.test(rest) ? !0 : /[*?]/.test(rest);
-  }
-  return /\$[({A-Za-z_]|`/.test(p) || p.startsWith("~") ? !0 : /[*?]/.test(p);
-}
-function isUnresolvablePath(p) {
-  if (p === "~" || p.startsWith("~/")) {
-    let rest = p.slice(1);
-    return /\$[({A-Za-z_]|`/.test(rest) ? !0 : /[*?]/.test(rest);
-  }
-  return p.includes("$(") || p.includes("`") || p.startsWith("~") || /[*?]/.test(p) || p === "." || p === "/" ? !0 : p === "/dev/null";
-}
-function serenaInsert(input, result, _base, ctp) {
-  if (isSerenaError(result)) return null;
-  let body2 = input.body ?? "";
-  if (!body2) return null;
-  let bodyTokens = charsToTokens(body2, ctp);
-  return { type: "editDelta", value: bodyTokens, spent: bodyTokens + TOOL_OVERHEAD.Serena };
-}
-function adapterFor(toolName) {
-  return NATIVE_ADAPTERS.find((a) => a.match(toolName)) || null;
-}
-function isEffectiveUpdate(update, target) {
-  return update ? update.type === "grepMultiFile" ? Object.keys(update.files || {}).length > 0 : update.type === "fullSet" || update.type === "lineUpdate" ? target != null && Array.isArray(update.lines) && update.lines.length > 0 : update.type === "write" || update.type === "editDelta" ? target != null : !1 : !1;
-}
+// lib/harness/claude-code/tool-evidence-profile.js
 function mcpDisplay(toolName) {
-  if (!toolName || !toolName.startsWith("mcp__")) return toolName;
-  let segments = toolName.slice(5).replace(/^plugin_/, "").split("__");
-  if (segments.length > 0) {
-    let firstSeg = segments[0], halfLen = Math.floor(firstSeg.length / 2);
-    for (let len = halfLen + 1; len >= 2; len--) {
-      let candidate = firstSeg.slice(0, len);
-      if (firstSeg.slice(len) === "_" + candidate) {
-        segments[0] = candidate;
-        break;
-      }
+  let segments = toolName.slice(MCP_PREFIX.length).replace(/^plugin_/, "").split("__"), firstSeg = segments[0], halfLen = Math.floor(firstSeg.length / 2);
+  for (let len = halfLen + 1; len >= 2; len--) {
+    let candidate = firstSeg.slice(0, len);
+    if (firstSeg.slice(len) === "_" + candidate) {
+      segments[0] = candidate;
+      break;
     }
   }
   return segments.join(" ");
 }
-function residualIdentityFor(toolName, input) {
-  let isBash = toolName === "Bash", isMcp = typeof toolName == "string" && toolName.startsWith("mcp__");
-  if (!isBash && !isMcp) return null;
-  if (isBash) {
+function residualIdentity(name2, input) {
+  if (name2 === "Bash") {
     let feature = bashFeature(input.command);
-    return {
-      groupKey: feature.name || "(bash)",
-      kind: "bash",
-      detail: feature.detail || "",
-      // The serialized length is a weight component; the raw input itself is never stored.
-      inputLength: JSON.stringify(input).length
-    };
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail };
   }
-  return { groupKey: mcpDisplay(toolName), kind: "mcp", detail: "", inputLength: JSON.stringify(input).length };
+  return name2.startsWith(MCP_PREFIX) ? { groupKey: mcpDisplay(name2), kind: "mcp", detail: "" } : { groupKey: name2, kind: "tool", detail: "" };
 }
-function isLoadHandoffTool(toolName) {
-  return typeof toolName == "string" && toolName.endsWith("load_handoff");
+function isLoadHandoffTool(name2) {
+  return name2.endsWith("load_handoff");
 }
-function resolvedLoadToken(resultText) {
-  try {
-    let parsed = JSON.parse(resultText);
-    return typeof parsed?.load_token == "string" ? parsed.load_token : null;
-  } catch {
-    return null;
-  }
+function nonFileResource({ name: name2, input }) {
+  return name2 === "Skill" && input.skill ? { resourceKey: "skill:" + input.skill } : null;
 }
-function policyFor(context, modelId) {
-  return context.resolveModelPolicy(modelId ?? null);
-}
-function interpretClaudeCodeToolUse(observation, context) {
-  let toolUseId = observation.toolUseId, issuingStepId = observation.messageId ?? null, issuingPolicy = policyFor(context, observation.model), input = observation.input || {}, explicitToken = isLoadHandoffTool(observation.name) && typeof input.load_token == "string" ? input.load_token : null, awaitLoadToken = isLoadHandoffTool(observation.name) && explicitToken === null, telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }, adapter = adapterFor(observation.name), base = baseDirFor(observation, context), canon = canonicalizerFor(context), target = null, targetResolved = adapter !== null;
-  if (adapter)
-    try {
-      target = adapter.extractTarget(input, base, canon);
-    } catch {
-      targetResolved = !1;
-    }
-  let isBash = adapter !== null && adapter.name === "Bash", effectEligible = targetResolved && !(isBash && target === null), compound = isBash && targetResolved && target === null ? compoundFor(input, base, canon, adapter) : null, residual = effectEligible || compound ? null : residualIdentityFor(observation.name, input), correlation = null;
-  return effectEligible ? correlation = {
-    kind: "effect",
-    toolUseId,
-    issuingStepId,
-    issuingPolicy,
-    awaitLoadToken,
-    adapter,
-    input,
-    target,
-    rawPath: input.file_path || input.path || target,
-    base,
-    // A shell result its adapter cannot price is still evidence, so the shell identity rides along.
-    residual: isBash ? residualIdentityFor(observation.name, input) : null
-  } : compound ? correlation = {
-    kind: "compound",
-    toolUseId,
-    issuingStepId,
-    issuingPolicy,
-    awaitLoadToken,
-    adapter,
-    base,
-    compound,
-    residual: residualIdentityFor(observation.name, input)
-  } : residual ? correlation = { kind: "residual", toolUseId, issuingStepId, issuingPolicy, awaitLoadToken, residual } : awaitLoadToken && (correlation = { kind: "load-token", toolUseId, issuingStepId, issuingPolicy, awaitLoadToken }), {
-    pending: correlation,
-    effects: [],
-    residuals: [],
-    telemetry
-  };
-}
-function residualCompletion(residual, resultText, observation, telemetry) {
-  let { groupKey, kind, detail, inputLength } = residual;
-  return {
-    effects: [],
-    residuals: [{
-      groupKey,
-      weight: inputLength + resultText.length,
-      hadError: observation.isError === !0,
-      meta: { kind, detail }
-    }],
-    telemetry,
-    skillContinuation: null
-  };
-}
-function completeCompound(correlation, observation, resultText, context, telemetry) {
-  let fallback = () => residualCompletion(correlation.residual, resultText, observation, telemetry);
-  if (observation.isError === !0 || PERSISTED_OUTPUT_RE.test(resultText)) return fallback();
-  let lines = resultText.split(`
-`);
-  lines.length && lines[lines.length - 1] === "" && lines.pop(), stripHarnessLines(lines);
-  let at = anchorLinesOf(correlation.compound.anchors, lines);
-  if (!at) return fallback();
-  let { adapter, base, issuingPolicy } = correlation, canon = canonicalizerFor(context), effects = [], remainder = 0, start2 = 0;
-  if (correlation.compound.blocks.forEach((block, i2) => {
-    let end = i2 < at.length ? at[i2] : lines.length, content = lines.slice(start2, end);
-    start2 = end + 1;
-    let chars = content.join(`
-`).length;
-    if (block.target === null) {
-      remainder += chars;
-      return;
-    }
-    let lead = block.lead, trail = block.trail;
-    for (; lead-- > 0 && content.length && content[0] === ""; ) content.shift();
-    for (; trail-- > 0 && content.length && content[content.length - 1] === ""; ) content.pop();
-    if (content.length === 0) return;
-    if (!blockPassesGuards(parseBashFileRead(block.command), content, block.command)) {
-      remainder += chars;
-      return;
-    }
-    let update;
-    try {
-      update = adapter.computeUpdate({ command: block.command }, content.join(`
-`), base, issuingPolicy.ctp, canon);
-    } catch {
-      update = null;
-    }
-    if (!isEffectiveUpdate(update, block.target)) {
-      remainder += chars;
-      return;
-    }
-    let effect = effectFor(update, block.target);
-    effects.push(effects.length === 0 ? effect : { ...effect, overheadTokens: 0, spentTokens: Math.max(0, effect.spentTokens - effect.overheadTokens) }), telemetry.pathEvents.push(...pathEventsFor(update, block.target, block.target, adapter.name));
-  }), effects.length === 0) return fallback();
-  let residuals = [];
-  if (remainder > 0) {
-    let { groupKey, kind, detail, inputLength } = correlation.residual;
-    residuals.push({ groupKey, weight: inputLength + remainder, hadError: !1, meta: { kind, detail } });
-  }
-  return { effects, residuals, telemetry, skillContinuation: null };
-}
-function completeClaudeCodeToolResult(awaitResult, observation, context) {
-  let correlation = awaitResult, resultText = resultTextOf(observation.content), telemetry = {
-    toolUseId: correlation.toolUseId,
-    issuingStepId: correlation.issuingStepId,
-    loadToken: correlation.awaitLoadToken ? resolvedLoadToken(resultText) : null,
-    pathEvents: []
-  }, nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
-  if (correlation.kind === "residual") return residualCompletion(correlation.residual, resultText, observation, telemetry);
-  if (correlation.kind === "compound") return completeCompound(correlation, observation, resultText, context, telemetry);
-  if (correlation.kind !== "effect") return nothing2;
-  let declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing2;
-  if (observation.isError === !0) return declined();
-  let adapter = correlation.adapter, update;
-  try {
-    update = adapter.computeUpdate(
-      correlation.input,
-      resultText,
-      correlation.base,
-      correlation.issuingPolicy.ctp,
-      canonicalizerFor(context)
-    );
-  } catch {
-    return declined();
-  }
-  return isEffectiveUpdate(update, correlation.target) ? (telemetry.pathEvents = pathEventsFor(update, correlation.target, correlation.rawPath, adapter.name), {
-    effects: [effectFor(update, correlation.target)],
-    residuals: [],
-    telemetry,
-    // A Skill result carries only a launch confirmation; the payload arrives as its own harness row, so
-    // the continuation is what lets that row replace this placeholder with the real content.
-    skillContinuation: adapter.name === "Skill" ? { resourceKey: correlation.target, issuingPolicy: correlation.issuingPolicy } : null
-  }) : declined();
-}
-function interpretClaudeCodeSkillPayload(continuation, observation) {
+function interpretSkillPayload(continuation, observation) {
   let text = typeof observation.text == "string" ? observation.text : "";
   if (!text) return { effects: [], residuals: [], telemetry: null };
   let tokens = charsToTokens(text, continuation.issuingPolicy.ctp);
   return {
     effects: [{
       access: "read",
-      overheadTokens: TOOL_OVERHEAD.Read,
+      overheadTokens: SKILL_FRAMING_TOKENS,
       // The launch confirmation already carried this call's spend; the payload restates the same content
       // at its real size and buys nothing further.
       spentTokens: 0,
       impacts: [{
         resourceKey: continuation.resourceKey,
-        mutation: { kind: "replace-fragments", fragments: lineFragments([[1, tokens]]) }
+        mutation: { kind: "replace-fragments", fragments: [{ key: 1, tokens }] }
       }]
     }],
     residuals: [],
     telemetry: null
   };
 }
-function interpretClaudeCodeTaskNotification(observation) {
+function interpretTaskNotification(observation) {
   let text = typeof observation.text == "string" ? observation.text : "", idMatch = text.match(TASK_ID_RE), idPrefix = idMatch ? idMatch[1].slice(0, TASK_ID_PREFIX_CHARS) : "", summaryMatch = text.match(TASK_SUMMARY_RE), detail = summaryMatch ? summaryMatch[1].replace(AGENT_FINISHED_RE, "$1") : idPrefix;
   return {
     effects: [],
@@ -27692,275 +27215,843 @@ function interpretClaudeCodeTaskNotification(observation) {
     telemetry: null
   };
 }
-function resolveClaudeCodeToolTarget(pair, context) {
-  let adapter = adapterFor(pair.name);
-  if (!adapter) return null;
-  let base = baseDirFor(pair, context);
+var MCP_PREFIX, TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, claudeCodeToolEvidenceProfile, init_tool_evidence_profile = __esm({
+  "lib/harness/claude-code/tool-evidence-profile.js"() {
+    init_constants();
+    init_bash_feature();
+    init_token_estimate();
+    MCP_PREFIX = "mcp__", TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/, TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/, AGENT_FINISHED_RE = /^Agent "(.+)" finished$/, TASK_ID_PREFIX_CHARS = 8;
+    claudeCodeToolEvidenceProfile = {
+      residualIdentity,
+      isLoadHandoffTool,
+      nonFileResource,
+      interpretSkillPayload,
+      interpretTaskNotification
+    };
+  }
+});
+
+// lib/working-tree.js
+import { statSync as statSync3, readFileSync as readFileSync7 } from "node:fs";
+function requireBound(name2, value) {
+  if (typeof value != "number" || !Number.isFinite(value) || value <= 0)
+    throw new TypeError(`Working Tree ${name2} must be a finite positive number`);
+}
+function slashed(text) {
+  return text.replaceAll("\\", "/");
+}
+function createResolver({ path: path3, homeDir }) {
+  if (!path3 || typeof path3.isAbsolute != "function" || typeof path3.resolve != "function" || typeof path3.normalize != "function")
+    throw new TypeError("Working Tree path must provide isAbsolute, resolve and normalize");
+  if (homeDir !== null && typeof homeDir != "string")
+    throw new TypeError("Working Tree homeDir must be a string or null");
+  return function(base, raw) {
+    if (typeof raw != "string" || raw.length === 0) return null;
+    let value = raw;
+    if (homeDir !== null && raw === "~" ? value = homeDir : homeDir !== null && raw.startsWith("~/") && (value = `${homeDir}/${raw.slice(2)}`), value = slashed(value), !path3.isAbsolute(value)) {
+      if (typeof base != "string" || base.length === 0) return null;
+      let root = slashed(base);
+      if (!path3.isAbsolute(root)) return null;
+      value = path3.resolve(root, value);
+    }
+    return slashed(path3.normalize(value));
+  };
+}
+function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars } = {}) {
+  let resolve4 = createResolver({ path: path3, homeDir });
+  requireBound("cacheEntries", cacheEntries), requireBound("cacheChars", cacheChars);
+  let cache = /* @__PURE__ */ new Map(), cachedChars = 0, orNull = (attempt) => {
+    try {
+      return attempt();
+    } catch {
+      return null;
+    }
+  };
+  function remember(file, st, text) {
+    let old = cache.get(file);
+    if (old && (cachedChars -= old.text.length, cache.delete(file)), !(text.length > cacheChars)) {
+      cache.set(file, { size: st.size, mtimeMs: st.mtimeMs, text }), cachedChars += text.length;
+      for (let [key, entry] of cache) {
+        if (cache.size <= cacheEntries && cachedChars <= cacheChars) break;
+        cache.delete(key), cachedChars -= entry.text.length;
+      }
+    }
+  }
+  return {
+    resolve: resolve4,
+    stat: (file) => orNull(() => {
+      let st = statSync3(file);
+      return { size: st.size, isFile: st.isFile() };
+    }),
+    readText: (file) => orNull(() => {
+      let st = statSync3(file);
+      if (!st.isFile()) return null;
+      let hit = cache.get(file);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.text;
+      let text = readFileSync7(file, "utf8");
+      return remember(file, st, text), text;
+    })
+  };
+}
+var init_working_tree = __esm({
+  "lib/working-tree.js"() {
+  }
+});
+
+// lib/line-align.js
+function splitLines(text) {
+  let lines = text.split(/\r?\n/);
+  return lines[lines.length - 1] === "" && lines.pop(), lines;
+}
+function normalizeLine(line) {
+  return line.trimEnd();
+}
+function fingerprintOf(normalizedLine) {
+  let hash = 2166136261;
+  for (let i2 = 0; i2 < normalizedLine.length; i2++)
+    hash = Math.imul(hash ^ normalizedLine.charCodeAt(i2), 16777619);
+  return hash >>> 0;
+}
+function stripLinePrefix(line) {
+  for (let cue of CUES) {
+    let match = cue.pattern.exec(line);
+    if (!match) continue;
+    let declaredLine = Number(match[cue.line]);
+    if (!(!Number.isSafeInteger(declaredLine) || declaredLine < 1))
+      return { text: match[cue.text], declaredLine, path: cue.path ? match[cue.path] : null };
+  }
+  return { text: line, declaredLine: null, path: null };
+}
+function trimEnds(a, b, minTrim) {
+  let shared = Math.min(a.length, b.length), head = 0;
+  for (; head < shared && a[head] === b[head]; ) head++;
+  head >= minTrim || (head = 0);
+  let room = shared - head, tail = 0;
+  for (; tail < room && a[a.length - 1 - tail] === b[b.length - 1 - tail]; ) tail++;
+  return tail >= minTrim || (tail = 0), { head, tail, cells: (a.length - head - tail) * (b.length - head - tail) };
+}
+function alignOrdered(a, b, { maxCells, minTrim }) {
+  let { head, tail, cells } = trimEnds(a, b, minTrim);
+  if (!(cells <= maxCells)) return null;
+  let pairs = [];
+  for (let k = 0; k < head; k++) pairs.push([k, k]);
+  let n = a.length - head - tail, m = b.length - head - tail;
+  if (n > 0 && m > 0) {
+    let width = m + 1, lcs = new Uint32Array((n + 1) * width);
+    for (let i3 = n - 1; i3 >= 0; i3--)
+      for (let j2 = m - 1; j2 >= 0; j2--)
+        lcs[i3 * width + j2] = a[head + i3] === b[head + j2] ? lcs[(i3 + 1) * width + j2 + 1] + 1 : Math.max(lcs[(i3 + 1) * width + j2], lcs[i3 * width + j2 + 1]);
+    let i2 = 0, j = 0;
+    for (; i2 < n && j < m; )
+      a[head + i2] === b[head + j] ? (pairs.push([head + i2, head + j]), i2++, j++) : lcs[(i2 + 1) * width + j] > lcs[i2 * width + j + 1] ? i2++ : j++;
+  }
+  for (let k = tail; k > 0; k--) pairs.push([a.length - k, b.length - k]);
+  return pairs;
+}
+var CUES, init_line_align = __esm({
+  "lib/line-align.js"() {
+    CUES = [
+      { pattern: /^ *(\d+)\t(.*)$/s, line: 1, text: 2 },
+      { pattern: /^ *(\d+)→(.*)$/s, line: 1, text: 2 },
+      { pattern: /^Line (\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(.+?):(\d+):(.*)$/s, path: 1, line: 2, text: 3 },
+      { pattern: /^(\d+)-(.*)$/s, line: 1, text: 2 },
+      // The path of a context row is not kept: its separators are indistinguishable from the path's own dashes.
+      { pattern: /^(\S+?)-(\d+)-(.*)$/s, line: 2, text: 3 }
+    ];
+  }
+});
+
+// lib/resource-attribution.js
+function partsOf(value) {
+  if (typeof value == "string") return [value];
+  if (value == null) return [];
+  if (Array.isArray(value) && value.every(isBlock))
+    return value.filter((block) => block.type === "text" && typeof block.text == "string").map((block) => block.text);
   try {
-    return adapter.extractTarget(pair.input || {}, base, canonicalizerFor(context)) ?? null;
+    return [JSON.stringify(value) ?? ""];
+  } catch {
+    return [];
+  }
+}
+function sideTextOf(value) {
+  return partsOf(value).join(`
+`);
+}
+function newlinesIn(text) {
+  let count = 0;
+  for (let at = text.indexOf(`
+`); at !== -1; at = text.indexOf(`
+`, at + 1)) count++;
+  return count;
+}
+function scanLeaves(text, baseDepth) {
+  if (!/^\s*[{[]/.test(text)) return null;
+  try {
+    JSON.parse(text);
+  } catch {
+    return null;
+  }
+  let leaves = [], depth = baseDepth, deepest = baseDepth, line = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    let code = text.charCodeAt(i2);
+    if (code === 34) {
+      let end = i2 + 1;
+      for (; text.charCodeAt(end) !== 34; ) end += text.charCodeAt(end) === 92 ? 2 : 1;
+      let next = end + 1;
+      for (; isJsonSpace(text.charCodeAt(next)); ) next++;
+      text.charCodeAt(next) !== 58 && leaves.push({ value: JSON.parse(text.slice(i2, end + 1)), depth, line }), i2 = end;
+    } else code === 123 || code === 91 ? (depth++, depth > deepest && (deepest = depth)) : code === 125 || code === 93 ? depth-- : code === 10 && line++;
+  }
+  return { leaves, deepest };
+}
+function collectLeaves(parts2, maxDepth, report) {
+  let leaves = [], descend = (text, lineBase2, baseDepth, parent) => {
+    let layer = scanLeaves(text, baseDepth);
+    if (layer !== null) {
+      report.deepest = Math.max(report.deepest, layer.deepest);
+      for (let leaf of layer.leaves) {
+        if (leaf.depth > maxDepth) continue;
+        let decoded = { value: leaf.value, line: lineBase2 + leaf.line, parent };
+        leaves.push(decoded), descend(leaf.value, 0, leaf.depth, decoded);
+      }
+    }
+  }, lineBase = 0;
+  for (let part of parts2)
+    descend(part, lineBase, 0, null), lineBase += newlinesIn(part) + 1;
+  return leaves;
+}
+function segmentOf(side, text, owner, counter) {
+  let id = counter.segments++, lines = splitLines(text).map((raw, index) => {
+    let cue = side === "output" ? stripLinePrefix(raw) : { text: raw, declaredLine: null, path: null };
+    return {
+      side,
+      raw,
+      norm: normalizeLine(cue.text),
+      declared: cue.declaredLine,
+      prefixPath: cue.path,
+      restrict: null,
+      list: !1,
+      seq: counter.lines++,
+      key: `${id}:${index}`,
+      ancestors: owner ? [owner.key, ...owner.ancestors] : [],
+      pos: owner ? owner.pos : index
+    };
+  });
+  return { side, lines, inner: owner !== null };
+}
+function segmentsOf(side, maxDepth, report, counter) {
+  let whole = segmentOf(side.name, side.text, null, counter), segments = [whole];
+  for (let leaf of collectLeaves(side.parts, maxDepth, report)) {
+    let owner = (leaf.parent ? leaf.parent.segment : whole).lines[leaf.line];
+    leaf.segment = segmentOf(side.name, leaf.value, owner, counter), segments.push(leaf.segment);
+  }
+  return segments;
+}
+function tokensOf(line, shell = !1) {
+  let tokens = [], token = "", quote = null, open = !1, previous = "";
+  for (let char of line) {
+    if (quote !== null)
+      char === quote ? quote = null : token += char;
+    else if (char === '"' || char === "'")
+      quote = char, open = !0;
+    else if (TOKEN_BREAK.test(char) || shell && (char === "(" || char === ")")) {
+      if (open && tokens.push(token), token = "", open = !1, shell) {
+        let mark = char === "|" ? previous === "|" ? STATEMENT_END : null : MARKS.get(char);
+        mark && tokens.push(mark);
+      }
+    } else
+      token += char, open = !0;
+    previous = char;
+  }
+  return open && tokens.push(token), tokens;
+}
+function literalOf(word, names) {
+  let length = word.length, value = word.replace(VARIABLE, (match, braced, bare) => {
+    let text = names.get(braced ?? bare);
+    return text === void 0 ? match : (length += text.length - match.length, length > PATH_CHARS ? "$" : text);
+  });
+  return EXPANSION.test(value) ? null : value;
+}
+function directoryOf(workingTree, directory, target) {
+  if (target === null || target.startsWith("-")) return null;
+  let resolved = workingTree.resolve(directory, target);
+  if (resolved === null) return null;
+  let key = resolved.length > 1 && resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+  return workingTree.stat(key)?.isFile === !1 ? key : null;
+}
+function holdsCd(lines) {
+  for (let line of lines) {
+    let head = !0;
+    for (let token of tokensOf(line.raw, !0))
+      if (typeof token == "symbol") head = !0;
+      else {
+        if (head && token === "cd") return !0;
+        head = !1;
+      }
+  }
+  return !1;
+}
+function followCommand(lines, base, workingTree, visit) {
+  let names = /* @__PURE__ */ new Map(), outer = [], directory = base, began = base, words = [], settle = () => {
+    let statement = words;
+    if (words = [], statement[0] === "cd")
+      directory = directoryOf(workingTree, directory, statement.length > 1 ? literalOf(statement[1], names) : null);
+    else
+      for (let word of statement.slice(statement[0] === "export" ? 1 : 0)) {
+        let assignment = ASSIGNMENT.exec(word);
+        if (assignment === null) break;
+        names.set(assignment[1], assignment[2]);
+      }
+  };
+  for (let line of lines) {
+    for (let token of tokensOf(line.raw, !0))
+      if (token === STATEMENT_END)
+        settle();
+      else if (token === SUBSHELL_OPEN)
+        settle(), outer.push(directory);
+      else if (token === SUBSHELL_CLOSE)
+        settle(), outer.length > 0 && (directory = outer.pop());
+      else {
+        began = directory, words.push(token);
+        let word = literalOf(token, names);
+        word !== null && PATH_SHAPE.test(word) && visit(directory, word, line);
+      }
+    settle();
+  }
+  return began;
+}
+function gatherCandidates(segments, base, workingTree) {
+  let spelled = /* @__PURE__ */ new Map(), candidates = /* @__PURE__ */ new Map(), fileOf = (directory, spelling) => {
+    let id = `${directory}\0${spelling}`;
+    if (!spelled.has(id)) {
+      let key = workingTree.resolve(directory, spelling), stat = key === null ? null : workingTree.stat(key);
+      spelled.set(id, stat?.isFile === !0 ? { key, size: stat.size } : null);
+    }
+    return spelled.get(id);
+  }, cite = (file, line) => {
+    let candidate = candidates.get(file.key);
+    candidate || (candidate = { key: file.key, size: file.size, order: candidates.size, cited: 1, outputAt: [] }, candidates.set(file.key, candidate)), line.side === "input" ? candidate.cited = 0 : candidate.outputAt.push(line.pos);
+  }, readCues = (lines, directory) => {
+    for (let line of lines) {
+      let tokens = tokensOf(line.raw), spellings = tokens.filter((token) => PATH_SHAPE.test(token));
+      line.prefixPath !== null && (spellings.push(line.prefixPath), line.restrict = fileOf(directory, line.prefixPath)?.key ?? ""), line.list = line.side === "output" && tokens.length === 1 && PATH_SHAPE.test(tokens[0]) && fileOf(directory, tokens[0]) !== null;
+      for (let spelling of spellings) {
+        let file = fileOf(directory, spelling);
+        file !== null && cite(file, line);
+      }
+    }
+  }, input = segments.filter(({ side }) => side === "input"), followed = new Set(input.filter(({ lines }) => holdsCd(lines))), dropsRawView = followed.size > 0 && input.some(({ inner }) => inner), outputDirectory = base;
+  for (let segment of input)
+    dropsRawView && !segment.inner || (followed.has(segment) ? outputDirectory = followCommand(segment.lines, base, workingTree, (directory, spelling, line) => {
+      let file = fileOf(directory, spelling);
+      file !== null && cite(file, line);
+    }) : readCues(segment.lines, base));
+  for (let { side, lines } of segments)
+    side === "output" && readCues(lines, outputDirectory);
+  return [...candidates.values()];
+}
+function readCandidates(candidates, bound, workingTree, stats) {
+  stats.candidates.observed.push(candidates.length), candidates.length > bound.candidates && stats.candidates.rejected.push(candidates.length);
+  for (let { size } of candidates)
+    stats.fileBytes.observed.push(size), size > bound.fileBytes && stats.fileBytes.rejected.push(size);
+  let readable = [];
+  for (let candidate of candidates.slice(0, bound.candidates)) {
+    if (candidate.size > bound.fileBytes) continue;
+    let text = workingTree.readText(candidate.key);
+    text === null || text.includes("\0") || (candidate.norms = splitLines(text).map(normalizeLine), readable.push(candidate));
+  }
+  return readable;
+}
+function runOf(candidate, pairs, declared) {
+  let [first] = pairs;
+  return {
+    candidate,
+    pairs,
+    declared,
+    cohesion: pairs.length,
+    distance: distanceOf(candidate, first.line),
+    start: first.file,
+    seq: first.line.seq
+  };
+}
+function createClaims() {
+  let taken = [], self = /* @__PURE__ */ new Set(), under = /* @__PURE__ */ new Set();
+  return {
+    taken,
+    blocked: (line) => self.has(line.key) || under.has(line.key) || line.ancestors.some((key) => self.has(key)),
+    take(line, candidate, file, tier) {
+      self.add(line.key);
+      for (let key of line.ancestors) under.add(key);
+      taken.push({ line, candidate, file, tier });
+    }
+  };
+}
+function holdsEvidence(lines, floor) {
+  return lines.length >= floor && lines.reduce((chars, line) => chars + line.norm.trim().length, 0) >= EVIDENCE_CHARS;
+}
+function claimRuns(runs, claims, floor) {
+  runs.sort(byPriority);
+  for (let run2 of runs) {
+    let part = [], flush = () => {
+      if (run2.declared ? part.length > 0 : holdsEvidence(part.map(({ line }) => line), floor))
+        for (let { line, file, tier } of part) claims.take(line, run2.candidate, file, tier);
+      part = [];
+    };
+    for (let pair of run2.pairs)
+      claims.blocked(pair.line) ? flush() : part.push(pair);
+    flush();
+  }
+}
+function declaredRuns(segments, candidates) {
+  let runs = [];
+  for (let candidate of candidates)
+    for (let { lines } of segments) {
+      let pairs = [], close = () => {
+        pairs.length > 0 && runs.push(runOf(candidate, pairs, !0)), pairs = [];
+      };
+      for (let line of lines)
+        line.declared !== null && !line.list && (line.restrict === null || line.restrict === candidate.key) && candidate.norms[line.declared - 1]?.trimStart() === line.norm.trimStart() ? pairs.push({ line, file: line.declared - 1, tier: "declared" }) : close();
+      close();
+    }
+  return runs;
+}
+function positionsOf(candidate) {
+  return candidate.positions || (candidate.positions = /* @__PURE__ */ new Map(), candidate.norms.forEach((norm, at) => {
+    candidate.positions.has(norm) ? candidate.positions.get(norm).push(at) : candidate.positions.set(norm, [at]);
+  })), candidate.positions;
+}
+function repeatsElsewhere(candidate, start2, length, budget) {
+  let { norms } = candidate;
+  for (let at of positionsOf(candidate).get(norms[start2])) {
+    if (budget.cells <= 0) return !1;
+    let same = 0;
+    if (at !== start2 && at + length <= norms.length) {
+      for (; same < length && norms[at + same] === norms[start2 + same]; ) same++;
+      if (same === length) return !0;
+    }
+    budget.cells = Math.max(0, budget.cells - 1 - same);
+  }
+  return !1;
+}
+function longestRun(a, alo, ahi, b, blo, bhi) {
+  let best = { file: 0, at: 0, length: 0 }, above = new Uint32Array(bhi - blo + 1), row = new Uint32Array(bhi - blo + 1);
+  for (let i2 = alo; i2 < ahi; i2++) {
+    for (let j = blo; j < bhi; j++) {
+      let length = a[i2] === b[j] ? above[j - blo] + 1 : 0;
+      row[j - blo + 1] = length, length > best.length && (best = { file: i2 - length + 1, at: j - length + 1, length });
+    }
+    [above, row] = [row, above];
+  }
+  return best;
+}
+function outrun(candidate, b, from, to, length, forward, budget) {
+  let a = candidate.norms, own = forward ? 0 : a.length - b.length, step = forward ? 1 : -1;
+  for (let p = from; p < to; p++)
+    for (let q of positionsOf(candidate).get(b[p]) ?? []) {
+      if (q === p + own) continue;
+      if (budget.cells <= 0) return !0;
+      let run2 = 1;
+      for (; a[q + step * run2] !== void 0 && a[q + step * run2] === b[p + step * run2]; ) run2++;
+      if (budget.cells = Math.max(0, budget.cells - run2), forward ? run2 > length : run2 >= length) return !0;
+    }
+  return !1;
+}
+function commonRuns(candidate, b, floor, budget, stats) {
+  let a = candidate.norms, shared = Math.min(a.length, b.length), head = 0;
+  for (; head < shared && a[head] === b[head]; ) head++;
+  (head < floor || head < shared && outrun(candidate, b, 0, head, head, !0, budget)) && (head = 0);
+  let tail = 0;
+  for (; tail < shared - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]; ) tail++;
+  (tail < floor || head + tail < shared && outrun(candidate, b, b.length - tail, b.length, tail, !1, budget)) && (tail = 0);
+  let runs = [];
+  head > 0 && runs.push({ file: 0, at: 0, length: head }), tail > 0 && runs.push({ file: a.length - tail, at: b.length - tail, length: tail });
+  let middle = [head, a.length - tail, head, b.length - tail];
+  (middle[1] - middle[0]) * (middle[3] - middle[2]) === 0 && stats.alignCells.observed.push(0);
+  let ranges = [middle];
+  for (; ranges.length > 0; ) {
+    let [alo, ahi, blo, bhi] = ranges.pop(), cells = (ahi - alo) * (bhi - blo);
+    if (cells === 0) continue;
+    if (stats.alignCells.observed.push(cells), cells > budget.cells) {
+      stats.alignCells.rejected.push(cells);
+      continue;
+    }
+    budget.cells -= cells;
+    let run2 = longestRun(a, alo, ahi, b, blo, bhi);
+    run2.length !== 0 && (runs.push(run2), run2.length >= floor && ranges.push([run2.file + run2.length, ahi, run2.at + run2.length, bhi], [alo, run2.file, blo, run2.at]));
+  }
+  return runs.sort((x, y) => x.at - y.at);
+}
+function keepRuns(runs, stretch, floor, stats) {
+  let kept = [];
+  for (let run2 of runs) {
+    if (stats.evidenceFloor.observed.push(run2.length), !holdsEvidence(stretch.slice(run2.at, run2.at + run2.length), floor)) {
+      stats.evidenceFloor.rejected.push(run2.length);
+      continue;
+    }
+    let group = Array.from({ length: run2.length }, (_, k) => ({ file: run2.file + k, at: run2.at + k })), previous = kept.at(-1), end = previous?.at(-1), gap = end ? run2.at - end.at - 1 : 0;
+    if (gap > 0 && gap === run2.file - end.file - 1 && stretch.slice(end.at + 1, run2.at).every((line) => line.norm.trim().length <= GAP_FILL_CHARS)) {
+      for (let k = 1; k <= gap; k++) previous.push({ file: end.file + k, at: end.at + k });
+      previous.push(...group);
+    } else
+      kept.push(group);
+  }
+  return kept;
+}
+function alignedRuns(segments, candidates, claims, bound, budget, stats) {
+  let runs = [], align = (candidate, stretch) => {
+    let found = commonRuns(candidate, stretch.map((line) => line.norm), bound.evidenceFloor, budget, stats);
+    for (let group of keepRuns(found, stretch, bound.evidenceFloor, stats)) {
+      let tied = repeatsElsewhere(candidate, group[0].file, group.length, budget);
+      runs.push(runOf(candidate, group.map(({ file, at }) => ({
+        line: stretch[at],
+        file,
+        tier: tied ? "tied" : placedTier(stretch[at])
+      })), !1));
+    }
+  };
+  for (let candidate of candidates)
+    for (let { lines } of segments) {
+      let stretch = [], close = () => {
+        stretch.length >= bound.evidenceFloor && align(candidate, stretch), stretch = [];
+      };
+      for (let line of lines)
+        !claims.blocked(line) && !line.list && (line.restrict === null || line.restrict === candidate.key) ? stretch.push(line) : close();
+      close();
+    }
+  return runs;
+}
+function anchoredLines(segments, candidates, claims) {
+  let free = segments.flatMap(({ lines }) => lines.filter((line) => !claims.blocked(line) && !line.list && line.norm.trim().length >= ANCHOR_CHARS));
+  if (free.length === 0) return;
+  let homes = new Map(free.map((line) => [line.norm, []]));
+  for (let candidate of candidates)
+    candidate.norms.forEach((norm, file) => homes.get(norm)?.push({ candidate, file }));
+  for (let line of free) {
+    if (claims.blocked(line)) continue;
+    let held = homes.get(line.norm), mine = line.restrict === null ? held : held.filter(({ candidate }) => candidate.key === line.restrict);
+    mine.length === 1 && claims.take(line, mine[0].candidate, mine[0].file, placedTier(line));
+  }
+}
+function requireLimit(limits, name2) {
+  let value = limits?.[name2];
+  if (typeof value != "number" || !Number.isFinite(value) || value <= 0)
+    throw new TypeError(`Resource Attribution limit ${name2} must be a finite positive number`);
+  return value;
+}
+function answerOf(sides, taken, stats) {
+  taken.sort((a, b) => a.line.seq - b.line.seq);
+  let groups = /* @__PURE__ */ new Map(), files = {}, matched = { input: 0, output: 0 };
+  for (let { line, candidate, file, tier } of taken) {
+    let id = `${line.side}\0${candidate.key}`;
+    groups.has(id) || groups.set(id, { resourceKey: candidate.key, side: line.side, lines: [] }), groups.get(id).lines.push({ line: file + 1, text: line.raw, tier }), matched[line.side] += line.raw.length, files[candidate.key] ??= candidate.norms.map(fingerprintOf);
+  }
+  return {
+    matches: [...groups.values()],
+    files,
+    unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length - matched[side.name]])),
+    stats
+  };
+}
+function createResourceAttribution({ workingTree, limits } = {}) {
+  let bound = Object.fromEntries(LIMIT_NAMES.map((name2) => [name2, requireLimit(limits, name2)]));
+  for (let method of ["resolve", "stat", "readText"])
+    if (typeof workingTree?.[method] != "function")
+      throw new TypeError(`Resource Attribution workingTree must provide ${method}`);
+  function attributeSides(sides, base) {
+    let stats = newStats(), counter = { lines: 0, segments: 0 }, segments = [];
+    for (let side of sides) {
+      if (stats.sideChars.observed.push(side.text.length), side.text.length > bound.sideChars) {
+        stats.sideChars.rejected.push(side.text.length);
+        continue;
+      }
+      let report = { deepest: 0 };
+      segments.push(...segmentsOf(side, bound.decodeDepth, report, counter)), stats.decodeDepth.observed.push(report.deepest), report.deepest > bound.decodeDepth && stats.decodeDepth.rejected.push(report.deepest);
+    }
+    let candidates = readCandidates(gatherCandidates(segments, base, workingTree), bound, workingTree, stats), claims = createClaims();
+    claimRuns(declaredRuns(segments, candidates), claims, bound.evidenceFloor);
+    let budget = { cells: bound.alignCells };
+    return claimRuns(alignedRuns(segments, candidates, claims, bound, budget, stats), claims, bound.evidenceFloor), anchoredLines(segments, candidates, claims), answerOf(sides, claims.taken, stats);
+  }
+  function attribute({ base, input, output } = {}) {
+    let values = { input, output }, sides = SIDES.map((name2) => {
+      let parts2 = partsOf(values[name2]);
+      return { name: name2, parts: parts2, text: parts2.join(`
+`) };
+    });
+    try {
+      return attributeSides(sides, base);
+    } catch (error) {
+      return {
+        matches: [],
+        files: {},
+        unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length])),
+        stats: { ...newStats(), failed: !0, failure: String(error?.message ?? error) }
+      };
+    }
+  }
+  return { attribute };
+}
+var LIMIT_NAMES, SIDES, GAP_FILL_CHARS, ANCHOR_CHARS, PATH_CHARS, EVIDENCE_CHARS, isBlock, isJsonSpace, TOKEN_BREAK, PATH_SHAPE, UNCITED, STATEMENT_END, SUBSHELL_OPEN, SUBSHELL_CLOSE, MARKS, VARIABLE, EXPANSION, ASSIGNMENT, distanceOf, byPriority, placedTier, newStats, init_resource_attribution = __esm({
+  "lib/resource-attribution.js"() {
+    init_line_align();
+    LIMIT_NAMES = ["candidates", "fileBytes", "sideChars", "decodeDepth", "alignCells", "evidenceFloor"], SIDES = ["input", "output"], GAP_FILL_CHARS = 3, ANCHOR_CHARS = 24, PATH_CHARS = 4096, EVIDENCE_CHARS = 12, isBlock = (value) => value !== null && typeof value == "object" && !Array.isArray(value) && typeof value.type == "string";
+    isJsonSpace = (code) => code === 32 || code === 9 || code === 10 || code === 13;
+    TOKEN_BREAK = /[\s|;&<>]/, PATH_SHAPE = /[/\\.]/, UNCITED = Number.MAX_SAFE_INTEGER, STATEMENT_END = /* @__PURE__ */ Symbol("statement end"), SUBSHELL_OPEN = /* @__PURE__ */ Symbol("subshell open"), SUBSHELL_CLOSE = /* @__PURE__ */ Symbol("subshell close"), MARKS = /* @__PURE__ */ new Map([[";", STATEMENT_END], ["&", STATEMENT_END], ["(", SUBSHELL_OPEN], [")", SUBSHELL_CLOSE]]), VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/g, EXPANSION = /[$`]/, ASSIGNMENT = /^([A-Za-z_]\w*)=(.*)$/;
+    distanceOf = (candidate, line) => line.side === "input" ? UNCITED : candidate.outputAt.reduce((nearest, at) => Math.min(nearest, Math.abs(at - line.pos)), UNCITED);
+    byPriority = (a, b) => b.cohesion - a.cohesion || a.candidate.cited - b.candidate.cited || a.distance - b.distance || a.candidate.order - b.candidate.order || a.start - b.start || a.seq - b.seq;
+    placedTier = (line) => line.declared !== null ? "drifted" : "aligned";
+    newStats = () => ({
+      failed: !1,
+      ...Object.fromEntries(LIMIT_NAMES.map((name2) => [name2, { observed: [], rejected: [] }]))
+    });
+  }
+});
+
+// lib/tool-evidence.js
+function baseOf2(row, sessionCwd) {
+  return typeof row.cwd == "string" && row.cwd.length > 0 ? row.cwd : typeof sessionCwd == "string" && sessionCwd.length > 0 ? sessionCwd : null;
+}
+function resolvedLoadToken(text) {
+  try {
+    let parsed = JSON.parse(text);
+    return typeof parsed?.load_token == "string" ? parsed.load_token : null;
   } catch {
     return null;
   }
 }
-function classifyToolPair(pair, ctp) {
-  let adapter = adapterFor(pair.name);
-  if (!adapter || pair.result == null || pair.isError === !0) return "residual";
-  let update;
-  try {
-    update = adapter.computeUpdate(pair.input || {}, resultTextOf(pair.result), null, ctp, canonicalizerFor(null));
-  } catch {
-    return "residual";
-  }
-  return isEffectiveUpdate(update, pair.resourceKey ?? null) ? adapter.name === "Skill" ? "skill" : "path" : "residual";
+function readEntry(raw) {
+  if (!isObject2(raw) || !isCount(raw.key) || !isCount(raw.chars) || !isCount(raw.cjk) || raw.cjk > raw.chars) return null;
+  let entry = { key: raw.key, chars: raw.chars, cjk: raw.cjk };
+  return isFingerprint(raw.fp) && (entry.fp = raw.fp), raw.moved === !0 && (entry.moved = !0), entry;
 }
-var TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS, init_native_tools = __esm({
-  "lib/harness/claude-code/native-tools.js"() {
-    init_constants();
-    init_token_estimate();
-    init_serena_parse();
-    init_bash_feature();
-    init_tool_effects();
-    TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/, TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/, AGENT_FINISHED_RE = /^Agent "(.+)" finished$/, TASK_ID_PREFIX_CHARS = 8;
-    SED_READ_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s+([^\s|;><&'"]+)\s*(\|\s*cat\s+-n\s*)?$/, SED_SPEC_PREFIX_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s/, SED_SEGMENT_RE = /^(\d+)(?:,(\d+|\$))?p$/, SED_CAT_PIPE_RE = /^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)['"]?\s*\|\s*sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\2\s*$/, STDERR_DISCARD_RE = /\s+2>\s*\/dev\/null$/;
-    HEREDOC_RE = /<<-?\s*['"]?\w/, CD_SEGMENT_RE = /^cd\s+(\S+)$/, BLANK_ECHO_RE = /^echo(?:\s+(?:""|''))?$/, DIRECTORY_CHANGE_RE = /^(?:cd|pushd|popd)\b/, READ_DIAGNOSTIC_RE = /^(?:cat|head|sed|grep|rg): /, ECHO_LITERAL_RE = /^echo\s+(?:"([^"$`\\\n]*)"|'([^'\n]*)'|([^\s"'$`;&|<>]+))$/, HEAD_COUNT_RE = /^head\s+(?:-n\s*|-)(\d+)/, HEAD_DEFAULT_LINES = 10;
-    CWD_RESET_LINE_RE = /^Shell cwd was reset to /, PERSISTED_OUTPUT_RE = /^<persisted-output>/;
-    NATIVE_ADAPTERS = [
-      {
-        name: "Read",
-        match: (name2) => name2 === "Read",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        computeUpdate: (input, result, base, ctp) => {
-          if (result.length < 100 && !result.includes(`
-`)) return null;
-          let lineEntries = [];
-          for (let physicalLine of result.split(`
-`)) {
-            let m = physicalLine.match(/^(\d+)\t/);
-            m && lineEntries.push([Number(m[1]), charsToTokens(physicalLine, ctp)]);
-          }
-          let requestedFull = input.offset == null && input.limit == null, looksComplete = lineEntries.length > 0 && !/(truncated|use offset|too large)/i.test(result.slice(-200)), isFullRead = requestedFull && looksComplete, spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Read;
-          return { type: isFullRead ? "fullSet" : "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Read, spent };
-        }
-      },
-      {
-        name: "Write",
-        match: (name2) => name2 === "Write",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        computeUpdate: (input, _result, _base, ctp) => {
-          let lineEntries = String(input.content ?? "").split(`
-`).map((l, i2) => [i2 + 1, charsToTokens(String(i2 + 1) + "	" + l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
-          return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
-        }
-      },
-      {
-        name: "Edit",
-        match: (name2) => name2 === "Edit",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
-        // framing overhead because the corrective Read that follows most edits charges its own, and charging
-        // both would count one framing cost twice.
-        computeUpdate: (input, _result, _base, ctp) => {
-          let tokenDelta = charsToTokens(input.new_string ?? "", ctp) - charsToTokens(input.old_string ?? "", ctp), lineDelta = ((input.new_string ?? "").match(/\n/g) || []).length - ((input.old_string ?? "").match(/\n/g) || []).length, spent = charsToTokens(input.old_string ?? "", ctp) + charsToTokens(input.new_string ?? "", ctp) + TOOL_OVERHEAD.Edit;
-          return { type: "editDelta", value: tokenDelta + lineDelta * (4 / ctp.ascii), spent };
-        }
-      },
-      {
-        name: "Grep",
-        match: (name2) => name2 === "Grep",
-        extractTarget: () => null,
-        // the files are named by the result, not by the input
-        computeUpdate: (_input, result, base, ctp, canon) => {
-          let files = /* @__PURE__ */ Object.create(null);
-          for (let line of result.split(`
-`)) {
-            let m = line.match(/^(.+?):(\d+):(.*)$/);
-            if (!m) continue;
-            let [, rawPath, lineNum, content] = m, key = canon(rawPath, base);
-            (files[key] ||= []).push([parseInt(lineNum, 10), charsToTokens(String(lineNum) + "	" + content, ctp)]);
-          }
-          let spent = TOOL_OVERHEAD.Grep;
-          for (let entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
-        }
-      },
-      {
-        name: "Bash",
-        match: (name2) => name2 === "Bash",
-        extractTarget: (input, base, canon) => {
-          let parsed = parseBashFileRead(input.command);
-          if (!parsed) return null;
-          let anchor = parsed.effectiveCwd ? canon(parsed.effectiveCwd, base) : base;
-          return canon(parsed.path, anchor);
-        },
-        computeUpdate: (input, result, _base, ctp) => {
-          let parsed = parseBashFileRead(input.command);
-          if (!parsed) return null;
-          let lines = result.split(`
-`).slice(parsed.headerLines);
-          if (parsed.type === "cat") {
-            let lineEntries = lines.map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "fullSet", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "head") {
-            let lineEntries = lines.map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "sed") {
-            let printed = lines.length && lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
-            if (parsed.numbered && !lines.slice(0, printed).every((l) => /^\s*\d+\t/.test(l))) return null;
-            let keys = sedKeysFor(parsed.segments, printed, lines.length);
-            if (!keys) return null;
-            let lineEntries = lines.map((l, i2) => [keys[i2], charsToTokens(l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "grep-n") {
-            let lineEntries = [];
-            for (let line of lines) {
-              let m = line.match(/^(\d+):(.*)$/);
-              m && lineEntries.push([parseInt(m[1], 10), charsToTokens(m[2], ctp)]);
-            }
-            if (lineEntries.length === 0) return null;
-            let spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "cat-write") {
-            let lineEntries = parsed.heredocBody.split(`
-`).map((l, i2) => [i2 + 1, charsToTokens(String(i2 + 1) + "	" + l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
-            return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
-          }
-          return null;
-        }
-      },
-      {
-        name: "Skill",
-        match: (name2) => name2 === "Skill",
-        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
-        extractTarget: (input) => "skill:" + input.skill,
-        computeUpdate: (_input, result, _base, ctp) => {
-          let tokens = charsToTokens(result, ctp);
-          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
-        }
-      },
-      // ─── Serena read-like adapters ───────────────────────────────────────────
-      {
-        name: "serena_find_symbol",
-        match: (name2) => name2 === "mcp__serena__find_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: (input, result, base, ctp, canon) => {
-          if (isSerenaError(result)) return null;
-          let parsed = parseSerenaFindSymbol(result);
-          if (parsed.truncated || parsed.items.length === 0) return null;
-          let withBody = parsed.items.filter((item) => item.body);
-          if (withBody.length === 0) return null;
-          if (input.relative_path) {
-            let allLines = [];
-            for (let item of withBody) {
-              let lines = item.body.split(`
-`);
-              for (let i2 = 0; i2 < lines.length; i2++)
-                allLines.push([item.startLine + 1 + i2, charsToTokens(lines[i2], ctp)]);
-            }
-            let spent2 = allLines.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Serena;
-            return { type: "lineUpdate", lines: allLines, overhead: TOOL_OVERHEAD.Serena, spent: spent2 };
-          }
-          let files = /* @__PURE__ */ Object.create(null);
-          for (let item of withBody) {
-            let key = canon(item.path, base), lines = item.body.split(`
-`);
-            (files[key] ||= []).push(...lines.map((l, i2) => [item.startLine + 1 + i2, charsToTokens(l, ctp)]));
-          }
-          let spent = TOOL_OVERHEAD.Serena;
-          for (let entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      {
-        name: "serena_get_symbols_overview",
-        match: (name2) => name2 === "mcp__serena__get_symbols_overview",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        // An overview lists names without their source. Producing no update leaves whatever a real Read of
-        // this file already established, where a name-only replacement would destroy it.
-        computeUpdate: () => null
-      },
-      {
-        name: "serena_find_referencing_symbols",
-        match: (name2) => name2 === "mcp__serena__find_referencing_symbols",
-        extractTarget: () => null,
-        // the referencing files are named by the result
-        computeUpdate: (_input, result, base, ctp, canon) => {
-          if (isSerenaError(result)) return null;
-          let parsed = parseSerenaReferencing(result);
-          if (Object.keys(parsed.files).length === 0) return null;
-          let files = /* @__PURE__ */ Object.create(null);
-          for (let [rawPath, entries] of Object.entries(parsed.files)) {
-            let key = canon(rawPath, base), lineEntries = [];
-            for (let entry of entries) {
-              if (!entry.context) continue;
-              let lines = entry.context.split(`
-`);
-              for (let i2 = 0; i2 < lines.length; i2++)
-                lineEntries.push([entry.startLine + 1 + i2, charsToTokens(lines[i2], ctp)]);
-            }
-            lineEntries.length > 0 && (files[key] = lineEntries);
-          }
-          if (Object.keys(files).length === 0) return null;
-          let spent = TOOL_OVERHEAD.Serena;
-          for (let entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      {
-        name: "serena_read_memory",
-        match: (name2) => name2 === "mcp__serena__read_memory",
-        extractTarget: (input, base, canon) => {
-          let name2 = input.memory_name || "";
-          return name2 ? canon(".serena/memories/" + (name2.endsWith(".md") ? name2 : name2 + ".md"), base) : null;
-        },
-        computeUpdate: (_input, result, _base, ctp) => {
-          if (isSerenaError(result)) return null;
-          let text = parseSerenaPlainText(result);
-          if (!text) return null;
-          let lineEntries = text.split(`
-`).map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]), spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Serena;
-          return { type: "fullSet", lines: lineEntries, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      // ─── Serena write-like adapters ──────────────────────────────────────────
-      {
-        name: "serena_replace_content",
-        match: (name2) => name2 === "mcp__serena__replace_content",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: (input, result, _base, ctp) => {
-          if (isSerenaError(result) || input.mode && input.mode !== "literal") return null;
-          let needle = input.needle ?? "", repl = input.repl ?? "", tokenDelta = charsToTokens(repl, ctp) - charsToTokens(needle, ctp), lineDelta = (repl.match(/\n/g) || []).length - (needle.match(/\n/g) || []).length, spent = charsToTokens(needle, ctp) + charsToTokens(repl, ctp) + TOOL_OVERHEAD.Serena;
-          return { type: "editDelta", value: tokenDelta + lineDelta * (4 / ctp.ascii), spent };
-        }
-      },
-      {
-        name: "serena_replace_symbol_body",
-        match: (name2) => name2 === "mcp__serena__replace_symbol_body",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        // The replaced body is not in the input, so the size change is unknown: assume net zero and let the
-        // next Read of this file correct it.
-        computeUpdate: (input, result, _base, ctp) => {
-          if (isSerenaError(result)) return null;
-          let body2 = input.body ?? "";
-          return body2 ? { type: "editDelta", value: 0, spent: charsToTokens(body2, ctp) + TOOL_OVERHEAD.Serena } : null;
-        }
-      },
-      {
-        name: "serena_insert_after_symbol",
-        match: (name2) => name2 === "mcp__serena__insert_after_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: serenaInsert
-      },
-      {
-        name: "serena_insert_before_symbol",
-        match: (name2) => name2 === "mcp__serena__insert_before_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: serenaInsert
+function readImpact(raw) {
+  if (!isObject2(raw) || !isText(raw.resourceKey) || raw.resourceKey.length === 0 || raw.kind !== "replace-fragments" && raw.kind !== "merge-fragments" || !Array.isArray(raw.entries) || raw.entries.length === 0) return null;
+  let entries = raw.entries.map(readEntry);
+  return entries.includes(null) || new Set(entries.map((entry) => entry.key)).size !== entries.length ? null : { resourceKey: raw.resourceKey, kind: raw.kind, entries };
+}
+function readEffect(raw) {
+  if (!isObject2(raw) || raw.access !== "read" && raw.access !== "write" || !Array.isArray(raw.impacts) || raw.impacts.length === 0) return null;
+  let impacts = raw.impacts.map(readImpact);
+  return impacts.includes(null) ? null : { access: raw.access, impacts };
+}
+function readResidual(raw) {
+  if (!(!isObject2(raw) || !isText(raw.groupKey) || raw.groupKey.length === 0) && !(!isText(raw.kind) || !isText(raw.detail) || !isCount(raw.weight)))
+    return { groupKey: raw.groupKey, kind: raw.kind, detail: raw.detail, weight: raw.weight };
+}
+function readRecord(raw) {
+  if (!isObject2(raw) || raw.v !== RECORD_VERSION || !Array.isArray(raw.effects)) return null;
+  let effects = raw.effects.map(readEffect);
+  if (effects.includes(null)) return null;
+  let residual = raw.residual === null ? null : readResidual(raw.residual);
+  return residual === void 0 ? null : { v: RECORD_VERSION, effects, residual };
+}
+function impactFor({ resourceKey, lines }, files) {
+  let fingerprints = files?.[resourceKey], entries = /* @__PURE__ */ new Map();
+  for (let { line, text } of lines) {
+    let entry = { key: line, chars: text.length, cjk: cjkOf(text) }, fp = fingerprints?.[line - 1];
+    isFingerprint(fp) && (entry.fp = fp), entries.set(line, entry);
+  }
+  let whole = Array.isArray(fingerprints) && fingerprints.length > 0 && entries.size === fingerprints.length;
+  for (let line = 1; whole && line <= fingerprints.length; line++) whole = entries.has(line);
+  return { resourceKey, kind: whole ? "replace-fragments" : "merge-fragments", entries: [...entries.values()] };
+}
+function priced(effects, ctp) {
+  return effects.map(({ access, impacts }) => {
+    let spentTokens = 0, pricedImpacts = impacts.map(({ resourceKey, kind, entries }) => ({
+      resourceKey,
+      mutation: {
+        kind,
+        fragments: entries.map(({ key, chars, cjk, moved }) => {
+          let tokens = countsToTokens({ chars, cjk }, ctp);
+          return moved !== !0 && (spentTokens += tokens), { key, tokens };
+        })
       }
-    ];
+    }));
+    return { access, overheadTokens: 0, spentTokens, impacts: pricedImpacts };
+  });
+}
+function pathEventsFor(effects, toolType) {
+  return effects.flatMap(({ access, impacts }) => impacts.map(({ resourceKey, mutation }) => ({
+    path: resourceKey,
+    rawPath: resourceKey,
+    toolType,
+    isFullRead: access === "write" ? null : mutation.kind === "replace-fragments" ? 1 : 0
+  })));
+}
+function foldInto(scratch, recorded, effects) {
+  recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
+    let { fragments } = effects[effectAt].impacts[impactAt].mutation, held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
+    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+      let entry = { chars, cjk, tokens: fragments[entryAt].tokens };
+      fp !== void 0 && (entry.fp = fp), held.set(key, entry);
+    }), scratch.set(resourceKey, held);
+  }));
+}
+function movedEntries(held, fingerprints, { maxCells, minTrim }) {
+  if (held === void 0) return { moved: [], judged: !0 };
+  if (!Array.isArray(fingerprints)) return { moved: [], judged: !1 };
+  let reach = fingerprints.length + maxCells, recorded = [], stranded = !1;
+  for (let item of held) {
+    let [key, entry] = item;
+    entry.fp !== void 0 && Number.isInteger(key) && key >= 1 && key <= reach ? recorded.push(item) : entry.chars > 0 && (stranded = !0);
+  }
+  let judged = !stranded;
+  if (recorded.every(([key, entry]) => fingerprints[key - 1] === entry.fp)) return { moved: [], judged };
+  recorded.sort(([a], [b]) => a - b);
+  let slots = new Array(recorded[recorded.length - 1][0]).fill(NaN);
+  for (let [key, entry] of recorded) slots[key - 1] = entry.fp;
+  let pairs = alignOrdered(slots, fingerprints, { maxCells, minTrim });
+  if (pairs === null) return { moved: [], judged: !1 };
+  let landing = new Map(pairs.map(([from, to]) => [from + 1, to + 1])), zeroed = [], shifted = [];
+  for (let [key, entry] of recorded) {
+    let at = landing.get(key);
+    at !== key && (zeroed.push({ key, chars: 0, cjk: 0 }), at !== void 0 && shifted.push({ key: at, chars: entry.chars, cjk: entry.cjk, fp: entry.fp, moved: !0 }));
+  }
+  return { moved: [...zeroed, ...shifted], judged };
+}
+function relocated(impact, moved) {
+  if (moved.length === 0) return impact;
+  let entries = /* @__PURE__ */ new Map();
+  for (let entry of moved) entries.set(entry.key, entry);
+  for (let entry of impact.entries) entries.set(entry.key, entry);
+  return { ...impact, entries: [...entries.values()] };
+}
+function residentPart(matches, effects, scratch, unjudged, ctp) {
+  let matched = /* @__PURE__ */ new Map();
+  for (let { resourceKey, lines } of matches) {
+    let chars = matched.get(resourceKey) ?? 0;
+    for (let { text } of lines) chars += text.length;
+    matched.set(resourceKey, chars);
+  }
+  let folded = new Map([...matched.keys()].map((resourceKey) => [resourceKey, new Map(scratch.get(resourceKey))]));
+  foldInto(folded, effects, priced(effects, ctp));
+  let part = 0;
+  for (let [resourceKey, chars] of matched)
+    unjudged.has(resourceKey) || (part += Math.max(0, chars - (charsHeld(folded.get(resourceKey)) - charsHeld(scratch.get(resourceKey)))));
+  return part;
+}
+function requireLimit2(limits, name2) {
+  let value = limits?.[name2];
+  if (typeof value != "number" || !Number.isFinite(value) || value <= 0)
+    throw new TypeError(`Tool Evidence Interpreter limit ${name2} must be a finite positive number`);
+}
+function requireMethods(owner, label, methods) {
+  for (let method of methods)
+    if (typeof owner?.[method] != "function")
+      throw new TypeError(`Tool Evidence Interpreter ${label} must provide ${method}`);
+}
+function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
+  requireMethods(attribution, "attribution", ["attribute"]), requireMethods(profile, "profile", ["residualIdentity", "isLoadHandoffTool", "nonFileResource"]);
+  for (let name2 of LIMIT_NAMES2) requireLimit2(limits, name2);
+  let readsSkillPayload = typeof profile.interpretSkillPayload == "function", bound = { maxCells: limits.alignCells, minTrim: limits.evidenceFloor };
+  function partition(pending, observation, scratch) {
+    let { matches, files, unmatched } = attribution.attribute({
+      base: pending.base,
+      input: pending.input,
+      output: observation.content
+    }), handled = /* @__PURE__ */ new Set(), unjudged = /* @__PURE__ */ new Set(), effects = [];
+    for (let access of ["write", "read"]) {
+      let impacts = matches.filter((match) => match.side === "input" == (access === "write")).map((match) => {
+        let impact = impactFor(match, files), later = handled.has(match.resourceKey);
+        if (handled.add(match.resourceKey), later || impact.kind === "replace-fragments") return impact;
+        let { moved, judged } = movedEntries(scratch.get(match.resourceKey), files?.[match.resourceKey], bound);
+        return judged || unjudged.add(match.resourceKey), relocated(impact, moved);
+      });
+      impacts.length > 0 && effects.push({ access, impacts });
+    }
+    let weight = unmatched.input + unmatched.output + residentPart(matches, effects, scratch, unjudged, pending.issuingPolicy.ctp), { groupKey, kind, detail } = pending.residual;
+    return {
+      v: RECORD_VERSION,
+      effects,
+      residual: weight > 0 ? { groupKey, kind, detail, weight } : null
+    };
+  }
+  function recordOf(pending, observation, frameCtx, scratch) {
+    let recalled = typeof frameCtx.recall == "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
+    if (recalled !== null) return recalled;
+    let record = partition(pending, observation, scratch);
+    return typeof frameCtx.remember == "function" && frameCtx.remember(pending.toolUseId, record), record;
+  }
+  function emit(record, pending, observation, telemetry, scratch) {
+    let effects = priced(record.effects, pending.issuingPolicy.ctp);
+    foldInto(scratch, record.effects, effects), telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    let residuals = record.residual === null ? [] : [{
+      groupKey: record.residual.groupKey,
+      weight: record.residual.weight,
+      hadError: observation.isError === !0,
+      meta: { kind: record.residual.kind, detail: record.residual.detail }
+    }];
+    return { effects, residuals, telemetry, skillContinuation: null };
+  }
+  function completeNonFileResource(pending, observation, telemetry) {
+    if (observation.isError === !0) return { effects: [], residuals: [], telemetry, skillContinuation: null };
+    let { resourceKey } = pending.nonFile, tokens = charsToTokens(sideTextOf(observation.content), pending.issuingPolicy.ctp), effects = [{
+      access: "read",
+      overheadTokens: SKILL_FRAMING_TOKENS,
+      spentTokens: tokens + SKILL_FRAMING_TOKENS,
+      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: [{ key: 1, tokens }] } }]
+    }];
+    telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    let skillContinuation = readsSkillPayload ? { resourceKey, issuingPolicy: pending.issuingPolicy } : null;
+    return { effects, residuals: [], telemetry, skillContinuation };
+  }
+  function interpretToolUse(observation, context) {
+    let { toolUseId, name: name2 } = observation, input = observation.input ?? {}, issuingStepId = observation.messageId ?? null, loadsHandoff = profile.isLoadHandoffTool(name2), explicitToken = loadsHandoff && typeof input.load_token == "string" ? input.load_token : null, nonFile = profile.nonFileResource({ name: name2, input }) ?? null;
+    return {
+      pending: {
+        toolUseId,
+        issuingStepId,
+        issuingPolicy: context.resolveModelPolicy(observation.model ?? null),
+        // An auto-matched load carries no token in its input; the resolved one comes back in its result.
+        awaitLoadToken: loadsHandoff && explicitToken === null,
+        name: name2,
+        input,
+        base: baseOf2(observation, context.sessionCwd),
+        nonFile,
+        residual: nonFile === null ? profile.residualIdentity(name2, input) : null
+      },
+      effects: [],
+      residuals: [],
+      telemetry: { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }
+    };
+  }
+  function completeToolResult(pending, observation, _context, { scratch = /* @__PURE__ */ new Map(), frameCtx } = {}) {
+    let telemetry = {
+      toolUseId: pending.toolUseId,
+      issuingStepId: pending.issuingStepId,
+      loadToken: pending.awaitLoadToken ? resolvedLoadToken(sideTextOf(observation.content)) : null,
+      pathEvents: []
+    };
+    return pending.nonFile !== null ? completeNonFileResource(pending, observation, telemetry) : emit(recordOf(pending, observation, frameCtx ?? {}, scratch), pending, observation, telemetry, scratch);
+  }
+  function resourceKeysOf(pair, capture) {
+    try {
+      let { recall, sessionCwd } = capture ?? {}, input = pair.input ?? {}, resource = profile.nonFileResource({ name: pair.name, input });
+      if (resource) return [resource.resourceKey];
+      let recorded = typeof recall == "function" ? readRecord(recall(pair.toolUseId)) : null, impacts = recorded ? recorded.effects.flatMap((effect) => effect.impacts) : attribution.attribute({ base: baseOf2(pair, sessionCwd), input, output: pair.result }).matches;
+      return [...new Set(impacts.map((impact) => impact.resourceKey))];
+    } catch {
+      return [];
+    }
+  }
+  return { interpretToolUse, completeToolResult, resourceKeysOf };
+}
+var cjkOf, isFingerprint, RECORD_VERSION, isObject2, isCount, isText, charsHeld, LIMIT_NAMES2, init_tool_evidence = __esm({
+  "lib/tool-evidence.js"() {
+    init_constants();
+    init_line_align();
+    init_resource_attribution();
+    init_token_estimate();
+    cjkOf = (text) => (text.match(CJK_RE) ?? []).length, isFingerprint = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;
+    RECORD_VERSION = 1, isObject2 = (value) => value !== null && typeof value == "object" && !Array.isArray(value), isCount = (value) => typeof value == "number" && Number.isFinite(value) && value >= 0, isText = (value) => typeof value == "string";
+    charsHeld = (held) => {
+      let total = 0;
+      for (let { chars } of held?.values() ?? []) total += chars;
+      return total;
+    };
+    LIMIT_NAMES2 = ["alignCells", "evidenceFloor"];
   }
 });
 
@@ -28118,16 +28209,22 @@ var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenR
 });
 
 // lib/lineage.js
-function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
-  let chain = [], node = headHandoff;
-  for (; node && !seen.has(node.sessionId); )
-    seen.add(node.sessionId), chain.push({
-      sessionId: node.sessionId,
-      sourceLocator: node.transcriptPath || null,
-      sourceLabel: node.transcriptPath || null,
-      handoffId: node.handoffId
-    }), node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
-  return chain.reverse();
+function walk(store, projectId, headHandoff) {
+  let seen = /* @__PURE__ */ new Set(), chain = [], node = headHandoff;
+  for (; node && !seen.has(node.handoffId); )
+    seen.add(node.handoffId), chain.push(node), node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
+  let entries = [];
+  for (let handoff of chain.reverse()) {
+    let earlier = entries.findLast((e) => e.sessionId === handoff.sessionId);
+    entries.push({
+      sessionId: handoff.sessionId,
+      sourceLocator: handoff.transcriptPath || null,
+      sourceLabel: handoff.transcriptPath || null,
+      handoffId: handoff.handoffId,
+      window: { after: earlier ? earlier.window.through : null, through: handoff.createdAt }
+    });
+  }
+  return entries;
 }
 function fromHandoff({ store, handoffId }) {
   let head = store.getHandoff(handoffId);
@@ -28152,7 +28249,7 @@ function rootHeadline(rows) {
 function buildTurnBrowse({ store, lineage }) {
   let sources = labelHistorySources(lineage), sections = [];
   return sources.forEach((entry, i2) => {
-    let rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
+    let rows = store.listTurnNotes(entry.sessionId).filter((row) => admitsTurn(entry, row.sourceTimestamp)).sort((a, b) => a.turnNoteId - b.turnNoteId);
     if (rows.length === 0) return;
     let entries = rows.map((row) => {
       let out2 = { u_text: row.uText };
@@ -28256,7 +28353,7 @@ var init_project_key = __esm({
 // lib/legacy-cleanup.js
 import { readdirSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { join as join6 } from "node:path";
-import { homedir as homedir4 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 var init_legacy_cleanup = __esm({
   "lib/legacy-cleanup.js"() {
   }
@@ -28341,7 +28438,7 @@ var PRESET_ID_MAX_CHARS, NO_MODEL_MESSAGE, init_pricing_store = __esm({
 });
 
 // lib/state-reaper.js
-import { readdirSync as readdirSync2, statSync as statSync3, unlinkSync as unlinkSync2, readFileSync as readFileSync7, rmSync as rmSync2 } from "node:fs";
+import { readdirSync as readdirSync2, statSync as statSync4, unlinkSync as unlinkSync2, readFileSync as readFileSync8, rmSync as rmSync2 } from "node:fs";
 import { join as join7 } from "node:path";
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return !1;
@@ -28354,7 +28451,7 @@ function isPidAlive(pid) {
 function isLivePortFile(sessionId, portDir) {
   if (!portDir || !sessionId || /[/\\\0]/.test(sessionId) || sessionId === ".." || sessionId === ".") return !1;
   try {
-    let p = join7(portDir, `${sessionId}.json`), record = JSON.parse(readFileSync7(p, "utf8"));
+    let p = join7(portDir, `${sessionId}.json`), record = JSON.parse(readFileSync8(p, "utf8"));
     return record.pid && isPidAlive(record.pid);
   } catch {
     return !1;
@@ -28388,10 +28485,10 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
     if (!f.endsWith(".json")) continue;
     let p = join7(portDir, f);
     try {
-      let st = statSync3(p);
+      let st = statSync4(p);
       if (now - st.mtimeMs > maxAgeMs) {
         try {
-          let record = JSON.parse(readFileSync7(p, "utf8"));
+          let record = JSON.parse(readFileSync8(p, "utf8"));
           if (record.pid && isPidAlive(record.pid)) continue;
         } catch {
         }
@@ -28414,10 +28511,10 @@ function sweepStaleTurnNotes(stateDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS
     if (!entry.isDirectory()) continue;
     let dir = join7(root, entry.name);
     try {
-      let latest = statSync3(dir).mtimeMs;
+      let latest = statSync4(dir).mtimeMs;
       for (let name2 of readdirSync2(dir))
         try {
-          latest = Math.max(latest, statSync3(join7(dir, name2)).mtimeMs);
+          latest = Math.max(latest, statSync4(join7(dir, name2)).mtimeMs);
         } catch {
         }
       now - latest > maxAgeMs && (rmSync2(dir, { recursive: !0, force: !0 }), removed++);
@@ -28842,7 +28939,7 @@ var import_ignore, init_gitignore_loader = __esm({
 });
 
 // lib/carry-sweep.js
-import { existsSync as existsSync2, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync2, statSync as statSync5 } from "node:fs";
 function replaySessionTelemetry(sessionId, transcriptPath, {
   store,
   createWatcher,
@@ -28853,7 +28950,7 @@ function replaySessionTelemetry(sessionId, transcriptPath, {
     throw new Error("replaySessionTelemetry requires the host's createWatcher composition callback");
   if (!transcriptPath || !existsSync2(transcriptPath)) return null;
   try {
-    let stat = statSync4(transcriptPath);
+    let stat = statSync5(transcriptPath);
     if (!stat.isFile()) return null;
     if (stat.size === 0) return !0;
   } catch {
@@ -28882,7 +28979,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.9.1",
+      version: "0.10.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -29003,6 +29100,7 @@ function renderPage(entries, notice) {
 async function projectSession(store, entry, readSource) {
   let { readable, turns } = await readSource(entry.sourceLocator), ordinals = readable ? activePathOrdinals(turns) : null, addressable = ordinals !== null && ordinals.size > 0, records = [];
   for (let row of store.listTurnNotes(entry.sessionId)) {
+    if (!admitsTurn(entry, row.sourceTimestamp)) continue;
     let record = projectTurnRecord(row, ordinals);
     record.t === null && addressable || records.push({
       index: entry.index,
@@ -29017,7 +29115,7 @@ async function projectSession(store, entry, readSource) {
 }
 async function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection, notice }) {
   invariant5(typeof notice == "string" && notice.length > 0, "notice is required");
-  let sources = labelHistorySources(lineage), readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), parsed = /* @__PURE__ */ new Map(), sessionAt = (index) => (parsed.has(index) || parsed.set(index, projectSession(store, sources[index], readSource)), parsed.get(index)), boundary = before == null ? null : await resolveBefore(before, sources, sessionAt), newestIndex = boundary ? boundary.index : sources.length - 1, windowAt = async (index) => {
+  let sources = labelHistorySources(lineage), readSource = createHistoryReader({ dialogueSource, dialogueProjection }), parsed = /* @__PURE__ */ new Map(), sessionAt = (index) => (parsed.has(index) || parsed.set(index, projectSession(store, sources[index], readSource)), parsed.get(index)), boundary = before == null ? null : await resolveBefore(before, sources, sessionAt), newestIndex = boundary ? boundary.index : sources.length - 1, windowAt = async (index) => {
     let { records } = await sessionAt(index);
     return !boundary || index !== boundary.index || boundary.t === null ? records : records.filter((e) => e.record.t < boundary.t);
   }, entries = [], turnPage = "", olderRemains = !1;
@@ -29069,14 +29167,13 @@ function foldAscii(s) {
   }
   return out2;
 }
-function canonicalEntities(fold, includeToolEvidence) {
+function canonicalEntities(fold) {
   let entities = [];
   for (let line of dialogueFoldLines(fold)) {
     if (line.kind === "visible") {
       entities.push({ text: line.message.text, line: line.sourceOrdinal });
       continue;
     }
-    if (!includeToolEvidence(line.tool)) continue;
     let useLine = line.sourceOrdinal;
     typeof line.tool.name == "string" && entities.push({ text: line.tool.name, line: useLine }), line.tool.input != null && entities.push({ text: stableStringify(line.tool.input), line: useLine });
     let { resultStr } = serializeResult(line.tool.result);
@@ -29115,7 +29212,7 @@ async function scopedSession(sources, scope, readSource) {
   let read = await readSource(entry.sourceLocator);
   if (!read.readable) throw scopeNotFound();
   let turns = read.turns.filter((turn) => turn.sourceOrdinal === parsed.sourceOrdinal);
-  if (turns.length !== 1) throw scopeNotFound();
+  if (turns.length !== 1 || !admitsTurn(entry, turns[0].timestamp)) throw scopeNotFound();
   let span = new Set(turns[0].lines.map((line) => line.foldOrdinal));
   return {
     entry,
@@ -29140,13 +29237,12 @@ async function searchTranscripts({
   q,
   scope = null,
   dialogueSource,
-  dialogueProjection,
-  includeToolEvidence
+  dialogueProjection
 }) {
-  let sources = labelHistorySources(lineage), readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), needle = foldAscii(String(q)), wire = (ranges, truncated2) => ({ found: !0, ranges, truncated: truncated2 }), groupsOf = (matches) => {
-    let out2 = [], session = null, byTurn = /* @__PURE__ */ new Map();
+  let sources = labelHistorySources(lineage), readSource = createHistoryReader({ dialogueSource, dialogueProjection }), needle = foldAscii(String(q)), wire = (ranges, truncated2) => ({ found: !0, ranges, truncated: truncated2 }), groupsOf = (matches) => {
+    let out2 = [], index = null, byTurn = /* @__PURE__ */ new Map();
     for (let m of matches) {
-      m.sessionId !== session && (session = m.sessionId, byTurn = /* @__PURE__ */ new Map());
+      m.index !== index && (index = m.index, byTurn = /* @__PURE__ */ new Map());
       let open = byTurn.get(m.turnKey);
       if (open) {
         open.matches.push(m.wire);
@@ -29178,16 +29274,17 @@ async function searchTranscripts({
     for await (let { entry, folds, turns } of sessionsToScan(sources, scope, readSource)) {
       let membership = null, recordByHead = null, headFolds = null;
       for (let i2 = folds.length - 1; i2 >= 0; i2--) {
-        let fold = folds[i2], hit = firstHit(canonicalEntities(fold, includeToolEvidence), needle);
+        let fold = folds[i2], hit = firstHit(canonicalEntities(fold), needle);
         if (!hit || (headFolds ??= headFoldsOf(turns), fold.message && fold.message.role === "human" && !headFolds.has(fold.ordinal))) continue;
         let turnKey = entry.sessionId, record = null;
         if (scope == null) {
-          membership ??= turnByFold(turns), recordByHead ??= await recordByTurnHead(store, entry, turns);
+          membership ??= turnByFold(turns);
           let member = membership.get(fold.ordinal);
-          turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`, record = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
+          if (!admitsTurn(entry, member ? turns[member.turnIndex].timestamp : fold.timestamp)) continue;
+          recordByHead ??= await recordByTurnHead(store, entry, turns), turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`, record = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
         }
         let candidate = {
-          sessionId: entry.sessionId,
+          index: entry.index,
           label: entry.label,
           turnKey,
           record,
@@ -29205,21 +29302,21 @@ async function searchTranscripts({
 }
 async function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
   if (!store.turnFtsAvailable()) throw locateUnavailable();
-  let readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator), sessions = new Map(labelHistorySources(lineage).map((entry) => [entry.sessionId, entry])), rows;
+  let readSource = createHistoryReader({ dialogueSource, dialogueProjection }), members = Map.groupBy(labelHistorySources(lineage), (entry) => entry.sessionId), rows;
   try {
-    rows = store.locateTurnNotes([...sessions.keys()], buildFtsMatch(q, "plain"));
+    rows = store.locateTurnNotes([...members.keys()], buildFtsMatch(q, "plain"));
   } catch (error) {
     throw locateUnavailable(error);
   }
   let projected = /* @__PURE__ */ new Map(), accumulated = /* @__PURE__ */ new Map(), hits = 0;
   for (let row of rows) {
-    let entry = sessions.get(row.sourceSessionId);
+    let entry = members.get(row.sourceSessionId)?.find((e) => admitsTurn(e, row.sourceTimestamp));
     if (!entry) continue;
-    if (!projected.has(entry.sessionId)) {
+    if (!projected.has(entry.index)) {
       let { readable, records } = await projectSession(store, entry, readSource);
-      projected.set(entry.sessionId, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
+      projected.set(entry.index, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
     }
-    let session = projected.get(entry.sessionId);
+    let session = projected.get(entry.index);
     if (!session) continue;
     let at = session.indexByAnchor.get(row.anchorUuid);
     if (at === void 0 || session.records[at].record.t === null) continue;
@@ -29274,7 +29371,6 @@ function createTurnReadService({
   sessionId,
   dialogueSource,
   dialogueProjection,
-  includeToolEvidence,
   recovery,
   turnPageBuilder = buildTurnPage
 }) {
@@ -29305,8 +29401,7 @@ function createTurnReadService({
           lineage,
           q,
           scope: scope || null,
-          ...history,
-          includeToolEvidence
+          ...history
         });
         return withSearchRecovery(found, { hitRecovery: recovery.searchHit });
       } catch (err2) {
@@ -29337,8 +29432,8 @@ var init_turn_read_service = __esm({
 });
 
 // lib/harness/claude-code/dialogue-source.js
-import { readFileSync as readFileSync8 } from "node:fs";
-function createClaudeCodeDialogueSource({ readFile = readFileSync8 } = {}) {
+import { readFileSync as readFileSync9 } from "node:fs";
+function createClaudeCodeDialogueSource({ readFile = readFileSync9 } = {}) {
   return {
     async read(sourceLocator) {
       let buffer;
@@ -29359,8 +29454,6 @@ var init_dialogue_source = __esm({
 });
 
 // lib/harness/claude-code/history-turn-rules.js
-import { isAbsolute as isAbsolute3, join as join8, normalize as normalize2, resolve as resolve3 } from "node:path";
-import { homedir as osHomedir } from "node:os";
 function cleanUserText(rawText) {
   let s = String(rawText || "").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, ""), captured = [];
   for (let m of s.matchAll(CAPTURE)) captured.push({ tag: m[1], text: m[2].trim() });
@@ -29409,18 +29502,14 @@ function createClaudeCodeAskHeadRule() {
     return cleaned ? { kind: "HEAD", text: cleaned } : ABSORB;
   };
 }
-function createClaudeCodeDialogueProjection({ sessionCwd = null } = {}) {
-  let context = { path: { join: join8, isAbsolute: isAbsolute3, resolve: resolve3, normalize: normalize2 }, homedir: osHomedir, sessionCwd }, rules = [
+function createClaudeCodeDialogueProjection() {
+  let rules = [
     createClaudeCodeHumanHeadRule(),
     createClaudeCodeAskHeadRule()
   ];
   return {
     project(observations) {
-      let { folds } = projectDialogue(observations);
-      for (let fold of folds)
-        for (let pair of fold.toolPairs)
-          pair.resourceKey = resolveClaudeCodeToolTarget(pair, context);
-      return { folds };
+      return projectDialogue(observations);
     },
     groupTurns(lines) {
       return groupTurns(lines, rules);
@@ -29432,7 +29521,6 @@ var TAG_BLOCKS, CAPTURE, EXIT_ECHO, EXIT_COMMAND, ASK_TOOL_NAME, ASK_FALLBACK_HE
     init_turn();
     init_dialogue_fold();
     init_turn_history_budget();
-    init_native_tools();
     TAG_BLOCKS = /<(command-[a-z-]+|local-command-[a-z-]+|bash-[a-z-]+)>[\s\S]*?<\/\1>/g, CAPTURE = /<(command-name|command-args|bash-input)>([\s\S]*?)<\/\1>/g, EXIT_ECHO = "<command-name>/exit</command-name>", EXIT_COMMAND = "/exit";
     ASK_TOOL_NAME = "AskUserQuestion", ASK_FALLBACK_HEAD = 200, ASK_FALLBACK_TAIL = 200;
   }
@@ -29465,175 +29553,7 @@ var init_dialogue_source2 = __esm({
   }
 });
 
-// lib/harness/dsh/native-tools.js
-function canonicalizerFor2(context) {
-  let ops = context && context.path;
-  return ops ? (raw, base) => {
-    let abs = ops.isAbsolute(raw) ? raw : ops.resolve(base || "/", raw);
-    return ops.normalize(abs).split("\\").join("/");
-  } : (raw) => String(raw);
-}
-function baseDirFor2(row, context) {
-  return typeof row.cwd == "string" && row.cwd.length > 0 ? row.cwd : typeof context.sessionCwd == "string" && context.sessionCwd.length > 0 ? context.sessionCwd : null;
-}
-function isEffectiveUpdate2(update, target) {
-  return update.type === "grepMultiFile" ? Object.keys(update.files).length > 0 : update.type === "fullSet" || update.type === "lineUpdate" ? target != null && update.lines.length > 0 : target != null;
-}
-function residualIdentityFor2(name2, input) {
-  let inputLength = JSON.stringify(input).length;
-  if (name2 === "bash") {
-    let feature = bashFeature(input.command);
-    return { groupKey: feature.name, kind: "bash", detail: feature.detail, inputLength };
-  }
-  return name2.startsWith(MCP_PREFIX) ? { groupKey: name2.slice(MCP_PREFIX.length), kind: "mcp", detail: "", inputLength } : { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "", inputLength };
-}
-function isLoadHandoffTool2(name2) {
-  return name2.endsWith("load_handoff");
-}
-function resolvedLoadToken2(text) {
-  try {
-    let parsed = JSON.parse(text);
-    return typeof parsed?.load_token == "string" ? parsed.load_token : null;
-  } catch {
-    return null;
-  }
-}
-function interpretDshToolUse(observation, context) {
-  let { toolUseId, name: name2 } = observation, issuingStepId = observation.messageId ?? null, issuingPolicy = context.resolveModelPolicy(observation.model ?? null), input = observation.input ?? {}, explicitToken = isLoadHandoffTool2(name2) && typeof input.load_token == "string" ? input.load_token : null, awaitLoadToken = isLoadHandoffTool2(name2) && explicitToken === null, telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }, call = { toolUseId, issuingStepId, issuingPolicy, awaitLoadToken }, adapter = EFFECT_ADAPTERS.get(name2), pending = null;
-  if (adapter === void 0)
-    pending = { kind: "residual", ...call, residual: residualIdentityFor2(name2, input) };
-  else {
-    let base = baseDirFor2(observation, context);
-    try {
-      let target = adapter.extractTarget(input, base, canonicalizerFor2(context));
-      pending = { kind: "effect", ...call, adapter, input, base, target, rawPath: input.file_path || target };
-    } catch {
-    }
-  }
-  return { pending, effects: [], residuals: [], telemetry };
-}
-function completeDshToolResult(pending, observation, context) {
-  let text = observation.content, telemetry = {
-    toolUseId: pending.toolUseId,
-    issuingStepId: pending.issuingStepId,
-    loadToken: pending.awaitLoadToken ? resolvedLoadToken2(text) : null,
-    pathEvents: []
-  }, hadError = observation.isError === !0;
-  if (pending.kind === "residual") {
-    let { groupKey, kind, detail, inputLength } = pending.residual;
-    return {
-      effects: [],
-      residuals: [{ groupKey, weight: inputLength + text.length, hadError, meta: { kind, detail } }],
-      telemetry,
-      skillContinuation: null
-    };
-  }
-  let nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
-  if (hadError) return nothing2;
-  let { adapter, input, base, target, rawPath, issuingPolicy } = pending, update;
-  try {
-    update = adapter.computeUpdate(input, text, base, issuingPolicy.ctp, canonicalizerFor2(context));
-  } catch {
-    return nothing2;
-  }
-  return isEffectiveUpdate2(update, target) ? (telemetry.pathEvents = pathEventsFor(update, target, rawPath, adapter.toolType), { effects: [effectFor(update, target)], residuals: [], telemetry, skillContinuation: null }) : nothing2;
-}
-function resolveDshToolTarget(pair, context) {
-  let adapter = EFFECT_ADAPTERS.get(pair.name);
-  if (adapter === void 0) return null;
-  try {
-    return adapter.extractTarget(pair.input ?? {}, baseDirFor2(pair, context), canonicalizerFor2(context));
-  } catch {
-    return null;
-  }
-}
-var READ_LINE_RE, END_OF_FILE_RE, GREP_SECTION_SEPARATOR, GREP_ROW_RE, sumTokens, fileTarget, EFFECT_ADAPTERS, MCP_PREFIX, AGENT_TOOLS, init_native_tools2 = __esm({
-  "lib/harness/dsh/native-tools.js"() {
-    init_constants();
-    init_token_estimate();
-    init_bash_feature();
-    init_tool_effects();
-    READ_LINE_RE = /^(\d+): /, END_OF_FILE_RE = /^\(End of file - total \d+ lines\)$/, GREP_SECTION_SEPARATOR = `
-
-`, GREP_ROW_RE = /^Line (\d+): /, sumTokens = (lines) => lines.reduce((sum, [, tokens]) => sum + tokens, 0), fileTarget = (input, base, canon) => input.file_path ? canon(input.file_path, base) : null, EFFECT_ADAPTERS = /* @__PURE__ */ new Map([
-      ["read", {
-        toolType: "read",
-        extractTarget: fileTarget,
-        computeUpdate: (_input, text, _base, ctp) => {
-          let lines = [], reachedEnd = !1;
-          for (let line of text.split(`
-`)) {
-            let numbered = READ_LINE_RE.exec(line);
-            numbered ? lines.push([Number(numbered[1]), charsToTokens(line, ctp)]) : END_OF_FILE_RE.test(line) && (reachedEnd = !0);
-          }
-          let isFullRead = reachedEnd && lines.length > 0 && lines[0][0] === 1, spent = sumTokens(lines) + TOOL_OVERHEAD.Read;
-          return { type: isFullRead ? "fullSet" : "lineUpdate", lines, overhead: TOOL_OVERHEAD.Read, spent };
-        }
-      }],
-      ["write", {
-        toolType: "write",
-        extractTarget: fileTarget,
-        // Written content is raw and a later read numbers it, so the write prices the read's form and the two
-        // observations of one file agree. `buildWindow` counts a final unterminated line but no line after a
-        // final newline, so neither does this.
-        computeUpdate: (input, _text, _base, ctp) => {
-          let rawLines = String(input.content ?? "").split(`
-`);
-          rawLines.at(-1) === "" && rawLines.pop();
-          let lines = rawLines.map((line, index) => [index + 1, charsToTokens(`${index + 1}: ${line}`, ctp)]);
-          return { type: "write", lines, overhead: TOOL_OVERHEAD.Write, spent: sumTokens(lines) + TOOL_OVERHEAD.Write };
-        }
-      }],
-      ["edit", {
-        toolType: "edit",
-        extractTarget: fileTarget,
-        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
-        // framing overhead because the corrective read that follows most edits charges its own. Each line it
-        // adds or removes carries a line-number prefix in the read's form.
-        computeUpdate: (input, _text, _base, ctp) => {
-          let oldString = input.old_string ?? "", newString = input.new_string ?? "", oldTokens = charsToTokens(oldString, ctp), newTokens = charsToTokens(newString, ctp), lineDelta = (newString.match(/\n/g) || []).length - (oldString.match(/\n/g) || []).length;
-          return { type: "editDelta", value: newTokens - oldTokens + lineDelta * (4 / ctp.ascii), spent: oldTokens + newTokens + TOOL_OVERHEAD.Edit };
-        }
-      }],
-      ["grep", {
-        toolType: "grep",
-        extractTarget: () => null,
-        // the files are named by the result, not by the input
-        computeUpdate: (_input, text, base, ctp, canon) => {
-          let files = /* @__PURE__ */ Object.create(null);
-          for (let section of text.split(GREP_SECTION_SEPARATOR)) {
-            let [path3, ...rows] = section.split(`
-`);
-            if (GREP_ROW_RE.test(path3)) continue;
-            let lines = [];
-            for (let row of rows) {
-              let numbered = GREP_ROW_RE.exec(row);
-              if (!numbered) continue;
-              let rendered = `${numbered[1]}: ${row.slice(numbered[0].length)}`;
-              lines.push([Number(numbered[1]), charsToTokens(rendered, ctp)]);
-            }
-            lines.length !== 0 && (files[canon(path3, base)] = lines);
-          }
-          let spent = Object.values(files).reduce((sum, lines) => sum + sumTokens(lines), TOOL_OVERHEAD.Grep);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
-        }
-      }],
-      ["skill", {
-        toolType: "skill",
-        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
-        extractTarget: (input) => input.name ? "skill:" + input.name : null,
-        computeUpdate: (_input, text, _base, ctp) => {
-          let tokens = charsToTokens(text, ctp);
-          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
-        }
-      }]
-    ]);
-    MCP_PREFIX = "mcp__", AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
-  }
-});
-
 // lib/harness/dsh/history-turn-rules.js
-import { isAbsolute as isAbsolute4, normalize as normalize3, resolve as resolve4 } from "node:path";
 function createDshHumanHeadRule() {
   return (line) => {
     if (line.kind !== "visible" || line.message.role !== "human") return PASS;
@@ -29662,18 +29582,14 @@ function createDshAskHeadRule() {
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
-function createDshDialogueProjection({ sessionCwd }) {
-  let context = { path: { isAbsolute: isAbsolute4, resolve: resolve4, normalize: normalize3 }, sessionCwd }, rules = [
+function createDshDialogueProjection() {
+  let rules = [
     createDshHumanHeadRule(),
     createDshAskHeadRule()
   ];
   return {
     project(observations) {
-      let { folds } = projectDialogue(observations);
-      for (let fold of folds)
-        for (let pair of fold.toolPairs)
-          pair.resourceKey = resolveDshToolTarget(pair, context);
-      return { folds };
+      return projectDialogue(observations);
     },
     groupTurns(lines) {
       return groupTurns(lines, rules);
@@ -29684,13 +29600,11 @@ var ASK_TOOL_NAME2, init_history_turn_rules2 = __esm({
   "lib/harness/dsh/history-turn-rules.js"() {
     init_turn();
     init_dialogue_fold();
-    init_native_tools2();
     ASK_TOOL_NAME2 = "ask_user_question";
   }
 });
 
 // lib/harness/dsh/measurement-projection.js
-import nodePath2 from "node:path";
 function invariant6(ok, message) {
   if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
 }
@@ -29706,7 +29620,7 @@ function createDshMeasurementProjection({
 } = {}) {
   return invariant6(typeof interpretToolUse == "function", "interpretToolUse must be a function"), invariant6(typeof completeToolResult == "function", "completeToolResult must be a function"), createMeasurementProjection({
     scope: "dsh-measurement-projection",
-    context: { path: nodePath2, sessionCwd: cwd || projectRoot || null, resolveModelPolicy },
+    context: { sessionCwd: cwd || projectRoot || null, resolveModelPolicy },
     captureSources: { live: "dsh-live", replay: "dsh-replay" },
     interpretToolUse,
     completeToolResult,
@@ -29719,6 +29633,28 @@ var init_measurement_projection3 = __esm({
   }
 });
 
+// lib/harness/dsh/tool-evidence-profile.js
+function residualIdentity2(name2, input) {
+  if (name2 === "bash") {
+    let feature = bashFeature(input.command);
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail };
+  }
+  return name2.startsWith(MCP_PREFIX2) ? { groupKey: name2.slice(MCP_PREFIX2.length), kind: "mcp", detail: "" } : { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "" };
+}
+function isLoadHandoffTool2(name2) {
+  return name2.endsWith("load_handoff");
+}
+function nonFileResource2({ name: name2, input }) {
+  return name2 === "skill" && input.name ? { resourceKey: "skill:" + input.name } : null;
+}
+var MCP_PREFIX2, AGENT_TOOLS, dshToolEvidenceProfile, init_tool_evidence_profile2 = __esm({
+  "lib/harness/dsh/tool-evidence-profile.js"() {
+    init_bash_feature();
+    MCP_PREFIX2 = "mcp__", AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
+    dshToolEvidenceProfile = { residualIdentity: residualIdentity2, isLoadHandoffTool: isLoadHandoffTool2, nonFileResource: nonFileResource2 };
+  }
+});
+
 // dsh/src/composition.js
 var composition_exports = {};
 __export(composition_exports, {
@@ -29726,9 +29662,38 @@ __export(composition_exports, {
   composeWatcher: () => composeWatcher
 });
 import { tmpdir } from "node:os";
-import { join as join9 } from "node:path";
-function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl }) {
-  let dialogueSource = createDshDialogueSource({ readSession }), dialogueProjection = createDshDialogueProjection({ sessionCwd: cwd });
+import nodePath, { join as join8 } from "node:path";
+function nodeWorkingTree() {
+  return sharedWorkingTree ??= createNodeWorkingTree({
+    path: nodePath,
+    homeDir: null,
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS
+  }), sharedWorkingTree;
+}
+function interpretersFor({ workingTree, cwd }) {
+  let attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree(), limits: ATTRIBUTION_LIMITS }), interpreter = createToolEvidenceInterpreter({
+    attribution,
+    profile: dshToolEvidenceProfile,
+    limits: ATTRIBUTION_LIMITS
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: cwd })
+  };
+}
+function composeWatcher({
+  sessionId,
+  cwd,
+  store,
+  turnNotesRoot,
+  readSession,
+  isIgnored,
+  cacheTtl,
+  workingTree
+}) {
+  let dialogueSource = createDshDialogueSource({ readSession }), dialogueProjection = createDshDialogueProjection(), { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
   return { watcher: new SessionWatcher({
     sessionId,
     sourceLocator: sessionId,
@@ -29747,16 +29712,17 @@ function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isI
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse: interpretDshToolUse,
-      completeToolResult: completeDshToolResult
+      interpretToolUse,
+      completeToolResult
     }),
+    resourceKeysOf,
     modelPolicyFor: (modelId) => {
       let policy = modelPolicyFor(modelId, cacheTtl() ?? "5m"), saved = loadPricingOverride(modelId);
       return saved && (policy.cRatio = saved.ratio), policy;
     }
   }), dialogueSource, dialogueProjection };
 }
-var DSH_TURN_NOTES_ROOT, init_composition = __esm({
+var DSH_TURN_NOTES_ROOT, sharedWorkingTree, init_composition = __esm({
   "dsh/src/composition.js"() {
     init_session_watcher();
     init_resource_policy();
@@ -29768,20 +29734,23 @@ var DSH_TURN_NOTES_ROOT, init_composition = __esm({
     init_project_key();
     init_version();
     init_constants();
+    init_working_tree();
+    init_resource_attribution();
+    init_tool_evidence();
     init_dialogue_source2();
     init_history_turn_rules2();
     init_measurement_projection3();
-    init_native_tools2();
-    DSH_TURN_NOTES_ROOT = join9(tmpdir(), "session-watcher", "turn-notes");
+    init_tool_evidence_profile2();
+    DSH_TURN_NOTES_ROOT = join8(tmpdir(), "session-watcher", "turn-notes"), sharedWorkingTree = null;
   }
 });
 
 // server.js
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { dirname as dirname3, join as join10 } from "node:path";
-import { readdirSync as readdirSync3, statSync as statSync5, mkdirSync as mkdirSync3, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
+import { dirname as dirname3, join as join9, resolve as resolve3, isAbsolute as isAbsolute3, normalize as normalize2 } from "node:path";
+import { readdirSync as readdirSync3, statSync as statSync6, mkdirSync as mkdirSync3, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
 function safeSessionId(sessionId) {
   let s = String(sessionId ?? "");
   return !s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..") ? "__invalid_session__" : s;
@@ -29797,7 +29766,7 @@ function resolveBySessionId(projectsRoot, sessionId) {
       return;
     }
     for (let e of entries) {
-      let p = join10(dir, e.name);
+      let p = join9(dir, e.name);
       e.isDirectory() ? walk2(p, depth + 1) : e.name === wanted && hits.push(p);
     }
   };
@@ -29805,6 +29774,28 @@ function resolveBySessionId(projectsRoot, sessionId) {
 }
 function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
   return sseClientsSize === 0 && now - lastRequestMono > IDLE_SHUTDOWN_MS;
+}
+function nodeWorkingTree2() {
+  return sharedWorkingTree2 ??= createNodeWorkingTree({
+    path: { isAbsolute: isAbsolute3, resolve: resolve3, normalize: normalize2 },
+    homeDir: homedir4(),
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS
+  }), sharedWorkingTree2;
+}
+function interpretersFor2({ workingTree, projectRoot }) {
+  let attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree2(), limits: ATTRIBUTION_LIMITS }), interpreter = createToolEvidenceInterpreter({
+    attribution,
+    profile: claudeCodeToolEvidenceProfile,
+    limits: ATTRIBUTION_LIMITS
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    interpretSkillPayload: claudeCodeToolEvidenceProfile.interpretSkillPayload,
+    interpretTaskNotification: claudeCodeToolEvidenceProfile.interpretTaskNotification,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: projectRoot })
+  };
 }
 function createWatcherComposition({
   sessionId = null,
@@ -29819,9 +29810,16 @@ function createWatcherComposition({
   // place production reads the declaration, and every layer below receives the lifetime already bound into
   // the policy resolver.
   cacheTtl = resolveClaudeCodeCacheTtl(),
-  now = () => Date.now()
+  now = () => Date.now(),
+  workingTree
 } = {}) {
-  let resourcePolicy = createResourcePolicy({ projectRoot, isIgnored }), resourceEnrichment = createResourceEnrichment();
+  let resourcePolicy = createResourcePolicy({ projectRoot, isIgnored }), resourceEnrichment = createResourceEnrichment(), {
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload: interpretSkillPayload2,
+    interpretTaskNotification: interpretTaskNotification2,
+    resourceKeysOf
+  } = interpretersFor2({ workingTree, projectRoot });
   return new SessionWatcher({
     sessionId,
     sourceLocator,
@@ -29829,27 +29827,28 @@ function createWatcherComposition({
     projectRoot,
     // Derived once from the host's existing state directory. `SessionWatcher` has no state-directory
     // fallback, so a composition that forgot this cannot silently write Turn Notes into the real install.
-    turnNotesRoot: join10(stateDir || PORT_DIR, "turn-notes"),
+    turnNotesRoot: join9(stateDir || PORT_DIR, "turn-notes"),
     resourcePolicy,
     resourceEnrichment,
     handoffComposition: createHandoffComposition(),
     loaderVersion: PLUGIN_VERSION,
     store,
     dialogueSource: dialogueSource || createClaudeCodeDialogueSource(),
-    dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: projectRoot || process.cwd() }),
+    dialogueProjection: createClaudeCodeDialogueProjection(),
     createEngine: createMeasurementEngine,
-    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the locator and the
-    // effective model resolver the application owns rather than closing over either.
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the effective model resolver
+    // the application owns rather than closing over it. The locator the application hands first is not read: a
+    // relative path resolves against the row's own `cwd`, else `projectRoot`.
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
       cwd: projectRoot,
       projectRoot,
-      sourceLocator: locator,
       resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification
+      interpretToolUse,
+      completeToolResult,
+      interpretSkillPayload: interpretSkillPayload2,
+      interpretTaskNotification: interpretTaskNotification2
     }),
+    resourceKeysOf,
     // The C ratio is a function of the model AND the prompt-cache lifetime this host declared, and that
     // lifetime is one fact for the whole composition. Binding it here leaves the measured layers below
     // passing a model id and nothing else, so no cache lifetime enters their vocabulary.
@@ -29857,10 +29856,8 @@ function createWatcherComposition({
     now
   });
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join10(__dirname2, "public"), store = null, disableTelemetrySweep = !1, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
-  let app = (0, import_express.default)(), startMs = Date.now(), sseClients = /* @__PURE__ */ new Set(), server = createHttpServer(app), resolveStore = () => store || getStore(), dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource(), dialogueProjection = createClaudeCodeDialogueProjection({
-    sessionCwd: projectRoot || process.cwd()
-  }), includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === "residual", history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE }, formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join9(__dirname2, "public"), store = null, disableTelemetrySweep = !1, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
+  let app = (0, import_express.default)(), startMs = Date.now(), sseClients = /* @__PURE__ */ new Set(), server = createHttpServer(app), resolveStore = () => store || getStore(), dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource(), dialogueProjection = createClaudeCodeDialogueProjection(), history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE }, formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
     store: resolveStore(),
     turnPageBuilder: injectedTurnPageBuilder,
     ...history
@@ -29872,7 +29869,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   });
   let currentSessionId = sessionId, effectiveStateDir = stateDir || PORT_DIR, pollTimer = null, lastAdvanceMono = -1 / 0, lastSnapshotMono = -1 / 0, _nowMono = () => _globalTestClockMono ?? performance.now(), ownerMeta = { pid: process.pid, startedAt: startMs, clientPid: process.ppid }, driver = null, candidate = null, RESOLVE_BACKOFF_MS = [1e3, 2e3, 4e3, 8e3, 16e3, 3e4], resolveAttempts = 0, nextResolveMono = -1 / 0, publishedDiscoveryPaths = /* @__PURE__ */ new Set();
   function writeDiscovery(targetSessionId) {
-    let path3 = join10(effectiveStateDir, `${safeSessionId(targetSessionId)}.json`);
+    let path3 = join9(effectiveStateDir, `${safeSessionId(targetSessionId)}.json`);
     try {
       return mkdirSync3(effectiveStateDir, { recursive: !0 }), writeFileSync2(path3, JSON.stringify({
         port: server.address()?.port ?? null,
@@ -29991,7 +29988,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
           sessionId: null,
           cwd: source.header.cwd,
           store: resolveStore(),
-          turnNotesRoot: join10(effectiveStateDir, "turn-notes"),
+          turnNotesRoot: join9(effectiveStateDir, "turn-notes"),
           readSession: async () => source.dialogueSnapshot,
           isIgnored: null,
           cacheTtl: () => cacheTtl
@@ -30121,8 +30118,7 @@ data: ${JSON.stringify({ type: "scan" })}
           lineage,
           q: req.query.q,
           scope,
-          ...history,
-          includeToolEvidence
+          ...history
         }));
       } catch (err2) {
         return err2 && err2.code === "scope_not_found" ? res.status(404).json({ error: "scope_not_found" }) : (process.env.SW_DEBUG && console.error("[turn_search]", err2), res.status(503).json({ error: "search_unavailable" }));
@@ -30189,7 +30185,7 @@ data: ${JSON.stringify({ type: "scan" })}
       recentStopEvents: (ledger?.recentStopEvents || []).length
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
-  }), app.get("/", (req, res) => res.sendFile(join10(publicDir, "dashboard.html"))), app.get("/dashboard", (req, res) => res.sendFile(join10(publicDir, "dashboard.html"))), app.use(import_express.default.static(publicDir, {
+  }), app.get("/", (req, res) => res.sendFile(join9(publicDir, "dashboard.html"))), app.get("/dashboard", (req, res) => res.sendFile(join9(publicDir, "dashboard.html"))), app.use(import_express.default.static(publicDir, {
     setHeaders: (res) => {
       res.setHeader("Cache-Control", "no-cache");
     }
@@ -30317,7 +30313,7 @@ data: ${JSON.stringify({ type: "scan" })}
     }
     let oldSessionId = currentSessionId;
     driver = rotated, currentSessionId = newSessionId, lastSnapshotMono = -1 / 0;
-    let oldStateFile = join10(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`), published = writeDiscovery(newSessionId), warning;
+    let oldStateFile = join9(effectiveStateDir, `${safeSessionId(oldSessionId)}.json`), published = writeDiscovery(newSessionId), warning;
     if (published.ok) {
       if (published.path !== oldStateFile)
         try {
@@ -30398,7 +30394,6 @@ data: ${JSON.stringify({ type: "scan" })}
     sessionId: () => currentSessionId,
     dialogueSource,
     dialogueProjection,
-    includeToolEvidence,
     recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
     turnPageBuilder: injectedTurnPageBuilder
   });
@@ -30434,7 +30429,7 @@ data: ${JSON.stringify({ type: "scan" })}
     }
   };
 }
-var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery, init_server = __esm({
+var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery, sharedWorkingTree2, init_server = __esm({
   "server.js"() {
     import_express = __toESM(require_express2(), 1);
     init_session_watcher();
@@ -30443,7 +30438,10 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     init_engine();
     init_source_driver();
     init_measurement_projection2();
-    init_native_tools();
+    init_tool_evidence_profile();
+    init_working_tree();
+    init_resource_attribution();
+    init_tool_evidence();
     init_cache_ttl();
     init_rate_lamp_manager();
     init_wire();
@@ -30468,19 +30466,18 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     init_turn_query();
     init_dialogue_source();
     init_history_turn_rules();
-    init_native_tools();
     init_turn_recovery();
     [_major, _minor] = process.versions.node.split(".").map(Number);
     (_major < 22 || _major === 22 && _minor < 16) && (console.error("Session Watcher requires Node >=22.16.0 (node:sqlite)"), process.exit(1));
     __dirname2 = dirname3(fileURLToPath2(import.meta.url));
-    PORT_DIR = process.env.SW_STATE_DIR || join10(homedir5(), ".session-watcher");
+    PORT_DIR = process.env.SW_STATE_DIR || join9(homedir4(), ".session-watcher");
     _globalTestClockMono = null, _idleEnv = Number(process.env.SW_IDLE_TTL_MS), IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 1440 * 60 * 1e3, SNAPSHOT_THROTTLE_MS = 3e4;
-    isValidTurnQuery = (q) => typeof q == "string" && q.trim() !== "" && q.length <= HISTORY_EXCERPT_CHARS;
+    isValidTurnQuery = (q) => typeof q == "string" && q.trim() !== "" && q.length <= HISTORY_EXCERPT_CHARS, sharedWorkingTree2 = null;
   }
 });
 
 // lib/replay-server.js
-import { dirname as dirname4, join as join11 } from "node:path";
+import { dirname as dirname4, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
   let { harness, index } = openReplaySource(transcriptPath);
@@ -30497,7 +30494,7 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
     store: getStore(),
     isIgnored: null,
     cacheTtl
-  }), publicDir = join11(__dirname3, "..", "public"), { server, stopTimers, sseClients } = createServer({
+  }), publicDir = join10(__dirname3, "..", "public"), { server, stopTimers, sseClients } = createServer({
     watcher,
     pollIntervalMs: 0,
     sessionId: "replay",
@@ -30511,9 +30508,9 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
     cacheTtl,
     disableTelemetrySweep: !0
   });
-  await new Promise((resolve6, reject) => {
+  await new Promise((resolve4, reject) => {
     server.once("error", reject), server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", reject), resolve6();
+      server.removeListener("error", reject), resolve4();
     });
   });
   let url = `http://127.0.0.1:${server.address().port}`, startRes = await fetch(`${url}/api/replay/start`, {
@@ -30525,7 +30522,7 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
     let err2 = await startRes.json().catch(() => ({}));
     throw closeStoreGlobal(), server.close(), new Error(`Failed to start replay: ${err2.error || startRes.statusText}`);
   }
-  let stop2 = () => cleanedUp ? Promise.resolve() : (cleanedUp = !0, new Promise((resolve6) => {
+  let stop2 = () => cleanedUp ? Promise.resolve() : (cleanedUp = !0, new Promise((resolve4) => {
     fetch(`${url}/api/replay/stop`, { method: "POST" }).catch(() => {
     }), stopTimers();
     for (let client of sseClients)
@@ -30534,9 +30531,9 @@ async function startReplayServer({ transcriptPath, speed = 20, port = 0 }) {
       } catch {
       }
     server.close(() => {
-      closeStoreGlobal(), resolve6();
+      closeStoreGlobal(), resolve4();
     }), setTimeout(() => {
-      closeStoreGlobal(), resolve6();
+      closeStoreGlobal(), resolve4();
     }, 2e3).unref();
   }));
   return { server, url, totalSteps: index.length, stop: stop2 };
@@ -30556,23 +30553,23 @@ var cli_exports = {};
 __export(cli_exports, {
   runCli: () => runCli
 });
-import { existsSync as existsSync3, statSync as statSync6 } from "node:fs";
-import { join as join12, dirname as dirname5 } from "node:path";
+import { existsSync as existsSync3, statSync as statSync7 } from "node:fs";
+import { join as join11, dirname as dirname5 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { exec } from "node:child_process";
 import { release } from "node:os";
 import { createServer as createHttpServer2 } from "node:http";
-import { readFileSync as readFileSync10 } from "node:fs";
+import { readFileSync as readFileSync11 } from "node:fs";
 async function runCli(args2) {
   return args2.command === "demo" ? runStaticDemo(args2) : runReplay(args2);
 }
 async function runStaticDemo(args2) {
   let publicDir = [
-    join12(__dirname4, "..", "public"),
+    join11(__dirname4, "..", "public"),
     // bundled (dist/bin/../public = dist/public)
-    join12(__dirname4, "..", "dist", "public")
+    join11(__dirname4, "..", "dist", "public")
     // source dev fallback
-  ].find((p) => existsSync3(join12(p, "demo.html")));
+  ].find((p) => existsSync3(join11(p, "demo.html")));
   publicDir || (console.error("Error: Demo assets not found. Try reinstalling: npm install -g @nomadop/session-watcher"), process.exit(1));
   let MIME = {
     ".html": "text/html",
@@ -30582,20 +30579,20 @@ async function runStaticDemo(args2) {
     ".svg": "image/svg+xml",
     ".png": "image/png"
   }, server = createHttpServer2((req, res) => {
-    let url2 = new URL(req.url, "http://localhost"), filePath = join12(publicDir, url2.pathname === "/" ? "demo.html" : url2.pathname);
+    let url2 = new URL(req.url, "http://localhost"), filePath = join11(publicDir, url2.pathname === "/" ? "demo.html" : url2.pathname);
     if (!filePath.startsWith(publicDir)) {
       res.writeHead(403), res.end();
       return;
     }
     try {
-      let data = readFileSync10(filePath), ext = filePath.slice(filePath.lastIndexOf("."));
+      let data = readFileSync11(filePath), ext = filePath.slice(filePath.lastIndexOf("."));
       res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Cache-Control": "no-cache" }), res.end(data);
     } catch {
       res.writeHead(404), res.end("Not found");
     }
   });
-  await new Promise((resolve6, reject) => {
-    server.listen(args2.port, "127.0.0.1", () => resolve6()), server.on("error", reject);
+  await new Promise((resolve4, reject) => {
+    server.listen(args2.port, "127.0.0.1", () => resolve4()), server.on("error", reject);
   });
   let url = `http://127.0.0.1:${server.address().port}`, cleanup = () => {
     server.close(), process.exit(0);
@@ -30606,7 +30603,7 @@ async function runReplay(args2) {
   let transcriptPath = args2.transcriptPath;
   existsSync3(transcriptPath) || (console.error(`Error: File not found: ${transcriptPath}`), process.exit(1));
   try {
-    statSync6(transcriptPath);
+    statSync7(transcriptPath);
   } catch (e) {
     throw e.code === "EACCES" && (console.error(`Error: Permission denied: ${transcriptPath}`), process.exit(1)), e;
   }
@@ -30732,7 +30729,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.9.1", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.10.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

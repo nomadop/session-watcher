@@ -183,7 +183,7 @@ Session Watcher is agent-agnostic. Everything below the harness layer consumes n
 | Hermes | adapter-ready | pending |
 | Aider | adapter-ready | pending |
 
-Adding a new agent means writing a harness for it under `lib/harness/<agent>/`: a source driver that turns that agent's own session evidence into normalized observations, a thin measurement projection adapter over the shared [`lib/measurement-projection.js`](lib/measurement-projection.js) with the interpreters for the agent's native tools, the dialogue source and history turn rules that read its conversation, and the recovery sentences that tell a reader how to open a turn it cites. The engine, dialogue history, handoff, and every product surface are shared and need no change. See [`lib/harness/claude-code/`](lib/harness/claude-code/) for the reference harness and [`lib/harness/dsh/`](lib/harness/dsh/) for a second one. PRs welcome.
+Adding a new agent means writing a harness for it under `lib/harness/<agent>/`: a source driver that turns that agent's own session evidence into normalized observations, a thin measurement projection adapter over the shared [`lib/measurement-projection.js`](lib/measurement-projection.js), a tool-evidence profile that names the agent's residual calls, its handoff-loading tool and any resource that is not a file (the interpreter that matches tool output against the files on disk is shared), the dialogue source and history turn rules that read its conversation, and the recovery sentences that tell a reader how to open a turn it cites. The engine, dialogue history, handoff, and every product surface are shared and need no change. See [`lib/harness/claude-code/`](lib/harness/claude-code/) for the reference harness and [`lib/harness/dsh/`](lib/harness/dsh/) for a second one. PRs welcome.
 
 ## Paper
 
@@ -224,8 +224,10 @@ npx playwright test   # E2E (requires running server)
 
 - No remote telemetry.
 - Transcripts are read locally and never uploaded.
+- Files a transcript names are read locally to attribute tool output to their lines; their content stays in memory and is never uploaded.
 - Local aggregate usage and handoff records are stored under `~/.session-watcher`.
 - No transcript prose or file contents are stored in telemetry.
+- Each tool call's file attribution is stored with its session as paths, line numbers, character counts and a hash of each line, plus the name of the tool or command that made the call (for a shell command, also its main argument) — no file contents.
 - Removing `~/.session-watcher` deletes all local state, except the Turn Notes a DSH session prepared and has not yet submitted successfully, which sit under the system temp directory.
 
 ## License

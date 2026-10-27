@@ -1,5 +1,7 @@
-// dsh/src/index.js — the Cordis plugin face of the session watcher: the one module that imports a DSH package, binding the production paths and `defineTool` into `applyHost`.
+// dsh/src/index.js — the Cordis plugin face of the session watcher: the one module that imports a DSH package, binding the production paths, `defineTool` and the `continueKit` values into `applyHost`.
 import { fileURLToPath } from 'node:url';
+import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 
 import { defaultDbPath } from '../../lib/store.js';
@@ -14,6 +16,7 @@ export const inject = HOST_INJECT;
 export function apply(ctx) {
   applyHost(ctx, {
     defineTool,
+    continueKit: { CompactionId, compactCheckpointSource, createUserMessage },
     storePath: defaultDbPath(),
     turnNotesRoot: DSH_TURN_NOTES_ROOT,
     loadIsIgnored,

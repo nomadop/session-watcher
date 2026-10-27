@@ -9,6 +9,7 @@ import { createModelNames } from './model-names.js';
 import { createRpcHandler } from './rpc.js';
 import { createSignalHub } from './signal.js';
 import { createTools } from './tools.js';
+import { createContinueCommand } from './continue.js';
 import { registerSkills } from './skills.js';
 import { catalogMessageFor } from './catalog.js';
 
@@ -17,14 +18,15 @@ export const HOST_INJECT = ['sessions', 'sessionQuery', 'tools', 'skills', 'llm'
 
 /**
  * Mount the host on `ctx`: open the store at `storePath`, keep one watcher per session the context lists, creates or appends to, and build one on demand when the RPC channel or `watcher_status` names a session the table lacks and the session listing holds, archive each on its session's disposal, and archive every live one and close the store when `ctx` unloads.
- * The agent tools answer each calling session from its watcher, `watcher_status` any session the host has run or persisted, the skills are registered from the `SKILL.md` files under `skillsDir`, and an agent created at startup or resume is injected the pending-handoff catalog of its session's project; with a connection present, the `/session-watcher` RPC channel answers from the watcher table, and the `/api/session-watcher.events` route streams the id of each session whose entry changes state, applies a frame or has its readings changed over the channel.
+ * The agent tools answer each calling session from its watcher, `watcher_status` any session the host has run or persisted, `load_handoff` also titles the loading session when a title service is mounted, the skills are registered from the `SKILL.md` files under `skillsDir`, and an agent created at startup or resume is injected the pending-handoff catalog of its session's project; with a connection present, the `/session-watcher` RPC channel answers from the watcher table, and the `/api/session-watcher.events` route streams the id of each session whose entry changes state, applies a frame or has its readings changed over the channel.
  * Each model call is measured under the `llm` catalog name of its provider and model id once `llm.resolveModelInfo` has answered one, and under the id until then; a pair keeps the first name it resolves to until the plugin remounts. The plugin requires `llm`, and a re-provided `llm` remounts the whole host, as a re-provided `sessions` does.
+ * With the `commands` and `tokenMeter` services both present, the `/sw-continue` command (`createContinueCommand`) is registered on their injection's child and leaves with either; `continueKit` is the `CompactionId`, `compactCheckpointSource` and `createUserMessage` values the command builds its events from, read only there, so a caller that mounts neither service omits it.
  * `turnNotesRoot` is the Turn Notes root; `loadIsIgnored(cwd)` answers a session's ignore matcher.
  * No handler or disposer throws into the host: a failure is a watcher's diagnostic or a stderr line.
  *
  * @returns {{ table: ReturnType<typeof createWatcherTable> }}
  */
-export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, defineTool, skillsDir }) {
+export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, defineTool, skillsDir, continueKit }) {
   initStore(storePath);
   // Registered right after the store opens, so a disposal after a later throw in `apply` still closes it.
   ctx.effect(() => () => {
@@ -74,8 +76,16 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
     });
     if (message !== null) agent.inject(message);
   }));
-  for (const definition of createTools({ defineTool, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
+  // Read at each call: a deployment without a title service mounts the host all the same, and titles nothing.
+  const sessionTitle = () => ctx.get('sessionTitle');
+  for (const definition of createTools({ defineTool, table, store: getStore(), resolvePersisted, sessionTitle })) ctx.tools.register(definition);
   registerSkills(ctx, { skillsDir });
+  // `commands.register` is an effect of the child that reads it, so the registration leaves when either service does.
+  ctx.inject(['commands', 'tokenMeter'], (child) => {
+    child.commands.register(createContinueCommand({
+      table, store: getStore(), kit: continueKit, meter: child.tokenMeter, flush: session => ctx.sessions.flush(session),
+    }));
+  });
 
   // Handed a plugin caller, `rpc.handle` reads `webServer` from Connection's own fiber, which does not inject it; called from the root, the read is permitted.
   // The root then owns the route, so the child's effect removes it.

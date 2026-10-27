@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { composeForTranscript, measuredTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { composeForTranscript, measuredTranscript, writeMeasuredTranscript, MEASURED_CONTENT } from './helpers/server-boot.js';
 import { snap } from './helpers/store-fixtures.js';
 
 const EXPIRED_AGE_MS = 8 * 24 * 3600 * 1000;   // past the reaper's own MAX_AGE_MS default
@@ -77,12 +77,13 @@ const FOREIGN_SESSION = 'foreign-project-session';
 
 // A Source belonging to another project, laid where the host's own locator resolution looks for it. Its
 // whole-file Read is of a resource under that project's root, which is what an owner bound elsewhere judges
-// outside its own boundary.
+// outside its own boundary. The sweep attributes by the lines a call shows and honours the absolute path as given,
+// so the file holds the lines the Read shows.
 function writeForeignProjectSource() {
   const projectsRoot = mkdtempSync(join(tmpdir(), 'sw-foreign-projects-'));
   const foreignRoot = mkdtempSync(join(tmpdir(), 'sw-foreign-root-'));
   const readPath = join(foreignRoot, 'carried.js');
-  writeFileSync(readPath, 'export const carried = 1;\n');
+  writeFileSync(readPath, MEASURED_CONTENT);
   writeFileSync(join(projectsRoot, `${FOREIGN_SESSION}.jsonl`),
     measuredTranscript({ steps: 2, paths: [readPath] }).map(row => JSON.stringify(row) + '\n').join(''));
   return projectsRoot;

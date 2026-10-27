@@ -13,6 +13,7 @@ import { snap, setupStore } from './helpers/store-fixtures.js';
 import { createWatcherComposition } from '../server.js';
 import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
 import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../lib/harness/claude-code/transcript-observation.js';
+import { CC_HOME, linesText, treeOf } from './helpers/attribution-fixtures.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -239,17 +240,22 @@ describe('two connections racing the same segment', () => {
 // The Store selects DISTINCT pending sessions and calls an INJECTED replaySession once per session, so
 // store.js imports no fold, watcher or sweep module. Budget is real wall clock, chunked between sessions.
 
+// The file the transcript below reads, declared once: the Read result is numbered from it and the working tree the
+// reconstruction attributes against holds it.
+const Z_LINES = Array.from({ length: 15 }, (unused, i) => `export const z = ${i};`);
+
 // The host's own `SessionWatcher` factory, on the project context this file's resources sit under.
 // Reconstruction composes through it, so its archival path is the live owner's rather than a second table.
 const sweepWatcher = ({ store, sessionId, sourceLocator }) => createWatcherComposition({
   sessionId, sourceLocator, projectId: '/p', projectRoot: '/p',
   stateDir: mkdtempSync(join(tmpdir(), 'sw-segtel-state-')), store, isIgnored: null,
+  workingTree: treeOf({ '/p/a.js': linesText(Z_LINES) }, CC_HOME),
 });
 
 // One minimal transcript: a cold-start step, a whole-file Read, and a second step. Written directly rather
 // than through a fold harness so this file drives the Store alone.
 function writeTranscript(target, absPath) {
-  const numbered = Array.from({ length: 15 }, (unused, i) => `${i + 1}\texport const z = ${i};`).join('\n');
+  const numbered = Z_LINES.map((line, i) => `${i + 1}\t${line}`).join('\n');
   const rows = [
     { type: 'assistant', uuid: 'g0', isSidechain: false, timestamp: '2026-07-01T00:00:00Z',
       message: { id: 'gm0', model: 'claude-opus-4-8', usage: { cache_read_input_tokens: 10000, output_tokens: 5 },
@@ -386,9 +392,11 @@ describe('GC snapshot fallback', () => {
     try {
       const sessionId = 'sid-gc-snapshot';
       const projectRoot = '/repo';
+      const bigLines = Array.from({ length: 400 }, (unused, i) => `const big${i} = ${i};`);
       const watcher = createWatcherComposition({
         sessionId, sourceLocator: '/gone/session.jsonl', projectId: projectRoot, projectRoot,
         stateDir: mkdtempSync(join(tmpdir(), 'sw-gc-state-')), store, isIgnored: null,
+        workingTree: treeOf({ [`${projectRoot}/big.js`]: linesText(bigLines) }, CC_HOME),
       });
 
       // One step whose total stock is SMALL while a whole-file Read makes the belief LARGE. That is the
@@ -402,7 +410,7 @@ describe('GC snapshot fallback', () => {
         }),
         toolResult({
           uuid: 'g-r1', parentUuid: 'g-u1', toolUseId: 'g-t1',
-          content: Array.from({ length: 400 }, (unused, i) => `${i + 1}\tconst big${i} = ${i};`).join('\n'),
+          content: bigLines.map((line, i) => `${i + 1}\t${line}`).join('\n'),
         }),
       ];
       const observations = reduceClaudeCodeSnapshot(

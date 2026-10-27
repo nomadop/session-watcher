@@ -15,6 +15,7 @@ import { indexDshLog } from '../lib/harness/dsh/playback.js';
 import { bootTestServer } from './helpers/server-boot.js';
 import { hasDshFixture, readDshFixture, expectationsOf } from './helpers/dsh-fixtures.js';
 import * as E from './helpers/dsh-events.js';
+import { writeFilesUnder } from './helpers/attribution-fixtures.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
 
@@ -501,7 +502,10 @@ describe('the replay route on a dsh log', () => {
   it('the replay route composes a dsh log under its header\'s cwd and writes no profile row', async () => {
     const profileRows = () => ctx.store._db.prepare('SELECT COUNT(*) AS n FROM profile').get().n;
     const rowsBefore = profileRows();
-    log = writeDshLog({ cwd: join(ctx.cwd, 'dsh-project') });
+    // The route attributes by the lines a call shows, so the header's directory holds the files the log reads.
+    const cwd = join(ctx.cwd, 'dsh-project');
+    writeFilesUnder(cwd, E.REUSED_CALL_ID_FILES);
+    log = writeDshLog({ cwd });
 
     const start = await ctx.requestRaw('/api/replay/start', {
       method: 'POST', body: { transcript: log.path, speed: 4 },

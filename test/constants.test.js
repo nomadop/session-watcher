@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   C_RATIO_TABLE, DEFAULT_CACHE_TTL,
-  CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, ASCII_EXTS, ALPHA_EMA, G_DELTA_CAP, G_FLOOR,
+  CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, ASCII_EXTS, ALPHA_EMA, G_DELTA_CAP, G_FLOOR,
   CHURN_ELEVATED_THRESHOLD, CHURN_STRUGGLING_THRESHOLD,
   CHURN_STRUGGLING_REREADS, WASTE_FLOOR,
 } from '../lib/constants.js';
@@ -47,8 +47,8 @@ test('v3: CTP table has calibrated claude/deepseek rows and a conservative defau
   assert.deepEqual(DEFAULT_CTP, { ascii: 3.0, cjk: 1.0 });
 });
 
-test('v3: tool framing overhead constants (tokens)', () => {
-  assert.deepEqual(TOOL_OVERHEAD, { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 });
+test('v3: skill framing overhead constant (tokens)', () => {
+  assert.equal(SKILL_FRAMING_TOKENS, 40);
 });
 
 test('v3: churn tier constants exported with exact values', () => {

@@ -14,7 +14,7 @@ import {
   assistantObservation, assistantToolUse, chain, observationsOf, toolResult, ts, userMessage,
 } from './helpers/transcript-fixtures.js';
 
-const projection = createClaudeCodeDialogueProjection({ sessionCwd: '/project' });
+const projection = createClaudeCodeDialogueProjection();
 const linesOf = (entries) => enumerateDialogueLines(projection.project(observationsOf(entries)).folds);
 const turnsOf = (entries) => projection.groupTurns(linesOf(entries));
 
@@ -354,39 +354,32 @@ describe('the Claude Code Dialogue Adapter', () => {
     assert.equal(turns[0].hasAssistantActivity, true);
   });
 
-  test('the Adapter attaches a resolved resourceKey to each paired tool line', () => {
-    const folds = projection.project(observationsOf(chain([
-      userMessage({ uuid: 'u1', text: 'read the store', timestamp: ts(1) }),
-      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 'tu1', name: 'Read',
-        input: { file_path: 'lib/store.js' }, timestamp: ts(2) }),
-      toolResult({ uuid: 'r1', toolUseId: 'tu1', content: 'export const x = 1;' }),
-      assistantToolUse({ uuid: 'a2', messageId: 'm2', toolUseId: 'tu2', name: 'Bash',
-        input: { command: 'npm test' }, timestamp: ts(3) }),
-      toolResult({ uuid: 'r2', toolUseId: 'tu2', content: 'ok' }),
-    ]))).folds;
-    const pairs = folds.flatMap(f => f.toolPairs);
-    assert.equal(pairs[0].resourceKey, '/project/lib/store.js');
-    // A shell command locates no file, so its pair carries no resource key at all.
-    assert.equal(pairs[1].resourceKey, null);
-  });
+  // A Read whose result is a whole numbered file, and a shell call.
+  const evidenceEntries = () => chain([
+    userMessage({ uuid: 'u1', text: 'read then run', timestamp: ts(1) }),
+    assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 'tu1', name: 'Read',
+      input: { file_path: 'lib/store.js' }, timestamp: ts(2) }),
+    toolResult({ uuid: 'r1', toolUseId: 'tu1', content: [
+      '1\texport const first = 1;   // padding so the whole result is a full read',
+      '2\texport const second = 2;  // padding so the whole result is a full read',
+      '3\texport const third = 3;   // padding so the whole result is a full read',
+    ].join('\n') }),
+    assistantToolUse({ uuid: 'a2', messageId: 'm2', toolUseId: 'tu2', name: 'Bash',
+      input: { command: 'npm test' }, timestamp: ts(3) }),
+    toolResult({ uuid: 'r2', toolUseId: 'tu2', content: 'ok' }),
+  ]);
 
-  test("a row's own working directory takes precedence over the session directory", () => {
-    const folds = projection.project(observationsOf(chain([
-      userMessage({ uuid: 'u1', text: 'read', timestamp: ts(1) }),
-      { ...assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 'tu1', name: 'Read',
-        input: { file_path: 'store.js' }, timestamp: ts(2) }), cwd: '/project/lib' },
-      toolResult({ uuid: 'r1', toolUseId: 'tu1', content: 'x' }),
-    ]))).folds;
-    assert.equal(folds.flatMap(f => f.toolPairs)[0].resourceKey, '/project/lib/store.js');
-  });
-
-  test('an unfamiliar tool resolves to no resource key without throwing', () => {
-    const folds = projection.project(observationsOf(chain([
-      userMessage({ uuid: 'u1', text: 'go', timestamp: ts(1) }),
-      assistantToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 'tu1', name: 'mcp__unknown__thing',
-        input: { whatever: 1 }, timestamp: ts(2) }),
-      toolResult({ uuid: 'r1', toolUseId: 'tu1', content: 'x' }),
-    ]))).folds;
-    assert.equal(folds.flatMap(f => f.toolPairs)[0].resourceKey, null);
+  test('project resolves no native target and attaches no key', () => {
+    // A tool input that counts its reads: resolving a target (the step that would reach a disk) opens it.
+    let reads = 0;
+    const observations = observationsOf(evidenceEntries());
+    const use = observations.find(o => o.type === 'tool-use' && o.toolUseId === 'tu1');
+    use.input = { get file_path() { reads += 1; return 'lib/store.js'; } };
+    assert.equal(use.input.file_path, 'lib/store.js');
+    assert.equal(reads, 1, 'fixture self-proof: reading the input is counted');
+    reads = 0;
+    const pairs = projection.project(observations).folds.flatMap(f => f.toolPairs);
+    assert.equal(reads, 0);
+    assert.deepEqual(pairs.map(p => p.resourceKeys), [[], []]);
   });
 });

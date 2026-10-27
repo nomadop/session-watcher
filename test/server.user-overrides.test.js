@@ -12,7 +12,8 @@ process.on('exit', () => {
   try { rmSync(TMP, { recursive: true, force: true }); } catch {}
 });
 
-import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { MEASURED_CONTENT, composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { CC_HOME, treeOf } from './helpers/attribution-fixtures.js';
 import { lampZone } from '../lib/bill-regret.js';
 
 // Both paths become resident the way production makes them resident: real Read tool pairs in the Source,
@@ -29,6 +30,7 @@ async function withServer(fn) {
   const composed = composeForTranscript({
     transcriptPath: writeMeasuredTranscript({ steps: 1, paths: RESIDENT }),
     sessionId: 'test-overrides', projectRoot: '/workspace',
+    workingTree: treeOf(Object.fromEntries(RESIDENT.map(path => [path, MEASURED_CONTENT])), CC_HOME),
   });
   const { server, stopTimers, sseClients } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));

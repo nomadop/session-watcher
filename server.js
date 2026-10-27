@@ -4,7 +4,7 @@ if (_major < 22 || (_major === 22 && _minor < 16)) { console.error('Session Watc
 import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, resolve, basename, extname, isAbsolute } from 'node:path';
+import { dirname, join, resolve, basename, extname, isAbsolute, normalize } from 'node:path';
 import { readdirSync, statSync, readFileSync, mkdirSync, unlinkSync, openSync, writeSync, closeSync, writeFileSync, appendFileSync, rmSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { SessionWatcher } from './lib/session-watcher.js';
@@ -13,16 +13,18 @@ import { createResourceEnrichment } from './lib/resource-enrichment.js';
 import { createMeasurementEngine } from './lib/measurement/engine.js';
 import { createClaudeCodeSourceDriver } from './lib/harness/claude-code/source-driver.js';
 import { createClaudeCodeMeasurementProjection } from './lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse, completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
-} from './lib/harness/claude-code/native-tools.js';
+import { claudeCodeToolEvidenceProfile } from './lib/harness/claude-code/tool-evidence-profile.js';
+import { createNodeWorkingTree } from './lib/working-tree.js';
+import { createResourceAttribution } from './lib/resource-attribution.js';
+import { createToolEvidenceInterpreter } from './lib/tool-evidence.js';
 import { resolveClaudeCodeCacheTtl } from './lib/harness/claude-code/cache-ttl.js';
 import { advanceRateLampToCurrent, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
 import {
   statusWire, statusWireWithLedger, bucketsPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap, INVALID_OVERRIDES_MESSAGE,
 } from './lib/wire.js';
-import { IDLE_HEARTBEAT_MS, DEFAULT_CTP } from './lib/constants.js';
+import {
+  IDLE_HEARTBEAT_MS, ATTRIBUTION_LIMITS, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS,
+} from './lib/constants.js';
 import { resolveProjectKey } from './lib/project-key.js';
 import { initStore, closeStoreGlobal, getStore } from './lib/store.js';
 import { cleanupLegacyJson, defaultBaseDir } from './lib/legacy-cleanup.js';
@@ -47,7 +49,6 @@ import { buildTurnBrowse } from './lib/turn-browse.js';
 import { searchTranscripts, locateRanges } from './lib/turn-query.js';
 import { createClaudeCodeDialogueSource } from './lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from './lib/harness/claude-code/history-turn-rules.js';
-import { classifyToolPair } from './lib/harness/claude-code/native-tools.js';
 import { SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY, TURN_NOTICE } from './lib/harness/claude-code/turn-recovery.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -169,6 +170,40 @@ const isValidTurnQuery = (q) =>
   typeof q === 'string' && q.trim() !== '' && q.length <= HISTORY_EXCERPT_CHARS;
 
 // ── Composition root ─────────────────────────────────────────────────────────
+// One Node tree for every composition of the process: it holds the Claude Code path namespace, where `~` is the
+// user's home directory, and a bounded cache of file text. The base a relative path resolves against comes with each
+// call, so the sessions' project roots need no tree of their own.
+let sharedWorkingTree = null;
+
+function nodeWorkingTree() {
+  sharedWorkingTree ??= createNodeWorkingTree({
+    path: { isAbsolute, resolve, normalize },
+    homeDir: homedir(),
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS,
+  });
+  return sharedWorkingTree;
+}
+
+// The interpreters the Measurement Projection is built with and the capture-time keys of Turn History: the one
+// interpreter over a matcher that reads `workingTree`, the process's Node tree when none is handed over; the matcher
+// and the interpreter take the same limits. `projectRoot`, as given, is the base of both ends: with none, a relative
+// path under no row `cwd` is attributed to nothing and has no key at capture, and neither the transcript's directory
+// nor the process's is a rung.
+function interpretersFor({ workingTree, projectRoot }) {
+  const attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree(), limits: ATTRIBUTION_LIMITS });
+  const interpreter = createToolEvidenceInterpreter({
+    attribution, profile: claudeCodeToolEvidenceProfile, limits: ATTRIBUTION_LIMITS,
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    interpretSkillPayload: claudeCodeToolEvidenceProfile.interpretSkillPayload,
+    interpretTaskNotification: claudeCodeToolEvidenceProfile.interpretTaskNotification,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: projectRoot }),
+  };
+}
+
 // The ONE place a shared `SessionWatcher` is built, and the only place the two worlds meet: the portable
 // Engine and the concrete Claude Code Measurement Projection factory are wired here, so neither
 // `lib/measurement/` nor `lib/session-watcher.js` names a Harness and `lib/harness/` names no application.
@@ -178,6 +213,9 @@ const isValidTurnQuery = (q) =>
 // inference) — one object, two roles, so a manual override and an inferred one share the same set. The CLI
 // owner, the in-process MCP owner and each carry reconstruction all call this, so every one of them resolves
 // selection through the same Resource Policy, against the project context its own caller supplies.
+//
+// A call's text is attributed to the lines of the files it holds, matched against `workingTree` (the Node tree of the
+// Claude Code namespace the process shares, unless one is handed over), and each live call keeps its record.
 export function createWatcherComposition({
   sessionId = null,
   sourceLocator = null,
@@ -192,9 +230,13 @@ export function createWatcherComposition({
   // the policy resolver.
   cacheTtl = resolveClaudeCodeCacheTtl(),
   now = () => Date.now(),
+  workingTree,
 } = {}) {
   const resourcePolicy = createResourcePolicy({ projectRoot, isIgnored });
   const resourceEnrichment = createResourceEnrichment();
+  const {
+    interpretToolUse, completeToolResult, interpretSkillPayload, interpretTaskNotification, resourceKeysOf,
+  } = interpretersFor({ workingTree, projectRoot });
   return new SessionWatcher({
     sessionId,
     sourceLocator,
@@ -209,17 +251,16 @@ export function createWatcherComposition({
     loaderVersion: PLUGIN_VERSION,
     store,
     dialogueSource: dialogueSource || createClaudeCodeDialogueSource(),
-    dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: projectRoot || process.cwd() }),
+    dialogueProjection: createClaudeCodeDialogueProjection(),
     createEngine: createMeasurementEngine,
-    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the locator and the
-    // effective model resolver the application owns rather than closing over either.
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
-      cwd: projectRoot, projectRoot, sourceLocator: locator, resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the effective model resolver
+    // the application owns rather than closing over it. The locator the application hands first is not read: a
+    // relative path resolves against the row's own `cwd`, else `projectRoot`.
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+      cwd: projectRoot, projectRoot, resolveModelPolicy,
+      interpretToolUse, completeToolResult, interpretSkillPayload, interpretTaskNotification,
     }),
+    resourceKeysOf,
     // The C ratio is a function of the model AND the prompt-cache lifetime this host declared, and that
     // lifetime is one fact for the whole composition. Binding it here leaves the measured layers below
     // passing a model id and nothing else, so no cache lifetime enters their vocabulary.
@@ -255,21 +296,13 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
 
   // ── Turn History composition ─────────────────────────────────────────────────
   // The one Claude Code Dialogue seam every history READ goes through: the Source Adapter interprets the
-  // opaque locator, and the bound Dialogue Adapter carries this composition's fixed History Turn rule
-  // order and resolves each paired tool line's `resourceKey`. `sessionCwd` is the base a relative tool
-  // path resolves against where the row carries none of its own; it falls back the same way every other
-  // path consumer here does, because a null base would key `lib/store.js` as `/lib/store.js`.
+  // opaque locator, and the bound Dialogue Adapter carries this composition's fixed History Turn rule order.
   //
   // Distinct from the pair inside the shared application: these serve the lineage-scoped read tools, which
   // open OTHER sessions' Sources, while the application's own pair serves this session's Turn Note capture.
+  // Search takes every tool pair of a Source.
   const dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource();
-  const dialogueProjection = createClaudeCodeDialogueProjection({
-    sessionCwd: projectRoot || process.cwd(),
-  });
-  // Search admits residual evidence only: a pair whose ground truth is the working tree is reachable
-  // there at full length, so ADR 0004 keeps it out of the transcript corpus. The classifier consumes the
-  // target the Adapter already resolved.
-  const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === 'residual';
+  const dialogueProjection = createClaudeCodeDialogueProjection();
   const history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE };
 
   // ── formatLoadedHandoff ──────────────────────────────────────────────────────
@@ -711,7 +744,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
         if (scope !== null && parseTurnAddress(scope) === null) return res.status(400).json({ error: 'invalid_scope' });
 
         return res.json(await searchTranscripts({
-          store, lineage, q: req.query.q, scope, ...history, includeToolEvidence,
+          store, lineage, q: req.query.q, scope, ...history,
         }));
       } catch (err) {
         if (err && err.code === 'scope_not_found') return res.status(404).json({ error: 'scope_not_found' });
@@ -751,7 +784,7 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
   // GET /api/turn/browse — the whole-lineage browse snapshot behind the dashboard's History drawer.
   // It takes NO parameters: the head is the newest handoff delivered into THIS session, resolved by
   // the same forLoadedHandoff walk the three MCP read tools use, so an `S{k}` a drawer prints and one
-  // an agent reports name the same session. A browser has no handoff id to send, and accepting one
+  // an agent reports name the same lineage member. A browser has no handoff id to send, and accepting one
   // would keep the head in two places at once.
   //
   // Below that label the two faces diverge and are meant to. The page opens session transcripts up to
@@ -1178,7 +1211,6 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     sessionId: () => currentSessionId,
     dialogueSource,
     dialogueProjection,
-    includeToolEvidence,
     recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
     turnPageBuilder: injectedTurnPageBuilder,
   });

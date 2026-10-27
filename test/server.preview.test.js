@@ -16,7 +16,8 @@ process.on('exit', () => {
   try { rmSync(TMP, { recursive: true, force: true }); } catch {}
 });
 
-import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { MEASURED_CONTENT, composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
+import { CC_HOME, treeOf } from './helpers/attribution-fixtures.js';
 
 const RESIDENT = ['/workspace/src/app.js', '/workspace/dist/bundle.js'];
 
@@ -24,6 +25,7 @@ async function withServer(fn, transcriptPath = null) {
   const composed = composeForTranscript({
     transcriptPath: transcriptPath ?? writeMeasuredTranscript({ steps: 6, paths: RESIDENT }),
     sessionId: 'test-preview', projectRoot: '/workspace',
+    workingTree: treeOf(Object.fromEntries(RESIDENT.map(path => [path, MEASURED_CONTENT])), CC_HOME),
   });
   const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));

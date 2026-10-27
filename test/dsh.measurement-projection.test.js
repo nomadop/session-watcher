@@ -4,19 +4,21 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDshMeasurementProjection } from '../lib/harness/dsh/measurement-projection.js';
-import { interpretDshToolUse, completeDshToolResult } from '../lib/harness/dsh/native-tools.js';
 import { reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL } from '../lib/constants.js';
-import { assistantMessage, toolResult, reusedCallIdAcrossSteps } from './helpers/dsh-events.js';
+import { assistantMessage, toolResult, reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES } from './helpers/dsh-events.js';
+import { dshRig, filesUnder } from './helpers/attribution-fixtures.js';
+
+// The files the log of the reused call id reads, under the session directory the Projection is built with.
+const { interpreters } = dshRig({ files: filesUnder('/repo', REUSED_CALL_ID_FILES), cwd: '/repo' });
 
 function makeProjection() {
   return createDshMeasurementProjection({
     cwd: '/repo',
     projectRoot: '/repo',
     resolveModelPolicy: modelId => modelPolicyFor(modelId, DEFAULT_CACHE_TTL),
-    interpretToolUse: interpretDshToolUse,
-    completeToolResult: completeDshToolResult,
+    ...interpreters,
   });
 }
 
@@ -66,5 +68,37 @@ describe('DSH Measurement Projection', () => {
     assert.equal(artifact, null);
     assert.deepEqual(diagnostics.map(({ scope, code }) => ({ scope, code })),
       [{ scope: 'dsh-measurement-projection', code: 'segment_telemetry_join_failed' }]);
+  });
+
+  test('the interpreters receive the scratch and frame context project was given, beside the DSH context', () => {
+    const calls = [];
+    const projection = createDshMeasurementProjection({
+      cwd: '/repo',
+      projectRoot: '/repo',
+      resolveModelPolicy: modelId => modelPolicyFor(modelId, DEFAULT_CACHE_TTL),
+      interpretToolUse(observation, context, run) {
+        calls.push({ phase: 'use', context, run });
+        return { pending: { toolUseId: observation.toolUseId }, effects: [], residuals: [], telemetry: null };
+      },
+      completeToolResult(pending, observation, context, run) {
+        calls.push({ phase: 'result', context, run });
+        return { effects: [], residuals: [], telemetry: null, skillContinuation: null };
+      },
+    });
+    const issued = reduceDshEvent(assistantMessage({
+      toolCalls: [{ id: 'call_read', name: 'read', arguments: JSON.stringify({ path: 'src/a.js' }) }],
+    })).observations;
+    const answered = reduceDshEvent(toolResult({ callId: 'call_read', text: 'const a = 1;' })).observations;
+    const frameCtx = { recall: () => null, remember: () => {} };
+    for (const observation of [...issued, ...answered]) projection.project(observation, frameCtx);
+
+    assert.deepEqual(calls.map(call => call.phase), ['use', 'result']);
+    for (const call of calls) {
+      assert.equal(call.run.frameCtx, frameCtx);
+      assert.equal(call.run.scratch, calls[0].run.scratch);
+      assert.equal(call.context.sessionCwd, '/repo');
+      assert.ok(!('scratch' in call.context) && !('frameCtx' in call.context));
+    }
+    assert.ok(calls[0].run.scratch instanceof Map);
   });
 });

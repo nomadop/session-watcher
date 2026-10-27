@@ -4,8 +4,8 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import nodePath, { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { inspect } from 'node:util';
 import { bootTestServer } from './helpers/server-boot.js';
 import { parseNoteSections, readHistorySource, slotKeysOf, snapshotDigest } from '../lib/turn.js';
@@ -13,11 +13,14 @@ import { captureCurrentEpochTurns } from '../lib/turn-note.js';
 import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
 import { sweepStaleTurnNotes } from '../lib/state-reaper.js';
+import { createNodeWorkingTree } from '../lib/working-tree.js';
+import { WORKING_TREE_CACHE_CHARS, WORKING_TREE_CACHE_ENTRIES } from '../lib/constants.js';
 import {
   userMessage, assistantObservation, assistantToolUse, toolResult, compactSummary, ts, usage,
   writeTranscript,
 } from './helpers/transcript-fixtures.js';
 import { _seedDeliveredHandoff } from './helpers/handoff-seed.js';
+import { ccRig } from './helpers/attribution-fixtures.js';
 
 const SESSION_ID = 'sess-A';
 // 当前 handoff turn 的活跃 leaf：增长测试往它下面挂完整 tool pair，boundary 测试往它下面挂新用户消息。
@@ -29,11 +32,12 @@ const LONG_HEAD_U = '一二三四五六七八九十'.repeat(25);
 // 物理行依次是：头 U、assistant 正文 + 它的工具行、tool_result（不产出对话行）、打断（被吸收）、
 // assistant 正文、`/model` 与 `/clear` 各自的裸命令 turn（皆真 note-less）、当前 handoff turn。捕获
 // 去掉末尾那个 handoff turn 后，剩下的 turn 里只有头 U 那个带 assistant 活动 ⇒ 全篇只有它落 NOTE 槽。
+const STORE_JS = 'export const x = 1;';
 const baseEntries = ({ dropTimestamp = false } = {}) => [
   userMessage({ uuid: 'u-one', parentUuid: null, text: LONG_HEAD_U, timestamp: ts(1) }),
   assistantToolUse({ uuid: 'a-one', parentUuid: 'u-one', messageId: 'm-one', toolUseId: 'tok-one',
     name: 'Read', input: { file_path: 'lib/store.js' }, timestamp: ts(2), text: 'working on it' }),
-  toolResult({ uuid: 'r-one', parentUuid: 'a-one', toolUseId: 'tok-one', content: 'export const x = 1;' }),
+  toolResult({ uuid: 'r-one', parentUuid: 'a-one', toolUseId: 'tok-one', content: `1\t${STORE_JS}` }),
   userMessage({ uuid: 'u-int', parentUuid: 'r-one', text: '[Request interrupted by user]', timestamp: ts(3) }),
   assistantObservation({ uuid: 'a-two', parentUuid: 'u-int', messageId: 'm-two', timestamp: ts(4),
     blocks: [{ type: 'text', text: 'resumed' }] }),
@@ -111,11 +115,18 @@ const appendUserMessage = (path, text) => appendTranscriptEntries(path, [
 
 // 测试侧对捕获路径的独立复算 —— 只用来算「应该有几行/哪个 turn 是 note-less/该填哪些槽」，不参与断言的产物。
 const dialogueSource = createClaudeCodeDialogueSource();
-// The Adapter resolves a relative tool path against the session directory, and the snapshot digest covers
-// the key it attaches — so the recomputation has to be bound to the same directory the server is.
-const projectionFor = (cwd) => createClaudeCodeDialogueProjection({ sessionCwd: cwd });
+// The server's composition attributes by the lines a result shows, matched against the files under the session
+// directory, and the snapshot digest covers the keys that gives a pair — so the recomputation is bound to the same
+// directory and reads the same files, through an interpreter of its own over a Node tree.
+const dialogueProjection = createClaudeCodeDialogueProjection();
+const { interpreter } = ccRig({
+  workingTree: createNodeWorkingTree({
+    path: nodePath, homeDir: homedir(), cacheEntries: WORKING_TREE_CACHE_ENTRIES, cacheChars: WORKING_TREE_CACHE_CHARS,
+  }),
+});
 const capture = async (path, cwd) => captureCurrentEpochTurns({
-  observations: (await dialogueSource.read(path)).observations, dialogueProjection: projectionFor(cwd),
+  observations: (await dialogueSource.read(path)).observations, dialogueProjection,
+  resourceKeysOf: pair => interpreter.resourceKeysOf(pair, { sessionCwd: cwd }),
 }).turns;
 
 // 服务端预写的空标题清单就是槽清单 —— 测试不从骨架反推槽键，读它写好的那份文件。
@@ -150,6 +161,8 @@ const useTranscript = (path) => { ctx.switchSource(path); currentSourcePath = pa
 
 before(async () => {
   ctx = await bootTestServer({ sessionId: SESSION_ID });
+  mkdirSync(join(ctx.cwd, 'lib'), { recursive: true });
+  writeFileSync(join(ctx.cwd, 'lib/store.js'), `${STORE_JS}\n`);
   store = ctx.store;
   svc = ctx.turnService;
   sessionId = ctx.sessionId;
@@ -913,7 +926,7 @@ describe('Turn page endpoint — 负载形态与 load_handoff 同一性', () => 
   test('search 成功响应不回显输入', async () => {
     const res = await ctx.request(`/api/turn/search?lineage_head=${handoffId}&q=turn9data`, {});
     assert.deepEqual(Object.keys(res).sort(), ['found', 'ranges', 'truncated']);
-    const at = (await readHistorySource({ dialogueSource, dialogueProjection: projectionFor(ctx.cwd) },
+    const at = (await readHistorySource({ dialogueSource, dialogueProjection },
       pageTranscriptPath))
       .folds.find(f => f.sourceEntryId === 'u-tp-9').sourceOrdinal;
     assert.deepEqual(res.ranges.flatMap(g => g.matches).map(m => m.line), [at]);

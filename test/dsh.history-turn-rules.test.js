@@ -14,7 +14,7 @@ import {
   askAborted, askEmptyAnswer, assistantMessage, reusedCallIdAcrossSteps, sessionLog, toolResult, userMessage,
 } from './helpers/dsh-events.js';
 
-const projection = createDshDialogueProjection({ sessionCwd: '/repo' });
+const projection = createDshDialogueProjection();
 const linesOf = (events) =>
   enumerateDialogueLines(projection.project(reduceDshSnapshot(events).observations).folds);
 const turnsOf = (events) => projection.groupTurns(linesOf(events));
@@ -166,21 +166,19 @@ describe('the DSH Dialogue Adapter', () => {
     assert.deepEqual(tools.map(l => l.tool.resultSourceOrdinal), results.map(e => e.seq));
   });
 
-  test('project attaches a resourceKey to every tool pair', () => {
-    const call = (id, name, input) => ({ id, name, arguments: JSON.stringify(input) });
-    const events = sessionLog([
-      userMessage({ text: 'Tidy the two modules.' }),
-      assistantMessage({ step: 1, toolCalls: [
-        call('call_read', 'read', { file_path: 'src/a.js' }),
-        call('call_bash', 'bash', { command: 'npm test' }),
-      ] }),
-      assistantMessage({ step: 2, toolCalls: [
-        call('call_edit', 'edit', { file_path: './src/../lib/b.js', old_string: 'x', new_string: 'y' }),
-      ] }),
-    ]);
-    const pairs = projection.project(reduceDshSnapshot(events).observations).folds.flatMap(f => f.toolPairs);
-    assert.deepEqual(pairs.map(p => [p.name, p.resourceKey]), [
-      ['read', '/repo/src/a.js'], ['bash', null], ['edit', '/repo/lib/b.js'],
-    ]);
+  test('project resolves no native target and attaches no key', () => {
+    // A tool input that counts its reads: resolving a target (the step that would reach a disk) opens it.
+    let reads = 0;
+    const observations = reduceDshSnapshot(reusedCallIdAcrossSteps()).observations;
+    for (const use of observations.filter(o => o.type === 'tool-use')) {
+      use.input = { get file_path() { reads += 1; return 'src/a.js'; } };
+    }
+    const [first] = observations.filter(o => o.type === 'tool-use');
+    assert.equal(first.input.file_path, 'src/a.js');
+    assert.equal(reads, 1, 'fixture self-proof: reading the input is counted');
+    reads = 0;
+    const pairs = projection.project(observations).folds.flatMap(f => f.toolPairs);
+    assert.equal(reads, 0);
+    assert.deepEqual(pairs.map(p => p.resourceKeys), [[], []]);
   });
 });

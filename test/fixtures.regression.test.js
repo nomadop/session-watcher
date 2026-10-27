@@ -2,7 +2,10 @@
 // builds its rows, so this is the only place a transcript this project did not author decides the outcome:
 // the fixture is DeepSeek, whose usage rows carry no cache_creation at all, and the assertions are the two
 // facts a provider change could silently break — that snapshot rows of one logical message collapse into one
-// measured call, and that a session with real traffic reports positive stock and a positive belief.
+// measured call, and that a session with real traffic reports positive stock and a positive belief. The composition
+// attributes by the lines a call shows, matched against the working tree `scripts/synthesize-working-tree.mjs` made
+// from the transcript, so the outcome does not depend on what the machine holds; a transcript or tree absent here
+// skips the cases.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -11,8 +14,11 @@ import { tmpdir } from 'node:os';
 import { openStore, closeStore } from '../lib/store.js';
 import { createWatcherComposition } from '../server.js';
 import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-driver.js';
+import { hasWorkingTreeFixture, readWorkingTreeFixture } from './helpers/working-tree-fixtures.js';
 
 const DS = 'fixtures/host/.claude/projects/C--Users-nomad-freshtrack/aa8e3739-3264-48d6-a2a0-75346d583c03.jsonl';
+const TREE = 'deepseek';
+const skip = !existsSync(DS) || !hasWorkingTreeFixture(TREE);
 
 // The shipped composition over the real Source: one advance reads the whole file, and the frame it produces
 // is applied the way the host's poll tick applies it.
@@ -23,6 +29,7 @@ function measureFixture() {
     const watcher = createWatcherComposition({
       sessionId: 'fixture-deepseek', sourceLocator: DS, projectId: '/repo', projectRoot: '/repo',
       stateDir: join(dir, 'state'), store, isIgnored: null,
+      workingTree: readWorkingTreeFixture(TREE),
     });
     const driver = createClaudeCodeSourceDriver({ sourceLocator: DS });
     const frame = driver.advance();
@@ -35,7 +42,7 @@ function measureFixture() {
   }
 }
 
-test('a real DeepSeek transcript folds its snapshot rows into one call each', { skip: !existsSync(DS) }, () => {
+test('a real DeepSeek transcript folds its snapshot rows into one call each', { skip }, () => {
   const rows = readFileSync(DS, 'utf8').split('\n').filter(Boolean)
     .map(line => { try { return JSON.parse(line); } catch { return null; } })
     .filter(entry => entry && entry.type === 'assistant' && entry.message?.usage);
@@ -47,7 +54,7 @@ test('a real DeepSeek transcript folds its snapshot rows into one call each', { 
     `measured calls (${history.length}) track distinct message ids (${distinctIds.size}), not raw rows (${rows.length})`);
 });
 
-test('a real DeepSeek transcript reports positive stock and belief', { skip: !existsSync(DS) }, () => {
+test('a real DeepSeek transcript reports positive stock and belief', { skip }, () => {
   const { status, history } = measureFixture();
   assert.ok(history.length > 5, `the fixture carries real traffic, got ${history.length} calls`);
   assert.ok(status.L > 0, 'the observed context stock is positive');

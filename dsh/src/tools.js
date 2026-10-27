@@ -7,16 +7,13 @@ import { createTurnReadService } from '../../lib/turn-read-service.js';
 import { withLoadRecovery } from '../../lib/turn-tool-recovery.js';
 import { TURN_ADDRESS_RE, TURN_PAGE_BOUNDARY_RE } from '../../lib/turn.js';
 import { HISTORY_EXCERPT_CHARS } from '../../lib/turn-history-budget.js';
-import { DEFAULT_CTP } from '../../lib/constants.js';
 import { createDshTurnRecovery } from '../../lib/harness/dsh/turn-recovery.js';
-import { classifyDshToolPair } from '../../lib/harness/dsh/native-tools.js';
+import { titleRenameFailed, writeDiagnostic } from './watcher-table.js';
 
 const OUTPUT = {
   schema: { type: 'object', additionalProperties: true },
   render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
 };
-
-const includeToolEvidence = pair => classifyDshToolPair(pair, DEFAULT_CTP) === 'residual';
 
 // The checks `index.js`'s zod schemas make and a DSH string parameter cannot declare.
 function assertBefore(before) {
@@ -43,12 +40,16 @@ const lossless = value => JSON.parse(JSON.stringify(value));
  * Each call waits for its target session's watcher to leave `bootstrapping` — the calling session's, or the one `watcher_status` names — and lets the wait's rejection — a failed watcher's diagnostic message, an abort, a missing entry — propagate as the tool's error.
  * A `sessionId` the table has not observed goes through `resolvePersisted(sessionId, signal)`, which ensures the persisted record it finds and answers it, or null when the host has no such session, which the tool reports as an error naming the id.
  * `store` is the store the deliveries and turn reads go through; `now` stamps `get_bucket_summary`.
+ * A `load_handoff` delivery renames the loading session after the handoff's `next_task` through the title service `sessionTitle()` answers, or undefined when the deployment mounts none; every delivery of a handoff that has a next task renames, over a title of any source, and a rename that fails leaves a stderr line and the load answered.
  *
  * @param {{ defineTool: Function, table: { get: Function, waitLive: Function }, store: object, now?: () => number,
- *   resolvePersisted?: (sessionId: string, signal: AbortSignal) => Promise<object|null> }} options
+ *   resolvePersisted?: (sessionId: string, signal: AbortSignal) => Promise<object|null>,
+ *   sessionTitle?: () => ({ rename: Function } | undefined) }} options
  * @returns {object[]}
  */
-export function createTools({ defineTool, table, store, now = Date.now, resolvePersisted = async () => null }) {
+export function createTools({
+  defineTool, table, store, now = Date.now, resolvePersisted = async () => null, sessionTitle = () => undefined,
+}) {
   const recovery = createDshTurnRecovery();
 
   const tool = ({ name, description, parameters = {}, check = () => {}, run }) => defineTool({
@@ -57,19 +58,32 @@ export function createTools({ defineTool, table, store, now = Date.now, resolveP
       check(args);
       const sessionId = exec.agent.session.id;
       const entry = await table.waitLive(sessionId, exec.signal);
-      return lossless(await run(args, { ...entry, sessionId }));
+      return lossless(await run(args, { ...entry, sessionId, session: exec.agent.session }));
     },
   });
 
   const turnReads = ({ sessionId, dialogueSource, dialogueProjection }) => createTurnReadService({
-    store: () => store, sessionId: () => sessionId, dialogueSource, dialogueProjection, includeToolEvidence, recovery,
+    store: () => store, sessionId: () => sessionId, dialogueSource, dialogueProjection, recovery,
   });
 
-  async function loadHandoff({ watcher, dialogueSource, dialogueProjection }, { load_token, query, query_mode }) {
+  // The delivery is committed before this runs (ADR 0005), so a failure here is a diagnostic and never the load's.
+  function retitle(session, handoffId) {
+    try {
+      const titles = sessionTitle();
+      const nextTask = store.getHandoff(handoffId)?.nextTask;
+      if (titles === undefined || !nextTask?.trim()) return;
+      titles.rename(session, nextTask);
+    } catch (error) {
+      writeDiagnostic(session.id, titleRenameFailed(error));
+    }
+  }
+
+  async function loadHandoff({ watcher, session, dialogueSource, dialogueProjection }, { load_token, query, query_mode }) {
     if (!load_token && query) return watcher.searchHandoffs({ query: String(query), queryMode: query_mode });
     const delivered = await watcher.deliverHandoff(load_token ? { loadToken: String(load_token) } : {});
     if (delivered.ok === false) return { error: delivered.error, retryable: delivered.retryable === true };
     if (!delivered.found) return delivered;
+    retitle(session, delivered.handoff_id);
     return loadedHandoffPayload(delivered, {
       store, turnPageBuilder: buildTurnPage, dialogueSource, dialogueProjection, notice: recovery.notice,
     });
@@ -133,7 +147,7 @@ export function createTools({ defineTool, table, store, now = Date.now, resolveP
     }),
     tool({
       name: 'load_handoff',
-      description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns.',
+      description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its turns.',
       parameters: {
         load_token: { type: 'string', description: 'Semantic token from prepare_handoff (exact match)' },
         query: { type: 'string', description: 'Free-text search when the token is unknown; returns top matches' },

@@ -6,15 +6,10 @@ import assert from 'node:assert/strict';
 import nodePath from 'node:path';
 
 import { createClaudeCodeMeasurementProjection } from '../lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse,
-  completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload,
-  interpretClaudeCodeTaskNotification,
-} from '../lib/harness/claude-code/native-tools.js';
 import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../lib/harness/claude-code/transcript-observation.js';
 import { charsToTokens } from '../lib/token-estimate.js';
-import { TOOL_OVERHEAD } from '../lib/constants.js';
+import { SKILL_FRAMING_TOKENS } from '../lib/constants.js';
+import { ccRig, linesText } from './helpers/attribution-fixtures.js';
 import {
   ts, chain, usage, userMessage, assistantObservation, assistantToolUse, toolResult, skillPayloadRow,
   compactSummary,
@@ -37,21 +32,26 @@ function resolveModelPolicy(modelId) {
 }
 
 const LOAD_TOOL = 'mcp__plugin_session-watcher_session-watcher__load_handoff';
-const READ_LINES = ['1\tconst alpha = 1;', '2\tconst beta = 2;', '3\tconst gamma = 3;'];
+const READ_TEXT = ['const alpha = 1;', 'const beta = 2;', 'const gamma = 3;'];
+const READ_LINES = READ_TEXT.map((line, index) => `${index + 1}\t${line}`);
 const READ_RESULT = READ_LINES.join('\n');
+const HINT = 'File is empty';
 const SKILL_LAUNCH = 'Launching skill: sw-handoff';
 const STEP_USAGE = usage({ input: 7, output: 11, cacheRead: 13, cacheWrite: 17 });
+
+// The files the Reads below show, declared once: the results are numbered from them and the tree holds the same, under
+// the session directory and under each other base a case takes away or adds.
+const FILES = Object.fromEntries(
+  ['/repo/lib/a.js', '/repo/lib/b.js', '/only-project-root/lib/a.js'].map(file => [file, linesText(READ_TEXT)]),
+);
+const { interpreters } = ccRig({ files: FILES, cwd: '/repo' });
 
 function makeProjection(overrides = {}) {
   return createClaudeCodeMeasurementProjection({
     cwd: '/repo',
     projectRoot: '/repo',
-    sourceLocator: '/transcripts/session.jsonl',
     resolveModelPolicy,
-    interpretToolUse: interpretClaudeCodeToolUse,
-    completeToolResult: completeClaudeCodeToolResult,
-    interpretSkillPayload: interpretClaudeCodeSkillPayload,
-    interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    ...interpreters,
     ...overrides,
   });
 }
@@ -155,11 +155,10 @@ describe('Claude Code Measurement Projection', () => {
     assert.throws(() => createClaudeCodeMeasurementProjection({
       cwd: '/repo',
       projectRoot: '/repo',
-      sourceLocator: '/transcripts/session.jsonl',
       resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
+      interpretToolUse: interpreters.interpretToolUse,
+      completeToolResult: interpreters.completeToolResult,
+      interpretSkillPayload: interpreters.interpretSkillPayload,
     }), /claude code measurement projection invariant: interpretTaskNotification must be a function/);
   });
 
@@ -304,13 +303,14 @@ describe('Claude Code Measurement Projection', () => {
     assert.equal(artifact.payload.steps[0].toolCalls, 0);
   });
 
-  test('an empty native completion completes its call and emits no measurement record', () => {
+  test('a completion that attributes nothing completes its call and leaves the call\'s text as its residual', () => {
     const observations = observationsOf(chain([
       userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
       readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) }),
-      // A short single-line result is a harness hint, not file content: the adapter computes no update.
-      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: 'File is empty', timestamp: ts(3) }),
+      // A short single-line result is a harness hint, not file content: no line of it is a line of the file.
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: HINT, timestamp: ts(3) }),
     ]));
+    const hintWeight = JSON.stringify({ file_path: 'lib/a.js' }).length + HINT.length;
     const lateResult = {
       type: 'tool-result', toolUseId: 't1', content: READ_RESULT, isError: undefined,
       resultMeta: { annotation: undefined }, sourceOrdinal: 9, sourceEntryId: 'r9', timestamp: 9000,
@@ -326,7 +326,9 @@ describe('Claude Code Measurement Projection', () => {
     const projection = makeProjection();
     const { records } = run(projection, observations);
     assert.deepEqual(recordsOfType(records, 'effect'), []);
-    assert.deepEqual(recordsOfType(records, 'residual'), []);
+    assert.deepEqual(recordsOfType(records, 'residual'), [{
+      type: 'residual', groupKey: 'Read', weight: hintWeight, hadError: false, meta: { kind: 'tool', detail: '' },
+    }], 'the call\'s characters, the input\'s included, are all residual');
     assert.deepEqual(projection.project(lateResult).records, [], 'the call was completed, not left armed');
   });
 
@@ -457,7 +459,8 @@ describe('Claude Code Measurement Projection', () => {
     const perObservation = [];
     for (const observation of observations) perObservation.push([observation, projection.project(observation)]);
     const [, resultOfResult] = perObservation.find(([observation]) => observation.type === 'tool-result');
-    assert.deepEqual(resultOfResult.records, []);
+    assert.deepEqual(resultOfResult.records.map(record => record.type), ['residual'],
+      'the result is the call\'s tool-kind residual and opens no turn');
     const all = perObservation.flatMap(([, result]) => result.records);
     assert.deepEqual(recordsOfType(all, 'turn-boundary'), [{ type: 'turn-boundary' }],
       'only the human row opens a turn');
@@ -513,7 +516,7 @@ describe('Claude Code Measurement Projection', () => {
     assert.equal(effect.type, 'effect');
     assert.equal(effect.access, 'read');
     assert.equal(effect.spentTokens, 0);
-    assert.equal(effect.overheadTokens, TOOL_OVERHEAD.Read);
+    assert.equal(effect.overheadTokens, SKILL_FRAMING_TOKENS);
     assert.equal(effect.impacts.length, 1);
     assert.equal(effect.impacts[0].resourceKey, 'skill:sw-handoff');
     assert.equal(effect.impacts[0].mutation.kind, 'replace-fragments');
@@ -556,27 +559,27 @@ describe('Claude Code Measurement Projection', () => {
     assert.deepEqual(payloadRecords[1], []);
   });
 
-  test('a null sourceLocator constructs and resolves no transcript directory', () => {
+  test('with no session directory a relative path has no base: neither the process\'s directory nor `/` is one', () => {
     const entries = chain([
       userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
       readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2), filePath: 'lib/a.js' }),
       toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
     ]);
-    const withoutLocator = makeProjection({ cwd: null, projectRoot: '/only-project-root', sourceLocator: null });
-    const resolved = run(withoutLocator, observationsOf(entries));
-    assert.equal(onlyRecordOfType(resolved.records, 'effect').impacts[0].resourceKey, '/only-project-root/lib/a.js');
+    // The file is also there under `/` and under the process's directory, so a key that no base reaches is one
+    // nothing asked the tree for.
+    const { interpreters: wide } = ccRig({
+      files: {
+        ...FILES,
+        '/lib/a.js': linesText(READ_TEXT),
+        [nodePath.resolve('lib/a.js')]: linesText(READ_TEXT),
+      },
+    });
+    const keysOf = overrides => recordsOfType(run(makeProjection({ ...wide, ...overrides }), observationsOf(entries)).records, 'effect')
+      .map(effect => effect.impacts[0].resourceKey);
 
-    // With a locator and nothing else, the transcript's own directory is the last-resort base.
-    const withLocator = makeProjection({ cwd: null, projectRoot: null, sourceLocator: '/transcripts/session.jsonl' });
-    const fallback = run(withLocator, observationsOf(entries));
-    assert.equal(onlyRecordOfType(fallback.records, 'effect').impacts[0].resourceKey, '/transcripts/lib/a.js');
-
-    // With no directory at all, the key stays path-shaped: no base is invented from the host process.
-    const bare = makeProjection({ cwd: null, projectRoot: null, sourceLocator: null });
-    const unanchored = run(bare, observationsOf(entries));
-    const key = onlyRecordOfType(unanchored.records, 'effect').impacts[0].resourceKey;
-    assert.equal(key, '/lib/a.js');
-    assert.notEqual(key, nodePath.resolve('lib/a.js'), 'the host working directory is not a base');
+    assert.deepEqual(keysOf({ cwd: null, projectRoot: '/only-project-root' }), ['/only-project-root/lib/a.js']);
+    assert.deepEqual(keysOf({ cwd: null, projectRoot: null }), [],
+      'with no directory at all the path is attributed to nothing, and the host working directory is not a base');
   });
 
   test('an empty session cwd falls through to the project root', () => {
@@ -585,7 +588,7 @@ describe('Claude Code Measurement Projection', () => {
       readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2), filePath: 'lib/a.js' }),
       toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
     ]);
-    const projection = makeProjection({ cwd: '', projectRoot: '/only-project-root', sourceLocator: '/transcripts/session.jsonl' });
+    const projection = makeProjection({ cwd: '', projectRoot: '/only-project-root' });
     const { records } = run(projection, observationsOf(entries));
     assert.equal(onlyRecordOfType(records, 'effect').impacts[0].resourceKey, '/only-project-root/lib/a.js');
   });
@@ -640,7 +643,7 @@ describe('Claude Code Measurement Projection', () => {
     const after = projection.finishSegment(closingSecond, { captureMode: 'live' }).artifact.payload;
     assert.equal(after.steps[0].toolCalls, 1);
     assert.deepEqual(after.events, [{
-      foldedSeq: 2, eventOrdinal: 0, path: '/repo/lib/a.js', rawPath: 'lib/a.js', toolType: 'Read', isFullRead: 1,
+      foldedSeq: 2, eventOrdinal: 0, path: '/repo/lib/a.js', rawPath: '/repo/lib/a.js', toolType: 'Read', isFullRead: 1,
     }]);
   });
 
@@ -716,5 +719,66 @@ describe('Claude Code Measurement Projection', () => {
     assert.equal(spendOf(plain).length, 2);
     assert.deepEqual(withReasoning.records, plain.records,
       'inter-tool text and thinking change no measurement record');
+  });
+
+  // Stub interpreters answer in the interpreter Interface's own shapes and record what each call received:
+  // what the wrapper owes them is the observation and the `{ scratch, frameCtx }` it was handed, not a result.
+  describe('frame context forwarding', () => {
+    function recordingInterpreters() {
+      const calls = [];
+      const notified = [];
+      return {
+        calls,
+        notified,
+        interpretToolUse(observation, context, run) {
+          calls.push({ phase: 'use', observation, context, run });
+          return { pending: { toolUseId: observation.toolUseId }, effects: [], residuals: [], telemetry: null };
+        },
+        completeToolResult(pending, observation, context, run) {
+          calls.push({ phase: 'result', observation, context, run });
+          return { effects: [], residuals: [], telemetry: null, skillContinuation: null };
+        },
+        interpretTaskNotification(observation) {
+          notified.push(observation);
+          return { effects: [], residuals: [] };
+        },
+      };
+    }
+
+    const NOTIFICATION = '<task-notification><task-id>abcdef1234-99</task-id>'
+      + '<summary>Agent "explore" finished</summary></task-notification>';
+
+    function toolThenNotification() {
+      return observationsOf(chain([
+        userMessage({ uuid: 'u1', text: 'read it', timestamp: ts(1) }),
+        readToolUse({ uuid: 'a1', messageId: 'm1', toolUseId: 't1', timestamp: ts(2) }),
+        toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: READ_RESULT, timestamp: ts(3) }),
+        userMessage({ uuid: 'n1', text: NOTIFICATION, timestamp: ts(4) }),
+      ]));
+    }
+
+    test('a tool observation reaches the interpreters with the scratch and frame context project was given', () => {
+      const recording = recordingInterpreters();
+      const projection = makeProjection(recording);
+      const frameCtx = { recall: () => null, remember: () => {} };
+      for (const observation of toolThenNotification()) projection.project(observation, frameCtx);
+
+      assert.deepEqual(recording.calls.map(call => [call.phase, call.observation.type, call.observation.toolUseId]),
+        [['use', 'tool-use', 't1'], ['result', 'tool-result', 't1']]);
+      const [use, result] = recording.calls;
+      assert.equal(use.run.frameCtx, frameCtx);
+      assert.equal(result.run.frameCtx, frameCtx);
+      assert.ok(use.run.scratch instanceof Map);
+      assert.equal(result.run.scratch, use.run.scratch, 'one epoch, one scratch');
+    });
+
+    test('a task-notification observation is answered by its own interpreter and never reaches the tool interpreters', () => {
+      const recording = recordingInterpreters();
+      const projection = makeProjection(recording);
+      for (const observation of toolThenNotification()) projection.project(observation, { recall: () => null });
+
+      assert.deepEqual(recording.notified.map(observation => observation.type), ['task-notification']);
+      assert.ok(recording.calls.every(call => call.observation.type !== 'task-notification'));
+    });
   });
 });

@@ -3,8 +3,8 @@
 // submission writes.
 //
 // The pure cases drive shared capture with a SYNTHETIC rule list and supply each tool line's
-// `resourceKey` directly: resolving a native input is the Harness Adapter's job, and shared capture reads
-// only the field the Adapter attaches. The three cases at the end drive the real in-process turn service,
+// `resourceKeys` directly: resolving a native input is not shared capture's job, and it reads only the
+// field a pair is handed. The three cases at the end drive the real in-process turn service,
 // because what they pin is the ORDER of a validation against a file write.
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,11 +43,11 @@ const RULES = [
   },
 ];
 
-// Shared path-cue fixtures supply `resourceKey` directly.
+// Shared path-cue fixtures supply `resourceKeys` directly; a value is one key or the pair's whole list.
 const withResourceKeys = (folds, keys = {}) => {
   for (const fold of folds) {
     for (const pair of fold.toolPairs) {
-      if (Object.hasOwn(keys, pair.toolUseId)) pair.resourceKey = keys[pair.toolUseId];
+      if (Object.hasOwn(keys, pair.toolUseId)) pair.resourceKeys = [].concat(keys[pair.toolUseId]);
     }
   }
   return folds;
@@ -607,54 +607,6 @@ test('buildTurnNoteRows：每个被捕获的 turn 一行，identity 与时间来
   assert.equal(rows[1].note, null);
 });
 
-// The one case in this file driven by the REAL Claude Code Adapter rather than by a supplied key: what it
-// pins is which base directory the Adapter resolves against, so the resolution itself has to happen.
-test('[delta] Turn path cues resolve against the issuing row cwd', () => {
-  const SESSION_CWD = '/project';
-  const ROW_CWD = '/project/lib';
-  // One relative tool input, two candidate absolute keys. Both are reachable, so an assertion on the
-  // row-cwd one cannot pass by accident: a silent fall back to the session root yields the other.
-  const UNDER_ROW_CWD = '/project/lib/store.js';
-  const UNDER_SESSION_CWD = '/project/store.js';
-  assert.notEqual(UNDER_ROW_CWD, UNDER_SESSION_CWD, 'fixture 自证：两个候选 key 真的不同');
-
-  const adapter = createClaudeCodeDialogueProjection({ sessionCwd: SESSION_CWD });
-  // The two fixtures differ in ONE field: whether the tool-use row carries its own working directory.
-  // `cwd` is not in the snapshot digest, so any digest difference below comes from the resolved key alone.
-  const entriesWith = (rowCwd) => chain([
-    userMessage({ uuid: 'tc-u', text: 'read the store', timestamp: ts(1) }),
-    { ...assistantToolUse({ uuid: 'tc-a', messageId: 'tc-m', toolUseId: 'tc-tu', name: 'Read',
-      input: { file_path: 'store.js' }, timestamp: ts(2) }), ...(rowCwd ? { cwd: rowCwd } : {}) },
-    toolResult({ uuid: 'tc-r', toolUseId: 'tc-tu', content: 'export const x = 1;' }),
-  ]);
-  const turnsOfAdapter = (rowCwd) => {
-    const { folds } = adapter.project(observationsOf(entriesWith(rowCwd)));
-    return adapter.groupTurns(enumerateDialogueLines(folds));
-  };
-  const [withRowCwd] = turnsOfAdapter(ROW_CWD);
-  const [withoutRowCwd] = turnsOfAdapter(null);
-
-  // The key the Adapter attached, and the key the same input reaches without a row directory.
-  const keyOf = (turn) => turn.lines.find(l => l.kind === 'tool').tool.resourceKey;
-  assert.equal(keyOf(withRowCwd), UNDER_ROW_CWD);
-  assert.equal(keyOf(withoutRowCwd), UNDER_SESSION_CWD, 'fixture 自证：会话根确实给出另一个 key');
-
-  // search_terms indexes the row-cwd key and never the session-root one.
-  const terms = buildSearchTerms({ uText: '', note: null, turn: withRowCwd }).split(' ');
-  assert.deepEqual(terms, [UNDER_ROW_CWD]);
-  assert.ok(!terms.includes(UNDER_SESSION_CWD));
-  assert.deepEqual(buildSearchTerms({ uText: '', note: null, turn: withoutRowCwd }).split(' '),
-    [UNDER_SESSION_CWD], 'fixture 自证：索引确实随 base 变化');
-
-  // The snapshot digest covers the same cue: the two captures fingerprint differently, and the row-cwd
-  // capture fingerprints as a capture whose key IS the row-cwd one.
-  assert.notEqual(snapshotDigest([withRowCwd]), snapshotDigest([withoutRowCwd]));
-  assert.equal(snapshotDigest([withRowCwd]),
-    snapshotDigest(turnsOf(entriesWith(ROW_CWD), { 'tc-tu': UNDER_ROW_CWD })));
-  assert.notEqual(snapshotDigest([withRowCwd]),
-    snapshotDigest(turnsOf(entriesWith(ROW_CWD), { 'tc-tu': UNDER_SESSION_CWD })));
-});
-
 test('buildTurnNoteRows：文件是增量、库是底本 —— 库独占覆盖的槽保住它自己的 note', () => {
   const captured = turnsOf(chain([
     userMessage({ uuid: 'row-u', text: '问', timestamp: ts(1) }),
@@ -669,6 +621,103 @@ test('buildTurnNoteRows：文件是增量、库是底本 —— 库独占覆盖�
     turns: captured, sections: new Map([['1', 'incoming edit']]),
     storedNotes: new Map([['row-u', 'durable body']]), sessionId: 'sess-R',
   })[0].note, 'incoming edit');
+});
+
+// ── Resource keys on the capture path ──────────────────────────────────────────
+
+test('a pair with two keys contributes both basenames and both search terms', () => {
+  const entries = chain([
+    userMessage({ uuid: 'tk-u', text: 'compare the two files', timestamp: ts(1) }),
+    assistantToolUse({ uuid: 'tk-a', messageId: 'tk-m', toolUseId: 'tok-tk', name: 'Bash',
+      input: { command: 'diff lib/a.js test/b.js' }, timestamp: ts(2) }),
+    toolResult({ uuid: 'tk-r', toolUseId: 'tok-tk', content: 'ok' }),
+  ]);
+  const KEYS = ['/project/lib/a.js', '/project/test/b.js'];
+  const [both] = turnsOf(entries, { 'tok-tk': KEYS });
+  // One call, two resources: the aggregate row counts the call once and names both files.
+  assert.match(buildSkeleton([both], 'sess'), /^ {6}\| A×0 · 1 tools: a\.js,b\.js$/m);
+  assert.deepEqual(buildSearchTerms({ uText: '', note: null, turn: both }).split(' '), KEYS);
+  // The digest covers every key of a pair, not just the first.
+  const [onlyFirst] = turnsOf(entries, { 'tok-tk': KEYS[0] });
+  const [otherSecond] = turnsOf(entries, { 'tok-tk': [KEYS[0], '/project/test/c.js'] });
+  assert.notEqual(snapshotDigest([both]), snapshotDigest([onlyFirst]));
+  assert.notEqual(snapshotDigest([both]), snapshotDigest([otherSecond]));
+});
+
+// The same Source captured with the Adapter attaching no keys and the keys arriving through the capture-time
+// `resourceKeysOf`.
+const keyedCapture = () => {
+  const observations = observationsOf(chain([
+    userMessage({ uuid: 'kc-u', text: 'read the store and the helper', timestamp: ts(1) }),
+    assistantToolUse({ uuid: 'kc-t1', messageId: 'kc-m1', toolUseId: 'tok-kc1', name: 'Read',
+      input: { file_path: 'lib/store.js' }, timestamp: ts(2) }),
+    toolResult({ uuid: 'kc-r1', toolUseId: 'tok-kc1', content: 'export const x = 1;' }),
+    assistantToolUse({ uuid: 'kc-t2', messageId: 'kc-m2', toolUseId: 'tok-kc2', name: 'Bash',
+      input: { command: 'npm test' }, timestamp: ts(3) }),
+    toolResult({ uuid: 'kc-r2', toolUseId: 'tok-kc2', content: 'ok' }),
+    assistantToolUse({ uuid: 'kc-t3', messageId: 'kc-m3', toolUseId: 'tok-kc3', name: 'Read',
+      input: { file_path: 'lib/a.js' }, timestamp: ts(4) }),
+    toolResult({ uuid: 'kc-r3', toolUseId: 'tok-kc3', content: 'export const a = 1;' }),
+    assistantObservation({ uuid: 'kc-a', messageId: 'kc-m4', timestamp: ts(5),
+      blocks: [{ type: 'text', text: 'both read' }] }),
+    userMessage({ uuid: 'kc-cur', text: 'prepare the handoff', timestamp: ts(6) }),
+  ]));
+  const seen = [];
+  const resourceKeysOf = (pair) => {
+    seen.push(pair);
+    return pair.name === 'Read' ? [`/project/${pair.input.file_path}`] : [];
+  };
+  const dialogueProjection = createClaudeCodeDialogueProjection();
+  return {
+    seen,
+    unkeyed: dialogueProjection.project(observations).folds.flatMap(fold => fold.toolPairs),
+    injected: captureCurrentEpochTurns({ observations, dialogueProjection, resourceKeysOf }).turns,
+  };
+};
+
+test('keys from an injected resourceKeysOf fill the skeleton row, the search terms and the digest', () => {
+  const { seen, unkeyed, injected } = keyedCapture();
+  // Fixture self-proof: the keys came from the injected function, the Adapter having attached none.
+  assert.deepEqual(seen.map(pair => pair.toolUseId), ['tok-kc1', 'tok-kc2', 'tok-kc3']);
+  assert.deepEqual(unkeyed.map(pair => pair.resourceKeys), [[], [], []]);
+  const skeleton = buildSkeleton(injected, 'sess');
+  assert.equal(skeleton, 'CONTEXT EPOCH  session sess   turns 1\n\nT    1 | U   : read the store and the helper\n'
+    + 'T    8 | A   : both read\n      | A×1 · 3 tools: store.js,a.js\n      | NOTE[1]: ____');
+  const terms = buildSearchTerms({ uText: '', note: null, turn: injected[0] }).split(' ');
+  assert.deepEqual(terms, ['/project/lib/store.js', '/project/lib/a.js']);
+  // The digest of the capture whose tool lines carry those two keys.
+  assert.equal(snapshotDigest(injected), '5994abd38395a89e872350136225df7122b73c3f7f1993e8ed0f9256bf515b09');
+});
+
+test('capture hands resourceKeysOf each paired tool pair of the epoch suffix and nothing from before it', () => {
+  const pairOf = (name, toolUseId, input, result, n) => [
+    assistantToolUse({ uuid: `${toolUseId}-a`, messageId: `${toolUseId}-m`, toolUseId, name, input,
+      timestamp: ts(n) }),
+    toolResult({ uuid: `${toolUseId}-r`, toolUseId, content: result }),
+  ];
+  const observations = observationsOf([
+    ...chain([
+      userMessage({ uuid: 'sf-pre-u', text: 'before the compact', timestamp: ts(1) }),
+      ...pairOf('Read', 'tok-pre', { file_path: 'lib/old.js' }, 'old', 2),
+      assistantObservation({ uuid: 'sf-pre-a', messageId: 'sf-pre-m', timestamp: ts(3),
+        blocks: [{ type: 'text', text: 'done' }], usage: usage({ input: 2, output: 5, cacheRead: 10_000 }) }),
+    ]),
+    ...chain([
+      compactSummary({ uuid: 'sf-sum', timestamp: ts(4) }),
+      userMessage({ uuid: 'sf-u', text: 'after the compact', timestamp: ts(5) }),
+      ...pairOf('Read', 'tok-post', { file_path: 'lib/new.js' }, 'new', 6),
+      userMessage({ uuid: 'sf-cur', text: 'prepare the handoff', timestamp: ts(8) }),
+    ]),
+  ]);
+  const seen = [];
+  const { turns } = captureCurrentEpochTurns({
+    observations,
+    dialogueProjection: createClaudeCodeDialogueProjection(),
+    resourceKeysOf: (pair) => { seen.push(pair); return ['/project/' + pair.input.file_path]; },
+  });
+  assert.deepEqual(seen.map(pair => [pair.toolUseId, pair.result]), [['tok-post', 'new']],
+    'the pair arrives paired with its result, and only the current epoch is asked about');
+  assert.deepEqual(buildSearchTerms({ uText: '', note: null, turn: turns[0] }).split(' '), ['/project/lib/new.js']);
 });
 
 // ── The three capture pins that need the real service ──────────────────────────
@@ -753,7 +802,7 @@ test('[delta] malformed Turn Head fails before skeleton or notes files are writt
   ctx.switchSource(headless);
   const captured = captureCurrentEpochTurns({
     observations: (await createClaudeCodeDialogueSource().read(headless)).observations,
-    dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: ctx.cwd }),
+    dialogueProjection: createClaudeCodeDialogueProjection(),
   }).turns;
   assert.deepEqual(captured.map(t => t.sourceEntryId), [null],
     'fixture 自证：捕获里真的有一个没有 identity 的头');

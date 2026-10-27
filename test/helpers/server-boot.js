@@ -31,9 +31,13 @@ import {
 // `br`, `mf`, `dhat` and `wallP` — so the harness states one lifetime rather than inheriting a developer's.
 const HARNESS_CACHE_TTL = DEFAULT_CACHE_TTL;
 
-// A Read whose output carries the `N\t` line prefixes the Read adapter parses, so a fed path becomes
-// resident content rather than an unattributed residual.
+// A Read whose output carries `N\t` line prefixes: the matcher's declared-line tier attributes a fed path to
+// those lines, so it becomes resident content rather than an unattributed residual.
 const numberedRead = (content) => content.split('\n').map((line, i) => `${i + 1}\t${line}`).join('\n');
+
+// What a Read of a fed path shows unless the call says otherwise, so a working tree that declares the same file
+// from this constant answers the lines the transcript shows.
+export const MEASURED_CONTENT = 'export const touched = 1;\n'.repeat(12);
 
 // The complete declared surface of the shared application: every named operation a consumer may call, and
 // nothing else. Host wiring and the tests below are held to exactly this list.
@@ -128,7 +132,7 @@ function pumpTick(handle) {
  * @returns {object[]} chained fixture entries
  */
 export function measuredTranscript({
-  steps = 1, paths = [], content = 'export const touched = 1;\n'.repeat(12),
+  steps = 1, paths = [], content = MEASURED_CONTENT,
   model = 'deepseek-v4-pro', laterModel = null, cacheReadStart = 42000, extraEntries = [],
 } = {}) {
   const rows = [];
@@ -179,17 +183,18 @@ export function writeMeasuredTranscript(spec = {}) {
 export function composeForTranscript({
   transcriptPath, sessionId = 'test-session', projectId = null, projectRoot = null,
   pollIntervalMs = 0, projectsRoot = null, ratioOverride = null, disableTelemetrySweep = true,
-  guard = true, cacheTtl = HARNESS_CACHE_TTL, ...rest
+  guard = true, cacheTtl = HARNESS_CACHE_TTL, workingTree, ...rest
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'sw-compose-'));
   const stateDir = join(dir, 'state');
   mkdirSync(stateDir, { recursive: true });
   const store = openStore(join(dir, 'store.sqlite'));
   // One lifetime on BOTH sides — the measured composition and the host reporting its price — so a case that
-  // wants another one names it once and the pair cannot drift apart.
+  // wants another one names it once and the pair cannot drift apart. `workingTree` is the composition's own
+  // argument: left out, the tree is the process's Node tree.
   const watcher = createWatcherComposition({
     sessionId, sourceLocator: transcriptPath, projectId, projectRoot, stateDir, store, isIgnored: null,
-    cacheTtl,
+    cacheTtl, workingTree,
   });
   const handle = createServer({
     watcher: guard ? strictWatcherFacade(watcher) : watcher,
@@ -231,6 +236,9 @@ export async function bootTestServer(opts = {}) {
     // Entries the transcript already holds when the owner boots. The default is one complete step, so the
     // very first synchronous bootstrap has a readable Source with a measured call.
     entries = null,
+    // The composition's working tree, as `composeForTranscript` takes it. A boot that names none reads the real temp
+    // `cwd` this harness writes its files into.
+    workingTree,
   } = opts;
 
   const dir = mkdtempSync(join(tmpdir(), 'sw-boot-'));
@@ -284,6 +292,7 @@ export async function bootTestServer(opts = {}) {
     store,
     isIgnored: null,
     cacheTtl: HARNESS_CACHE_TTL,
+    workingTree,
     ...(dialogueSource ? { dialogueSource } : {}),
   });
 
@@ -376,7 +385,7 @@ export async function bootTestServer(opts = {}) {
     // Make each (cwd-relative) path resident: write the real file, append a Read tool use plus its result
     // carrying the file's own numbered lines, then let the host's tick acquire them. Returns the absolute
     // paths written. Every path rides ONE issuing step, so a caller gets one measured call per call here.
-    touchBucketPaths: (paths, { content = 'export const touched = 1;\n'.repeat(12) } = {}) => {
+    touchBucketPaths: (paths, { content = MEASURED_CONTENT } = {}) => {
       const abs = [];
       const rows = [];
       const label = `touch${++seq}`;
@@ -427,6 +436,7 @@ export async function bootTestServer(opts = {}) {
         store: secondStore,
         isIgnored: null,
         cacheTtl: HARNESS_CACHE_TTL,
+        workingTree,
       });
       const second = createServer({
         watcher: secondWatcher, pollIntervalMs: 0, sessionId: secondSid, projectsRoot,

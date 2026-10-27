@@ -4,13 +4,13 @@
 // re-verified against the active path, then widened into one chronological list of hits and the turns
 // adjacent to each).
 // 所有 fixture 都是合成 Source；物理行号才是 T，所以头 U 用 meta 填充推到指定绝对行。
-// 哪些工具对进匹配面由注入的 includeToolEvidence 决定，这个文件把 Claude Code 那一个注进来。
+// 匹配面收全部工具证据。
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CTP_TABLE, DEFAULT_CTP, NOTE_PREVIEW_TOKENS, NOTE_TOKEN_LIMIT } from '../lib/constants.js';
+import { DEFAULT_CTP, NOTE_PREVIEW_TOKENS, NOTE_TOKEN_LIMIT } from '../lib/constants.js';
 import {
   HISTORY_EXCERPT_CHARS, HISTORY_TOKEN_BUDGET, estimateWireTokens, isWithinHistoryBudget,
 } from '../lib/turn-history-budget.js';
@@ -24,24 +24,23 @@ import {
 import { locateRanges, searchTranscripts as searchTranscriptsImpl } from '../lib/turn-query.js';
 import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
-import { classifyToolPair } from '../lib/harness/claude-code/native-tools.js';
 import {
   assistantObservation, assistantToolUse, toolResult, ts, userMessage, writeTranscript,
 } from './helpers/transcript-fixtures.js';
 
-// The real Claude Code Dialogue seam, plus its own evidence-admission rule: residual evidence exists only
-// in the Source, while a pair whose ground truth is the working tree is reachable there (ADR 0004).
+// The real Claude Code Dialogue seam: every tool pair's evidence is there for the search to match.
 const dialogueSource = createClaudeCodeDialogueSource();
 const dialogueProjection = createClaudeCodeDialogueProjection();
-const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === 'residual';
 const HISTORY = { dialogueSource, dialogueProjection };
 // A Source whose read settles on a later tick: the seam's contract is a Promise, and a consumer that reads
 // `.status` off the pending value would see every Source as unreadable.
 const deferred = { read: async (locator) => dialogueSource.read(locator) };
+// A window that holds every fixture note: the cases that are not about windows read the whole session.
+const OPEN_WINDOW = { after: null, through: Number.MAX_SAFE_INTEGER };
 // One History Source, spelled the way lib/lineage.js spells it.
-const source = (sessionId, locator, handoffId) =>
-  ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId });
-const searchWith = async (args) => searchTranscriptsImpl({ ...HISTORY, includeToolEvidence, ...args });
+const source = (sessionId, locator, handoffId, window = OPEN_WINDOW) =>
+  ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId, window });
+const searchWith = async (args) => searchTranscriptsImpl({ ...HISTORY, ...args });
 const locateWith = async (args) => locateRanges({ ...HISTORY, ...args });
 
 const dir = mkdtempSync(join(tmpdir(), 'sw-turn-query-'));
@@ -78,9 +77,7 @@ const padTo = (entries, ordinal, tag) => {
   return entries;
 };
 
-// Path 桶要成立，Read 的 result 必须真能产出有效 fullSet：真行号前缀 `N\t`、总长 > 100、
-// 尾部没有 truncated / use offset / too large 标记。少一条就会按 ineffective_update 落回 Residual，
-// 「Path 桶搜不到」就会因为错误的理由通过。
+// 一次 Read 的 result，Claude Code 的形状：每行带 `N\t` 行号前缀。
 const READ_RESULT = [
   '1\tconst first = 1;   // read-bucket-literal marker line',
   '2\tconst second = 2;  // padding so the whole result is a full read',
@@ -210,20 +207,6 @@ test('延后 resolve 的 Source 读为 readable，folds 与 turns 同同步读',
     await readHistorySource(HISTORY, transcriptA));
 });
 
-test('fixture 自证：Read 对真落在 Path 桶，Bash 对落在 Residual 桶', async () => {
-  assert.equal(classifyToolPair((await foldById(transcriptA, 'a-read')).toolPairs[0], DEFAULT_CTP), 'path');
-  assert.equal(classifyToolPair((await foldById(transcriptA, 'a-bash')).toolPairs[0], DEFAULT_CTP), 'residual');
-});
-
-test('桶与 ctp 无关：Read 对在 CTP_TABLE 每一档与缺省档都是 Path', async () => {
-  // search 固定 DEFAULT_CTP，bookmark detail 用 ctpForModel(canonical.model)。两处若能对同一对给出
-  // 不同桶，一条命中就会「search 找得到、detail 取不到」—— 这条不变量代码里没有别处声明。
-  const pair = (await foldById(transcriptA, 'a-read')).toolPairs[0];
-  for (const ctp of [...Object.values(CTP_TABLE), DEFAULT_CTP]) {
-    assert.equal(classifyToolPair(pair, ctp), 'path', JSON.stringify(ctp));
-  }
-});
-
 // ── Matcher semantics ──────────────────────────────────────────────────────────
 
 test('ASCII 折叠逐码元只映射 A–Z；非 ASCII 不经 toLowerCase 变长', async () => {
@@ -270,11 +253,11 @@ test('ABSORB harness evidence 不参与匹配', async () => {
   assert.equal((await searchTranscripts({ lineage, q: 'local-command-stdout' })).found, false);
 });
 
-test('Path 桶工具一个实体都不产出（连工具名也不进），Residual 桶搜得到', async () => {
-  assert.equal((await searchTranscripts({ lineage, q: 'read-bucket-literal' })).found, false);
-  assert.equal((await searchTranscripts({ lineage, q: 'Read' })).found, false);
+test('文件读取工具与其余工具一样，名、input、result 都在匹配面上', async () => {
+  assert.equal((await searchTranscripts({ lineage, q: 'read-bucket-literal' })).found, true);
+  assert.equal((await searchTranscripts({ lineage, q: 'Read' })).found, true);
   assert.equal((await searchTranscripts({ lineage, q: 'residual-bucket-literal' })).found, true);
-  // Residual 工具名逐字可搜，且 ASCII 大小写不敏感
+  // 工具名逐字可搜，且 ASCII 大小写不敏感
   assert.equal((await searchTranscripts({ lineage, q: 'bash' })).found, true);
 });
 
@@ -318,7 +301,7 @@ test('search 的扫描面与行枚举同源：同一 fold 的每条行都在匹�
   const needles = lines.flatMap(line => line.kind === 'visible'
     ? [line.message.text]
     : [line.tool.name, stableStringify(line.tool.input), serializeResult(line.tool.result).resultStr]);
-  // 一条可见行一个实体，一条 Residual 工具行三个（名、序列化 input、序列化 result）。
+  // 一条可见行一个实体，一条工具行三个（名、序列化 input、序列化 result）。
   assert.deepEqual(needles, [
     'split-prose-literal before the call',
     'Bash', '{"command":"echo split-input-literal"}', 'split-output-literal',
@@ -337,33 +320,12 @@ test('search 的扫描面与行枚举同源：同一 fold 的每条行都在匹�
 });
 
 
-// 注入的谓词是这一层对「哪些工具证据算 Source 独有」的唯一知识来源：shared Turn History 不认识任何
-// Harness 的 outcome 分类，所以同一批 fold 在 true 与 false 下的匹配面必须整块地不同。
-test('search：注入 () => true 时每个工具对都进匹配面', async () => {
-  const all = await searchWith({ store: storeEmpty, lineage, q: 'read-bucket-literal',
-    includeToolEvidence: () => true });
+// 每个工具对都进匹配面：Read 的 result 与其余工具证据同等命中。
+test('search：每个工具对都进匹配面', async () => {
+  const all = await searchWith({ store: storeEmpty, lineage, q: 'read-bucket-literal' });
   assert.equal(all.found, true);
   // 这个字面量在 result 里，所以命中行是 result 自己那一行，不是发起调用的那一行。
   assert.equal(allMatches(all)[0].line, (await foldById(transcriptA, 'a-read')).toolPairs[0].resultSourceOrdinal);
-});
-
-test('search：注入 () => false 时一个工具对都不进，可见正文仍照旧命中', async () => {
-  const none = { store: storeEmpty, lineage, includeToolEvidence: () => false };
-  assert.deepEqual(await searchWith({ ...none, q: 'residual-bucket-literal' }), { found: false });
-  assert.deepEqual(await searchWith({ ...none, q: 'tool-only-literal' }), { found: false });
-  assert.equal((await searchWith({ ...none, q: 'visible-literal' })).found, true);
-});
-
-test('search：谓词只在配对之后被调用，拿到的是胜出的那一对', async () => {
-  const seen = [];
-  await searchWith({ store: storeEmpty, lineage, q: 'needle-literal',
-    includeToolEvidence: (pair) => { seen.push(pair); return true; } });
-  assert.ok(seen.length > 0);
-  const bash = seen.find(p => p.toolUseId === 'tu-bash');
-  assert.equal(bash.result, 'residual bucket output', '谓词看到的是配对后的结果载荷');
-  assert.equal(bash.resourceKey, null, 'Adapter 已经解析过一次目标，谓词读它而不是再解析');
-  const read = seen.find(p => p.toolUseId === 'tu-read');
-  assert.equal(read.resourceKey, '/synthetic/read-target.js');
 });
 
 test('head U 的匹配面是 fold 原文，不是清洗结果', async () => {
@@ -513,13 +475,13 @@ storeMain.upsertTurnNotes([
 const prefixStored = storedUText(PREFIX_TAIL_U);
 const pathTermsRow = {
   uuid: 'loc-path-row', uText: 'index probe turn', note: 'this note names no file',
-  // Shared path-cue fixtures supply `resourceKey` directly: a shell call locates no resource, so its
+  // Shared path-cue fixtures supply `resourceKeys` directly: a shell call locates no resource, so its
   // pair carries none and contributes no term.
   searchTerms: buildSearchTerms({
     uText: 'index probe turn', note: 'this note names no file',
     turn: { lines: [
-      { kind: 'tool', tool: { resourceKey: `${LOCATE_CWD}/lib/store.js` } },
-      { kind: 'tool', tool: { resourceKey: null } },
+      { kind: 'tool', tool: { resourceKeys: [`${LOCATE_CWD}/lib/store.js`] } },
+      { kind: 'tool', tool: { resourceKeys: [] } },
     ] },
   }),
 };
@@ -1228,4 +1190,120 @@ test('scoped 响应同样带 transcript_path —— 调用者给的是 turn 地�
   // scope / u / note 三个键在 scoped 下缺席（它们只会回显输入），路径不在那三个里面。
   assert.deepEqual(Object.keys(scoped.ranges[0]).sort(), ['matches', 'transcript_path']);
   assert.equal(scoped.ranges[0].transcript_path, transcriptAddr);
+});
+
+// ── Members of one session ─────────────────────────────────────────────────────
+
+// One session and one Source held by two members. Turn heads sit at 10 s steps; turn 2 also carries a fold
+// 5 s after its head. The first window ends between that fold and the head, so the fold lies after
+// `through` while its turn is the first member's. Each note's source_timestamp is the epoch-ms of its turn
+// head as buildTurnNoteRows stores it, so the note filter and the scan place a turn in the same window.
+const headMs = (second) => Date.parse(ts(second));
+const storeMembers = testStore('members');
+const MEMBER_TURNS = [
+  { n: 1, second: 10, u: 'turn-1 memberword locword', answers: [] },
+  { n: 2, second: 20, u: 'turn-2 memberword locword', answers: [
+    { second: 21, text: 'straddleword in the answer body' },
+    { second: 25, text: 'straddleword in the late fold' },
+  ] },
+  { n: 3, second: 30, u: 'turn-3 memberword locword', answers: [] },
+  { n: 4, second: 40, u: 'turn-4 memberword', answers: [] },
+  { n: 5, second: 50, u: 'turn-5 memberword locword', answers: [] },
+];
+const memberPath = writeTranscript(dir, linear(MEMBER_TURNS.flatMap(turn => [
+  userMessage({ uuid: `mem-u${turn.n}`, text: turn.u, timestamp: ts(turn.second) }),
+  ...turn.answers.map((a, i) => assistantObservation({
+    uuid: `mem-a${turn.n}-${i}`, messageId: `mem-m${turn.n}-${i}`, timestamp: ts(a.second),
+    blocks: [{ type: 'text', text: a.text }],
+  })),
+])));
+storeMembers.upsertTurnNotes(MEMBER_TURNS.map(turn => noteRow('sess-members', {
+  uuid: `mem-u${turn.n}`, uText: turn.u, note: `member note ${turn.n}`, sourceTimestamp: headMs(turn.second),
+})));
+// Turns 1–2 belong to the first member, turns 3–4 to the second; turn 5 is after the second's `through`.
+const memberLineage = [
+  source('sess-members', memberPath, 950, { after: null, through: headMs(22) }),
+  source('sess-members', memberPath, 951, { after: headMs(22), through: headMs(45) }),
+];
+const memberT = async (n) => (await turnsOfPath(memberPath))[n - 1].sourceOrdinal;
+const memberScope = async (label, n) => `${label}:${await memberT(n)}`;
+const countingMemberSource = () => {
+  const read = [];
+  return { read, dialogueSource: { read: async (locator) => { read.push(locator); return dialogueSource.read(locator); } } };
+};
+const locateMembers = async (args) => locateWith({ store: storeMembers, lineage: memberLineage, ...args });
+const searchMembers = async (args) => searchWith({ store: storeMembers, lineage: memberLineage, ...args });
+
+test('fixture 自证：成员 fixture 的头时间戳就是 note 的 source_timestamp，straddle fold 晚于第一窗口的 through', async () => {
+  const { turns, folds } = await readOf(memberPath);
+  assert.deepEqual(turns.map(t => t.timestamp), MEMBER_TURNS.map(t => headMs(t.second)));
+  const late = folds.find(f => f.sourceEntryId === 'mem-a2-1');
+  assert.equal(late.timestamp, headMs(25));
+  assert.ok(late.timestamp > memberLineage[0].window.through && turns[1].timestamp <= memberLineage[0].window.through);
+});
+
+test('locate（成员）：候选行归给接纳它的成员，两窗外的行被丢弃，窗口里的 context 在窗口边缘截止', async () => {
+  const r = await locateMembers({ q: 'locword' });
+  const [s1t1, s1t2, s2t3, s2t4] = [await memberScope('S1', 1), await memberScope('S1', 2),
+    await memberScope('S2', 3), await memberScope('S2', 4)];
+  assert.deepEqual(hitScopes(r), [s1t1, s1t2, s2t3]);
+  // 第二成员窗口的首个命中不借第一成员的 turn 2；第一成员窗口的末个命中不借第二成员的 turn 3；turn 5 一条都不进。
+  assert.deepEqual(allScopes(r), [s1t1, s1t2, s2t3, s2t4]);
+});
+
+test('locate（成员）：只落在两窗之外的行是 {found:false}', async () => {
+  assert.deepEqual(await locateMembers({ q: 'turn-5' }), { found: false });
+});
+
+test('locate（成员）：共享同一 locator 的成员在一次调用内只读一次 Source', async () => {
+  const { read, dialogueSource: counting } = countingMemberSource();
+  const r = await locateMembers({ q: 'locword', dialogueSource: counting });
+  assert.equal(r.found, true);
+  assert.deepEqual(read, [memberPath]);
+});
+
+test('search（成员）：两窗里都有的字面量，各命中只出现在自己成员的 label 下，不重复', async () => {
+  const r = await searchMembers({ q: 'memberword' });
+  assert.deepEqual(r.ranges.map(g => g.scope), [
+    await memberScope('S1', 1), await memberScope('S1', 2), await memberScope('S2', 3), await memberScope('S2', 4),
+  ]);
+  assert.equal(allMatches(r).length, 4);
+});
+
+test('search（成员）：头在 through 之内、后续 fold 晚于 through 的 turn，全部命中留在第一成员 label 下', async () => {
+  const r = await searchMembers({ q: 'straddleword' });
+  assert.equal(r.ranges.length, 1);
+  assert.equal(r.ranges[0].scope, await memberScope('S1', 2));
+  assert.equal(r.ranges[0].matches.length, 2);
+});
+
+test('search（成员）：头没有时间戳的 turn 被共享该 Source 的每个成员接纳（两个 label 各一份）', async () => {
+  const stamplessPath = writeTranscript(dir, linear([
+    userMessage({ uuid: 'stampless-u', text: 'stampless-literal opening', timestamp: undefined }),
+    assistantObservation({ uuid: 'stampless-a', messageId: 'm-stampless', timestamp: undefined,
+      blocks: [{ type: 'text', text: 'plain answer' }] }),
+  ]));
+  assert.equal((await turnsOfPath(stamplessPath))[0].timestamp, null);
+  const lineageOf = [
+    source('sess-stampless', stamplessPath, 952, { after: null, through: 100 }),
+    source('sess-stampless', stamplessPath, 953, { after: 100, through: 200 }),
+  ];
+  const r = await searchTranscripts({ lineage: lineageOf, q: 'stampless-literal' });
+  assert.equal(r.ranges.length, 2);
+  assert.equal(allMatches(r).length, 2);
+});
+
+test('search（成员）：scope 只解析到该成员持有的 turn，别的成员持有的 turn 是 scope_not_found', async () => {
+  const ok = await searchMembers({ q: 'memberword', scope: await memberScope('S1', 2) });
+  assert.equal(ok.found, true);
+  assert.equal((await searchMembers({ q: 'memberword', scope: await memberScope('S2', 3) })).found, true);
+  for (const scope of [await memberScope('S2', 2), await memberScope('S1', 3)]) {
+    await assert.rejects(() => searchMembers({ q: 'memberword', scope }), /scope_not_found/, scope);
+  }
+});
+
+test('search（成员）：共享同一 locator 的成员在一次调用内只读一次 Source', async () => {
+  const { read, dialogueSource: counting } = countingMemberSource();
+  await searchMembers({ q: 'memberword', dialogueSource: counting });
+  assert.deepEqual(read, [memberPath]);
 });

@@ -10,17 +10,27 @@ import { createResourcePolicy } from '../lib/resource-policy.js';
 import { createResourceEnrichment } from '../lib/resource-enrichment.js';
 import { createMeasurementEngine } from '../lib/measurement/engine.js';
 import { createClaudeCodeMeasurementProjection } from '../lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse, completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
-} from '../lib/harness/claude-code/native-tools.js';
 import { readClaudeCodeRows, createClaudeCodeObservationReducer } from '../lib/harness/claude-code/transcript-observation.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import {
   ts, chain, usage, userMessage, assistantToolUse, assistantObservation, toolResult, compactSummary,
 } from './helpers/transcript-fixtures.js';
+import { ccRig, linesText } from './helpers/attribution-fixtures.js';
 
 const PROJECT = '/repo';
+
+// The lines every Read and Grep below shows, declared once: the results are built from them and the working tree the
+// interpreter attributes against holds the same files.
+const READ_LINES = Array.from({ length: 12 }, (_, i) => `const v${i} = ${i};`);
+const GREP_LINES = ['import os', 'print(os.name)'];
+const FILES = {
+  ...Object.fromEntries([
+    'src/one.js', 'src/two.js', 'lib/three.js', 'lib/four.js', 'vendor/a.js', 'vendor/b.js', 'src/keep.js',
+    'src/kept.js', 'src/a.js', 'src/b.js',
+  ].map(file => [`${PROJECT}/${file}`, linesText(READ_LINES)])),
+  [`${PROJECT}/pkg/mod.py`]: linesText(GREP_LINES),
+};
+const { interpreters } = ccRig({ files: FILES, cwd: PROJECT });
 
 // One incremental reducer per composed watcher, so a boundary that must be a NON-FIRST topology root stays
 // one across successive frames — a fresh snapshot per frame would read it as the session origin instead.
@@ -83,12 +93,8 @@ function compose({ isIgnored = null, manualOverrides = null } = {}) {
     dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
-      cwd: PROJECT, projectRoot: PROJECT, sourceLocator: locator, resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+      cwd: PROJECT, projectRoot: PROJECT, resolveModelPolicy, ...interpreters,
     }),
     modelPolicyFor,
     now: () => 1000,
@@ -106,9 +112,9 @@ const nextId = () => `n${++seq}`;
 
 // One assistant row that reads `path` whole, plus its tool result. The row carries usage so the step is
 // measured, which is what makes the resource key a NEW key of the current Engine epoch.
-function readStep(path, { cacheRead, lines = 12 } = {}) {
+function readStep(path, { cacheRead } = {}) {
   const id = nextId();
-  const body = Array.from({ length: lines }, (_, i) => `${i + 1}\tconst v${i} = ${i};`).join('\n');
+  const body = READ_LINES.map((line, i) => `${i + 1}\t${line}`).join('\n');
   return [
     assistantToolUse({
       uuid: `a-${id}`, messageId: `m-${id}`, toolUseId: `t-${id}`, name: 'Read',
@@ -121,7 +127,7 @@ function readStep(path, { cacheRead, lines = 12 } = {}) {
 // A multi-file Grep whose result names two files and whose issuing row carries usage.
 function grepStep(paths, { cacheRead } = {}) {
   const id = nextId();
-  const body = paths.flatMap(p => [`${p}:1:import os`, `${p}:2:print(os.name)`]).join('\n');
+  const body = paths.flatMap(p => GREP_LINES.map((line, i) => `${p}:${i + 1}:${line}`)).join('\n');
   return [
     assistantToolUse({
       uuid: `a-${id}`, messageId: `m-${id}`, toolUseId: `t-${id}`, name: 'Grep',

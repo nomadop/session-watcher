@@ -489,6 +489,8 @@ var require_ignore = __commonJS({
 
 // dsh/src/index.js
 import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { CompactionId, compactCheckpointSource } from "@deepseek-ai/dsh-compaction";
+import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
 // lib/store.js
@@ -570,7 +572,7 @@ var CTP_TABLE = [
   // DeepSeek tokenizer (n=5265)
 ];
 var DEFAULT_CTP = { ascii: 3, cjk: 1 };
-var TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 };
+var SKILL_FRAMING_TOKENS = 40;
 var DEPTH_HOT_LAP_COUNT = 3;
 var ALPHA_EMA = 0.06;
 var G_DELTA_CAP = 250;
@@ -589,6 +591,16 @@ var HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200;
 var NOTE_TOKEN_LIMIT = 800;
 var NOTE_PREVIEW_TOKENS = 100;
 var HANDOFF_TOKEN_MAX_RETRIES = 5;
+var WORKING_TREE_CACHE_ENTRIES = 256;
+var WORKING_TREE_CACHE_CHARS = 8e6;
+var ATTRIBUTION_LIMITS = {
+  candidates: 64,
+  fileBytes: 1e6,
+  sideChars: 1e5,
+  decodeDepth: 6,
+  alignCells: 4e6,
+  evidenceFloor: 3
+};
 
 // lib/store.js
 var yieldTick = () => new Promise((r) => setImmediate(r));
@@ -772,6 +784,14 @@ function ensureV5Shape(db) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_note_session
     ON turn_note(source_session_id, source_timestamp)`);
 }
+function ensureAttributionRecordShape(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS attribution_record (
+    session_id  TEXT NOT NULL,
+    tool_use_id TEXT NOT NULL,
+    record      TEXT NOT NULL,
+    PRIMARY KEY (session_id, tool_use_id)
+  ) WITHOUT ROWID`);
+}
 var V3_HANDOFF_COLUMNS = [
   ["delivered_session_id", "TEXT"],
   ["loader_version", "TEXT"],
@@ -896,6 +916,7 @@ function migrate(db) {
     ensureV2Shape(db);
     ensureV3Shape(db);
     ensureV5Shape(db);
+    ensureAttributionRecordShape(db);
     if (version < 5) {
       db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     }
@@ -938,6 +959,9 @@ var Store = class _Store {
       deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
       deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
       deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
+      deleteSessionAttributions: db.prepare("DELETE FROM attribution_record WHERE session_id = ?"),
+      loadAttribution: db.prepare("SELECT record FROM attribution_record WHERE session_id = ? AND tool_use_id = ?"),
+      insertAttribution: db.prepare("INSERT OR IGNORE INTO attribution_record (session_id, tool_use_id, record) VALUES (?, ?, ?)"),
       // Config CRUD
       loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
       saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
@@ -1023,9 +1047,10 @@ var Store = class _Store {
       insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
         (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
         VALUES (?,?,?,?,?,?,?)`),
-      // Lineage: the parent edge is the delivery a session consumed before it prepared its own
-      // handoff. LIMIT 1 is replacement semantics, not a query optimization — when one child
-      // session loaded several handoffs, only the newest qualifying delivery is its parent, and
+      // Lineage: the parent edge is the newest delivery a session consumed no later than a node's
+      // creation, a delivery of the session's own handoff included — that is how a continued session
+      // reaches its previous epoch. LIMIT 1 is replacement semantics, not a query optimization — when one
+      // child session loaded several handoffs, only the newest qualifying delivery is its parent, and
       // the earlier ones' ancestor chains are NOT merged in. Same millisecond breaks by handoff_id.
       findParentDelivery: db.prepare(`SELECT h.* FROM handoff_load AS hl
         JOIN handoff AS h ON h.handoff_id = hl.handoff_id
@@ -1154,12 +1179,28 @@ var Store = class _Store {
       this._stmts.deleteSessionState.run(sessionId);
       this._stmts.deleteSessionPaths.run(sessionId);
       this._stmts.deleteSessionLines.run(sessionId);
+      this._stmts.deleteSessionAttributions.run(sessionId);
       this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId);
       this._stmts.deleteSessionRecord.run(sessionId);
       this._db.exec("COMMIT");
     } catch (e) {
       this._db.exec("ROLLBACK");
       throw e;
+    }
+  }
+  // --- Attribution Record ---
+  // INSERT OR IGNORE: the first write for a key stays.
+  rememberAttribution(sessionId, toolUseId, record) {
+    this._stmts.insertAttribution.run(sessionId, toolUseId, JSON.stringify(record));
+  }
+  recallAttribution(sessionId, toolUseId) {
+    const row = this._stmts.loadAttribution.get(sessionId, toolUseId);
+    if (!row) return null;
+    try {
+      const parsed = JSON.parse(row.record);
+      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
     }
   }
   // --- Config CRUD ---
@@ -1968,7 +2009,7 @@ function cacheTtlForRetention(retention) {
 
 // dsh/src/composition.js
 import { tmpdir } from "node:os";
-import { join as join6 } from "node:path";
+import nodePath, { join as join6 } from "node:path";
 
 // lib/session-watcher.js
 import { join as join3 } from "node:path";
@@ -1994,7 +2035,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     if (relative && ignoreMatcher && ignoreMatcher(relative)) return "gitignore";
     return null;
   }
-  function resolve3(resourceKey) {
+  function resolve2(resourceKey) {
     const defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -2034,7 +2075,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve3, infer };
+  return { resolve: resolve2, infer };
 }
 
 // lib/dialogue-fold.js
@@ -2156,10 +2197,10 @@ function pairFor(toolUseId, use, pendingResults) {
     sourceOrdinal: use.sourceOrdinal,
     sourceEntryId: use.sourceEntryId,
     timestamp: use.timestamp,
-    // A tool use's own working directory, carried uninterpreted: the Harness Adapter resolves the native
-    // target from this pair and attaches the `resourceKey` shared Turn History reads.
+    // A tool use's own working directory, carried uninterpreted: whatever resolves a pair's resources does it
+    // from this pair. `resourceKeys` is the one list shared Turn History reads.
     cwd: use.cwd,
-    resourceKey: null,
+    resourceKeys: [],
     // null means "no result row paired with this tool use", which is not the same as a result row that
     // carried no annotation — that one has a `resultMeta` whose annotation is absent.
     result: result === void 0 ? null : result.content,
@@ -3352,11 +3393,22 @@ function parseTurnPageBoundary(raw) {
 function labelHistorySources(lineage) {
   return lineage.map((entry, index) => ({ ...entry, label: `S${index + 1}`, index }));
 }
+function admitsTurn({ window: window2 }, timestamp) {
+  if (timestamp == null) return true;
+  return timestamp <= window2.through && (window2.after === null || timestamp > window2.after);
+}
 async function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
   const read = await dialogueSource.read(sourceLocator);
   if (read.status !== "ok") return { readable: false, folds: [], turns: [] };
   const { folds } = dialogueProjection.project(read.observations);
   return { readable: true, folds, turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)) };
+}
+function createHistoryReader(history) {
+  const reads = /* @__PURE__ */ new Map();
+  return (sourceLocator) => {
+    if (!reads.has(sourceLocator)) reads.set(sourceLocator, readHistorySource(history, sourceLocator));
+    return reads.get(sourceLocator);
+  };
 }
 var PASS = Object.freeze({ kind: "PASS" });
 var ABSORB = Object.freeze({ kind: "ABSORB" });
@@ -3413,7 +3465,7 @@ function buildSkeleton(turns, sessionId) {
       }
       if (line.kind === "tool") {
         toolCalls++;
-        if (line.tool.resourceKey) basenames.add(basename(line.tool.resourceKey));
+        for (const key of line.tool.resourceKeys) basenames.add(basename(key));
         return [];
       }
       if (line.message.role !== "human" && !shown.has(i2)) return [];
@@ -3480,7 +3532,7 @@ function snapshotDigest(turns) {
     anchor: turn.sourceEntryId,
     ts: turn.timestamp,
     u: turn.cleanedU,
-    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKey ?? null } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
+    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKeys } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
   }));
   return createHash2("sha256").update(stableStringify(canonical)).digest("hex");
 }
@@ -3493,7 +3545,7 @@ ${note ?? ""}`);
   const keys = /* @__PURE__ */ new Set();
   for (const line of turn.lines) {
     if (line.kind !== "tool") continue;
-    if (line.tool.resourceKey) keys.add(line.tool.resourceKey);
+    for (const key of line.tool.resourceKeys) keys.add(key);
   }
   return [bigrams, ...keys].filter(Boolean).join(" ");
 }
@@ -3513,12 +3565,17 @@ function activePathOrdinals(turns) {
 }
 
 // lib/turn-note.js
-function captureCurrentEpochTurns({ observations, dialogueProjection }) {
+function captureCurrentEpochTurns({ observations, dialogueProjection, resourceKeysOf }) {
   let boundaryAt = -1;
   for (let i2 = 0; i2 < observations.length; i2++) {
     if (observations[i2].type === "epoch-boundary") boundaryAt = i2;
   }
   const { folds } = dialogueProjection.project(observations.slice(boundaryAt + 1));
+  if (resourceKeysOf) {
+    for (const fold of folds) {
+      for (const pair of fold.toolPairs) pair.resourceKeys = resourceKeysOf(pair);
+    }
+  }
   const turns = dialogueProjection.groupTurns(enumerateDialogueLines(folds));
   return { turns: turns.slice(0, -1) };
 }
@@ -3608,6 +3665,7 @@ var SessionWatcher = class {
     createEngine,
     createMeasurementProjection: createMeasurementProjection2,
     modelPolicyFor: modelPolicyFor2,
+    resourceKeysOf = null,
     now = () => Date.now()
   } = {}) {
     invariant(store !== null && typeof store === "object", "store is required");
@@ -3627,6 +3685,7 @@ var SessionWatcher = class {
     invariant(typeof createEngine === "function", "createEngine must be a function");
     invariant(typeof createMeasurementProjection2 === "function", "createMeasurementProjection must be a function");
     invariant(typeof modelPolicyFor2 === "function", "modelPolicyFor must be a function");
+    invariant(resourceKeysOf === null || typeof resourceKeysOf === "function", "resourceKeysOf must be a function");
     invariant(typeof now === "function", "now must be a function");
     this._projectId = projectId;
     this._projectRoot = projectRoot;
@@ -3641,6 +3700,7 @@ var SessionWatcher = class {
     this._createEngine = createEngine;
     this._createProjection = createMeasurementProjection2;
     this._modelPolicyFor = modelPolicyFor2;
+    this._resourceKeysOf = resourceKeysOf;
     this._now = now;
     this._startMs = now();
     this._sessionId = sessionId;
@@ -3695,11 +3755,12 @@ var SessionWatcher = class {
         this._hasObservedSource = observedBefore || frame.sourceObserved === true;
         if (!observedBefore && this._hasObservedSource) this._streamRevision += 1;
       }
+      const frameCtx = this._frameContext(frame, diagnostics);
       let newCalls = 0;
       let revisedCalls = 0;
       for (const batch of frame.batches ?? []) {
         for (const observation of batch) {
-          const projected = this._projection.project(observation);
+          const projected = this._projection.project(observation, frameCtx);
           for (const entry of projected.diagnostics) diagnostics.push(entry);
           for (const record of projected.records) {
             if (record.type === "epoch") this._flushResourcePolicy(diagnostics);
@@ -3734,6 +3795,55 @@ var SessionWatcher = class {
     for (const entry of result.diagnostics) diagnostics.push(entry);
     this._consumeClosedSegment(result, captureMode, diagnostics);
     return { diagnostics };
+  }
+  // The attribution store bound to the session this frame belongs to, for native interpretation to recall a
+  // call's record and offer one to keep. A store failure never reaches interpretation as an exception: a
+  // recall that fails is a miss and a remember that fails keeps nothing, each as a diagnostic of the frame.
+  // `remember` exists only on a live append, with `captureMode` read from the frame itself: the local default
+  // `applyHarnessFrame` applies would make an absent one live.
+  _frameContext(frame, diagnostics) {
+    const sessionId = this._sessionId;
+    if (!sessionId) return {};
+    const frameCtx = {
+      recall: this._recallFor(sessionId, (toolUseId, error) => {
+        diagnostics.push(diagnostic(
+          "attribution_recall_failed",
+          `attribution record for tool use ${toolUseId} could not be recalled: ${error.message}`
+        ));
+      })
+    };
+    if (frame.transition === "append" && frame.captureMode === "live") {
+      frameCtx.remember = (toolUseId, record) => {
+        try {
+          this._store.rememberAttribution(sessionId, toolUseId, record);
+        } catch (error) {
+          diagnostics.push(diagnostic(
+            "attribution_remember_failed",
+            `attribution record for tool use ${toolUseId} could not be kept: ${error.message}`
+          ));
+        }
+      };
+    }
+    return frameCtx;
+  }
+  // The context a capture operation hands `resourceKeysOf`: the same session-bound `recall` a frame gets,
+  // and no `remember`, because capture only reads what ingestion kept. Capture has no diagnostics exit, so a
+  // failed read is just a miss.
+  _captureContext() {
+    const sessionId = this._sessionId;
+    return sessionId ? { recall: this._recallFor(sessionId) } : {};
+  }
+  // The one store read behind every `recall`. The store method is looked up at call time, so a store without
+  // it fails like any other read does. A failure answers a miss and goes to `onFailure` when there is one.
+  _recallFor(sessionId, onFailure) {
+    return (toolUseId) => {
+      try {
+        return this._store.recallAttribution(sessionId, toolUseId);
+      } catch (error) {
+        onFailure?.(toolUseId, error);
+        return null;
+      }
+    };
   }
   _installFreshRuntime(sourceLocator) {
     this._pendingNewResourceKeys = /* @__PURE__ */ new Set();
@@ -4134,7 +4244,15 @@ var SessionWatcher = class {
   async _captureTurns() {
     const read = await this._dialogueSource.read(this._sourceLocator);
     if (read.status !== "ok") return { status: read.status, turns: [] };
-    return { status: "ok", ...captureCurrentEpochTurns({ observations: read.observations, dialogueProjection: this._dialogueProjection }) };
+    const context = this._captureContext();
+    return {
+      status: "ok",
+      ...captureCurrentEpochTurns({
+        observations: read.observations,
+        dialogueProjection: this._dialogueProjection,
+        resourceKeysOf: this._resourceKeysOf ? (pair) => this._resourceKeysOf(pair, context) : void 0
+      })
+    };
   }
   // The two files' one address, derived here and nowhere else. The key is the Context Epoch — this session
   // plus the epoch's first anchor — so a re-fetch after the epoch grew still finds the notes already
@@ -5807,13 +5925,13 @@ async function Module2(moduleArg = {}) {
       }
       readAsync = /* @__PURE__ */ __name(async (url) => {
         if (isFileURI(url)) {
-          return new Promise((resolve3, reject) => {
+          return new Promise((resolve2, reject) => {
             var xhr = new XMLHttpRequest();
             xhr.open("GET", url, true);
             xhr.responseType = "arraybuffer";
             xhr.onload = () => {
               if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                resolve3(xhr.response);
+                resolve2(xhr.response);
                 return;
               }
               reject(xhr.status);
@@ -6009,9 +6127,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module["instantiateWasm"]) {
-      return new Promise((resolve3, reject) => {
+      return new Promise((resolve2, reject) => {
         Module["instantiateWasm"](info2, (mod, inst) => {
-          resolve3(receiveInstance(mod, inst));
+          resolve2(receiveInstance(mod, inst));
         });
       });
     }
@@ -6424,7 +6542,7 @@ async function Module2(moduleArg = {}) {
     }
   }, "updateGOT");
   var relocateExports = /* @__PURE__ */ __name((exports, memoryBase2, replace) => {
-    var relocated = {};
+    var relocated2 = {};
     for (var e in exports) {
       var value = exports[e];
       if (typeof value == "object") {
@@ -6433,10 +6551,10 @@ async function Module2(moduleArg = {}) {
       if (typeof value == "number") {
         value += memoryBase2;
       }
-      relocated[e] = value;
+      relocated2[e] = value;
     }
-    updateGOT(relocated, replace);
-    return relocated;
+    updateGOT(relocated2, replace);
+    return relocated2;
   }, "relocateExports");
   var isSymbolDefined = /* @__PURE__ */ __name((symName) => {
     var existing = wasmImports[symName];
@@ -7342,8 +7460,8 @@ async function Module2(moduleArg = {}) {
   if (runtimeInitialized) {
     moduleRtn = Module;
   } else {
-    moduleRtn = new Promise((resolve3, reject) => {
-      readyPromiseResolve = resolve3;
+    moduleRtn = new Promise((resolve2, reject) => {
+      readyPromiseResolve = resolve2;
       readyPromiseReject = reject;
     });
   }
@@ -9981,7 +10099,7 @@ function deletePricingOverride(model) {
 // package.json
 var package_default = {
   name: "@nomadop/session-watcher",
-  version: "0.9.1",
+  version: "0.10.0",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -10056,13 +10174,1061 @@ var package_default = {
 // lib/version.js
 var PLUGIN_VERSION = package_default.version;
 
+// lib/working-tree.js
+import { statSync as statSync3, readFileSync as readFileSync5 } from "node:fs";
+function requireBound(name3, value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Working Tree ${name3} must be a finite positive number`);
+  }
+}
+function slashed(text) {
+  return text.replaceAll("\\", "/");
+}
+function createResolver({ path: path3, homeDir }) {
+  if (!path3 || typeof path3.isAbsolute !== "function" || typeof path3.resolve !== "function" || typeof path3.normalize !== "function") {
+    throw new TypeError("Working Tree path must provide isAbsolute, resolve and normalize");
+  }
+  if (homeDir !== null && typeof homeDir !== "string") {
+    throw new TypeError("Working Tree homeDir must be a string or null");
+  }
+  return function resolve2(base, raw) {
+    if (typeof raw !== "string" || raw.length === 0) return null;
+    let value = raw;
+    if (homeDir !== null && raw === "~") value = homeDir;
+    else if (homeDir !== null && raw.startsWith("~/")) value = `${homeDir}/${raw.slice(2)}`;
+    value = slashed(value);
+    if (!path3.isAbsolute(value)) {
+      if (typeof base !== "string" || base.length === 0) return null;
+      const root = slashed(base);
+      if (!path3.isAbsolute(root)) return null;
+      value = path3.resolve(root, value);
+    }
+    return slashed(path3.normalize(value));
+  };
+}
+function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars } = {}) {
+  const resolve2 = createResolver({ path: path3, homeDir });
+  requireBound("cacheEntries", cacheEntries);
+  requireBound("cacheChars", cacheChars);
+  const cache = /* @__PURE__ */ new Map();
+  let cachedChars = 0;
+  const orNull = (attempt) => {
+    try {
+      return attempt();
+    } catch {
+      return null;
+    }
+  };
+  function remember(file, st, text) {
+    const old = cache.get(file);
+    if (old) {
+      cachedChars -= old.text.length;
+      cache.delete(file);
+    }
+    if (text.length > cacheChars) return;
+    cache.set(file, { size: st.size, mtimeMs: st.mtimeMs, text });
+    cachedChars += text.length;
+    for (const [key, entry] of cache) {
+      if (cache.size <= cacheEntries && cachedChars <= cacheChars) break;
+      cache.delete(key);
+      cachedChars -= entry.text.length;
+    }
+  }
+  return {
+    resolve: resolve2,
+    stat: (file) => orNull(() => {
+      const st = statSync3(file);
+      return { size: st.size, isFile: st.isFile() };
+    }),
+    readText: (file) => orNull(() => {
+      const st = statSync3(file);
+      if (!st.isFile()) return null;
+      const hit = cache.get(file);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.text;
+      const text = readFileSync5(file, "utf8");
+      remember(file, st, text);
+      return text;
+    })
+  };
+}
+
+// lib/line-align.js
+var FNV_OFFSET = 2166136261;
+var FNV_PRIME = 16777619;
+function splitLines(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+function normalizeLine(line) {
+  return line.trimEnd();
+}
+function fingerprintOf(normalizedLine) {
+  let hash = FNV_OFFSET;
+  for (let i2 = 0; i2 < normalizedLine.length; i2++) {
+    hash = Math.imul(hash ^ normalizedLine.charCodeAt(i2), FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+var CUES = [
+  { pattern: /^ *(\d+)\t(.*)$/s, line: 1, text: 2 },
+  { pattern: /^ *(\d+)→(.*)$/s, line: 1, text: 2 },
+  { pattern: /^Line (\d+): ?(.*)$/s, line: 1, text: 2 },
+  { pattern: /^(\d+): ?(.*)$/s, line: 1, text: 2 },
+  { pattern: /^(.+?):(\d+):(.*)$/s, path: 1, line: 2, text: 3 },
+  { pattern: /^(\d+)-(.*)$/s, line: 1, text: 2 },
+  // The path of a context row is not kept: its separators are indistinguishable from the path's own dashes.
+  { pattern: /^(\S+?)-(\d+)-(.*)$/s, line: 2, text: 3 }
+];
+function stripLinePrefix(line) {
+  for (const cue of CUES) {
+    const match = cue.pattern.exec(line);
+    if (!match) continue;
+    const declaredLine = Number(match[cue.line]);
+    if (!Number.isSafeInteger(declaredLine) || declaredLine < 1) continue;
+    return { text: match[cue.text], declaredLine, path: cue.path ? match[cue.path] : null };
+  }
+  return { text: line, declaredLine: null, path: null };
+}
+function trimEnds(a, b, minTrim) {
+  const shared = Math.min(a.length, b.length);
+  let head = 0;
+  while (head < shared && a[head] === b[head]) head++;
+  if (!(head >= minTrim)) head = 0;
+  const room = shared - head;
+  let tail = 0;
+  while (tail < room && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  if (!(tail >= minTrim)) tail = 0;
+  return { head, tail, cells: (a.length - head - tail) * (b.length - head - tail) };
+}
+function alignOrdered(a, b, { maxCells, minTrim }) {
+  const { head, tail, cells } = trimEnds(a, b, minTrim);
+  if (!(cells <= maxCells)) return null;
+  const pairs = [];
+  for (let k = 0; k < head; k++) pairs.push([k, k]);
+  const n = a.length - head - tail;
+  const m = b.length - head - tail;
+  if (n > 0 && m > 0) {
+    const width = m + 1;
+    const lcs = new Uint32Array((n + 1) * width);
+    for (let i3 = n - 1; i3 >= 0; i3--) {
+      for (let j2 = m - 1; j2 >= 0; j2--) {
+        lcs[i3 * width + j2] = a[head + i3] === b[head + j2] ? lcs[(i3 + 1) * width + j2 + 1] + 1 : Math.max(lcs[(i3 + 1) * width + j2], lcs[i3 * width + j2 + 1]);
+      }
+    }
+    let i2 = 0;
+    let j = 0;
+    while (i2 < n && j < m) {
+      if (a[head + i2] === b[head + j]) {
+        pairs.push([head + i2, head + j]);
+        i2++;
+        j++;
+      } else if (lcs[(i2 + 1) * width + j] > lcs[i2 * width + j + 1]) {
+        i2++;
+      } else {
+        j++;
+      }
+    }
+  }
+  for (let k = tail; k > 0; k--) pairs.push([a.length - k, b.length - k]);
+  return pairs;
+}
+
+// lib/resource-attribution.js
+var LIMIT_NAMES = ["candidates", "fileBytes", "sideChars", "decodeDepth", "alignCells", "evidenceFloor"];
+var SIDES = ["input", "output"];
+var GAP_FILL_CHARS = 3;
+var ANCHOR_CHARS = 24;
+var PATH_CHARS = 4096;
+var EVIDENCE_CHARS = 12;
+var isBlock = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && typeof value.type === "string";
+function partsOf(value) {
+  if (typeof value === "string") return [value];
+  if (value === void 0 || value === null) return [];
+  if (Array.isArray(value) && value.every(isBlock)) {
+    return value.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text);
+  }
+  try {
+    return [JSON.stringify(value) ?? ""];
+  } catch {
+    return [];
+  }
+}
+function sideTextOf(value) {
+  return partsOf(value).join("\n");
+}
+var isJsonSpace = (code) => code === 32 || code === 9 || code === 10 || code === 13;
+function newlinesIn(text) {
+  let count = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) count++;
+  return count;
+}
+function scanLeaves(text, baseDepth) {
+  if (!/^\s*[{[]/.test(text)) return null;
+  try {
+    JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const leaves = [];
+  let depth = baseDepth;
+  let deepest = baseDepth;
+  let line = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    const code = text.charCodeAt(i2);
+    if (code === 34) {
+      let end = i2 + 1;
+      while (text.charCodeAt(end) !== 34) end += text.charCodeAt(end) === 92 ? 2 : 1;
+      let next = end + 1;
+      while (isJsonSpace(text.charCodeAt(next))) next++;
+      if (text.charCodeAt(next) !== 58) leaves.push({ value: JSON.parse(text.slice(i2, end + 1)), depth, line });
+      i2 = end;
+    } else if (code === 123 || code === 91) {
+      depth++;
+      if (depth > deepest) deepest = depth;
+    } else if (code === 125 || code === 93) {
+      depth--;
+    } else if (code === 10) {
+      line++;
+    }
+  }
+  return { leaves, deepest };
+}
+function collectLeaves(parts2, maxDepth, report) {
+  const leaves = [];
+  const descend = (text, lineBase2, baseDepth, parent) => {
+    const layer = scanLeaves(text, baseDepth);
+    if (layer === null) return;
+    report.deepest = Math.max(report.deepest, layer.deepest);
+    for (const leaf of layer.leaves) {
+      if (leaf.depth > maxDepth) continue;
+      const decoded = { value: leaf.value, line: lineBase2 + leaf.line, parent };
+      leaves.push(decoded);
+      descend(leaf.value, 0, leaf.depth, decoded);
+    }
+  };
+  let lineBase = 0;
+  for (const part of parts2) {
+    descend(part, lineBase, 0, null);
+    lineBase += newlinesIn(part) + 1;
+  }
+  return leaves;
+}
+function segmentOf(side, text, owner, counter) {
+  const id = counter.segments++;
+  const lines = splitLines(text).map((raw, index) => {
+    const cue = side === "output" ? stripLinePrefix(raw) : { text: raw, declaredLine: null, path: null };
+    return {
+      side,
+      raw,
+      norm: normalizeLine(cue.text),
+      declared: cue.declaredLine,
+      prefixPath: cue.path,
+      restrict: null,
+      list: false,
+      seq: counter.lines++,
+      key: `${id}:${index}`,
+      ancestors: owner ? [owner.key, ...owner.ancestors] : [],
+      pos: owner ? owner.pos : index
+    };
+  });
+  return { side, lines, inner: owner !== null };
+}
+function segmentsOf(side, maxDepth, report, counter) {
+  const whole = segmentOf(side.name, side.text, null, counter);
+  const segments = [whole];
+  for (const leaf of collectLeaves(side.parts, maxDepth, report)) {
+    const owner = (leaf.parent ? leaf.parent.segment : whole).lines[leaf.line];
+    leaf.segment = segmentOf(side.name, leaf.value, owner, counter);
+    segments.push(leaf.segment);
+  }
+  return segments;
+}
+var TOKEN_BREAK = /[\s|;&<>]/;
+var PATH_SHAPE = /[/\\.]/;
+var UNCITED = Number.MAX_SAFE_INTEGER;
+var STATEMENT_END = /* @__PURE__ */ Symbol("statement end");
+var SUBSHELL_OPEN = /* @__PURE__ */ Symbol("subshell open");
+var SUBSHELL_CLOSE = /* @__PURE__ */ Symbol("subshell close");
+var MARKS = /* @__PURE__ */ new Map([[";", STATEMENT_END], ["&", STATEMENT_END], ["(", SUBSHELL_OPEN], [")", SUBSHELL_CLOSE]]);
+var VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/g;
+var EXPANSION = /[$`]/;
+var ASSIGNMENT = /^([A-Za-z_]\w*)=(.*)$/;
+function tokensOf(line, shell = false) {
+  const tokens = [];
+  let token = "";
+  let quote = null;
+  let open = false;
+  let previous = "";
+  for (const char of line) {
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else token += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      open = true;
+    } else if (TOKEN_BREAK.test(char) || shell && (char === "(" || char === ")")) {
+      if (open) tokens.push(token);
+      token = "";
+      open = false;
+      if (shell) {
+        const mark = char === "|" ? previous === "|" ? STATEMENT_END : null : MARKS.get(char);
+        if (mark) tokens.push(mark);
+      }
+    } else {
+      token += char;
+      open = true;
+    }
+    previous = char;
+  }
+  if (open) tokens.push(token);
+  return tokens;
+}
+function literalOf(word, names) {
+  let length = word.length;
+  const value = word.replace(VARIABLE, (match, braced, bare) => {
+    const text = names.get(braced ?? bare);
+    if (text === void 0) return match;
+    length += text.length - match.length;
+    return length > PATH_CHARS ? "$" : text;
+  });
+  return EXPANSION.test(value) ? null : value;
+}
+function directoryOf(workingTree, directory, target) {
+  if (target === null || target.startsWith("-")) return null;
+  const resolved = workingTree.resolve(directory, target);
+  if (resolved === null) return null;
+  const key = resolved.length > 1 && resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+  return workingTree.stat(key)?.isFile === false ? key : null;
+}
+function holdsCd(lines) {
+  for (const line of lines) {
+    let head = true;
+    for (const token of tokensOf(line.raw, true)) {
+      if (typeof token === "symbol") head = true;
+      else if (head && token === "cd") return true;
+      else head = false;
+    }
+  }
+  return false;
+}
+function followCommand(lines, base, workingTree, visit) {
+  const names = /* @__PURE__ */ new Map();
+  const outer = [];
+  let directory = base;
+  let began = base;
+  let words = [];
+  const settle = () => {
+    const statement = words;
+    words = [];
+    if (statement[0] === "cd") {
+      directory = directoryOf(workingTree, directory, statement.length > 1 ? literalOf(statement[1], names) : null);
+    } else {
+      for (const word of statement.slice(statement[0] === "export" ? 1 : 0)) {
+        const assignment = ASSIGNMENT.exec(word);
+        if (assignment === null) break;
+        names.set(assignment[1], assignment[2]);
+      }
+    }
+  };
+  for (const line of lines) {
+    for (const token of tokensOf(line.raw, true)) {
+      if (token === STATEMENT_END) {
+        settle();
+      } else if (token === SUBSHELL_OPEN) {
+        settle();
+        outer.push(directory);
+      } else if (token === SUBSHELL_CLOSE) {
+        settle();
+        if (outer.length > 0) directory = outer.pop();
+      } else {
+        began = directory;
+        words.push(token);
+        const word = literalOf(token, names);
+        if (word !== null && PATH_SHAPE.test(word)) visit(directory, word, line);
+      }
+    }
+    settle();
+  }
+  return began;
+}
+function gatherCandidates(segments, base, workingTree) {
+  const spelled = /* @__PURE__ */ new Map();
+  const candidates = /* @__PURE__ */ new Map();
+  const fileOf = (directory, spelling) => {
+    const id = `${directory}\0${spelling}`;
+    if (!spelled.has(id)) {
+      const key = workingTree.resolve(directory, spelling);
+      const stat = key === null ? null : workingTree.stat(key);
+      spelled.set(id, stat?.isFile === true ? { key, size: stat.size } : null);
+    }
+    return spelled.get(id);
+  };
+  const cite = (file, line) => {
+    let candidate = candidates.get(file.key);
+    if (!candidate) {
+      candidate = { key: file.key, size: file.size, order: candidates.size, cited: 1, outputAt: [] };
+      candidates.set(file.key, candidate);
+    }
+    if (line.side === "input") candidate.cited = 0;
+    else candidate.outputAt.push(line.pos);
+  };
+  const readCues = (lines, directory) => {
+    for (const line of lines) {
+      const tokens = tokensOf(line.raw);
+      const spellings = tokens.filter((token) => PATH_SHAPE.test(token));
+      if (line.prefixPath !== null) {
+        spellings.push(line.prefixPath);
+        line.restrict = fileOf(directory, line.prefixPath)?.key ?? "";
+      }
+      line.list = line.side === "output" && tokens.length === 1 && PATH_SHAPE.test(tokens[0]) && fileOf(directory, tokens[0]) !== null;
+      for (const spelling of spellings) {
+        const file = fileOf(directory, spelling);
+        if (file !== null) cite(file, line);
+      }
+    }
+  };
+  const input = segments.filter(({ side }) => side === "input");
+  const followed = new Set(input.filter(({ lines }) => holdsCd(lines)));
+  const dropsRawView = followed.size > 0 && input.some(({ inner }) => inner);
+  let outputDirectory = base;
+  for (const segment of input) {
+    if (dropsRawView && !segment.inner) continue;
+    if (followed.has(segment)) {
+      outputDirectory = followCommand(segment.lines, base, workingTree, (directory, spelling, line) => {
+        const file = fileOf(directory, spelling);
+        if (file !== null) cite(file, line);
+      });
+    } else {
+      readCues(segment.lines, base);
+    }
+  }
+  for (const { side, lines } of segments) {
+    if (side === "output") readCues(lines, outputDirectory);
+  }
+  return [...candidates.values()];
+}
+function readCandidates(candidates, bound, workingTree, stats) {
+  stats.candidates.observed.push(candidates.length);
+  if (candidates.length > bound.candidates) stats.candidates.rejected.push(candidates.length);
+  for (const { size } of candidates) {
+    stats.fileBytes.observed.push(size);
+    if (size > bound.fileBytes) stats.fileBytes.rejected.push(size);
+  }
+  const readable = [];
+  for (const candidate of candidates.slice(0, bound.candidates)) {
+    if (candidate.size > bound.fileBytes) continue;
+    const text = workingTree.readText(candidate.key);
+    if (text === null || text.includes("\0")) continue;
+    candidate.norms = splitLines(text).map(normalizeLine);
+    readable.push(candidate);
+  }
+  return readable;
+}
+var distanceOf = (candidate, line) => line.side === "input" ? UNCITED : candidate.outputAt.reduce((nearest, at) => Math.min(nearest, Math.abs(at - line.pos)), UNCITED);
+function runOf(candidate, pairs, declared) {
+  const [first] = pairs;
+  return {
+    candidate,
+    pairs,
+    declared,
+    cohesion: pairs.length,
+    distance: distanceOf(candidate, first.line),
+    start: first.file,
+    seq: first.line.seq
+  };
+}
+var byPriority = (a, b) => b.cohesion - a.cohesion || a.candidate.cited - b.candidate.cited || a.distance - b.distance || a.candidate.order - b.candidate.order || a.start - b.start || a.seq - b.seq;
+function createClaims() {
+  const taken = [];
+  const self = /* @__PURE__ */ new Set();
+  const under = /* @__PURE__ */ new Set();
+  return {
+    taken,
+    blocked: (line) => self.has(line.key) || under.has(line.key) || line.ancestors.some((key) => self.has(key)),
+    take(line, candidate, file, tier) {
+      self.add(line.key);
+      for (const key of line.ancestors) under.add(key);
+      taken.push({ line, candidate, file, tier });
+    }
+  };
+}
+function holdsEvidence(lines, floor) {
+  return lines.length >= floor && lines.reduce((chars, line) => chars + line.norm.trim().length, 0) >= EVIDENCE_CHARS;
+}
+function claimRuns(runs, claims, floor) {
+  runs.sort(byPriority);
+  for (const run2 of runs) {
+    let part = [];
+    const flush = () => {
+      if (run2.declared ? part.length > 0 : holdsEvidence(part.map(({ line }) => line), floor)) {
+        for (const { line, file, tier } of part) claims.take(line, run2.candidate, file, tier);
+      }
+      part = [];
+    };
+    for (const pair of run2.pairs) {
+      if (claims.blocked(pair.line)) flush();
+      else part.push(pair);
+    }
+    flush();
+  }
+}
+function declaredRuns(segments, candidates) {
+  const runs = [];
+  for (const candidate of candidates) {
+    for (const { lines } of segments) {
+      let pairs = [];
+      const close = () => {
+        if (pairs.length > 0) runs.push(runOf(candidate, pairs, true));
+        pairs = [];
+      };
+      for (const line of lines) {
+        const verified = line.declared !== null && !line.list && (line.restrict === null || line.restrict === candidate.key) && candidate.norms[line.declared - 1]?.trimStart() === line.norm.trimStart();
+        if (verified) pairs.push({ line, file: line.declared - 1, tier: "declared" });
+        else close();
+      }
+      close();
+    }
+  }
+  return runs;
+}
+function positionsOf(candidate) {
+  if (!candidate.positions) {
+    candidate.positions = /* @__PURE__ */ new Map();
+    candidate.norms.forEach((norm, at) => {
+      if (candidate.positions.has(norm)) candidate.positions.get(norm).push(at);
+      else candidate.positions.set(norm, [at]);
+    });
+  }
+  return candidate.positions;
+}
+function repeatsElsewhere(candidate, start2, length, budget) {
+  const { norms } = candidate;
+  for (const at of positionsOf(candidate).get(norms[start2])) {
+    if (budget.cells <= 0) return false;
+    let same = 0;
+    if (at !== start2 && at + length <= norms.length) {
+      while (same < length && norms[at + same] === norms[start2 + same]) same++;
+      if (same === length) return true;
+    }
+    budget.cells = Math.max(0, budget.cells - 1 - same);
+  }
+  return false;
+}
+function longestRun(a, alo, ahi, b, blo, bhi) {
+  let best = { file: 0, at: 0, length: 0 };
+  let above = new Uint32Array(bhi - blo + 1);
+  let row = new Uint32Array(bhi - blo + 1);
+  for (let i2 = alo; i2 < ahi; i2++) {
+    for (let j = blo; j < bhi; j++) {
+      const length = a[i2] === b[j] ? above[j - blo] + 1 : 0;
+      row[j - blo + 1] = length;
+      if (length > best.length) best = { file: i2 - length + 1, at: j - length + 1, length };
+    }
+    [above, row] = [row, above];
+  }
+  return best;
+}
+function outrun(candidate, b, from, to, length, forward, budget) {
+  const a = candidate.norms;
+  const own = forward ? 0 : a.length - b.length;
+  const step = forward ? 1 : -1;
+  for (let p = from; p < to; p++) {
+    for (const q of positionsOf(candidate).get(b[p]) ?? []) {
+      if (q === p + own) continue;
+      if (budget.cells <= 0) return true;
+      let run2 = 1;
+      while (a[q + step * run2] !== void 0 && a[q + step * run2] === b[p + step * run2]) run2++;
+      budget.cells = Math.max(0, budget.cells - run2);
+      if (forward ? run2 > length : run2 >= length) return true;
+    }
+  }
+  return false;
+}
+function commonRuns(candidate, b, floor, budget, stats) {
+  const a = candidate.norms;
+  const shared = Math.min(a.length, b.length);
+  let head = 0;
+  while (head < shared && a[head] === b[head]) head++;
+  if (head < floor || head < shared && outrun(candidate, b, 0, head, head, true, budget)) head = 0;
+  let tail = 0;
+  while (tail < shared - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  if (tail < floor || head + tail < shared && outrun(candidate, b, b.length - tail, b.length, tail, false, budget)) {
+    tail = 0;
+  }
+  const runs = [];
+  if (head > 0) runs.push({ file: 0, at: 0, length: head });
+  if (tail > 0) runs.push({ file: a.length - tail, at: b.length - tail, length: tail });
+  const middle = [head, a.length - tail, head, b.length - tail];
+  if ((middle[1] - middle[0]) * (middle[3] - middle[2]) === 0) stats.alignCells.observed.push(0);
+  const ranges = [middle];
+  while (ranges.length > 0) {
+    const [alo, ahi, blo, bhi] = ranges.pop();
+    const cells = (ahi - alo) * (bhi - blo);
+    if (cells === 0) continue;
+    stats.alignCells.observed.push(cells);
+    if (cells > budget.cells) {
+      stats.alignCells.rejected.push(cells);
+      continue;
+    }
+    budget.cells -= cells;
+    const run2 = longestRun(a, alo, ahi, b, blo, bhi);
+    if (run2.length === 0) continue;
+    runs.push(run2);
+    if (run2.length >= floor) {
+      ranges.push([run2.file + run2.length, ahi, run2.at + run2.length, bhi], [alo, run2.file, blo, run2.at]);
+    }
+  }
+  return runs.sort((x, y) => x.at - y.at);
+}
+function keepRuns(runs, stretch, floor, stats) {
+  const kept = [];
+  for (const run2 of runs) {
+    stats.evidenceFloor.observed.push(run2.length);
+    if (!holdsEvidence(stretch.slice(run2.at, run2.at + run2.length), floor)) {
+      stats.evidenceFloor.rejected.push(run2.length);
+      continue;
+    }
+    const group = Array.from({ length: run2.length }, (_, k) => ({ file: run2.file + k, at: run2.at + k }));
+    const previous = kept.at(-1);
+    const end = previous?.at(-1);
+    const gap = end ? run2.at - end.at - 1 : 0;
+    if (gap > 0 && gap === run2.file - end.file - 1 && stretch.slice(end.at + 1, run2.at).every((line) => line.norm.trim().length <= GAP_FILL_CHARS)) {
+      for (let k = 1; k <= gap; k++) previous.push({ file: end.file + k, at: end.at + k });
+      previous.push(...group);
+    } else {
+      kept.push(group);
+    }
+  }
+  return kept;
+}
+var placedTier = (line) => line.declared !== null ? "drifted" : "aligned";
+function alignedRuns(segments, candidates, claims, bound, budget, stats) {
+  const runs = [];
+  const align = (candidate, stretch) => {
+    const found = commonRuns(candidate, stretch.map((line) => line.norm), bound.evidenceFloor, budget, stats);
+    for (const group of keepRuns(found, stretch, bound.evidenceFloor, stats)) {
+      const tied = repeatsElsewhere(candidate, group[0].file, group.length, budget);
+      runs.push(runOf(candidate, group.map(({ file, at }) => ({
+        line: stretch[at],
+        file,
+        tier: tied ? "tied" : placedTier(stretch[at])
+      })), false));
+    }
+  };
+  for (const candidate of candidates) {
+    for (const { lines } of segments) {
+      let stretch = [];
+      const close = () => {
+        if (stretch.length >= bound.evidenceFloor) align(candidate, stretch);
+        stretch = [];
+      };
+      for (const line of lines) {
+        if (!claims.blocked(line) && !line.list && (line.restrict === null || line.restrict === candidate.key)) {
+          stretch.push(line);
+        } else {
+          close();
+        }
+      }
+      close();
+    }
+  }
+  return runs;
+}
+function anchoredLines(segments, candidates, claims) {
+  const free = segments.flatMap(({ lines }) => lines.filter((line) => !claims.blocked(line) && !line.list && line.norm.trim().length >= ANCHOR_CHARS));
+  if (free.length === 0) return;
+  const homes = new Map(free.map((line) => [line.norm, []]));
+  for (const candidate of candidates) {
+    candidate.norms.forEach((norm, file) => homes.get(norm)?.push({ candidate, file }));
+  }
+  for (const line of free) {
+    if (claims.blocked(line)) continue;
+    const held = homes.get(line.norm);
+    const mine = line.restrict === null ? held : held.filter(({ candidate }) => candidate.key === line.restrict);
+    if (mine.length === 1) claims.take(line, mine[0].candidate, mine[0].file, placedTier(line));
+  }
+}
+function requireLimit(limits, name3) {
+  const value = limits?.[name3];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Resource Attribution limit ${name3} must be a finite positive number`);
+  }
+  return value;
+}
+var newStats = () => ({
+  failed: false,
+  ...Object.fromEntries(LIMIT_NAMES.map((name3) => [name3, { observed: [], rejected: [] }]))
+});
+function answerOf(sides, taken, stats) {
+  taken.sort((a, b) => a.line.seq - b.line.seq);
+  const groups = /* @__PURE__ */ new Map();
+  const files = {};
+  const matched = { input: 0, output: 0 };
+  for (const { line, candidate, file, tier } of taken) {
+    const id = `${line.side}\0${candidate.key}`;
+    if (!groups.has(id)) groups.set(id, { resourceKey: candidate.key, side: line.side, lines: [] });
+    groups.get(id).lines.push({ line: file + 1, text: line.raw, tier });
+    matched[line.side] += line.raw.length;
+    files[candidate.key] ??= candidate.norms.map(fingerprintOf);
+  }
+  return {
+    matches: [...groups.values()],
+    files,
+    unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length - matched[side.name]])),
+    stats
+  };
+}
+function createResourceAttribution({ workingTree, limits } = {}) {
+  const bound = Object.fromEntries(LIMIT_NAMES.map((name3) => [name3, requireLimit(limits, name3)]));
+  for (const method of ["resolve", "stat", "readText"]) {
+    if (typeof workingTree?.[method] !== "function") {
+      throw new TypeError(`Resource Attribution workingTree must provide ${method}`);
+    }
+  }
+  function attributeSides(sides, base) {
+    const stats = newStats();
+    const counter = { lines: 0, segments: 0 };
+    const segments = [];
+    for (const side of sides) {
+      stats.sideChars.observed.push(side.text.length);
+      if (side.text.length > bound.sideChars) {
+        stats.sideChars.rejected.push(side.text.length);
+        continue;
+      }
+      const report = { deepest: 0 };
+      segments.push(...segmentsOf(side, bound.decodeDepth, report, counter));
+      stats.decodeDepth.observed.push(report.deepest);
+      if (report.deepest > bound.decodeDepth) stats.decodeDepth.rejected.push(report.deepest);
+    }
+    const candidates = readCandidates(gatherCandidates(segments, base, workingTree), bound, workingTree, stats);
+    const claims = createClaims();
+    claimRuns(declaredRuns(segments, candidates), claims, bound.evidenceFloor);
+    const budget = { cells: bound.alignCells };
+    claimRuns(alignedRuns(segments, candidates, claims, bound, budget, stats), claims, bound.evidenceFloor);
+    anchoredLines(segments, candidates, claims);
+    return answerOf(sides, claims.taken, stats);
+  }
+  function attribute({ base, input, output } = {}) {
+    const values = { input, output };
+    const sides = SIDES.map((name3) => {
+      const parts2 = partsOf(values[name3]);
+      return { name: name3, parts: parts2, text: parts2.join("\n") };
+    });
+    try {
+      return attributeSides(sides, base);
+    } catch (error) {
+      return {
+        matches: [],
+        files: {},
+        unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length])),
+        stats: { ...newStats(), failed: true, failure: String(error?.message ?? error) }
+      };
+    }
+  }
+  return { attribute };
+}
+
+// lib/tool-evidence.js
+var cjkOf = (text) => (text.match(CJK_RE) ?? []).length;
+var isFingerprint = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;
+function baseOf(row, sessionCwd) {
+  if (typeof row.cwd === "string" && row.cwd.length > 0) return row.cwd;
+  if (typeof sessionCwd === "string" && sessionCwd.length > 0) return sessionCwd;
+  return null;
+}
+function resolvedLoadToken(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
+  } catch {
+    return null;
+  }
+}
+var RECORD_VERSION = 1;
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isCount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+var isText = (value) => typeof value === "string";
+function readEntry(raw) {
+  if (!isObject(raw) || !isCount(raw.key) || !isCount(raw.chars) || !isCount(raw.cjk) || raw.cjk > raw.chars) return null;
+  const entry = { key: raw.key, chars: raw.chars, cjk: raw.cjk };
+  if (isFingerprint(raw.fp)) entry.fp = raw.fp;
+  if (raw.moved === true) entry.moved = true;
+  return entry;
+}
+function readImpact(raw) {
+  if (!isObject(raw) || !isText(raw.resourceKey) || raw.resourceKey.length === 0) return null;
+  if (raw.kind !== "replace-fragments" && raw.kind !== "merge-fragments") return null;
+  if (!Array.isArray(raw.entries) || raw.entries.length === 0) return null;
+  const entries = raw.entries.map(readEntry);
+  if (entries.includes(null) || new Set(entries.map((entry) => entry.key)).size !== entries.length) return null;
+  return { resourceKey: raw.resourceKey, kind: raw.kind, entries };
+}
+function readEffect(raw) {
+  if (!isObject(raw) || raw.access !== "read" && raw.access !== "write") return null;
+  if (!Array.isArray(raw.impacts) || raw.impacts.length === 0) return null;
+  const impacts = raw.impacts.map(readImpact);
+  return impacts.includes(null) ? null : { access: raw.access, impacts };
+}
+function readResidual(raw) {
+  if (!isObject(raw) || !isText(raw.groupKey) || raw.groupKey.length === 0) return void 0;
+  if (!isText(raw.kind) || !isText(raw.detail) || !isCount(raw.weight)) return void 0;
+  return { groupKey: raw.groupKey, kind: raw.kind, detail: raw.detail, weight: raw.weight };
+}
+function readRecord(raw) {
+  if (!isObject(raw) || raw.v !== RECORD_VERSION || !Array.isArray(raw.effects)) return null;
+  const effects = raw.effects.map(readEffect);
+  if (effects.includes(null)) return null;
+  const residual = raw.residual === null ? null : readResidual(raw.residual);
+  return residual === void 0 ? null : { v: RECORD_VERSION, effects, residual };
+}
+function impactFor({ resourceKey, lines }, files) {
+  const fingerprints = files?.[resourceKey];
+  const entries = /* @__PURE__ */ new Map();
+  for (const { line, text } of lines) {
+    const entry = { key: line, chars: text.length, cjk: cjkOf(text) };
+    const fp = fingerprints?.[line - 1];
+    if (isFingerprint(fp)) entry.fp = fp;
+    entries.set(line, entry);
+  }
+  let whole = Array.isArray(fingerprints) && fingerprints.length > 0 && entries.size === fingerprints.length;
+  for (let line = 1; whole && line <= fingerprints.length; line++) whole = entries.has(line);
+  return { resourceKey, kind: whole ? "replace-fragments" : "merge-fragments", entries: [...entries.values()] };
+}
+function priced(effects, ctp) {
+  return effects.map(({ access, impacts }) => {
+    let spentTokens = 0;
+    const pricedImpacts = impacts.map(({ resourceKey, kind, entries }) => ({
+      resourceKey,
+      mutation: {
+        kind,
+        fragments: entries.map(({ key, chars, cjk, moved }) => {
+          const tokens = countsToTokens({ chars, cjk }, ctp);
+          if (moved !== true) spentTokens += tokens;
+          return { key, tokens };
+        })
+      }
+    }));
+    return { access, overheadTokens: 0, spentTokens, impacts: pricedImpacts };
+  });
+}
+function pathEventsFor(effects, toolType) {
+  return effects.flatMap(({ access, impacts }) => impacts.map(({ resourceKey, mutation }) => ({
+    path: resourceKey,
+    rawPath: resourceKey,
+    toolType,
+    isFullRead: access === "write" ? null : mutation.kind === "replace-fragments" ? 1 : 0
+  })));
+}
+function foldInto(scratch, recorded, effects) {
+  recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
+    const { fragments } = effects[effectAt].impacts[impactAt].mutation;
+    const held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
+    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+      const entry = { chars, cjk, tokens: fragments[entryAt].tokens };
+      if (fp !== void 0) entry.fp = fp;
+      held.set(key, entry);
+    });
+    scratch.set(resourceKey, held);
+  }));
+}
+function movedEntries(held, fingerprints, { maxCells, minTrim }) {
+  if (held === void 0) return { moved: [], judged: true };
+  if (!Array.isArray(fingerprints)) return { moved: [], judged: false };
+  const reach = fingerprints.length + maxCells;
+  const recorded = [];
+  let stranded = false;
+  for (const item of held) {
+    const [key, entry] = item;
+    if (entry.fp !== void 0 && Number.isInteger(key) && key >= 1 && key <= reach) recorded.push(item);
+    else if (entry.chars > 0) stranded = true;
+  }
+  const judged = !stranded;
+  if (recorded.every(([key, entry]) => fingerprints[key - 1] === entry.fp)) return { moved: [], judged };
+  recorded.sort(([a], [b]) => a - b);
+  const slots = new Array(recorded[recorded.length - 1][0]).fill(NaN);
+  for (const [key, entry] of recorded) slots[key - 1] = entry.fp;
+  const pairs = alignOrdered(slots, fingerprints, { maxCells, minTrim });
+  if (pairs === null) return { moved: [], judged: false };
+  const landing = new Map(pairs.map(([from, to]) => [from + 1, to + 1]));
+  const zeroed = [];
+  const shifted = [];
+  for (const [key, entry] of recorded) {
+    const at = landing.get(key);
+    if (at === key) continue;
+    zeroed.push({ key, chars: 0, cjk: 0 });
+    if (at !== void 0) shifted.push({ key: at, chars: entry.chars, cjk: entry.cjk, fp: entry.fp, moved: true });
+  }
+  return { moved: [...zeroed, ...shifted], judged };
+}
+function relocated(impact, moved) {
+  if (moved.length === 0) return impact;
+  const entries = /* @__PURE__ */ new Map();
+  for (const entry of moved) entries.set(entry.key, entry);
+  for (const entry of impact.entries) entries.set(entry.key, entry);
+  return { ...impact, entries: [...entries.values()] };
+}
+var charsHeld = (held) => {
+  let total = 0;
+  for (const { chars } of held?.values() ?? []) total += chars;
+  return total;
+};
+function residentPart(matches, effects, scratch, unjudged, ctp) {
+  const matched = /* @__PURE__ */ new Map();
+  for (const { resourceKey, lines } of matches) {
+    let chars = matched.get(resourceKey) ?? 0;
+    for (const { text } of lines) chars += text.length;
+    matched.set(resourceKey, chars);
+  }
+  const folded = new Map([...matched.keys()].map((resourceKey) => [resourceKey, new Map(scratch.get(resourceKey))]));
+  foldInto(folded, effects, priced(effects, ctp));
+  let part = 0;
+  for (const [resourceKey, chars] of matched) {
+    if (unjudged.has(resourceKey)) continue;
+    part += Math.max(0, chars - (charsHeld(folded.get(resourceKey)) - charsHeld(scratch.get(resourceKey))));
+  }
+  return part;
+}
+var LIMIT_NAMES2 = ["alignCells", "evidenceFloor"];
+function requireLimit2(limits, name3) {
+  const value = limits?.[name3];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Tool Evidence Interpreter limit ${name3} must be a finite positive number`);
+  }
+}
+function requireMethods(owner, label, methods) {
+  for (const method of methods) {
+    if (typeof owner?.[method] !== "function") {
+      throw new TypeError(`Tool Evidence Interpreter ${label} must provide ${method}`);
+    }
+  }
+}
+function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
+  requireMethods(attribution, "attribution", ["attribute"]);
+  requireMethods(profile, "profile", ["residualIdentity", "isLoadHandoffTool", "nonFileResource"]);
+  for (const name3 of LIMIT_NAMES2) requireLimit2(limits, name3);
+  const readsSkillPayload = typeof profile.interpretSkillPayload === "function";
+  const bound = { maxCells: limits.alignCells, minTrim: limits.evidenceFloor };
+  function partition(pending, observation, scratch) {
+    const { matches, files, unmatched } = attribution.attribute({
+      base: pending.base,
+      input: pending.input,
+      output: observation.content
+    });
+    const handled = /* @__PURE__ */ new Set();
+    const unjudged = /* @__PURE__ */ new Set();
+    const effects = [];
+    for (const access of ["write", "read"]) {
+      const impacts = matches.filter((match) => match.side === "input" === (access === "write")).map((match) => {
+        const impact = impactFor(match, files);
+        const later = handled.has(match.resourceKey);
+        handled.add(match.resourceKey);
+        if (later || impact.kind === "replace-fragments") return impact;
+        const { moved, judged } = movedEntries(scratch.get(match.resourceKey), files?.[match.resourceKey], bound);
+        if (!judged) unjudged.add(match.resourceKey);
+        return relocated(impact, moved);
+      });
+      if (impacts.length > 0) effects.push({ access, impacts });
+    }
+    const weight = unmatched.input + unmatched.output + residentPart(matches, effects, scratch, unjudged, pending.issuingPolicy.ctp);
+    const { groupKey, kind, detail } = pending.residual;
+    return {
+      v: RECORD_VERSION,
+      effects,
+      residual: weight > 0 ? { groupKey, kind, detail, weight } : null
+    };
+  }
+  function recordOf(pending, observation, frameCtx, scratch) {
+    const recalled = typeof frameCtx.recall === "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
+    if (recalled !== null) return recalled;
+    const record = partition(pending, observation, scratch);
+    if (typeof frameCtx.remember === "function") frameCtx.remember(pending.toolUseId, record);
+    return record;
+  }
+  function emit(record, pending, observation, telemetry, scratch) {
+    const effects = priced(record.effects, pending.issuingPolicy.ctp);
+    foldInto(scratch, record.effects, effects);
+    telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    const residuals = record.residual === null ? [] : [{
+      groupKey: record.residual.groupKey,
+      weight: record.residual.weight,
+      hadError: observation.isError === true,
+      meta: { kind: record.residual.kind, detail: record.residual.detail }
+    }];
+    return { effects, residuals, telemetry, skillContinuation: null };
+  }
+  function completeNonFileResource(pending, observation, telemetry) {
+    if (observation.isError === true) return { effects: [], residuals: [], telemetry, skillContinuation: null };
+    const { resourceKey } = pending.nonFile;
+    const tokens = charsToTokens(sideTextOf(observation.content), pending.issuingPolicy.ctp);
+    const effects = [{
+      access: "read",
+      overheadTokens: SKILL_FRAMING_TOKENS,
+      spentTokens: tokens + SKILL_FRAMING_TOKENS,
+      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: [{ key: 1, tokens }] } }]
+    }];
+    telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    const skillContinuation = readsSkillPayload ? { resourceKey, issuingPolicy: pending.issuingPolicy } : null;
+    return { effects, residuals: [], telemetry, skillContinuation };
+  }
+  function interpretToolUse(observation, context) {
+    const { toolUseId, name: name3 } = observation;
+    const input = observation.input ?? {};
+    const issuingStepId = observation.messageId ?? null;
+    const loadsHandoff = profile.isLoadHandoffTool(name3);
+    const explicitToken = loadsHandoff && typeof input.load_token === "string" ? input.load_token : null;
+    const nonFile = profile.nonFileResource({ name: name3, input }) ?? null;
+    return {
+      pending: {
+        toolUseId,
+        issuingStepId,
+        issuingPolicy: context.resolveModelPolicy(observation.model ?? null),
+        // An auto-matched load carries no token in its input; the resolved one comes back in its result.
+        awaitLoadToken: loadsHandoff && explicitToken === null,
+        name: name3,
+        input,
+        base: baseOf(observation, context.sessionCwd),
+        nonFile,
+        residual: nonFile === null ? profile.residualIdentity(name3, input) : null
+      },
+      effects: [],
+      residuals: [],
+      telemetry: { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }
+    };
+  }
+  function completeToolResult(pending, observation, _context, { scratch = /* @__PURE__ */ new Map(), frameCtx } = {}) {
+    const telemetry = {
+      toolUseId: pending.toolUseId,
+      issuingStepId: pending.issuingStepId,
+      loadToken: pending.awaitLoadToken ? resolvedLoadToken(sideTextOf(observation.content)) : null,
+      pathEvents: []
+    };
+    if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
+    return emit(recordOf(pending, observation, frameCtx ?? {}, scratch), pending, observation, telemetry, scratch);
+  }
+  function resourceKeysOf(pair, capture) {
+    try {
+      const { recall, sessionCwd } = capture ?? {};
+      const input = pair.input ?? {};
+      const resource = profile.nonFileResource({ name: pair.name, input });
+      if (resource) return [resource.resourceKey];
+      const recorded = typeof recall === "function" ? readRecord(recall(pair.toolUseId)) : null;
+      const impacts = recorded ? recorded.effects.flatMap((effect) => effect.impacts) : attribution.attribute({ base: baseOf(pair, sessionCwd), input, output: pair.result }).matches;
+      return [...new Set(impacts.map((impact) => impact.resourceKey))];
+    } catch {
+      return [];
+    }
+  }
+  return { interpretToolUse, completeToolResult, resourceKeysOf };
+}
+
 // lib/harness/dsh/transcript-observation.js
 var SCOPE = "dsh-transcript-observation";
 var MESSAGE_NAMESPACE = "dsh:message:";
-var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
 var isId = (value) => typeof value === "string" && value !== "";
-var isSurfaceOp = (value) => value === "append" || isObject(value) && value.op === "replace";
+var isSurfaceOp = (value) => value === "append" || isObject2(value) && value.op === "replace";
 var nothing = () => ({ observations: [], diagnostics: [] });
 function violation(event, field) {
   const at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
@@ -10077,13 +11243,13 @@ function faultOf(checks) {
 function envelopeChecks(event) {
   return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
 }
-function baseOf(event) {
+function baseOf2(event) {
   return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
 }
 var textShaped = (block) => block.type !== "text" || typeof block.text === "string";
 var toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
 function isContent(content, ...shapes) {
-  return Array.isArray(content) && content.every((block) => isObject(block) && shapes.every((shaped) => shaped(block)));
+  return Array.isArray(content) && content.every((block) => isObject2(block) && shapes.every((shaped) => shaped(block)));
 }
 function textOf(content) {
   return content.filter((block) => block.type === "text").map((block) => block.text).join("");
@@ -10099,7 +11265,7 @@ function parseArguments(raw) {
   }
 }
 function isUsage(usage) {
-  return isObject(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
+  return isObject2(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
 }
 function usageOf(usage) {
   return {
@@ -10117,7 +11283,7 @@ function reduceHumanMessage(event) {
     ["data.content", isContent(data.content, textShaped)]
   ]);
   if (fault !== null) return violation(event, fault);
-  const base = baseOf(event);
+  const base = baseOf2(event);
   const observations = [{ type: "turn-boundary", ...base, provenance: "human" }];
   const text = textOf(data.content);
   if (text !== "") {
@@ -10137,7 +11303,7 @@ function reduceCheckpoint(event) {
   if (event.surfaceOp === "append") return nothing();
   const fault = faultOf(envelopeChecks(event));
   if (fault !== null) return violation(event, fault);
-  return { observations: [{ type: "epoch-boundary", ...baseOf(event), provenance: "harness" }], diagnostics: [] };
+  return { observations: [{ type: "epoch-boundary", ...baseOf2(event), provenance: "harness" }], diagnostics: [] };
 }
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
@@ -10158,7 +11324,7 @@ function reduceAssistantMessage(event) {
     ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
   ]);
   if (fault !== null) return violation(event, fault);
-  const base = baseOf(event);
+  const base = baseOf2(event);
   const messageId = MESSAGE_NAMESPACE + message.id;
   const model = message.source.model;
   const observations = [];
@@ -10215,7 +11381,7 @@ function reduceToolResult(event) {
       // The tool's private metadata and failure identity ride uninterpreted, as Claude Code's
       // `toolUseResult` does.
       resultMeta: { meta: data.meta ?? null, error: data.error ?? null },
-      ...baseOf(event),
+      ...baseOf2(event),
       provenance: "harness"
     }],
     diagnostics: []
@@ -10260,28 +11426,288 @@ function createDshDialogueSource({ readSession }) {
 }
 
 // lib/harness/dsh/history-turn-rules.js
-import { isAbsolute as isAbsolute3, normalize as normalize2, resolve as resolve2 } from "node:path";
+function createDshHumanHeadRule() {
+  return (line) => {
+    if (line.kind !== "visible" || line.message.role !== "human") return PASS;
+    const text = line.message.text.trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+var ASK_TOOL_NAME = "ask_user_question";
+function answerText(result) {
+  let value;
+  try {
+    value = JSON.parse(result);
+  } catch {
+    return "";
+  }
+  const lines = [];
+  for (const answer of Array.isArray(value?.answers) ? value.answers : []) {
+    if (Array.isArray(answer?.selected)) lines.push(...answer.selected);
+    if (answer?.custom) lines.push(answer.custom);
+  }
+  return lines.join("\n");
+}
+function createDshAskHeadRule() {
+  return (line) => {
+    if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME) return PASS;
+    if (line.tool.isError === true) return ABSORB;
+    const text = answerText(line.tool.result).trim();
+    return text === "" ? ABSORB : { kind: "HEAD", text };
+  };
+}
+function createDshDialogueProjection() {
+  const rules = [
+    createDshHumanHeadRule(),
+    createDshAskHeadRule()
+  ];
+  return {
+    project(observations) {
+      return projectDialogue(observations);
+    },
+    groupTurns(lines) {
+      return groupTurns(lines, rules);
+    }
+  };
+}
+
+// lib/measurement-projection.js
+function emptyFacts() {
+  return { toolUseIds: /* @__PURE__ */ new Set(), loadToken: null, pathEvents: [] };
+}
+function stepRowFor(step, facts) {
+  return {
+    foldedSeq: step.foldedSeq,
+    ts: step.timestamp,
+    input: step.usage.input,
+    output: step.usage.output,
+    cacheRead: step.usage.cacheRead,
+    cacheCreation: step.usage.cacheWrite,
+    toolCalls: facts ? facts.toolUseIds.size : 0,
+    loadToken: facts ? facts.loadToken : null
+  };
+}
+function joinFacts(factsByStepId, closedSegment) {
+  const steps = [];
+  const events = [];
+  for (const step of closedSegment.steps) {
+    const facts = factsByStepId.get(step.id) ?? null;
+    steps.push(stepRowFor(step, facts));
+    if (!facts) continue;
+    let eventOrdinal = 0;
+    for (const event of facts.pathEvents) {
+      events.push({
+        foldedSeq: step.foldedSeq,
+        eventOrdinal: eventOrdinal++,
+        path: event.path,
+        rawPath: event.rawPath,
+        toolType: event.toolType,
+        isFullRead: event.isFullRead
+      });
+    }
+  }
+  return { steps, events };
+}
+function createMeasurementProjection({
+  scope,
+  context,
+  captureSources,
+  interpretToolUse,
+  completeToolResult,
+  interpretSkillPayload
+}) {
+  const invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
+  function invariant7(ok, message) {
+    if (!ok) throw new Error(`${invariantPrefix}: ${message}`);
+  }
+  function diagnostic3(code, message) {
+    return { scope, code, message };
+  }
+  let callByToolUseId = /* @__PURE__ */ new Map();
+  let scratch = /* @__PURE__ */ new Map();
+  let sidecarByStepId = /* @__PURE__ */ new Map();
+  function factsFor(stepId) {
+    let facts = sidecarByStepId.get(stepId);
+    if (!facts) {
+      facts = emptyFacts();
+      sidecarByStepId.set(stepId, facts);
+    }
+    return facts;
+  }
+  function mergeTelemetry(telemetry, diagnostics) {
+    if (!telemetry) return;
+    const stepId = telemetry.issuingStepId;
+    if (typeof stepId !== "string" || stepId.length === 0) return;
+    const facts = factsFor(stepId);
+    if (telemetry.toolUseId != null) facts.toolUseIds.add(telemetry.toolUseId);
+    if (typeof telemetry.loadToken === "string" && telemetry.loadToken.length > 0) {
+      if (facts.loadToken === null) facts.loadToken = telemetry.loadToken;
+      else if (facts.loadToken !== telemetry.loadToken) {
+        diagnostics.push(diagnostic3(
+          "multiple_load_tokens",
+          `step ${stepId} keeps its first load token`
+        ));
+      }
+    }
+    for (const event of telemetry.pathEvents ?? []) facts.pathEvents.push(event);
+  }
+  function pushRecords(interpreted, records) {
+    for (const effect of interpreted.effects) records.push({ type: "effect", ...effect });
+    for (const residual of interpreted.residuals) records.push({ type: "residual", ...residual });
+  }
+  function projectToolUse(observation, frameCtx, records, diagnostics) {
+    const id = observation.toolUseId;
+    const entry = callByToolUseId.get(id);
+    if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
+    const interpreted = interpretToolUse(observation, context, { scratch, frameCtx });
+    mergeTelemetry(interpreted.telemetry, diagnostics);
+    callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" });
+    pushRecords(interpreted, records);
+    if (entry && entry.phase === "held") projectToolResult(entry.result, frameCtx, records, diagnostics);
+  }
+  function projectToolResult(observation, frameCtx, records, diagnostics) {
+    const id = observation.toolUseId;
+    const entry = callByToolUseId.get(id);
+    if (!entry) {
+      callByToolUseId.set(id, { phase: "held", result: observation });
+      return;
+    }
+    if (entry.phase === "issued") {
+      callByToolUseId.set(id, { phase: "completed" });
+      return;
+    }
+    if (entry.phase !== "await-result") return;
+    const completed = completeToolResult(entry.pending, observation, context, { scratch, frameCtx });
+    mergeTelemetry(completed.telemetry, diagnostics);
+    callByToolUseId.set(id, completed.skillContinuation ? {
+      phase: "await-skill-payload",
+      resourceKey: completed.skillContinuation.resourceKey,
+      issuingPolicy: completed.skillContinuation.issuingPolicy
+    } : { phase: "completed" });
+    pushRecords(completed, records);
+  }
+  function projectSkillPayload(observation, records, diagnostics) {
+    const entry = callByToolUseId.get(observation.toolUseId);
+    if (!entry || entry.phase !== "await-skill-payload") return;
+    callByToolUseId.set(observation.toolUseId, { phase: "completed" });
+    const interpreted = interpretSkillPayload(
+      { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
+      observation
+    );
+    mergeTelemetry(interpreted.telemetry, diagnostics);
+    pushRecords(interpreted, records);
+  }
+  function project(observation, frameCtx) {
+    invariant7(observation !== null && typeof observation === "object", "observation must be an object");
+    const records = [];
+    const diagnostics = [];
+    switch (observation.type) {
+      case "epoch-boundary":
+        callByToolUseId = /* @__PURE__ */ new Map();
+        scratch = /* @__PURE__ */ new Map();
+        records.push({ type: "epoch" });
+        break;
+      case "turn-boundary":
+        records.push({ type: "turn-boundary" });
+        break;
+      case "usage":
+        records.push({
+          type: "step",
+          id: observation.messageId,
+          model: observation.model ?? null,
+          timestamp: observation.timestamp ?? null,
+          usage: {
+            input: observation.usage.input,
+            output: observation.usage.output,
+            cacheRead: observation.usage.cacheRead,
+            cacheWrite: observation.usage.cacheWrite
+          }
+        });
+        break;
+      case "tool-use":
+        projectToolUse(observation, frameCtx, records, diagnostics);
+        break;
+      case "tool-result":
+        projectToolResult(observation, frameCtx, records, diagnostics);
+        break;
+      case "skill-payload":
+        projectSkillPayload(observation, records, diagnostics);
+        break;
+      case "text":
+        break;
+      default:
+        invariant7(false, `unsupported observation type: ${String(observation.type)}`);
+    }
+    return { records, diagnostics };
+  }
+  function finishSegment(closedSegment, { captureMode = "live" } = {}) {
+    const closing = sidecarByStepId;
+    sidecarByStepId = /* @__PURE__ */ new Map();
+    callByToolUseId = /* @__PURE__ */ new Map();
+    scratch = /* @__PURE__ */ new Map();
+    const diagnostics = [];
+    if (closedSegment == null) return { artifact: null, diagnostics };
+    let payload;
+    try {
+      payload = joinFacts(closing, closedSegment);
+    } catch (error) {
+      diagnostics.push(diagnostic3("segment_telemetry_join_failed", `telemetry join failed: ${error.message}`));
+      return { artifact: null, diagnostics };
+    }
+    return {
+      artifact: {
+        captureSource: captureMode === "replay" ? captureSources.replay : captureSources.live,
+        payload
+      },
+      diagnostics
+    };
+  }
+  return { project, finishSegment };
+}
+
+// lib/harness/dsh/measurement-projection.js
+function invariant4(ok, message) {
+  if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
+}
+function noSkillPayload() {
+  invariant4(false, "no skill payload phase in DSH");
+}
+function createDshMeasurementProjection({
+  cwd = null,
+  projectRoot = null,
+  resolveModelPolicy,
+  interpretToolUse,
+  completeToolResult
+} = {}) {
+  invariant4(typeof interpretToolUse === "function", "interpretToolUse must be a function");
+  invariant4(typeof completeToolResult === "function", "completeToolResult must be a function");
+  const context = { sessionCwd: cwd || projectRoot || null, resolveModelPolicy };
+  return createMeasurementProjection({
+    scope: "dsh-measurement-projection",
+    context,
+    captureSources: { live: "dsh-live", replay: "dsh-replay" },
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload: noSkillPayload
+  });
+}
 
 // lib/bash-feature.js
 var LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/;
 var DISPLAY_CHARS = 40;
-var CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/;
+var CD_PREAMBLE_RE = /^cd\s+\S+\s*(?:&&|;)\s*/;
 var ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/;
 var FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
 function stripShellPreamble(command) {
   let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim();
-  let effectiveCwd = null;
-  let headerLines = 0;
   for (; ; ) {
     let m = rest.match(CD_PREAMBLE_RE);
     if (m) {
-      effectiveCwd = m[1];
       rest = rest.slice(m[0].length);
       continue;
     }
     m = rest.match(ECHO_PREAMBLE_RE);
     if (m) {
-      headerLines += 1;
       rest = rest.slice(m[0].length);
       continue;
     }
@@ -10290,7 +11716,7 @@ function stripShellPreamble(command) {
       rest = rest.slice(m[0].length);
       continue;
     }
-    return { rest, effectiveCwd, headerLines };
+    return rest;
   }
 }
 var SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
@@ -10365,7 +11791,7 @@ function redactCmd(cmd) {
   return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
 }
 function pipeActorDisplay(cmd) {
-  const stripped = stripShellPreamble(cmd).rest;
+  const stripped = stripShellPreamble(cmd);
   const firstLine = stripped.split("\n")[0].split(";")[0];
   const catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
   const headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
@@ -10390,12 +11816,12 @@ function bashFeature(command) {
   if (pipeActorResult) return pipeActorResult;
   cmd = cmd.split("|")[0].trim();
   cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
-  cmd = stripShellPreamble(cmd).rest;
+  cmd = stripShellPreamble(cmd);
   while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
   for (; ; ) {
     const before = cmd;
     cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, "");
-    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest;
+    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, ""));
     if (cmd === before) break;
   }
   const firstLine = cmd.split("\n")[0];
@@ -10455,548 +11881,65 @@ function bashFeature(command) {
   return { name: name3, detail };
 }
 
-// lib/tool-effects.js
-function lineFragments(lines) {
-  const byLine = /* @__PURE__ */ new Map();
-  for (const [line, tokens] of lines) byLine.set(line, tokens);
-  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
-}
-function effectFor(update, resourceKey) {
-  const spentTokens = update.spent > 0 ? update.spent : 0;
-  if (update.type === "grepMultiFile") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: Object.entries(update.files).map(([key, entries]) => ({
-        resourceKey: key,
-        mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
-      }))
-    };
-  }
-  if (update.type === "fullSet") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "write") {
-    return {
-      access: "write",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "lineUpdate") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  return {
-    access: "write",
-    overheadTokens: 0,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
-  };
-}
-function pathEventsFor(update, resourceKey, rawPath, toolType) {
-  if (update.type === "grepMultiFile") {
-    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
-  }
-  if (resourceKey == null) return [];
-  const isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
-  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
-}
-
-// lib/harness/dsh/native-tools.js
-function canonicalizerFor(context) {
-  const ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  return (raw, base) => {
-    const abs = ops.isAbsolute(raw) ? raw : ops.resolve(base || "/", raw);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor(row, context) {
-  if (typeof row.cwd === "string" && row.cwd.length > 0) return row.cwd;
-  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
-  return null;
-}
-var READ_LINE_RE = /^(\d+): /;
-var END_OF_FILE_RE = /^\(End of file - total \d+ lines\)$/;
-var GREP_SECTION_SEPARATOR = "\n\n";
-var GREP_ROW_RE = /^Line (\d+): /;
-var sumTokens = (lines) => lines.reduce((sum, [, tokens]) => sum + tokens, 0);
-var fileTarget = (input, base, canon) => input.file_path ? canon(input.file_path, base) : null;
-var EFFECT_ADAPTERS = /* @__PURE__ */ new Map([
-  ["read", {
-    toolType: "read",
-    extractTarget: fileTarget,
-    computeUpdate: (_input, text, _base, ctp) => {
-      const lines = [];
-      let reachedEnd = false;
-      for (const line of text.split("\n")) {
-        const numbered = READ_LINE_RE.exec(line);
-        if (numbered) lines.push([Number(numbered[1]), charsToTokens(line, ctp)]);
-        else if (END_OF_FILE_RE.test(line)) reachedEnd = true;
-      }
-      const isFullRead = reachedEnd && lines.length > 0 && lines[0][0] === 1;
-      const spent = sumTokens(lines) + TOOL_OVERHEAD.Read;
-      return { type: isFullRead ? "fullSet" : "lineUpdate", lines, overhead: TOOL_OVERHEAD.Read, spent };
-    }
-  }],
-  ["write", {
-    toolType: "write",
-    extractTarget: fileTarget,
-    // Written content is raw and a later read numbers it, so the write prices the read's form and the two
-    // observations of one file agree. `buildWindow` counts a final unterminated line but no line after a
-    // final newline, so neither does this.
-    computeUpdate: (input, _text, _base, ctp) => {
-      const rawLines = String(input.content ?? "").split("\n");
-      if (rawLines.at(-1) === "") rawLines.pop();
-      const lines = rawLines.map((line, index) => [index + 1, charsToTokens(`${index + 1}: ${line}`, ctp)]);
-      return { type: "write", lines, overhead: TOOL_OVERHEAD.Write, spent: sumTokens(lines) + TOOL_OVERHEAD.Write };
-    }
-  }],
-  ["edit", {
-    toolType: "edit",
-    extractTarget: fileTarget,
-    // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
-    // framing overhead because the corrective read that follows most edits charges its own. Each line it
-    // adds or removes carries a line-number prefix in the read's form.
-    computeUpdate: (input, _text, _base, ctp) => {
-      const oldString = input.old_string ?? "";
-      const newString = input.new_string ?? "";
-      const oldTokens = charsToTokens(oldString, ctp);
-      const newTokens = charsToTokens(newString, ctp);
-      const lineDelta = (newString.match(/\n/g) || []).length - (oldString.match(/\n/g) || []).length;
-      const value = newTokens - oldTokens + lineDelta * (4 / ctp.ascii);
-      return { type: "editDelta", value, spent: oldTokens + newTokens + TOOL_OVERHEAD.Edit };
-    }
-  }],
-  ["grep", {
-    toolType: "grep",
-    extractTarget: () => null,
-    // the files are named by the result, not by the input
-    computeUpdate: (_input, text, base, ctp, canon) => {
-      const files = /* @__PURE__ */ Object.create(null);
-      for (const section of text.split(GREP_SECTION_SEPARATOR)) {
-        const [path3, ...rows] = section.split("\n");
-        if (GREP_ROW_RE.test(path3)) continue;
-        const lines = [];
-        for (const row of rows) {
-          const numbered = GREP_ROW_RE.exec(row);
-          if (!numbered) continue;
-          const rendered = `${numbered[1]}: ${row.slice(numbered[0].length)}`;
-          lines.push([Number(numbered[1]), charsToTokens(rendered, ctp)]);
-        }
-        if (lines.length === 0) continue;
-        files[canon(path3, base)] = lines;
-      }
-      const spent = Object.values(files).reduce((sum, lines) => sum + sumTokens(lines), TOOL_OVERHEAD.Grep);
-      return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
-    }
-  }],
-  ["skill", {
-    toolType: "skill",
-    // A skill is a resource without a file: its key is its own namespace, so no base path applies.
-    extractTarget: (input) => input.name ? "skill:" + input.name : null,
-    computeUpdate: (_input, text, _base, ctp) => {
-      const tokens = charsToTokens(text, ctp);
-      return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
-    }
-  }]
-]);
-function isEffectiveUpdate(update, target) {
-  if (update.type === "grepMultiFile") return Object.keys(update.files).length > 0;
-  if (update.type === "fullSet" || update.type === "lineUpdate") return target != null && update.lines.length > 0;
-  return target != null;
-}
+// lib/harness/dsh/tool-evidence-profile.js
 var MCP_PREFIX = "mcp__";
 var AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
-function residualIdentityFor(name3, input) {
-  const inputLength = JSON.stringify(input).length;
+function residualIdentity(name3, input) {
   if (name3 === "bash") {
     const feature = bashFeature(input.command);
-    return { groupKey: feature.name, kind: "bash", detail: feature.detail, inputLength };
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail };
   }
   if (name3.startsWith(MCP_PREFIX)) {
-    return { groupKey: name3.slice(MCP_PREFIX.length), kind: "mcp", detail: "", inputLength };
+    return { groupKey: name3.slice(MCP_PREFIX.length), kind: "mcp", detail: "" };
   }
-  return { groupKey: name3, kind: AGENT_TOOLS.has(name3) ? "agent" : "tool", detail: "", inputLength };
+  return { groupKey: name3, kind: AGENT_TOOLS.has(name3) ? "agent" : "tool", detail: "" };
 }
 function isLoadHandoffTool(name3) {
   return name3.endsWith("load_handoff");
 }
-function resolvedLoadToken(text) {
-  try {
-    const parsed = JSON.parse(text);
-    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
-  } catch {
-    return null;
-  }
+function nonFileResource({ name: name3, input }) {
+  return name3 === "skill" && input.name ? { resourceKey: "skill:" + input.name } : null;
 }
-function interpretDshToolUse(observation, context) {
-  const { toolUseId, name: name3 } = observation;
-  const issuingStepId = observation.messageId ?? null;
-  const issuingPolicy = context.resolveModelPolicy(observation.model ?? null);
-  const input = observation.input ?? {};
-  const explicitToken = isLoadHandoffTool(name3) && typeof input.load_token === "string" ? input.load_token : null;
-  const awaitLoadToken = isLoadHandoffTool(name3) && explicitToken === null;
-  const telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] };
-  const call = { toolUseId, issuingStepId, issuingPolicy, awaitLoadToken };
-  const adapter = EFFECT_ADAPTERS.get(name3);
-  let pending = null;
-  if (adapter === void 0) {
-    pending = { kind: "residual", ...call, residual: residualIdentityFor(name3, input) };
-  } else {
-    const base = baseDirFor(observation, context);
-    try {
-      const target = adapter.extractTarget(input, base, canonicalizerFor(context));
-      pending = { kind: "effect", ...call, adapter, input, base, target, rawPath: input.file_path || target };
-    } catch {
-    }
-  }
-  return { pending, effects: [], residuals: [], telemetry };
-}
-function completeDshToolResult(pending, observation, context) {
-  const text = observation.content;
-  const telemetry = {
-    toolUseId: pending.toolUseId,
-    issuingStepId: pending.issuingStepId,
-    loadToken: pending.awaitLoadToken ? resolvedLoadToken(text) : null,
-    pathEvents: []
-  };
-  const hadError = observation.isError === true;
-  if (pending.kind === "residual") {
-    const { groupKey, kind, detail, inputLength } = pending.residual;
-    return {
-      effects: [],
-      residuals: [{ groupKey, weight: inputLength + text.length, hadError, meta: { kind, detail } }],
-      telemetry,
-      skillContinuation: null
-    };
-  }
-  const nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
-  if (hadError) return nothing2;
-  const { adapter, input, base, target, rawPath, issuingPolicy } = pending;
-  let update;
-  try {
-    update = adapter.computeUpdate(input, text, base, issuingPolicy.ctp, canonicalizerFor(context));
-  } catch {
-    return nothing2;
-  }
-  if (!isEffectiveUpdate(update, target)) return nothing2;
-  telemetry.pathEvents = pathEventsFor(update, target, rawPath, adapter.toolType);
-  return { effects: [effectFor(update, target)], residuals: [], telemetry, skillContinuation: null };
-}
-function resolveDshToolTarget(pair, context) {
-  const adapter = EFFECT_ADAPTERS.get(pair.name);
-  if (adapter === void 0) return null;
-  try {
-    return adapter.extractTarget(pair.input ?? {}, baseDirFor(pair, context), canonicalizerFor(context));
-  } catch {
-    return null;
-  }
-}
-function classifyDshToolPair(pair, ctp) {
-  const adapter = EFFECT_ADAPTERS.get(pair.name);
-  if (adapter === void 0 || pair.result == null || pair.isError === true) return "residual";
-  let update;
-  try {
-    update = adapter.computeUpdate(pair.input ?? {}, pair.result, null, ctp, canonicalizerFor(null));
-  } catch {
-    return "residual";
-  }
-  if (!isEffectiveUpdate(update, pair.resourceKey)) return "residual";
-  return pair.name === "skill" ? "skill" : "path";
-}
-
-// lib/harness/dsh/history-turn-rules.js
-function createDshHumanHeadRule() {
-  return (line) => {
-    if (line.kind !== "visible" || line.message.role !== "human") return PASS;
-    const text = line.message.text.trim();
-    return text === "" ? ABSORB : { kind: "HEAD", text };
-  };
-}
-var ASK_TOOL_NAME = "ask_user_question";
-function answerText(result) {
-  let value;
-  try {
-    value = JSON.parse(result);
-  } catch {
-    return "";
-  }
-  const lines = [];
-  for (const answer of Array.isArray(value?.answers) ? value.answers : []) {
-    if (Array.isArray(answer?.selected)) lines.push(...answer.selected);
-    if (answer?.custom) lines.push(answer.custom);
-  }
-  return lines.join("\n");
-}
-function createDshAskHeadRule() {
-  return (line) => {
-    if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME) return PASS;
-    if (line.tool.isError === true) return ABSORB;
-    const text = answerText(line.tool.result).trim();
-    return text === "" ? ABSORB : { kind: "HEAD", text };
-  };
-}
-function createDshDialogueProjection({ sessionCwd }) {
-  const context = { path: { isAbsolute: isAbsolute3, resolve: resolve2, normalize: normalize2 }, sessionCwd };
-  const rules = [
-    createDshHumanHeadRule(),
-    createDshAskHeadRule()
-  ];
-  return {
-    project(observations) {
-      const { folds } = projectDialogue(observations);
-      for (const fold of folds) {
-        for (const pair of fold.toolPairs) {
-          pair.resourceKey = resolveDshToolTarget(pair, context);
-        }
-      }
-      return { folds };
-    },
-    groupTurns(lines) {
-      return groupTurns(lines, rules);
-    }
-  };
-}
-
-// lib/harness/dsh/measurement-projection.js
-import nodePath from "node:path";
-
-// lib/measurement-projection.js
-function emptyFacts() {
-  return { toolUseIds: /* @__PURE__ */ new Set(), loadToken: null, pathEvents: [] };
-}
-function stepRowFor(step, facts) {
-  return {
-    foldedSeq: step.foldedSeq,
-    ts: step.timestamp,
-    input: step.usage.input,
-    output: step.usage.output,
-    cacheRead: step.usage.cacheRead,
-    cacheCreation: step.usage.cacheWrite,
-    toolCalls: facts ? facts.toolUseIds.size : 0,
-    loadToken: facts ? facts.loadToken : null
-  };
-}
-function joinFacts(factsByStepId, closedSegment) {
-  const steps = [];
-  const events = [];
-  for (const step of closedSegment.steps) {
-    const facts = factsByStepId.get(step.id) ?? null;
-    steps.push(stepRowFor(step, facts));
-    if (!facts) continue;
-    let eventOrdinal = 0;
-    for (const event of facts.pathEvents) {
-      events.push({
-        foldedSeq: step.foldedSeq,
-        eventOrdinal: eventOrdinal++,
-        path: event.path,
-        rawPath: event.rawPath,
-        toolType: event.toolType,
-        isFullRead: event.isFullRead
-      });
-    }
-  }
-  return { steps, events };
-}
-function createMeasurementProjection({
-  scope,
-  context,
-  captureSources,
-  interpretToolUse,
-  completeToolResult,
-  interpretSkillPayload
-}) {
-  const invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
-  function invariant7(ok, message) {
-    if (!ok) throw new Error(`${invariantPrefix}: ${message}`);
-  }
-  function diagnostic3(code, message) {
-    return { scope, code, message };
-  }
-  let callByToolUseId = /* @__PURE__ */ new Map();
-  let sidecarByStepId = /* @__PURE__ */ new Map();
-  function factsFor(stepId) {
-    let facts = sidecarByStepId.get(stepId);
-    if (!facts) {
-      facts = emptyFacts();
-      sidecarByStepId.set(stepId, facts);
-    }
-    return facts;
-  }
-  function mergeTelemetry(telemetry, diagnostics) {
-    if (!telemetry) return;
-    const stepId = telemetry.issuingStepId;
-    if (typeof stepId !== "string" || stepId.length === 0) return;
-    const facts = factsFor(stepId);
-    if (telemetry.toolUseId != null) facts.toolUseIds.add(telemetry.toolUseId);
-    if (typeof telemetry.loadToken === "string" && telemetry.loadToken.length > 0) {
-      if (facts.loadToken === null) facts.loadToken = telemetry.loadToken;
-      else if (facts.loadToken !== telemetry.loadToken) {
-        diagnostics.push(diagnostic3(
-          "multiple_load_tokens",
-          `step ${stepId} keeps its first load token`
-        ));
-      }
-    }
-    for (const event of telemetry.pathEvents ?? []) facts.pathEvents.push(event);
-  }
-  function pushRecords(interpreted, records) {
-    for (const effect of interpreted.effects) records.push({ type: "effect", ...effect });
-    for (const residual of interpreted.residuals) records.push({ type: "residual", ...residual });
-  }
-  function projectToolUse(observation, records, diagnostics) {
-    const id = observation.toolUseId;
-    const entry = callByToolUseId.get(id);
-    if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
-    const interpreted = interpretToolUse(observation, context);
-    mergeTelemetry(interpreted.telemetry, diagnostics);
-    callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" });
-    pushRecords(interpreted, records);
-    if (entry && entry.phase === "held") projectToolResult(entry.result, records, diagnostics);
-  }
-  function projectToolResult(observation, records, diagnostics) {
-    const id = observation.toolUseId;
-    const entry = callByToolUseId.get(id);
-    if (!entry) {
-      callByToolUseId.set(id, { phase: "held", result: observation });
-      return;
-    }
-    if (entry.phase === "issued") {
-      callByToolUseId.set(id, { phase: "completed" });
-      return;
-    }
-    if (entry.phase !== "await-result") return;
-    const completed = completeToolResult(entry.pending, observation, context);
-    mergeTelemetry(completed.telemetry, diagnostics);
-    callByToolUseId.set(id, completed.skillContinuation ? {
-      phase: "await-skill-payload",
-      resourceKey: completed.skillContinuation.resourceKey,
-      issuingPolicy: completed.skillContinuation.issuingPolicy
-    } : { phase: "completed" });
-    pushRecords(completed, records);
-  }
-  function projectSkillPayload(observation, records, diagnostics) {
-    const entry = callByToolUseId.get(observation.toolUseId);
-    if (!entry || entry.phase !== "await-skill-payload") return;
-    callByToolUseId.set(observation.toolUseId, { phase: "completed" });
-    const interpreted = interpretSkillPayload(
-      { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
-      observation
-    );
-    mergeTelemetry(interpreted.telemetry, diagnostics);
-    pushRecords(interpreted, records);
-  }
-  function project(observation) {
-    invariant7(observation !== null && typeof observation === "object", "observation must be an object");
-    const records = [];
-    const diagnostics = [];
-    switch (observation.type) {
-      case "epoch-boundary":
-        callByToolUseId = /* @__PURE__ */ new Map();
-        records.push({ type: "epoch" });
-        break;
-      case "turn-boundary":
-        records.push({ type: "turn-boundary" });
-        break;
-      case "usage":
-        records.push({
-          type: "step",
-          id: observation.messageId,
-          model: observation.model ?? null,
-          timestamp: observation.timestamp ?? null,
-          usage: {
-            input: observation.usage.input,
-            output: observation.usage.output,
-            cacheRead: observation.usage.cacheRead,
-            cacheWrite: observation.usage.cacheWrite
-          }
-        });
-        break;
-      case "tool-use":
-        projectToolUse(observation, records, diagnostics);
-        break;
-      case "tool-result":
-        projectToolResult(observation, records, diagnostics);
-        break;
-      case "skill-payload":
-        projectSkillPayload(observation, records, diagnostics);
-        break;
-      case "text":
-        break;
-      default:
-        invariant7(false, `unsupported observation type: ${String(observation.type)}`);
-    }
-    return { records, diagnostics };
-  }
-  function finishSegment(closedSegment, { captureMode = "live" } = {}) {
-    const closing = sidecarByStepId;
-    sidecarByStepId = /* @__PURE__ */ new Map();
-    callByToolUseId = /* @__PURE__ */ new Map();
-    const diagnostics = [];
-    if (closedSegment == null) return { artifact: null, diagnostics };
-    let payload;
-    try {
-      payload = joinFacts(closing, closedSegment);
-    } catch (error) {
-      diagnostics.push(diagnostic3("segment_telemetry_join_failed", `telemetry join failed: ${error.message}`));
-      return { artifact: null, diagnostics };
-    }
-    return {
-      artifact: {
-        captureSource: captureMode === "replay" ? captureSources.replay : captureSources.live,
-        payload
-      },
-      diagnostics
-    };
-  }
-  return { project, finishSegment };
-}
-
-// lib/harness/dsh/measurement-projection.js
-function invariant4(ok, message) {
-  if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
-}
-function noSkillPayload() {
-  invariant4(false, "no skill payload phase in DSH");
-}
-function createDshMeasurementProjection({
-  cwd = null,
-  projectRoot = null,
-  resolveModelPolicy,
-  interpretToolUse,
-  completeToolResult
-} = {}) {
-  invariant4(typeof interpretToolUse === "function", "interpretToolUse must be a function");
-  invariant4(typeof completeToolResult === "function", "completeToolResult must be a function");
-  const context = { path: nodePath, sessionCwd: cwd || projectRoot || null, resolveModelPolicy };
-  return createMeasurementProjection({
-    scope: "dsh-measurement-projection",
-    context,
-    captureSources: { live: "dsh-live", replay: "dsh-replay" },
-    interpretToolUse,
-    completeToolResult,
-    interpretSkillPayload: noSkillPayload
-  });
-}
+var dshToolEvidenceProfile = { residualIdentity, isLoadHandoffTool, nonFileResource };
 
 // dsh/src/composition.js
 var DSH_TURN_NOTES_ROOT = join6(tmpdir(), "session-watcher", "turn-notes");
-function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl }) {
+var sharedWorkingTree = null;
+function nodeWorkingTree() {
+  sharedWorkingTree ??= createNodeWorkingTree({
+    path: nodePath,
+    homeDir: null,
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS
+  });
+  return sharedWorkingTree;
+}
+function interpretersFor({ workingTree, cwd }) {
+  const attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree(), limits: ATTRIBUTION_LIMITS });
+  const interpreter = createToolEvidenceInterpreter({
+    attribution,
+    profile: dshToolEvidenceProfile,
+    limits: ATTRIBUTION_LIMITS
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: cwd })
+  };
+}
+function composeWatcher({
+  sessionId,
+  cwd,
+  store,
+  turnNotesRoot,
+  readSession,
+  isIgnored,
+  cacheTtl,
+  workingTree
+}) {
   const dialogueSource = createDshDialogueSource({ readSession });
-  const dialogueProjection = createDshDialogueProjection({ sessionCwd: cwd });
+  const dialogueProjection = createDshDialogueProjection();
+  const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
   const watcher = new SessionWatcher({
     sessionId,
     sourceLocator: sessionId,
@@ -11015,9 +11958,10 @@ function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isI
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse: interpretDshToolUse,
-      completeToolResult: completeDshToolResult
+      interpretToolUse,
+      completeToolResult
     }),
+    resourceKeysOf,
     modelPolicyFor: (modelId) => {
       const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
       const saved = loadPricingOverride(modelId);
@@ -11491,6 +12435,9 @@ var hostDiagnostic = (code, error) => ({ scope: HOST_SCOPE, code, message: messa
 function handlerFailed(error) {
   return hostDiagnostic("handler_failed", error);
 }
+function titleRenameFailed(error) {
+  return hostDiagnostic("title_rename_failed", error);
+}
 var missingEntry = (sessionId) => new Error(`session ${sessionId} has no watcher`);
 var aborted = (sessionId, signal) => new Error(
   `session ${sessionId}: the wait for its watcher was aborted`,
@@ -11681,9 +12628,9 @@ function createWatcherTable({ compose, readSession, cacheTtlFor = () => null, mo
     if (entry.state === "live") return Promise.resolve(liveView(entry));
     if (entry.state === "failed") return Promise.reject(new Error(entry.diagnostic.message));
     if (signal.aborted) return Promise.reject(aborted(sessionId, signal));
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve2, reject) => {
       const onAbort = () => reject(aborted(sessionId, signal));
-      const waiter = { resolve: resolve3, reject, release: () => signal.removeEventListener("abort", onAbort) };
+      const waiter = { resolve: resolve2, reject, release: () => signal.removeEventListener("abort", onAbort) };
       entry.waiters.add(waiter);
       signal.addEventListener("abort", onAbort, { once: true });
     });
@@ -11709,7 +12656,7 @@ function pairOfEvent(event) {
   if (event?.type === "assistant/message") return pairOf(event.data?.message?.source);
   return void 0;
 }
-function createModelNames({ resolve: resolve3 }) {
+function createModelNames({ resolve: resolve2 }) {
   const names = /* @__PURE__ */ new Map();
   const inFlight = /* @__PURE__ */ new Map();
   const store = (key) => ({ name: name3 }) => {
@@ -11723,7 +12670,7 @@ function createModelNames({ resolve: resolve3 }) {
       if (names.has(key)) continue;
       let pending = inFlight.get(key);
       if (pending === void 0) {
-        pending = resolve3(provider, model).then(store(key)).finally(() => inFlight.delete(key));
+        pending = resolve2(provider, model).then(store(key)).finally(() => inFlight.delete(key));
         inFlight.set(key, pending);
       }
       waits.push(pending);
@@ -11751,20 +12698,27 @@ function createModelNames({ resolve: resolve3 }) {
 }
 
 // lib/lineage.js
-function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
+function walk(store, projectId, headHandoff) {
+  const seen = /* @__PURE__ */ new Set();
   const chain = [];
   let node = headHandoff;
-  while (node && !seen.has(node.sessionId)) {
-    seen.add(node.sessionId);
-    chain.push({
-      sessionId: node.sessionId,
-      sourceLocator: node.transcriptPath || null,
-      sourceLabel: node.transcriptPath || null,
-      handoffId: node.handoffId
-    });
+  while (node && !seen.has(node.handoffId)) {
+    seen.add(node.handoffId);
+    chain.push(node);
     node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
   }
-  return chain.reverse();
+  const entries = [];
+  for (const handoff of chain.reverse()) {
+    const earlier = entries.findLast((e) => e.sessionId === handoff.sessionId);
+    entries.push({
+      sessionId: handoff.sessionId,
+      sourceLocator: handoff.transcriptPath || null,
+      sourceLabel: handoff.transcriptPath || null,
+      handoffId: handoff.handoffId,
+      window: { after: earlier ? earlier.window.through : null, through: handoff.createdAt }
+    });
+  }
+  return entries;
 }
 function fromHandoff({ store, handoffId }) {
   const head = store.getHandoff(handoffId);
@@ -11790,7 +12744,7 @@ function buildTurnBrowse({ store, lineage }) {
   const sources = labelHistorySources(lineage);
   const sections = [];
   sources.forEach((entry, i2) => {
-    const rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
+    const rows = store.listTurnNotes(entry.sessionId).filter((row) => admitsTurn(entry, row.sourceTimestamp)).sort((a, b) => a.turnNoteId - b.turnNoteId);
     if (rows.length === 0) return;
     const entries = rows.map((row) => {
       const out2 = { u_text: row.uText };
@@ -12095,6 +13049,7 @@ async function projectSession(store, entry, readSource) {
   const addressable = ordinals !== null && ordinals.size > 0;
   const records = [];
   for (const row of store.listTurnNotes(entry.sessionId)) {
+    if (!admitsTurn(entry, row.sourceTimestamp)) continue;
     const record = projectTurnRecord(row, ordinals);
     if (record.t === null && addressable) continue;
     records.push({
@@ -12112,7 +13067,7 @@ async function projectSession(store, entry, readSource) {
 async function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection, notice }) {
   invariant6(typeof notice === "string" && notice.length > 0, "notice is required");
   const sources = labelHistorySources(lineage);
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
   const parsed = /* @__PURE__ */ new Map();
   const sessionAt = (index) => {
     if (!parsed.has(index)) parsed.set(index, projectSession(store, sources[index], readSource));
@@ -12221,14 +13176,13 @@ function foldAscii(s) {
   }
   return out2;
 }
-function canonicalEntities(fold, includeToolEvidence2) {
+function canonicalEntities(fold) {
   const entities = [];
   for (const line of dialogueFoldLines(fold)) {
     if (line.kind === "visible") {
       entities.push({ text: line.message.text, line: line.sourceOrdinal });
       continue;
     }
-    if (!includeToolEvidence2(line.tool)) continue;
     const useLine = line.sourceOrdinal;
     if (typeof line.tool.name === "string") entities.push({ text: line.tool.name, line: useLine });
     if (line.tool.input != null) entities.push({ text: stableStringify(line.tool.input), line: useLine });
@@ -12288,7 +13242,7 @@ async function scopedSession(sources, scope, readSource) {
   const read = await readSource(entry.sourceLocator);
   if (!read.readable) throw scopeNotFound();
   const turns = read.turns.filter((turn) => turn.sourceOrdinal === parsed.sourceOrdinal);
-  if (turns.length !== 1) throw scopeNotFound();
+  if (turns.length !== 1 || !admitsTurn(entry, turns[0].timestamp)) throw scopeNotFound();
   const span = new Set(turns[0].lines.map((line) => line.foldOrdinal));
   return {
     entry,
@@ -12328,20 +13282,19 @@ async function searchTranscripts({
   q,
   scope = null,
   dialogueSource,
-  dialogueProjection,
-  includeToolEvidence: includeToolEvidence2
+  dialogueProjection
 }) {
   const sources = labelHistorySources(lineage);
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
   const needle = foldAscii(String(q));
   const wire = (ranges, truncated2) => ({ found: true, ranges, truncated: truncated2 });
   const groupsOf = (matches) => {
     const out2 = [];
-    let session = null;
+    let index = null;
     let byTurn = /* @__PURE__ */ new Map();
     for (const m of matches) {
-      if (m.sessionId !== session) {
-        session = m.sessionId;
+      if (m.index !== index) {
+        index = m.index;
         byTurn = /* @__PURE__ */ new Map();
       }
       const open = byTurn.get(m.turnKey);
@@ -12382,7 +13335,7 @@ async function searchTranscripts({
       let headFolds = null;
       for (let i2 = folds.length - 1; i2 >= 0; i2--) {
         const fold = folds[i2];
-        const hit = firstHit(canonicalEntities(fold, includeToolEvidence2), needle);
+        const hit = firstHit(canonicalEntities(fold), needle);
         if (!hit) continue;
         headFolds ??= headFoldsOf(turns);
         if (fold.message && fold.message.role === "human" && !headFolds.has(fold.ordinal)) continue;
@@ -12390,13 +13343,14 @@ async function searchTranscripts({
         let record = null;
         if (scope == null) {
           membership ??= turnByFold(turns);
-          recordByHead ??= await recordByTurnHead(store, entry, turns);
           const member = membership.get(fold.ordinal);
+          if (!admitsTurn(entry, member ? turns[member.turnIndex].timestamp : fold.timestamp)) continue;
+          recordByHead ??= await recordByTurnHead(store, entry, turns);
           turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`;
           record = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
         }
         const candidate = {
-          sessionId: entry.sessionId,
+          index: entry.index,
           label: entry.label,
           turnKey,
           record,
@@ -12438,11 +13392,11 @@ var locateWire = (accumulated) => ({
 });
 async function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
   if (!store.turnFtsAvailable()) throw locateUnavailable();
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
-  const sessions = new Map(labelHistorySources(lineage).map((entry) => [entry.sessionId, entry]));
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
+  const members = Map.groupBy(labelHistorySources(lineage), (entry) => entry.sessionId);
   let rows;
   try {
-    rows = store.locateTurnNotes([...sessions.keys()], buildFtsMatch(q, "plain"));
+    rows = store.locateTurnNotes([...members.keys()], buildFtsMatch(q, "plain"));
   } catch (error) {
     throw locateUnavailable(error);
   }
@@ -12450,13 +13404,13 @@ async function locateRanges({ store, lineage, q, dialogueSource, dialogueProject
   let accumulated = /* @__PURE__ */ new Map();
   let hits = 0;
   for (const row of rows) {
-    const entry = sessions.get(row.sourceSessionId);
+    const entry = members.get(row.sourceSessionId)?.find((e) => admitsTurn(e, row.sourceTimestamp));
     if (!entry) continue;
-    if (!projected.has(entry.sessionId)) {
+    if (!projected.has(entry.index)) {
       const { readable, records } = await projectSession(store, entry, readSource);
-      projected.set(entry.sessionId, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
+      projected.set(entry.index, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
     }
-    const session = projected.get(entry.sessionId);
+    const session = projected.get(entry.index);
     if (!session) continue;
     const at = session.indexByAnchor.get(row.anchorUuid);
     if (at === void 0 || session.records[at].record.t === null) continue;
@@ -12482,7 +13436,6 @@ function createTurnReadService({
   sessionId,
   dialogueSource,
   dialogueProjection,
-  includeToolEvidence: includeToolEvidence2,
   recovery,
   turnPageBuilder = buildTurnPage
 }) {
@@ -12514,8 +13467,7 @@ function createTurnReadService({
           lineage,
           q,
           scope: scope || null,
-          ...history,
-          includeToolEvidence: includeToolEvidence2
+          ...history
         });
         return withSearchRecovery(found, { hitRecovery: recovery.searchHit });
       } catch (err2) {
@@ -12551,7 +13503,6 @@ var OUTPUT = {
   schema: { type: "object", additionalProperties: true },
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }]
 };
-var includeToolEvidence = (pair) => classifyDshToolPair(pair, DEFAULT_CTP) === "residual";
 function assertBefore(before) {
   if (before !== void 0 && !TURN_PAGE_BOUNDARY_RE.test(before)) {
     throw new Error("before must be an S{k} session label or an S{k}:{T} cursor");
@@ -12566,7 +13517,14 @@ function assertQuery(q) {
   }
 }
 var lossless = (value) => JSON.parse(JSON.stringify(value));
-function createTools({ defineTool: defineTool2, table, store, now = Date.now, resolvePersisted = async () => null }) {
+function createTools({
+  defineTool: defineTool2,
+  table,
+  store,
+  now = Date.now,
+  resolvePersisted = async () => null,
+  sessionTitle = () => void 0
+}) {
   const recovery = createDshTurnRecovery();
   const tool = ({ name: name3, description, parameters = {}, check = () => {
   }, run: run2 }) => defineTool2({
@@ -12578,7 +13536,7 @@ function createTools({ defineTool: defineTool2, table, store, now = Date.now, re
       check(args2);
       const sessionId = exec.agent.session.id;
       const entry = await table.waitLive(sessionId, exec.signal);
-      return lossless(await run2(args2, { ...entry, sessionId }));
+      return lossless(await run2(args2, { ...entry, sessionId, session: exec.agent.session }));
     }
   });
   const turnReads = ({ sessionId, dialogueSource, dialogueProjection }) => createTurnReadService({
@@ -12586,14 +13544,24 @@ function createTools({ defineTool: defineTool2, table, store, now = Date.now, re
     sessionId: () => sessionId,
     dialogueSource,
     dialogueProjection,
-    includeToolEvidence,
     recovery
   });
-  async function loadHandoff({ watcher, dialogueSource, dialogueProjection }, { load_token, query, query_mode }) {
+  function retitle(session, handoffId) {
+    try {
+      const titles = sessionTitle();
+      const nextTask = store.getHandoff(handoffId)?.nextTask;
+      if (titles === void 0 || !nextTask?.trim()) return;
+      titles.rename(session, nextTask);
+    } catch (error) {
+      writeDiagnostic(session.id, titleRenameFailed(error));
+    }
+  }
+  async function loadHandoff({ watcher, session, dialogueSource, dialogueProjection }, { load_token, query, query_mode }) {
     if (!load_token && query) return watcher.searchHandoffs({ query: String(query), queryMode: query_mode });
     const delivered = await watcher.deliverHandoff(load_token ? { loadToken: String(load_token) } : {});
     if (delivered.ok === false) return { error: delivered.error, retryable: delivered.retryable === true };
     if (!delivered.found) return delivered;
+    retitle(session, delivered.handoff_id);
     return loadedHandoffPayload(delivered, {
       store,
       turnPageBuilder: buildTurnPage,
@@ -12673,7 +13641,7 @@ function createTools({ defineTool: defineTool2, table, store, now = Date.now, re
     }),
     tool({
       name: "load_handoff",
-      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns.",
+      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its turns.",
       parameters: {
         load_token: { type: "string", description: "Semantic token from prepare_handoff (exact match)" },
         query: { type: "string", description: "Free-text search when the token is unknown; returns top matches" },
@@ -12728,8 +13696,133 @@ function createTools({ defineTool: defineTool2, table, store, now = Date.now, re
   ];
 }
 
+// dsh/src/continue.js
+import { randomUUID } from "node:crypto";
+var SUMMARY_PROVIDER = "session-watcher";
+var SUMMARY_MODEL = "sw-continue";
+var ClearError = class extends Error {
+  constructor(code, message, options) {
+    super(message, options);
+    this.name = "ClearError";
+    this.code = code;
+  }
+};
+var COMMAND_NAME = "sw-continue";
+var COMMAND_DESCRIPTION = "Clear the session and resume from its last handoff";
+var USAGE = "Usage: /sw-continue (no arguments)";
+var NO_HANDOFF = "No handoff has been prepared in this session. Run the sw-handoff skill first.";
+var STALE_HANDOFF = "The last handoff was prepared before the session's latest context reset. Run the sw-handoff skill again.";
+var NOT_IDLE = "/sw-continue runs only while the agent is idle.";
+var NOT_STARTED = "Clearing could not start; the session history is unchanged.";
+var NOT_FINISHED = "Clearing did not finish cleanly; some history may be shadowed. Inspect the session before retrying.";
+var NOT_SAVED = "Clearing finished, but the session could not be saved.";
+var NOTHING_TO_CLEAR = "No history to clear.";
+var checkpointText = (token) => `[Session Watcher] Context cleared by /sw-continue. Handoff token: ${token}`;
+var followupText = (token) => `Continue from handoff ${token}: load it with the sw-load skill.`;
+var clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loading handoff ${token}.`;
+var textBlocks = (token) => [{ type: "text", text: checkpointText(token) }];
+var messageOf2 = (error) => error instanceof Error ? error.message : String(error);
+function nodesAfterHead(session, meter) {
+  const { nodes } = meter.measure(session);
+  const first = nodes.length > 0 && session.eventAt(nodes[0].seq).type === "system/message" ? 1 : 0;
+  return nodes.slice(first);
+}
+function closeWithError(session, lifecycle, cause) {
+  try {
+    session.append("compaction/end", { ...lifecycle, error: messageOf2(cause) });
+  } catch {
+  }
+}
+function clearSurface({ session, meter, kit, commandId, token }) {
+  const compactionId = kit.CompactionId(randomUUID());
+  const lifecycle = { compactionId, sourceCommandId: commandId, turn: null };
+  let range;
+  let checkpoint;
+  let startEvent;
+  try {
+    range = nodesAfterHead(session, meter);
+    if (range.length === 0) return null;
+    checkpoint = kit.createUserMessage({
+      content: textBlocks(token),
+      source: kit.compactCheckpointSource(compactionId, commandId)
+    });
+    startEvent = session.append("compaction/start", lifecycle);
+  } catch (cause) {
+    throw new ClearError("start", `clearing could not start: ${messageOf2(cause)}`, { cause });
+  }
+  const shadowedSeqs = range.map((node) => node.seq);
+  const shadowedRange = { start: shadowedSeqs[0], end: shadowedSeqs.at(-1) };
+  const shadowedTokenCount = range.reduce((total, node) => total + node.heuristicTokens, 0);
+  let summaryEvent;
+  try {
+    summaryEvent = session.append("compaction/summary", {
+      compactionId,
+      sourceCommandId: commandId,
+      summary: textBlocks(token),
+      shadowedRange,
+      shadowedSeqs,
+      shadowedTokenCount,
+      provider: SUMMARY_PROVIDER,
+      model: SUMMARY_MODEL
+    });
+    session.append("user/message", checkpoint, {
+      surfaceOp: { op: "replace", startSeq: shadowedRange.start, endSeq: shadowedRange.end },
+      sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...shadowedSeqs]
+    });
+  } catch (cause) {
+    closeWithError(session, lifecycle, cause);
+    throw new ClearError("commit", `clearing did not finish: ${messageOf2(cause)}`, { cause });
+  }
+  try {
+    session.append("compaction/end", lifecycle);
+  } catch (cause) {
+    throw new ClearError("commit", `clearing did not close: ${messageOf2(cause)}`, { cause });
+  }
+  return { count: shadowedSeqs.length, shadowedTokenCount };
+}
+var failure2 = (text) => ({ kind: "error", text });
+var success = (text) => ({ kind: "success", text });
+function createContinueCommand({ table, store, kit, meter, flush }) {
+  async function handler({ commandId, agent, rawInput, signal }) {
+    if (rawInput.trim().length > 0) return failure2(USAGE);
+    const { session } = agent;
+    const handoff = store.loadHandoffBySession(session.id);
+    if (handoff === null) return failure2(NO_HANDOFF);
+    const { watcher } = await table.waitLive(session.id, signal);
+    if (handoff.segment !== watcher.getStatus().segment) return failure2(STALE_HANDOFF);
+    const token = handoff.loadToken;
+    let maintenance;
+    try {
+      maintenance = agent.runMaintenance(async () => {
+        const cleared = clearSurface({ session, meter, kit, commandId, token });
+        if (cleared === null) return { status: "empty" };
+        try {
+          await flush(session);
+        } catch {
+          return { status: "unsaved" };
+        }
+        return { status: "cleared", cleared };
+      });
+    } catch {
+      return failure2(NOT_IDLE);
+    }
+    let outcome;
+    try {
+      outcome = await maintenance;
+    } catch (error) {
+      if (error instanceof ClearError) return failure2(error.code === "start" ? NOT_STARTED : NOT_FINISHED);
+      throw error;
+    }
+    if (outcome.status === "empty") return success(NOTHING_TO_CLEAR);
+    if (outcome.status === "unsaved") return failure2(NOT_SAVED);
+    agent.followup(kit.createUserMessage({ content: [{ type: "text", text: followupText(token) }], source: { kind: "user" } }));
+    return success(clearedText(outcome.cleared, token));
+  }
+  return { name: COMMAND_NAME, description: COMMAND_DESCRIPTION, handler };
+}
+
 // dsh/src/skills.js
-import { existsSync, readdirSync, readFileSync as readFileSync5 } from "node:fs";
+import { existsSync, readdirSync, readFileSync as readFileSync6 } from "node:fs";
 import { join as join7 } from "node:path";
 function parseFrontmatter(text) {
   const [, block = "", body2 = text] = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)/.exec(text) ?? [];
@@ -12744,7 +13837,7 @@ function registerSkills(ctx, { skillsDir }) {
     const directory = join7(skillsDir, entry);
     const path3 = join7(directory, "SKILL.md");
     if (!existsSync(path3)) continue;
-    const { fields: { name: name3, description }, body: body2 } = parseFrontmatter(readFileSync5(path3, "utf8"));
+    const { fields: { name: name3, description }, body: body2 } = parseFrontmatter(readFileSync6(path3, "utf8"));
     ctx.skills.register({
       name: name3,
       description,
@@ -12757,7 +13850,7 @@ function registerSkills(ctx, { skillsDir }) {
 }
 
 // dsh/src/catalog.js
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // lib/handoff-discovery.js
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
@@ -12840,7 +13933,7 @@ function catalogMessageFor({ dbPath, projectId, sessionId }) {
   const text = formatHandoffContext(rows, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_TASK_PREVIEW_CHARS);
   if (text === null) return null;
   return {
-    id: randomUUID(),
+    id: randomUUID2(),
     role: "user",
     content: [{ type: "text", text }],
     source: { kind: "session-watcher", form: "catalog" }
@@ -12849,7 +13942,7 @@ function catalogMessageFor({ dbPath, projectId, sessionId }) {
 
 // dsh/src/host.js
 var HOST_INJECT = ["sessions", "sessionQuery", "tools", "skills", "llm"];
-function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir }) {
+function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir, continueKit }) {
   initStore(storePath);
   ctx.effect(() => () => {
     try {
@@ -12911,8 +14004,18 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
     });
     if (message !== null) agent.inject(message);
   }));
-  for (const definition of createTools({ defineTool: defineTool2, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
+  const sessionTitle = () => ctx.get("sessionTitle");
+  for (const definition of createTools({ defineTool: defineTool2, table, store: getStore(), resolvePersisted, sessionTitle })) ctx.tools.register(definition);
   registerSkills(ctx, { skillsDir });
+  ctx.inject(["commands", "tokenMeter"], (child) => {
+    child.commands.register(createContinueCommand({
+      table,
+      store: getStore(),
+      kit: continueKit,
+      meter: child.tokenMeter,
+      flush: (session) => ctx.sessions.flush(session)
+    }));
+  });
   ctx.inject(["connection"], (child) => {
     const remove = child.root.get("connection").rpc.handle("/session-watcher", createRpcHandler({
       table,
@@ -12947,6 +14050,7 @@ var inject = HOST_INJECT;
 function apply(ctx) {
   applyHost(ctx, {
     defineTool,
+    continueKit: { CompactionId, compactCheckpointSource, createUserMessage },
     storePath: defaultDbPath(),
     turnNotesRoot: DSH_TURN_NOTES_ROOT,
     loadIsIgnored,

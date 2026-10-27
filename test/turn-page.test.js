@@ -15,6 +15,7 @@ import { buildTurnPage } from '../lib/turn-page.js';
 import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
 import { TURN_NOTICE } from '../lib/harness/claude-code/turn-recovery.js';
+import { readHistorySource } from '../lib/turn.js';
 import {
   assistantObservation, compactSummary, ts, userMessage, writeTranscript,
 } from './helpers/transcript-fixtures.js';
@@ -30,9 +31,11 @@ const HISTORY = { dialogueSource, dialogueProjection, notice: TURN_NOTICE };
 // A Source whose read settles on a later tick: the seam's contract is a Promise, and a consumer that reads
 // `.status` off the pending value would see every Source as unreadable.
 const deferred = { read: async (locator) => dialogueSource.read(locator) };
+// A window that holds every fixture note: the cases that are not about windows read the whole session.
+const OPEN_WINDOW = { after: null, through: Number.MAX_SAFE_INTEGER };
 // One History Source, spelled the way lib/lineage.js spells it.
-const source = (sessionId, locator, handoffId = 700) =>
-  ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId });
+const source = (sessionId, locator, handoffId = 700, window = OPEN_WINDOW) =>
+  ({ sessionId, sourceLocator: locator, sourceLabel: locator, handoffId, window });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 // 合成 transcript + 直接 upsert 的 turn_note，本文件自带定义（不与 turn-query 共享）。转录里的物理行
@@ -477,4 +480,91 @@ test('label 边界只按 lineage 成员解析：更新会话的 Source 不被读
   assert.ok(turnPage.startsWith(TURN_NOTICE));
   assert.ok(turnPage.includes('u-turn-'));
   assert.equal(nextBefore, null);              // 页首 t 为 null，交不出合法 S:T
+});
+
+// ── Members of one session ─────────────────────────────────────────────────────
+
+// One session, one Source, five turns whose heads sit 10 s apart; each note's source_timestamp is the epoch-ms
+// of its turn head as buildTurnNoteRows stores it, so the window that filters notes and the one that
+// places a turn read the same instant.
+const headMs = (second) => Date.parse(ts(second));
+const memberTurns = [10, 20, 30, 40, 50].map((second, i) => ({
+  uuid: `mem-u${i + 1}`, uText: `member-turn-${i + 1}`, note: `member-note-${i + 1}`, second,
+}));
+const memberTranscript = writeTranscript(dir, memberTurns.flatMap((turn, i) => [
+  userMessage({
+    uuid: turn.uuid, parentUuid: i === 0 ? null : `${memberTurns[i - 1].uuid}-a`,
+    text: turn.uText, timestamp: ts(turn.second),
+  }),
+  assistantObservation({
+    uuid: `${turn.uuid}-a`, parentUuid: turn.uuid, messageId: `${turn.uuid}-m`,
+    timestamp: ts(turn.second + 1), blocks: [{ type: 'text', text: 'ok' }],
+  }),
+]));
+for (const turn of memberTurns) {
+  store.upsertTurnNotes([noteRow('sess-members', { ...turn, sourceTimestamp: headMs(turn.second) })]);
+}
+// The first member holds turns 1–2, the second turns 3–4; turn 5 is after the second's `through`.
+const firstWindow = { after: null, through: headMs(20) };
+const secondWindow = { after: headMs(20), through: headMs(40) };
+const memberLineage = [
+  source('sess-members', memberTranscript, 901, firstWindow),
+  source('sess-members', memberTranscript, 902, secondWindow),
+];
+const memberT = (n) => 2 * n - 1;   // turn n's head row: one user row and one assistant row per turn
+const countingSource = () => {
+  const read = [];
+  return { read, dialogueSource: { read: async (locator) => { read.push(locator); return dialogueSource.read(locator); } } };
+};
+
+test('fixture 自证：成员 fixture 的 turn 头时间戳就是 note 的 source_timestamp，T 是头所在行', async () => {
+  const { turns } = await readHistorySource(HISTORY, memberTranscript);
+  assert.deepEqual(turns.map(t => t.timestamp), memberTurns.map(t => headMs(t.second)));
+  assert.deepEqual(turns.map(t => t.sourceOrdinal), memberTurns.map((_, i) => memberT(i + 1)));
+});
+
+test('同一 session 的两个成员：页先渲染第一成员自己的块与 note，再渲染第二成员的；两窗外的 note 不出现', async () => {
+  const { turnPage } = await buildTurnPage({ store, lineage: memberLineage, ...HISTORY });
+  const at = (text) => turnPage.indexOf(text);
+  const s1 = at(`S1  ${memberTranscript}`);
+  const s2 = at(`S2  ${memberTranscript}`);
+  assert.ok(s1 >= 0 && s2 > s1);
+  for (const n of [1, 2]) {
+    assert.ok(at(`S1:${memberT(n)} | U: member-turn-${n}`) > s1 && at(`member-note-${n}`) < s2);
+  }
+  for (const n of [3, 4]) {
+    assert.ok(at(`S2:${memberT(n)} | U: member-turn-${n}`) > s2 && at(`member-note-${n}`) > s2);
+  }
+  assert.equal(turnPage.includes('member-turn-5'), false);
+  assert.equal(turnPage.includes(`S1:${memberT(3)}`), false);
+  assert.equal(turnPage.includes(`S2:${memberT(1)}`), false);
+});
+
+test('before 只给第二成员的 label：从它的末尾起页，第一成员继续填', async () => {
+  const { turnPage } = await buildTurnPage({ store, lineage: memberLineage, before: 'S2', ...HISTORY });
+  assert.ok(turnPage.includes('member-turn-4'));
+  assert.ok(turnPage.includes('member-turn-1'));
+  assert.equal(turnPage.includes('member-turn-5'), false);
+  const first = await buildTurnPage({ store, lineage: memberLineage, before: 'S1', ...HISTORY });
+  assert.ok(first.turnPage.includes('member-turn-2'));
+  assert.equal(first.turnPage.includes('member-turn-3'), false);
+});
+
+test('before 带 T：只解析到该成员窗口里的记录，别的成员持有的 turn 是 not_found', async () => {
+  const ok = await buildTurnPage({ store, lineage: memberLineage, before: `S2:${memberT(4)}`, ...HISTORY });
+  assert.ok(ok.turnPage.includes('member-turn-3'));
+  assert.equal(ok.turnPage.includes('member-turn-4'), false);
+  await assert.rejects(() => buildTurnPage({ store, lineage: memberLineage, before: `S2:${memberT(2)}`, ...HISTORY }),
+    /not_found/);
+  await assert.rejects(() => buildTurnPage({ store, lineage: memberLineage, before: `S1:${memberT(3)}`, ...HISTORY }),
+    /not_found/);
+});
+
+test('共享同一 locator 的成员在一次调用内只读一次 Source，下一次调用重新读', async () => {
+  const { read, dialogueSource: counting } = countingSource();
+  const args = { store, lineage: memberLineage, dialogueSource: counting, dialogueProjection, notice: TURN_NOTICE };
+  await buildTurnPage(args);
+  assert.deepEqual(read, [memberTranscript]);
+  await buildTurnPage(args);
+  assert.deepEqual(read, [memberTranscript, memberTranscript]);
 });

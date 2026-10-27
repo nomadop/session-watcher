@@ -1,7 +1,7 @@
 // The `/session-watcher` RPC channel over the DSH host's watcher table: the state each reply carries, the payload each endpoint shares with its express route, the route's failure codes, and the pricing write's fan-out to every live watcher.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +18,11 @@ import { loadPricingOverride } from '../lib/pricing-store.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
 import { initParser, loadGrammar } from '../lib/symbol-outline.js';
-import { reusedCallIdAcrossSteps, header } from './helpers/dsh-events.js';
+import {
+  reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, REUSED_CALL_ID_SYMBOL_FILES, header,
+} from './helpers/dsh-events.js';
 import { createFakeContext, fakeSession } from './helpers/dsh-fake-context.js';
+import { writeFilesUnder } from './helpers/attribution-fixtures.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 const NODE_MODULES = fileURLToPath(new URL('../node_modules/', import.meta.url));
@@ -81,9 +84,9 @@ const call = (handler, endpoint, payload) => handler(endpoint, payload, new Abor
 
 const failure = (code, message) => ({ ok: false, error: { code, message, details: {} } });
 
-// The log with every `assistant/message` under `model` and, when given, on `route`.
-function logUnder({ model, route }) {
-  return reusedCallIdAcrossSteps().map(event => {
+// The log with every `assistant/message` under `model` and, when given, on `route`; its reads show the lines of `files`.
+function logUnder({ model, route, files }) {
+  return reusedCallIdAcrossSteps({ files }).map(event => {
     if (event.type !== 'assistant/message') return event;
     const source = { ...event.data.message.source, model, ...(route === undefined ? {} : { provider: route }) };
     return { ...event, data: { ...event.data, message: { ...event.data.message, source } } };
@@ -142,16 +145,15 @@ test('state follows the watcher: unobserved, bootstrapping without payload, live
 test('every listed endpoint answers a live session with the value its express route answers', async () => {
   const sessionId = 's-live';
   const route = 'route-long';
-  // The files the log reads exist under the session's cwd and the grammar is loaded, so a symbol-bearing buckets payload differs from the symbol-less one.
+  // The files the log reads exist under the session's cwd, with the lines the log shows because the host attributes by
+  // them, and the grammar is loaded, so a symbol-bearing buckets payload differs from the symbol-less one.
   await initParser({ wasmDir: join(NODE_MODULES, 'web-tree-sitter') });
   await loadGrammar('.js', { wasmDir: join(NODE_MODULES, 'tree-sitter-javascript') });
   const cwd = join(dir, 'repo');
-  mkdirSync(join(cwd, 'src'), { recursive: true });
-  writeFileSync(join(cwd, 'src/a.js'), 'export function a() { return 1; }\n');
-  writeFileSync(join(cwd, 'src/b.js'), 'export function b() { return 2; }\nexport default b;\n');
+  writeFilesUnder(cwd, REUSED_CALL_ID_SYMBOL_FILES);
   const { ctx, table } = mountHost({
     sessions: [fakeSession({ id: sessionId, cwd })],
-    snapshots: { [sessionId]: logUnder({ model: CLAUDE_MODEL, route }) },
+    snapshots: { [sessionId]: logUnder({ model: CLAUDE_MODEL, route, files: REUSED_CALL_ID_SYMBOL_FILES }) },
     ...declaredLifetime(route, 'long'),
   });
   await settled();
@@ -372,6 +374,11 @@ test('a pricing write with no epoch model answers no_model', async () => {
 test('a watcher whose ignore matcher throws reports each refresh diagnostic on stderr and the save still restamps the others', async (t) => {
   const lines = captureStderr(t);
   const log = reusedCallIdAcrossSteps();
+  // The host attributes by the lines a call shows, so each session's directory holds the files the log reads; the
+  // clean session then has resources to resolve and reports none.
+  const throwsCwd = join(dir, 'throws');
+  const cleanCwd = join(dir, 'clean');
+  for (const cwd of [throwsCwd, cleanCwd]) writeFilesUnder(cwd, REUSED_CALL_ID_FILES);
   // Armed once both are live: a throw while the log applies fails the watcher on the frame path instead.
   let broken = false;
   const throwing = () => {
@@ -379,9 +386,9 @@ test('a watcher whose ignore matcher throws reports each refresh diagnostic on s
     return false;
   };
   const { ctx, table, handler } = mountHost({
-    sessions: [fakeSession({ id: 's-throws', cwd: '/throws' }), fakeSession({ id: 's-clean', cwd: '/repo' })],
+    sessions: [fakeSession({ id: 's-throws', cwd: throwsCwd }), fakeSession({ id: 's-clean', cwd: cleanCwd })],
     snapshots: { 's-throws': log, 's-clean': log },
-    loadIsIgnored: cwd => (cwd === '/throws' ? throwing : null),
+    loadIsIgnored: cwd => (cwd === throwsCwd ? throwing : null),
   });
   await settled();
   for (const sessionId of ['s-throws', 's-clean']) assert.equal(table.get(sessionId).state, 'live', sessionId);
@@ -397,7 +404,7 @@ test('a watcher whose ignore matcher throws reports each refresh diagnostic on s
   assert.deepEqual(written.filter(line => line.includes(' resource_policy_failed: ')), [failedLine, failedLine],
     'one line per file the log reads');
   assert.deepEqual(written.filter(line => line.includes(' resource_policy_invalid: ')), ['a', 'b'].map(file =>
-    `s-throws [measurement-engine] resource_policy_invalid: resource policy for /throws/src/${file}.js is unusable; defaulting to selected`));
+    `s-throws [measurement-engine] resource_policy_invalid: resource policy for ${throwsCwd}/src/${file}.js is unusable; defaulting to selected`));
   assert.deepEqual(written.filter(line => line.startsWith('s-clean ')), []);
   ctx.dispose();
 });

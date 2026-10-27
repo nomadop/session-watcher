@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ABSORB, PASS, activePathOrdinals, buildSkeleton, groupTurns, projectTurnRecord, slotKeysOf,
+  ABSORB, PASS, activePathOrdinals, admitsTurn, buildSkeleton, groupTurns, projectTurnRecord, slotKeysOf,
 } from '../lib/turn.js';
 import { enumerateDialogueLines, projectDialogue } from '../lib/dialogue-fold.js';
 import {
@@ -222,4 +222,23 @@ test('activePathOrdinals: 无 identity 的头不进 map，重复 identity 首次
   ]);
   assert.equal(ordinals.size, 1);
   assert.equal(ordinals.get('dup'), 2);
+});
+
+test('admitsTurn: through 含端点，after 不含端点，after 为 null 时下界开放', () => {
+  const bounded = { window: { after: 100, through: 200 } };
+  assert.equal(admitsTurn(bounded, 200), true);      // through inclusive
+  assert.equal(admitsTurn(bounded, 201), false);
+  assert.equal(admitsTurn(bounded, 100), false);     // after exclusive
+  assert.equal(admitsTurn(bounded, 101), true);
+  assert.equal(admitsTurn(bounded, 99), false);
+  const unbounded = { window: { after: null, through: 200 } };
+  assert.equal(admitsTurn(unbounded, 0), true);
+  assert.equal(admitsTurn(unbounded, -5), true);
+  assert.equal(admitsTurn(unbounded, 201), false);
+});
+
+test('admitsTurn: null 与 undefined 的时间戳被任何窗口接纳', () => {
+  const bounded = { window: { after: 100, through: 200 } };
+  assert.equal(admitsTurn(bounded, null), true);
+  assert.equal(admitsTurn(bounded, undefined), true);
 });

@@ -9,15 +9,22 @@ import { SessionWatcher } from '../lib/session-watcher.js';
 import { createResourcePolicy } from '../lib/resource-policy.js';
 import { createMeasurementEngine } from '../lib/measurement/engine.js';
 import { createClaudeCodeMeasurementProjection } from '../lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse, completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
-} from '../lib/harness/claude-code/native-tools.js';
 import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../lib/harness/claude-code/transcript-observation.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import {
   ts, chain, usage, userMessage, assistantObservation, toolResult, skillPayloadRow,
 } from './helpers/transcript-fixtures.js';
+import { ccRig, linesText } from './helpers/attribution-fixtures.js';
+
+// The lines each Read below shows, declared once: the results are numbered from them and the working tree the
+// interpreter attributes against holds the same files.
+const repeated = (count, line) => Array.from({ length: count }, () => line);
+const FILES = {
+  '/p/a.js': linesText(repeated(2, 'const a = 1;')),
+  '/project/src/app.js': linesText(repeated(50, 'const app = 1;')),
+  '/project/node_modules/pkg/index.js': linesText(repeated(200, 'module.exports = {};')),
+};
+const { interpreters } = ccRig({ files: FILES });
 
 const NO_ENRICHMENT = {
   warm: () => {}, activeSymbols: () => null, symbolRanges: () => null,
@@ -48,12 +55,8 @@ function compose({ projectRoot = null, isIgnored = null } = {}) {
     dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
-      cwd: projectRoot, projectRoot, sourceLocator: locator, resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+      cwd: projectRoot, projectRoot, resolveModelPolicy, ...interpreters,
     }),
     modelPolicyFor,
     now: () => 1000,
@@ -67,7 +70,7 @@ function apply(watcher, entries) {
 }
 
 const SKILL_BODY = 'Base directory for this skill: /path\n\n# Brainstorming\n\n' + 'content '.repeat(100);
-const numbered = (count, prefix) => Array.from({ length: count }, (unused, i) => `${i + 1}\t${prefix}`).join('\n');
+const numbered = (count, line) => repeated(count, line).map((text, i) => `${i + 1}\t${text}`).join('\n');
 
 const step = (uuid, messageId, tokens, blocks = []) => assistantObservation({
   uuid, messageId, blocks, timestamp: ts(1), model: 'claude-opus-4-8', usage: usage(tokens),
@@ -122,7 +125,7 @@ describe('getBucketData', () => {
     assert.ok('lastTurn' in bd.residual.bash[0] && 'detail' in bd.residual.bash[0]);
   });
 
-  test('residual.tool is an empty array on a Claude Code composition', () => {
+  test('residual.tool is an empty array while every call is a Bash call', () => {
     const watcher = compose();
     apply(watcher, [
       userMessage({ uuid: 'u0', text: 'go', timestamp: ts(0) }),
@@ -134,7 +137,7 @@ describe('getBucketData', () => {
     ]);
     const bd = watcher.getBucketData();
     assert.ok(Array.isArray(bd.residual.tool), 'residual.tool is always an array');
-    assert.equal(bd.residual.tool.length, 0, 'Claude Code emits no tool-kind residual');
+    assert.equal(bd.residual.tool.length, 0, 'a Bash call is a bash-kind residual, not a tool-kind one');
   });
 
   test('exposes segment, currentTurnSeq and the totals', () => {

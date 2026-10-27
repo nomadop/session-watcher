@@ -17,9 +17,13 @@ import { createClaudeCodeSourceDriver } from '../lib/harness/claude-code/source-
 import {
   assistantToolUse, chain, compactSummary, toolResult, ts, usage,
 } from './helpers/transcript-fixtures.js';
+import { CC_HOME, linesText, treeOf } from './helpers/attribution-fixtures.js';
 
 const PROJECT = '/repo';
-const numbered = (lines) => Array.from({ length: lines }, (unused, i) => `${i + 1}\tconst v${i} = ${i};`).join('\n');
+// The file every Read of this fixture shows, declared once: the Read results are numbered from it and the working
+// tree the composition attributes against holds it.
+const LINES = Array.from({ length: 12 }, (unused, i) => `const v${i} = ${i};`);
+const numbered = (lines) => lines.map((line, i) => `${i + 1}\t${line}`).join('\n');
 
 let dir;
 let stores;
@@ -37,7 +41,7 @@ const readStep = ({ tag, parent, absPath, cacheRead }) => [
     input: { file_path: absPath }, timestamp: ts(2), model: 'claude-opus-4-8',
     usage: usage({ input: 100, output: 10, cacheRead, cacheWrite: 2000 }),
   }),
-  toolResult({ uuid: `r-${tag}`, parentUuid: `u-${tag}`, toolUseId: `t-${tag}`, content: numbered(12) }),
+  toolResult({ uuid: `r-${tag}`, parentUuid: `u-${tag}`, toolUseId: `t-${tag}`, content: numbered(LINES) }),
 ];
 
 // One persisted explicit epoch carrying step and path telemetry, followed by a POPULATED OPEN segment. The
@@ -60,6 +64,7 @@ function compose({ sessionId = 'sid-repl', sourceLocator }) {
   const watcher = createWatcherComposition({
     sessionId, sourceLocator, projectId: PROJECT, projectRoot: PROJECT,
     stateDir: join(dir, 'state'), store, isIgnored: null,
+    workingTree: treeOf({ [`${PROJECT}/alpha.js`]: linesText(LINES) }, CC_HOME),
   });
   return { store, watcher };
 }

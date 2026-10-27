@@ -16,16 +16,21 @@ import { createWatcherComposition } from '../server.js';
 import {
   assistantToolUse, compactSummary, toolResult, ts, usage,
 } from './helpers/transcript-fixtures.js';
+import { CC_HOME, linesText, treeOf } from './helpers/attribution-fixtures.js';
 
 const PROJECT = '/p';
+
+// The file every Read of this fixture shows, declared once: the Read results are numbered from it and the working
+// tree the composition attributes against holds it.
+const LINES = Array.from({ length: 12 }, (unused, i) => `const v${i} = ${i};`);
+const numbered = (lines) => lines.map((line, i) => `${i + 1}\t${line}`).join('\n');
 
 // The host's own composition callback, on the project context this fixture's resources sit under.
 const createWatcher = ({ store, sessionId, sourceLocator }) => createWatcherComposition({
   sessionId, sourceLocator, projectId: PROJECT, projectRoot: PROJECT,
   stateDir: mkdtempSync(join(tmpdir(), 'sw-sweep-state-')), store, isIgnored: null,
+  workingTree: treeOf({ [`${PROJECT}/a.js`]: linesText(LINES) }, CC_HOME),
 });
-
-const numbered = (lines) => Array.from({ length: lines }, (unused, i) => `${i + 1}\tconst v${i} = ${i};`).join('\n');
 
 // One measured step whose tool use is a full Read of `absPath`, chained onto `parent`.
 const readStep = ({ id, uuid, parent, absPath, cacheRead }) => [
@@ -34,7 +39,7 @@ const readStep = ({ id, uuid, parent, absPath, cacheRead }) => [
     input: { file_path: absPath }, timestamp: ts(2), model: 'claude-opus-4-8',
     usage: usage({ input: 100, output: 10, cacheRead, cacheWrite: 2000 }),
   }),
-  toolResult({ uuid: `r-${id}`, parentUuid: uuid, toolUseId: `t-${id}`, content: numbered(12) }),
+  toolResult({ uuid: `r-${id}`, parentUuid: uuid, toolUseId: `t-${id}`, content: numbered(LINES) }),
 ];
 
 function writeSource(rows) {

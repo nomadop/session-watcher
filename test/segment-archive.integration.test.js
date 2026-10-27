@@ -13,19 +13,27 @@ import { SessionWatcher } from '../lib/session-watcher.js';
 import { createResourcePolicy } from '../lib/resource-policy.js';
 import { createMeasurementEngine } from '../lib/measurement/engine.js';
 import { createClaudeCodeMeasurementProjection } from '../lib/harness/claude-code/measurement-projection.js';
-import {
-  interpretClaudeCodeToolUse, completeClaudeCodeToolResult,
-  interpretClaudeCodeSkillPayload, interpretClaudeCodeTaskNotification,
-} from '../lib/harness/claude-code/native-tools.js';
 import { readClaudeCodeRows, reduceClaudeCodeSnapshot } from '../lib/harness/claude-code/transcript-observation.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
 import { openStore, closeStore } from '../lib/store.js';
 import {
   ts, chain, usage, userMessage, assistantObservation, assistantToolUse, toolResult, compactSummary,
 } from './helpers/transcript-fixtures.js';
+import { ccRig, linesText } from './helpers/attribution-fixtures.js';
 
 const PROJECT = '/repo';
 const LOAD_TOOL = 'mcp__plugin_session-watcher_session-watcher__load_handoff';
+
+// The lines of every file the Reads below show, declared once: the results are numbered from them and the working
+// tree the interpreter attributes against holds the same files.
+const linesOf = (count) => Array.from({ length: count }, (_, i) => `const v${i} = ${i};`);
+const FILES = {
+  [`${PROJECT}/src/a.js`]: linesText(linesOf(18)),
+  [`${PROJECT}/src/rejected.js`]: linesText(linesOf(30)),
+  [`${PROJECT}/small.js`]: linesText(linesOf(6)),
+  [`${PROJECT}/large.js`]: linesText(linesOf(90)),
+};
+const { interpreters } = ccRig({ files: FILES, cwd: PROJECT });
 
 let dir;
 let stores;
@@ -61,12 +69,8 @@ function compose({ sessionId = 'sid-archive', now = () => 9_000_000, store = nul
     dialogueSource: { read: async () => ({ status: 'unavailable', observations: [] }) },
     dialogueProjection: {},
     createEngine: createMeasurementEngine,
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
-      cwd: PROJECT, projectRoot: PROJECT, sourceLocator: locator, resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification,
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+      cwd: PROJECT, projectRoot: PROJECT, resolveModelPolicy, ...interpreters,
     }),
     modelPolicyFor,
     now,
@@ -83,7 +87,7 @@ const apply = (watcher, entries, over = {}) => watcher.applyHarnessFrame({
   transition: 'append', batches: [observationsOf(entries)], sourceObserved: true, captureMode: 'live', ...over,
 });
 
-const numbered = (lines) => Array.from({ length: lines }, (_, i) => `${i + 1}\tconst v${i} = ${i};`).join('\n');
+const numbered = (count) => linesOf(count).map((line, i) => `${i + 1}\t${line}`).join('\n');
 
 // ── Shared observation builders ──────────────────────────────────────────────
 

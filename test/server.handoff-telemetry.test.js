@@ -1,10 +1,25 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, openSync, ftruncateSync, closeSync } from 'node:fs';
+import { writeFileSync, mkdirSync, openSync, ftruncateSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootTestServer } from './helpers/server-boot.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
-import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
+import { assistantToolUse, chain, toolResult, ts, usage, userMessage } from './helpers/transcript-fixtures.js';
+import { linesText } from './helpers/attribution-fixtures.js';
+
+// The line `n` of the file `partialRead` shows lines of, declared once so the file a test writes holds the lines its
+// Read result shows.
+const lineOf = n => `const v${n} = ${n};`;
+
+// The Source an owner boots over. Its opening call reads no file, so what a test touches is all its path bucket holds.
+const openingEntries = () => chain([
+  userMessage({ uuid: 'u-open', parentUuid: null, text: 'open the session', timestamp: ts(1) }),
+  assistantToolUse({
+    uuid: 'a-open', messageId: 'm-open', toolUseId: 'tu-open', name: 'Bash', input: { command: 'echo open' },
+    timestamp: ts(2), text: 'opening', usage: usage({ input: 500, output: 20, cacheRead: 20000 }),
+  }),
+  toolResult({ uuid: 'r-open', toolUseId: 'tu-open', content: 'open' }),
+]);
 
 // A partial Read of `absPath` covering exactly [from, to]: one measured step whose result carries those
 // physical line numbers, which is what makes the resident coverage assertable as those lines.
@@ -12,7 +27,7 @@ let readSeq = 0;
 const partialRead = (absPath, from, to) => {
   const tag = `cmp${++readSeq}`;
   const lines = [];
-  for (let n = from; n <= to; n++) lines.push(`${n}\tconst v${n} = ${n};`);
+  for (let n = from; n <= to; n++) lines.push(`${n}\t${lineOf(n)}`);
   return [
     assistantToolUse({
       uuid: `u-${tag}`, messageId: `m-${tag}`, toolUseId: `t-${tag}`, name: 'Read',
@@ -29,7 +44,7 @@ const partialRead = (absPath, from, to) => {
 // resolves against a real file on disk.
 
 let ctx;
-beforeEach(async () => { ctx = await bootTestServer(); });
+beforeEach(async () => { ctx = await bootTestServer({ entries: openingEntries() }); });
 afterEach(async () => { await ctx.teardown(); });
 
 test('load stamps delivered_session_id + loader_version from the live server context', async () => {
@@ -114,7 +129,8 @@ test('compat: path + symbols + lines round-trip through the projection; telemetr
   // A PARTIAL Read of the path in the Source: a line-fragment update keyed by source line is the only thing
   // that gives a kept entry its `lines`, and the coverage is what the result's own `N\t` prefixes say.
   const testPath = 'src/compat.js';
-  writeFileSync(join(ctx.cwd, 'compat.js'), 'export const y = 2;\n');
+  mkdirSync(join(ctx.cwd, 'src'), { recursive: true });
+  writeFileSync(join(ctx.cwd, testPath), linesText(Array.from({ length: 12 }, (unused, i) => lineOf(i + 1))));
   ctx.appendRows(partialRead(join(ctx.cwd, testPath), 10, 12));
   const token = await ctx.prepareHandoff({ paths_to_keep: [{ path: testPath, symbols: ['doThing'] }], summary: 's' });
   const res = await ctx.get(`/api/handoff/load?load_token=${token}`);

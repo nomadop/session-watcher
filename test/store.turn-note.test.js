@@ -79,7 +79,7 @@ test('CJK：search_terms 与 buildFtsMatch 双向使用同一 cjkBigrams', () =>
 });
 
 test('search_terms：索引取 Adapter 解析好的 resourceKey；只收它、不收工具名；重复只收一次', () => {
-  const read = () => ({ kind: 'tool', tool: { name: 'Read', resourceKey: '/project/lib/store.js' } });
+  const read = () => ({ kind: 'tool', tool: { name: 'Read', resourceKeys: ['/project/lib/store.js'] } });
   const turn = { lines: [read(), read()] };          // the same resource read twice in one turn
   const parts = buildSearchTerms({ uText: '', note: null, turn }).split(' ');
   assert.ok(!parts.includes('Read'), '工具名不是检索词');

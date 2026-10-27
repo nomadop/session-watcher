@@ -17,7 +17,7 @@ The measurement system requires a stream of structured events. The implementatio
 
 **Context-reset signal:** A structural indicator that the context window has been cleared or compacted. It comes from transcript topology alone — a drop in reported token totals is not one, however steep. The measurement system uses it to trigger segment boundaries.
 
-**Tool-event stream:** File operations (reads, writes, edits) with their content, used to compute per-path token contributions to B. Each event carries a path and enough content to estimate token cost at ingestion time.
+**Tool-event stream:** Each tool call's input and result text. To compute per-path token contributions to B, the system reads the files the call names and matches the call's text against their lines, whichever tool or command printed or wrote them. A line that matches counts toward its file, at the line where the file holds it; every other character, and the text of a file that is missing, unreadable or binary, counts toward the residual.
 
 ---
 
@@ -64,7 +64,9 @@ Since the system overhead floor is set from the very first usage snapshot and is
 
 **Segment profiles:** On each segment boundary and at shutdown, a summary profile is archived to persistent storage. This includes exit metrics (B, L peak, g, br, mf, turns, duration) — enough to reconstruct cross-segment trends.
 
-**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system reconstructs it by re-reading the transcript from byte zero — the same interpretation the live path applies, so the rebuilt series is the one live observation would have produced. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
+**Per-call time series:** The full call-by-call history lives only in process memory. On resume, the system reconstructs it by re-reading the transcript from byte zero — the same interpretation the live path applies, with each call's file attribution taken from the record stored when the call was first observed, so the rebuilt series is the one live observation produced. A call with no stored record is matched against the files as they are at that moment. If the transcript file is lost, per-call history is unrecoverable; only the archived segment profiles remain.
+
+**Attribution records:** For each tool call observed live, the files and line numbers its text was attributed to are stored with the session, together with each line's character count and a hash of it, and the name of the tool or command that made the call (for a shell command, also its main argument), but no file content; they are deleted with the session.
 
 **Rate-lamp ledger:** The billing ledger is persisted independently via periodic checkpoints. An unclean exit may lose recent state. On restart, the system loads the last valid checkpoint; if none is usable, it starts a fresh ledger.
 
@@ -93,13 +95,15 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 | `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
 | `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
 | `prepare_handoff` | Persist the kept paths and a summary as a handoff package; returns a load token |
-| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. A delivered package carries the lineage headlines and the newest page of turns |
+| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. On DSH a delivery also renames the loading session after the package's next task. A delivered package carries the lineage headlines and the newest page of turns |
 | `rotate_session` | Claude Code only: switch the watcher to a new session and transcript |
 | `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
 | `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
 | `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |
 
 The three history tools resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
+
+On DSH the human command `/sw-continue` takes no arguments and clears the session in place: it shadows the session's history behind a checkpoint that opens a new epoch, then has the model load the session's newest handoff through the `sw-load` skill. It leaves the session untouched and says why when the session has prepared no handoff, when its newest handoff was prepared before the latest context reset, or while the agent is busy. The session's earlier epochs stay readable as their own lineage entries, each with the turns up to the handoff it produced.
 
 ---
 

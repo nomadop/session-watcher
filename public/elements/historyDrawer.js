@@ -1,7 +1,7 @@
 // public/elements/historyDrawer.js — the read-only History drawer.
 //
-// One snapshot per open from GET /api/turn/browse, one collapsible section per session in the
-// lineage carrying the wayfinder headline it shows in place of its rows, one row for a History Turn's
+// One snapshot per open from GET /api/turn/browse, one collapsible section per lineage member
+// carrying the wayfinder headline it shows in place of its rows, one row for a History Turn's
 // stored user text and one for its note — a turn with no note text contributes only the user row —
 // client-side substring search, and no write path at all. There is no transport module: the one
 // snapshot GET goes through browser fetch directly and is awaited where it is made.
@@ -35,7 +35,7 @@ export function mount(root, ctx) {
   let expandedKey = null;
   // Sections are multi-open and every one starts collapsed, so the first open is all wayfinders.
   // Membership is keyed by lineage label rather than by position: a label survives a replacement
-  // snapshot, where a position shifts as soon as an earlier session gains its first stored row.
+  // snapshot, where a position shifts as soon as an earlier member gains its first stored row.
   const expandedLabels = new Set();
   let destroyed = false;
 
@@ -99,7 +99,7 @@ export function mount(root, ctx) {
 
   // The snapshot carries no per-row identity, so expansion keys off the section's label plus the
   // row's position inside that section. Rows run oldest → newest and only ever append, so an existing
-  // row keeps its position from one snapshot to the next, and a session gaining its first stored row
+  // row keeps its position from one snapshot to the next, and a lineage member gaining its first stored row
   // between two opens shifts nothing outside its own section.
   const rowKey = (label, index, side) => `${label}:${index}:${side}`;
 

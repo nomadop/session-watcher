@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { bootTestServer } from './helpers/server-boot.js';
 import { _seedDeliveredHandoff } from './helpers/handoff-seed.js';
 import { writeTranscript, userMessage, assistantObservation, ts } from './helpers/transcript-fixtures.js';
+import { ccCallLog, ccReadResultText } from './helpers/attribution-fixtures.js';
 import { STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE } from '../lib/turn-tool-recovery.js';
 
 describe('turn read tools', () => {
@@ -155,5 +156,34 @@ describe('turn read tools', () => {
     assert.deepEqual(Object.keys(s).sort(), ['found', 'ranges', 'truncated']);
     const l = await ctx.request(`/api/turn/locate?lineage_head=${handoffId}&q=turn9data`, {});
     assert.deepEqual(Object.keys(l).sort(), ['found', 'ranges']);
+  });
+
+  // The literal that sits only in a Read's result is asked after the one in a Bash result, which is the control: a
+  // transcript that was never read fails the control first, and a search that leaves out file reads fails the other.
+  test('both search surfaces find the result of a file read', async () => {
+    const searcher = 'sid-file-read-search';
+    const fresh = await bootTestServer({ sessionId: searcher });
+    try {
+      const transcriptPath = writeTranscript(dir, ccCallLog([
+        {
+          name: 'Read', input: { file_path: join(fresh.cwd, 'source.js') },
+          content: ccReadResultText(['export const fileReadLiteral = 1;', 'export const sibling = 2;']),
+        },
+        { name: 'Bash', input: { command: 'ls' }, content: 'listing-literal\n' },
+      ]).entries);
+      const head = _seedDeliveredHandoff(fresh.store, {
+        sessionId: searcher, sourceSessionId: 'session-file-read-src', loadToken: 'tok-file-read', transcriptPath,
+      });
+      await fresh.request('/api/handoff/load?load_token=tok-file-read', {});
+
+      for (const q of ['listing-literal', 'fileReadLiteral']) {
+        const viaHttp = await fresh.request(`/api/turn/search?lineage_head=${head}&q=${q}`, {});
+        const viaTool = await fresh.turnReadService.turnSearch({ q });
+        assert.equal(viaHttp.found, true, `the route finds ${q}`);
+        assert.equal(viaTool.found, true, `the tool finds ${q}`);
+      }
+    } finally {
+      await fresh.teardown();
+    }
   });
 });

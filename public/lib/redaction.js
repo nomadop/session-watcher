@@ -1,6 +1,6 @@
 // public/lib/redaction.js — front-end copy of redactCmd (defense-in-depth at the DOM/clipboard sink)
-// Keep in sync with `redactCmd` in lib/harness/claude-code/native-tools.js — the two are held to the same
-// output by test/claude-code.native-tools.test.js `the dashboard copy produces identical output`.
+// Keep in sync with `redactCmd` in lib/bash-feature.js — the two are held to the same
+// output by test/bash-feature.test.js `the dashboard copy produces identical output`.
 
 /**
  * Privacy scrubbing for display/clipboard. Applied as defense-in-depth over server extraction.

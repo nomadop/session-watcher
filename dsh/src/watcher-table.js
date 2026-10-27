@@ -22,6 +22,11 @@ export function handlerFailed(error) {
   return hostDiagnostic('handler_failed', error);
 }
 
+/** The diagnostic of a session rename the host attempted on a delivery and the title service refused or failed. */
+export function titleRenameFailed(error) {
+  return hostDiagnostic('title_rename_failed', error);
+}
+
 const missingEntry = sessionId => new Error(`session ${sessionId} has no watcher`);
 
 const aborted = (sessionId, signal) => new Error(`session ${sessionId}: the wait for its watcher was aborted`,

@@ -274,7 +274,7 @@ if (__selfReal === __argvReal) {
     mcpServer.registerTool('load_handoff', {
       description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — '
         + 'by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries '
-        + 'the lineage behind it as one headline per session, oldest to newest, beside the newest page of its '
+        + 'the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its '
         + 'turns.',
       inputSchema: {
         load_token: z.string().optional().describe('Semantic token from prepare_handoff (exact match)'),

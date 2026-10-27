@@ -253,7 +253,7 @@ Quantities describing the per-path token map and its maintenance.
 
 **Units.** tokens
 
-**Definition.** Each tracked file's contribution to B: the sum of its line-level token counts, plus tool-invocation overhead, plus any pending edit estimate, minus any calibration correction. Floored at zero. Summed across all paths (plus the system overhead floor) to produce B_full.
+**Definition.** Each tracked file's contribution to B: the sum of the token counts of the lines it holds in context, minus any calibration correction, floored at zero. Summed across all paths (plus the system overhead floor) to produce B_full.
 
 **Validity.** Non-negative.
 
@@ -277,8 +277,8 @@ The system tracks different categories of content:
 
 | Type | Description |
 |------|-------------|
-| **File path** | Standard tracked file (Read, Write, Edit, grep hit, or a shell read that names one file) |
+| **File path** | A file whose lines a tool call's text holds, recognized by matching the text against the file on disk whichever tool or command printed or wrote it (Read, Write, Edit, grep, a shell command, an MCP tool) |
 | **Skill** | Skill/instruction content loaded into context (included in B_default by default) |
-| **Bash/MCP residual** | Tool output not attributed to a specific file (contributes to residual growth, not B) |
+| **Bash/MCP residual** | The part of a tool call's text that holds no file line, grouped under the tool or command that made the call (contributes to residual growth, not B) |
 
 File paths are canonicalized so that different representations of the same file (`./a.js`, `/cwd/a.js`) map to a single entry, preventing baseline inflation from path fragmentation.

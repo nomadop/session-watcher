@@ -86,6 +86,10 @@ The agent gets the tool set tabled under MCP Tools on the [Guarantees page](http
 
 The package ships the `sw-handoff`, `sw-load` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host.
 
+## Commands
+
+The plugin registers the human command `/sw-continue`, which clears the session in place and resumes it from its newest handoff. Its behavior is stated under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools).
+
 ## Handoff across sessions
 
 When an agent starts or resumes, it receives a message listing the pending handoffs that other sessions prepared for its project. That message is the same text the Claude Code SessionStart hook shows. Subagents do not receive it. The message is not measured as a turn.

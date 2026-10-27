@@ -15,6 +15,7 @@ process.on('exit', () => {
 
 import { composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
 import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
+import { CC_HOME, linesText, treeOf } from './helpers/attribution-fixtures.js';
 
 // Both paths become resident through real Read tool pairs in the Source — a big one and a small one, so an
 // override that excludes the big path moves bDefault enough to move x and br with it.
@@ -24,6 +25,12 @@ const SMALL = '/workspace/src/small.ts';
 const SIB_A = '/workspace/lib/a.js';
 const SIB_B = '/workspace/lib/b.js';
 const SIB_C = '/workspace/lib/c.js';
+
+// What each Read in this file shows, declared once: the transcript's results are numbered from it and the working
+// tree each composition attributes against holds the same files.
+const BIG_CONTENT = 'export const filler = 1;\n'.repeat(80);
+const SIB_CONTENT = 'export const filler = 1;\n'.repeat(40);
+const SIB_C_LINES = Array.from({ length: 20 }, (unused, i) => `const s${i} = ${i};`);
 // The leaf the sibling append chains onto: `measuredTranscript`'s last row is the final step's tool result.
 const LAST_LEAF = 'sr9';
 
@@ -36,18 +43,16 @@ const readOf = (path, tag) => [
   }),
   toolResult({
     uuid: `sibr-${tag}`, toolUseId: `sibt-${tag}`,
-    content: Array.from({ length: 20 }, (unused, i) => `${i + 1}\tconst s${i} = ${i};`).join('\n'),
+    content: SIB_C_LINES.map((line, i) => `${i + 1}\t${line}`).join('\n'),
   }),
 ];
 
 // Two siblings resident from the start, so the third can be inferred from them.
 async function withServerWithSiblings(fn) {
   const composed = composeForTranscript({
-    transcriptPath: writeMeasuredTranscript({
-      steps: 10, paths: [SIB_A, SIB_B],
-      content: 'export const filler = 1;\n'.repeat(40),
-    }),
+    transcriptPath: writeMeasuredTranscript({ steps: 10, paths: [SIB_A, SIB_B], content: SIB_CONTENT }),
     sessionId: 'test-e2e-siblings', projectRoot: '/workspace',
+    workingTree: treeOf({ [SIB_A]: SIB_CONTENT, [SIB_B]: SIB_CONTENT, [SIB_C]: linesText(SIB_C_LINES) }, CC_HOME),
   });
   const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -57,11 +62,9 @@ async function withServerWithSiblings(fn) {
 
 async function withServer(fn) {
   const composed = composeForTranscript({
-    transcriptPath: writeMeasuredTranscript({
-      steps: 10, paths: [BIG, SMALL],
-      content: 'export const filler = 1;\n'.repeat(80),
-    }),
+    transcriptPath: writeMeasuredTranscript({ steps: 10, paths: [BIG, SMALL], content: BIG_CONTENT }),
     sessionId: 'test-e2e', projectRoot: '/workspace',
+    workingTree: treeOf({ [BIG]: BIG_CONTENT, [SMALL]: BIG_CONTENT }, CC_HOME),
   });
   const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));

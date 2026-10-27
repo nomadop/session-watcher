@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.9.1",
+      version: "0.10.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -320,10 +320,10 @@ function pairFor(toolUseId, use, pendingResults) {
     sourceOrdinal: use.sourceOrdinal,
     sourceEntryId: use.sourceEntryId,
     timestamp: use.timestamp,
-    // A tool use's own working directory, carried uninterpreted: the Harness Adapter resolves the native
-    // target from this pair and attaches the `resourceKey` shared Turn History reads.
+    // A tool use's own working directory, carried uninterpreted: whatever resolves a pair's resources does it
+    // from this pair. `resourceKeys` is the one list shared Turn History reads.
     cwd: use.cwd,
-    resourceKey: null,
+    resourceKeys: [],
     // null means "no result row paired with this tool use", which is not the same as a result row that
     // carried no annotation — that one has a `resultMeta` whose annotation is absent.
     result: result === void 0 ? null : result.content,
@@ -437,7 +437,7 @@ var init_bill_regret = __esm({
 });
 
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, TOOL_OVERHEAD, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES;
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS;
 var init_constants = __esm({
   "lib/constants.js"() {
     RECENT_STOP_EVENTS_LIMIT = 32;
@@ -512,7 +512,7 @@ var init_constants = __esm({
       // DeepSeek tokenizer (n=5265)
     ];
     DEFAULT_CTP = { ascii: 3, cjk: 1 };
-    TOOL_OVERHEAD = { Read: 40, Write: 90, Edit: 85, Bash: 10, Grep: 40, Serena: 50 };
+    SKILL_FRAMING_TOKENS = 40;
     DEPTH_HOT_LAP_COUNT = 3;
     ALPHA_EMA = 0.06;
     G_DELTA_CAP = 250;
@@ -531,6 +531,16 @@ var init_constants = __esm({
     NOTE_TOKEN_LIMIT = 800;
     NOTE_PREVIEW_TOKENS = 100;
     HANDOFF_TOKEN_MAX_RETRIES = 5;
+    WORKING_TREE_CACHE_ENTRIES = 256;
+    WORKING_TREE_CACHE_CHARS = 8e6;
+    ATTRIBUTION_LIMITS = {
+      candidates: 64,
+      fileBytes: 1e6,
+      sideChars: 1e5,
+      decodeDepth: 6,
+      alignCells: 4e6,
+      evidenceFloor: 3
+    };
   }
 });
 
@@ -1576,11 +1586,22 @@ function parseTurnPageBoundary(raw) {
 function labelHistorySources(lineage) {
   return lineage.map((entry, index) => ({ ...entry, label: `S${index + 1}`, index }));
 }
+function admitsTurn({ window: window2 }, timestamp) {
+  if (timestamp == null) return true;
+  return timestamp <= window2.through && (window2.after === null || timestamp > window2.after);
+}
 async function readHistorySource({ dialogueSource, dialogueProjection }, sourceLocator) {
   const read = await dialogueSource.read(sourceLocator);
   if (read.status !== "ok") return { readable: false, folds: [], turns: [] };
   const { folds } = dialogueProjection.project(read.observations);
   return { readable: true, folds, turns: dialogueProjection.groupTurns(enumerateDialogueLines(folds)) };
+}
+function createHistoryReader(history) {
+  const reads = /* @__PURE__ */ new Map();
+  return (sourceLocator) => {
+    if (!reads.has(sourceLocator)) reads.set(sourceLocator, readHistorySource(history, sourceLocator));
+    return reads.get(sourceLocator);
+  };
 }
 function applyHeadRules(line, rules) {
   for (const rule of rules) {
@@ -1633,7 +1654,7 @@ function buildSkeleton(turns, sessionId) {
       }
       if (line.kind === "tool") {
         toolCalls++;
-        if (line.tool.resourceKey) basenames.add(basename(line.tool.resourceKey));
+        for (const key of line.tool.resourceKeys) basenames.add(basename(key));
         return [];
       }
       if (line.message.role !== "human" && !shown.has(i2)) return [];
@@ -1698,7 +1719,7 @@ function snapshotDigest(turns) {
     anchor: turn.sourceEntryId,
     ts: turn.timestamp,
     u: turn.cleanedU,
-    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKey ?? null } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
+    lines: turn.lines.map((l) => l.kind === "tool" ? { k: "t", a: l.sourceEntryId, n: l.tool.name, p: l.tool.resourceKeys } : { k: "v", a: l.sourceEntryId, r: l.message.role, x: l.message.text })
   }));
   return createHash2("sha256").update(stableStringify(canonical)).digest("hex");
 }
@@ -1711,7 +1732,7 @@ ${note ?? ""}`);
   const keys = /* @__PURE__ */ new Set();
   for (const line of turn.lines) {
     if (line.kind !== "tool") continue;
-    if (line.tool.resourceKey) keys.add(line.tool.resourceKey);
+    for (const key of line.tool.resourceKeys) keys.add(key);
   }
   return [bigrams, ...keys].filter(Boolean).join(" ");
 }
@@ -1872,6 +1893,14 @@ function ensureV5Shape(db) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_note_session
     ON turn_note(source_session_id, source_timestamp)`);
 }
+function ensureAttributionRecordShape(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS attribution_record (
+    session_id  TEXT NOT NULL,
+    tool_use_id TEXT NOT NULL,
+    record      TEXT NOT NULL,
+    PRIMARY KEY (session_id, tool_use_id)
+  ) WITHOUT ROWID`);
+}
 function addColumnIfMissing(db, table, name2, type) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
   if (!cols.includes(name2)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name2} ${type}`);
@@ -1978,6 +2007,7 @@ function migrate(db) {
     ensureV2Shape(db);
     ensureV3Shape(db);
     ensureV5Shape(db);
+    ensureAttributionRecordShape(db);
     if (version2 < 5) {
       db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '5') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     }
@@ -2166,6 +2196,9 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           deleteSessionPaths: db.prepare("DELETE FROM paths WHERE session_id = ?"),
           deleteSessionLines: db.prepare("DELETE FROM lines WHERE session_id = ?"),
           deleteSessionRecord: db.prepare("DELETE FROM sessions WHERE session_id = ?"),
+          deleteSessionAttributions: db.prepare("DELETE FROM attribution_record WHERE session_id = ?"),
+          loadAttribution: db.prepare("SELECT record FROM attribution_record WHERE session_id = ? AND tool_use_id = ?"),
+          insertAttribution: db.prepare("INSERT OR IGNORE INTO attribution_record (session_id, tool_use_id, record) VALUES (?, ?, ?)"),
           // Config CRUD
           loadConfig: db.prepare("SELECT value FROM config WHERE key = ?"),
           saveConfig: db.prepare(`INSERT INTO config (key, value) VALUES (?, ?)
@@ -2251,9 +2284,10 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           insertHandoffLoad: db.prepare(`INSERT OR IGNORE INTO handoff_load
         (handoff_id, session_id, loaded_at, loader_version, claim_result, primary_session_id, consumer_segment)
         VALUES (?,?,?,?,?,?,?)`),
-          // Lineage: the parent edge is the delivery a session consumed before it prepared its own
-          // handoff. LIMIT 1 is replacement semantics, not a query optimization — when one child
-          // session loaded several handoffs, only the newest qualifying delivery is its parent, and
+          // Lineage: the parent edge is the newest delivery a session consumed no later than a node's
+          // creation, a delivery of the session's own handoff included — that is how a continued session
+          // reaches its previous epoch. LIMIT 1 is replacement semantics, not a query optimization — when one
+          // child session loaded several handoffs, only the newest qualifying delivery is its parent, and
           // the earlier ones' ancestor chains are NOT merged in. Same millisecond breaks by handoff_id.
           findParentDelivery: db.prepare(`SELECT h.* FROM handoff_load AS hl
         JOIN handoff AS h ON h.handoff_id = hl.handoff_id
@@ -2382,12 +2416,28 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
           this._stmts.deleteSessionState.run(sessionId);
           this._stmts.deleteSessionPaths.run(sessionId);
           this._stmts.deleteSessionLines.run(sessionId);
+          this._stmts.deleteSessionAttributions.run(sessionId);
           this._stmts.deleteTurnNotesIfNoHandoff.run(sessionId);
           this._stmts.deleteSessionRecord.run(sessionId);
           this._db.exec("COMMIT");
         } catch (e) {
           this._db.exec("ROLLBACK");
           throw e;
+        }
+      }
+      // --- Attribution Record ---
+      // INSERT OR IGNORE: the first write for a key stays.
+      rememberAttribution(sessionId, toolUseId, record2) {
+        this._stmts.insertAttribution.run(sessionId, toolUseId, JSON.stringify(record2));
+      }
+      recallAttribution(sessionId, toolUseId) {
+        const row = this._stmts.loadAttribution.get(sessionId, toolUseId);
+        if (!row) return null;
+        try {
+          const parsed = JSON.parse(row.record);
+          return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+        } catch {
+          return null;
         }
       }
       // --- Config CRUD ---
@@ -3569,20 +3619,27 @@ var init_rate_lamp_manager = __esm({
 });
 
 // lib/lineage.js
-function walk(store, projectId, headHandoff, seen = /* @__PURE__ */ new Set()) {
+function walk(store, projectId, headHandoff) {
+  const seen = /* @__PURE__ */ new Set();
   const chain = [];
   let node = headHandoff;
-  while (node && !seen.has(node.sessionId)) {
-    seen.add(node.sessionId);
-    chain.push({
-      sessionId: node.sessionId,
-      sourceLocator: node.transcriptPath || null,
-      sourceLabel: node.transcriptPath || null,
-      handoffId: node.handoffId
-    });
+  while (node && !seen.has(node.handoffId)) {
+    seen.add(node.handoffId);
+    chain.push(node);
     node = store.findParentDelivery(projectId, node.sessionId, node.createdAt);
   }
-  return chain.reverse();
+  const entries = [];
+  for (const handoff of chain.reverse()) {
+    const earlier = entries.findLast((e) => e.sessionId === handoff.sessionId);
+    entries.push({
+      sessionId: handoff.sessionId,
+      sourceLocator: handoff.transcriptPath || null,
+      sourceLabel: handoff.transcriptPath || null,
+      handoffId: handoff.handoffId,
+      window: { after: earlier ? earlier.window.through : null, through: handoff.createdAt }
+    });
+  }
+  return entries;
 }
 function fromHandoff({ store, handoffId }) {
   const head = store.getHandoff(handoffId);
@@ -3611,7 +3668,7 @@ function buildTurnBrowse({ store, lineage }) {
   const sources = labelHistorySources(lineage);
   const sections = [];
   sources.forEach((entry, i2) => {
-    const rows = [...store.listTurnNotes(entry.sessionId)].sort((a, b) => a.turnNoteId - b.turnNoteId);
+    const rows = store.listTurnNotes(entry.sessionId).filter((row) => admitsTurn(entry, row.sourceTimestamp)).sort((a, b) => a.turnNoteId - b.turnNoteId);
     if (rows.length === 0) return;
     const entries = rows.map((row) => {
       const out2 = { u_text: row.uText };
@@ -9850,7 +9907,7 @@ var init_schemas = __esm({
         return (payload, ctx) => fn(shape, payload, ctx);
       };
       let fastpass;
-      const isObject3 = isObject;
+      const isObject4 = isObject;
       const jit = !globalConfig.jitless;
       const allowsEval2 = allowsEval;
       const fastEnabled = jit && allowsEval2.value;
@@ -9859,7 +9916,7 @@ var init_schemas = __esm({
       inst._zod.parse = (payload, ctx) => {
         value ?? (value = _normalized.value);
         const input = payload.value;
-        if (!isObject3(input)) {
+        if (!isObject4(input)) {
           payload.issues.push({
             expected: "object",
             code: "invalid_type",
@@ -16514,7 +16571,7 @@ var init_protocol = __esm({
               return;
             }
             const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-            await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
+            await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
             options?.signal?.throwIfAborted();
           }
         } catch (error2) {
@@ -16531,7 +16588,7 @@ var init_protocol = __esm({
        */
       request(request, resultSchema, options) {
         const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve3, reject) => {
           const earlyReject = (error2) => {
             reject(error2);
           };
@@ -16609,7 +16666,7 @@ var init_protocol = __esm({
               if (!parseResult.success) {
                 reject(parseResult.error);
               } else {
-                resolve5(parseResult.data);
+                resolve3(parseResult.data);
               }
             } catch (error2) {
               reject(error2);
@@ -16870,12 +16927,12 @@ var init_protocol = __esm({
           }
         } catch {
         }
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve3, reject) => {
           if (signal.aborted) {
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
             return;
           }
-          const timeoutId = setTimeout(resolve5, interval);
+          const timeoutId = setTimeout(resolve3, interval);
           signal.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -19153,8 +19210,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize4) {
-      if (normalize4 !== false)
+    function getFullPath(resolver, id = "", normalize3) {
+      if (normalize3 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -19902,7 +19959,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve5.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -19929,7 +19986,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve5(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -20550,7 +20607,7 @@ var require_fast_uri = __commonJS({
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
-    function normalize4(uri, options) {
+    function normalize3(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -20560,7 +20617,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve5(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse4(baseURI, schemelessOptions), parse4(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -20817,8 +20874,8 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize: normalize4,
-      resolve: resolve5,
+      normalize: normalize3,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -25285,7 +25342,7 @@ var init_mcp = __esm({
         let task = createTaskResult.task;
         const pollInterval = task.pollInterval ?? 5e3;
         while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-          await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
+          await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
           const updatedTask = await extra.taskStore.getTask(taskId);
           if (!updatedTask) {
             throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -25907,12 +25964,12 @@ var init_stdio2 = __esm({
         this.onclose?.();
       }
       send(message) {
-        return new Promise((resolve5) => {
+        return new Promise((resolve3) => {
           const json = serializeMessage(message);
           if (this._stdout.write(json)) {
-            resolve5();
+            resolve3();
           } else {
-            this._stdout.once("drain", resolve5);
+            this._stdout.once("drain", resolve3);
           }
         });
       }
@@ -30899,10 +30956,10 @@ var require_raw_body = __commonJS({
       if (done) {
         return readStream(stream, encoding, length, limit, wrap(done));
       }
-      return new Promise(function executor(resolve5, reject) {
+      return new Promise(function executor(resolve3, reject) {
         readStream(stream, encoding, length, limit, function onRead(err2, buf) {
           if (err2) return reject(err2);
-          resolve5(buf);
+          resolve3(buf);
         });
       });
     }
@@ -40078,7 +40135,7 @@ var require_type_is = __commonJS({
     module2.exports = typeofrequest;
     module2.exports.is = typeis;
     module2.exports.hasBody = hasbody;
-    module2.exports.normalize = normalize4;
+    module2.exports.normalize = normalize3;
     module2.exports.match = mimeMatch;
     function typeis(value, types_) {
       var i2;
@@ -40098,7 +40155,7 @@ var require_type_is = __commonJS({
       }
       var type;
       for (i2 = 0; i2 < types.length; i2++) {
-        if (mimeMatch(normalize4(type = types[i2]), val)) {
+        if (mimeMatch(normalize3(type = types[i2]), val)) {
           return type[0] === "+" || type.indexOf("*") !== -1 ? val : type;
         }
       }
@@ -40121,7 +40178,7 @@ var require_type_is = __commonJS({
       var value = req.headers["content-type"];
       return typeis(value, types);
     }
-    function normalize4(type) {
+    function normalize3(type) {
       if (typeof type !== "string") {
         return false;
       }
@@ -44437,8 +44494,8 @@ var require_view = __commonJS({
     var dirname4 = path3.dirname;
     var basename3 = path3.basename;
     var extname3 = path3.extname;
-    var join14 = path3.join;
-    var resolve5 = path3.resolve;
+    var join13 = path3.join;
+    var resolve3 = path3.resolve;
     module2.exports = View;
     function View(name2, options) {
       var opts = options || {};
@@ -44472,7 +44529,7 @@ var require_view = __commonJS({
       debug('lookup "%s"', name2);
       for (var i2 = 0; i2 < roots.length && !path4; i2++) {
         var root = roots[i2];
-        var loc = resolve5(root, name2);
+        var loc = resolve3(root, name2);
         var dir = dirname4(loc);
         var file = basename3(loc);
         path4 = this.resolve(dir, file);
@@ -44483,14 +44540,14 @@ var require_view = __commonJS({
       debug('render "%s"', this.path);
       this.engine(this.path, options, callback);
     };
-    View.prototype.resolve = function resolve6(dir, file) {
+    View.prototype.resolve = function resolve4(dir, file) {
       var ext = this.ext;
-      var path4 = join14(dir, file);
+      var path4 = join13(dir, file);
       var stat = tryStat(path4);
       if (stat && stat.isFile()) {
         return path4;
       }
-      path4 = join14(dir, basename3(file, ext), "index" + ext);
+      path4 = join13(dir, basename3(file, ext), "index" + ext);
       stat = tryStat(path4);
       if (stat && stat.isFile()) {
         return path4;
@@ -45123,9 +45180,9 @@ var require_send = __commonJS({
     var Stream = __require("stream");
     var util2 = __require("util");
     var extname3 = path3.extname;
-    var join14 = path3.join;
-    var normalize4 = path3.normalize;
-    var resolve5 = path3.resolve;
+    var join13 = path3.join;
+    var normalize3 = path3.normalize;
+    var resolve3 = path3.resolve;
     var sep = path3.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
@@ -45162,7 +45219,7 @@ var require_send = __commonJS({
       this._maxage = opts.maxAge || opts.maxage;
       this._maxage = typeof this._maxage === "string" ? ms(this._maxage) : Number(this._maxage);
       this._maxage = !isNaN(this._maxage) ? Math.min(Math.max(0, this._maxage), MAX_MAXAGE) : 0;
-      this._root = opts.root ? resolve5(opts.root) : null;
+      this._root = opts.root ? resolve3(opts.root) : null;
       if (!this._root && opts.from) {
         this.from(opts.from);
       }
@@ -45186,7 +45243,7 @@ var require_send = __commonJS({
       return this;
     }, "send.index: pass index as option");
     SendStream.prototype.root = function root(path4) {
-      this._root = resolve5(String(path4));
+      this._root = resolve3(String(path4));
       debug("root %s", this._root);
       return this;
     };
@@ -45334,7 +45391,7 @@ var require_send = __commonJS({
       var parts2;
       if (root !== null) {
         if (path4) {
-          path4 = normalize4("." + sep + path4);
+          path4 = normalize3("." + sep + path4);
         }
         if (UP_PATH_REGEXP.test(path4)) {
           debug('malicious path "%s"', path4);
@@ -45342,15 +45399,15 @@ var require_send = __commonJS({
           return res;
         }
         parts2 = path4.split(sep);
-        path4 = normalize4(join14(root, path4));
+        path4 = normalize3(join13(root, path4));
       } else {
         if (UP_PATH_REGEXP.test(path4)) {
           debug('malicious path "%s"', path4);
           this.error(403);
           return res;
         }
-        parts2 = normalize4(path4).split(sep);
-        path4 = resolve5(path4);
+        parts2 = normalize3(path4).split(sep);
+        path4 = resolve3(path4);
       }
       if (containsDotFile(parts2)) {
         var access = this._dotfiles;
@@ -45477,7 +45534,7 @@ var require_send = __commonJS({
           if (err2) return self.onStatError(err2);
           return self.error(404);
         }
-        var p = join14(path4, self._index[i2]);
+        var p = join13(path4, self._index[i2]);
         debug('stat "%s"', p);
         fs3.stat(p, function(err3, stat) {
           if (err3) return next(err3);
@@ -46630,7 +46687,7 @@ var require_application = __commonJS({
     var deprecate = require_depd()("express");
     var flatten = require_array_flatten();
     var merge2 = require_utils_merge();
-    var resolve5 = __require("path").resolve;
+    var resolve3 = __require("path").resolve;
     var setPrototypeOf = require_setprototypeof();
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     var slice = Array.prototype.slice;
@@ -46669,7 +46726,7 @@ var require_application = __commonJS({
       this.mountpath = "/";
       this.locals.settings = this.settings;
       this.set("view", View);
-      this.set("views", resolve5("views"));
+      this.set("views", resolve3("views"));
       this.set("jsonp callback name", "callback");
       if (env === "production") {
         this.enable("view cache");
@@ -47901,7 +47958,7 @@ var require_response = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var http = __require("http");
-    var isAbsolute6 = require_utils3().isAbsolute;
+    var isAbsolute4 = require_utils3().isAbsolute;
     var onFinished = require_on_finished();
     var path3 = __require("path");
     var statuses = require_statuses();
@@ -47914,7 +47971,7 @@ var require_response = __commonJS({
     var send = require_send();
     var extname3 = path3.extname;
     var mime = send.mime;
-    var resolve5 = path3.resolve;
+    var resolve3 = path3.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module2.exports = res;
@@ -48107,7 +48164,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute6(path4)) {
+      if (!opts.root && !isAbsolute4(path4)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
       var pathname = encodeURI(path4);
@@ -48173,7 +48230,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve5(path4) : path4;
+      var fullPath = !opts.root ? resolve3(path4) : path4;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -48439,7 +48496,7 @@ var require_serve_static = __commonJS({
     var encodeUrl = require_encodeurl();
     var escapeHtml = require_escape_html();
     var parseUrl = require_parseurl();
-    var resolve5 = __require("path").resolve;
+    var resolve3 = __require("path").resolve;
     var send = require_send();
     var url = __require("url");
     module2.exports = serveStatic;
@@ -48459,7 +48516,7 @@ var require_serve_static = __commonJS({
         throw new TypeError("option setHeaders must be function");
       }
       opts.maxage = opts.maxage || opts.maxAge || 0;
-      opts.root = resolve5(root);
+      opts.root = resolve3(root);
       var onDirectory = redirect ? createRedirectDirectoryListener() : createNotFoundDirectoryListener();
       return function serveStatic2(req, res, next) {
         if (req.method !== "GET" && req.method !== "HEAD") {
@@ -48633,7 +48690,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     if (relative && ignoreMatcher && ignoreMatcher(relative)) return "gitignore";
     return null;
   }
-  function resolve5(resourceKey) {
+  function resolve3(resourceKey) {
     const defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -48673,7 +48730,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve5, infer };
+  return { resolve: resolve3, infer };
 }
 var SKILL_RESOURCE_PREFIX;
 var init_resource_policy = __esm({
@@ -48683,12 +48740,17 @@ var init_resource_policy = __esm({
 });
 
 // lib/turn-note.js
-function captureCurrentEpochTurns({ observations, dialogueProjection }) {
+function captureCurrentEpochTurns({ observations, dialogueProjection, resourceKeysOf }) {
   let boundaryAt = -1;
   for (let i2 = 0; i2 < observations.length; i2++) {
     if (observations[i2].type === "epoch-boundary") boundaryAt = i2;
   }
   const { folds } = dialogueProjection.project(observations.slice(boundaryAt + 1));
+  if (resourceKeysOf) {
+    for (const fold of folds) {
+      for (const pair of fold.toolPairs) pair.resourceKeys = resourceKeysOf(pair);
+    }
+  }
   const turns = dialogueProjection.groupTurns(enumerateDialogueLines(folds));
   return { turns: turns.slice(0, -1) };
 }
@@ -48802,6 +48864,7 @@ var init_session_watcher = __esm({
         createEngine,
         createMeasurementProjection: createMeasurementProjection2,
         modelPolicyFor: modelPolicyFor2,
+        resourceKeysOf = null,
         now = () => Date.now()
       } = {}) {
         invariant(store !== null && typeof store === "object", "store is required");
@@ -48821,6 +48884,7 @@ var init_session_watcher = __esm({
         invariant(typeof createEngine === "function", "createEngine must be a function");
         invariant(typeof createMeasurementProjection2 === "function", "createMeasurementProjection must be a function");
         invariant(typeof modelPolicyFor2 === "function", "modelPolicyFor must be a function");
+        invariant(resourceKeysOf === null || typeof resourceKeysOf === "function", "resourceKeysOf must be a function");
         invariant(typeof now === "function", "now must be a function");
         this._projectId = projectId;
         this._projectRoot = projectRoot;
@@ -48835,6 +48899,7 @@ var init_session_watcher = __esm({
         this._createEngine = createEngine;
         this._createProjection = createMeasurementProjection2;
         this._modelPolicyFor = modelPolicyFor2;
+        this._resourceKeysOf = resourceKeysOf;
         this._now = now;
         this._startMs = now();
         this._sessionId = sessionId;
@@ -48889,11 +48954,12 @@ var init_session_watcher = __esm({
             this._hasObservedSource = observedBefore || frame.sourceObserved === true;
             if (!observedBefore && this._hasObservedSource) this._streamRevision += 1;
           }
+          const frameCtx = this._frameContext(frame, diagnostics);
           let newCalls = 0;
           let revisedCalls = 0;
           for (const batch of frame.batches ?? []) {
             for (const observation of batch) {
-              const projected = this._projection.project(observation);
+              const projected = this._projection.project(observation, frameCtx);
               for (const entry of projected.diagnostics) diagnostics.push(entry);
               for (const record2 of projected.records) {
                 if (record2.type === "epoch") this._flushResourcePolicy(diagnostics);
@@ -48928,6 +48994,55 @@ var init_session_watcher = __esm({
         for (const entry of result.diagnostics) diagnostics.push(entry);
         this._consumeClosedSegment(result, captureMode, diagnostics);
         return { diagnostics };
+      }
+      // The attribution store bound to the session this frame belongs to, for native interpretation to recall a
+      // call's record and offer one to keep. A store failure never reaches interpretation as an exception: a
+      // recall that fails is a miss and a remember that fails keeps nothing, each as a diagnostic of the frame.
+      // `remember` exists only on a live append, with `captureMode` read from the frame itself: the local default
+      // `applyHarnessFrame` applies would make an absent one live.
+      _frameContext(frame, diagnostics) {
+        const sessionId = this._sessionId;
+        if (!sessionId) return {};
+        const frameCtx = {
+          recall: this._recallFor(sessionId, (toolUseId, error2) => {
+            diagnostics.push(diagnostic(
+              "attribution_recall_failed",
+              `attribution record for tool use ${toolUseId} could not be recalled: ${error2.message}`
+            ));
+          })
+        };
+        if (frame.transition === "append" && frame.captureMode === "live") {
+          frameCtx.remember = (toolUseId, record2) => {
+            try {
+              this._store.rememberAttribution(sessionId, toolUseId, record2);
+            } catch (error2) {
+              diagnostics.push(diagnostic(
+                "attribution_remember_failed",
+                `attribution record for tool use ${toolUseId} could not be kept: ${error2.message}`
+              ));
+            }
+          };
+        }
+        return frameCtx;
+      }
+      // The context a capture operation hands `resourceKeysOf`: the same session-bound `recall` a frame gets,
+      // and no `remember`, because capture only reads what ingestion kept. Capture has no diagnostics exit, so a
+      // failed read is just a miss.
+      _captureContext() {
+        const sessionId = this._sessionId;
+        return sessionId ? { recall: this._recallFor(sessionId) } : {};
+      }
+      // The one store read behind every `recall`. The store method is looked up at call time, so a store without
+      // it fails like any other read does. A failure answers a miss and goes to `onFailure` when there is one.
+      _recallFor(sessionId, onFailure) {
+        return (toolUseId) => {
+          try {
+            return this._store.recallAttribution(sessionId, toolUseId);
+          } catch (error2) {
+            onFailure?.(toolUseId, error2);
+            return null;
+          }
+        };
       }
       _installFreshRuntime(sourceLocator) {
         this._pendingNewResourceKeys = /* @__PURE__ */ new Set();
@@ -49328,7 +49443,15 @@ var init_session_watcher = __esm({
       async _captureTurns() {
         const read = await this._dialogueSource.read(this._sourceLocator);
         if (read.status !== "ok") return { status: read.status, turns: [] };
-        return { status: "ok", ...captureCurrentEpochTurns({ observations: read.observations, dialogueProjection: this._dialogueProjection }) };
+        const context = this._captureContext();
+        return {
+          status: "ok",
+          ...captureCurrentEpochTurns({
+            observations: read.observations,
+            dialogueProjection: this._dialogueProjection,
+            resourceKeysOf: this._resourceKeysOf ? (pair) => this._resourceKeysOf(pair, context) : void 0
+          })
+        };
       }
       // The two files' one address, derived here and nowhere else. The key is the Context Epoch — this session
       // plus the epoch's first anchor — so a re-fetch after the epoch grew still finds the notes already
@@ -49626,13 +49749,13 @@ async function Module2(moduleArg = {}) {
       }
       readAsync = /* @__PURE__ */ __name(async (url) => {
         if (isFileURI(url)) {
-          return new Promise((resolve5, reject) => {
+          return new Promise((resolve3, reject) => {
             var xhr = new XMLHttpRequest();
             xhr.open("GET", url, true);
             xhr.responseType = "arraybuffer";
             xhr.onload = () => {
               if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                resolve5(xhr.response);
+                resolve3(xhr.response);
                 return;
               }
               reject(xhr.status);
@@ -49828,9 +49951,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module["instantiateWasm"]) {
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve3, reject) => {
         Module["instantiateWasm"](info2, (mod, inst) => {
-          resolve5(receiveInstance(mod, inst));
+          resolve3(receiveInstance(mod, inst));
         });
       });
     }
@@ -50243,7 +50366,7 @@ async function Module2(moduleArg = {}) {
     }
   }, "updateGOT");
   var relocateExports = /* @__PURE__ */ __name((exports, memoryBase2, replace) => {
-    var relocated = {};
+    var relocated2 = {};
     for (var e in exports) {
       var value = exports[e];
       if (typeof value == "object") {
@@ -50252,10 +50375,10 @@ async function Module2(moduleArg = {}) {
       if (typeof value == "number") {
         value += memoryBase2;
       }
-      relocated[e] = value;
+      relocated2[e] = value;
     }
-    updateGOT(relocated, replace);
-    return relocated;
+    updateGOT(relocated2, replace);
+    return relocated2;
   }, "relocateExports");
   var isSymbolDefined = /* @__PURE__ */ __name((symName) => {
     var existing = wasmImports[symName];
@@ -51161,8 +51284,8 @@ async function Module2(moduleArg = {}) {
   if (runtimeInitialized) {
     moduleRtn = Module;
   } else {
-    moduleRtn = new Promise((resolve5, reject) => {
-      readyPromiseResolve = resolve5;
+    moduleRtn = new Promise((resolve3, reject) => {
+      readyPromiseResolve = resolve3;
       readyPromiseReject = reject;
     });
   }
@@ -55610,7 +55733,7 @@ function createMeasurementProjection({
   captureSources,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload
+  interpretSkillPayload: interpretSkillPayload2
 }) {
   const invariantPrefix = `${scope.replaceAll("-", " ")} invariant`;
   function invariant7(ok, message) {
@@ -55620,6 +55743,7 @@ function createMeasurementProjection({
     return { scope, code, message };
   }
   let callByToolUseId = /* @__PURE__ */ new Map();
+  let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
@@ -55650,17 +55774,17 @@ function createMeasurementProjection({
     for (const effect of interpreted.effects) records.push({ type: "effect", ...effect });
     for (const residual of interpreted.residuals) records.push({ type: "residual", ...residual });
   }
-  function projectToolUse(observation, records, diagnostics) {
+  function projectToolUse(observation, frameCtx, records, diagnostics) {
     const id = observation.toolUseId;
     const entry = callByToolUseId.get(id);
     if (entry && (entry.phase === "await-skill-payload" || entry.phase === "completed")) return;
-    const interpreted = interpretToolUse(observation, context);
+    const interpreted = interpretToolUse(observation, context, { scratch, frameCtx });
     mergeTelemetry(interpreted.telemetry, diagnostics);
     callByToolUseId.set(id, interpreted.pending ? { phase: "await-result", pending: interpreted.pending } : { phase: "issued" });
     pushRecords(interpreted, records);
-    if (entry && entry.phase === "held") projectToolResult(entry.result, records, diagnostics);
+    if (entry && entry.phase === "held") projectToolResult(entry.result, frameCtx, records, diagnostics);
   }
-  function projectToolResult(observation, records, diagnostics) {
+  function projectToolResult(observation, frameCtx, records, diagnostics) {
     const id = observation.toolUseId;
     const entry = callByToolUseId.get(id);
     if (!entry) {
@@ -55672,7 +55796,7 @@ function createMeasurementProjection({
       return;
     }
     if (entry.phase !== "await-result") return;
-    const completed = completeToolResult(entry.pending, observation, context);
+    const completed = completeToolResult(entry.pending, observation, context, { scratch, frameCtx });
     mergeTelemetry(completed.telemetry, diagnostics);
     callByToolUseId.set(id, completed.skillContinuation ? {
       phase: "await-skill-payload",
@@ -55685,20 +55809,21 @@ function createMeasurementProjection({
     const entry = callByToolUseId.get(observation.toolUseId);
     if (!entry || entry.phase !== "await-skill-payload") return;
     callByToolUseId.set(observation.toolUseId, { phase: "completed" });
-    const interpreted = interpretSkillPayload(
+    const interpreted = interpretSkillPayload2(
       { resourceKey: entry.resourceKey, issuingPolicy: entry.issuingPolicy },
       observation
     );
     mergeTelemetry(interpreted.telemetry, diagnostics);
     pushRecords(interpreted, records);
   }
-  function project(observation) {
+  function project(observation, frameCtx) {
     invariant7(observation !== null && typeof observation === "object", "observation must be an object");
     const records = [];
     const diagnostics = [];
     switch (observation.type) {
       case "epoch-boundary":
         callByToolUseId = /* @__PURE__ */ new Map();
+        scratch = /* @__PURE__ */ new Map();
         records.push({ type: "epoch" });
         break;
       case "turn-boundary":
@@ -55719,10 +55844,10 @@ function createMeasurementProjection({
         });
         break;
       case "tool-use":
-        projectToolUse(observation, records, diagnostics);
+        projectToolUse(observation, frameCtx, records, diagnostics);
         break;
       case "tool-result":
-        projectToolResult(observation, records, diagnostics);
+        projectToolResult(observation, frameCtx, records, diagnostics);
         break;
       case "skill-payload":
         projectSkillPayload(observation, records, diagnostics);
@@ -55738,6 +55863,7 @@ function createMeasurementProjection({
     const closing = sidecarByStepId;
     sidecarByStepId = /* @__PURE__ */ new Map();
     callByToolUseId = /* @__PURE__ */ new Map();
+    scratch = /* @__PURE__ */ new Map();
     const diagnostics = [];
     if (closedSegment == null) return { artifact: null, diagnostics };
     let payload;
@@ -55763,40 +55889,36 @@ var init_measurement_projection = __esm({
 });
 
 // lib/harness/claude-code/measurement-projection.js
-import nodePath from "node:path";
-import { homedir as homedir5 } from "node:os";
 function invariant4(ok, message) {
   if (!ok) throw new Error(`claude code measurement projection invariant: ${message}`);
 }
 function createClaudeCodeMeasurementProjection({
   cwd = null,
   projectRoot = null,
-  sourceLocator = null,
   resolveModelPolicy,
   interpretToolUse,
   completeToolResult,
-  interpretSkillPayload,
-  interpretTaskNotification
+  interpretSkillPayload: interpretSkillPayload2,
+  interpretTaskNotification: interpretTaskNotification2
 } = {}) {
   invariant4(typeof resolveModelPolicy === "function", "resolveModelPolicy must be a function");
   invariant4(typeof interpretToolUse === "function", "interpretToolUse must be a function");
   invariant4(typeof completeToolResult === "function", "completeToolResult must be a function");
-  invariant4(typeof interpretSkillPayload === "function", "interpretSkillPayload must be a function");
-  invariant4(typeof interpretTaskNotification === "function", "interpretTaskNotification must be a function");
+  invariant4(typeof interpretSkillPayload2 === "function", "interpretSkillPayload must be a function");
+  invariant4(typeof interpretTaskNotification2 === "function", "interpretTaskNotification must be a function");
   const sessionCwd = cwd || projectRoot || null;
-  const transcriptDir = typeof sourceLocator === "string" && sourceLocator.length > 0 ? nodePath.dirname(sourceLocator) : null;
-  const context = { path: nodePath, homedir: homedir5, sessionCwd, transcriptDir, resolveModelPolicy };
+  const context = { sessionCwd, resolveModelPolicy };
   const shared = createMeasurementProjection({
     scope: "claude-code-measurement-projection",
     context,
     captureSources: { live: "cc-live", replay: "cc-replay" },
     interpretToolUse,
     completeToolResult,
-    interpretSkillPayload
+    interpretSkillPayload: interpretSkillPayload2
   });
-  function project(observation) {
+  function project(observation, frameCtx) {
     if (observation?.type === "task-notification") {
-      const interpreted = interpretTaskNotification(observation);
+      const interpreted = interpretTaskNotification2(observation);
       return {
         records: [
           ...interpreted.effects.map((effect) => ({ type: "effect", ...effect })),
@@ -55805,7 +55927,7 @@ function createClaudeCodeMeasurementProjection({
         diagnostics: []
       };
     }
-    return shared.project(observation);
+    return shared.project(observation, frameCtx);
   }
   return { project, finishSegment: shared.finishSegment };
 }
@@ -55815,108 +55937,17 @@ var init_measurement_projection2 = __esm({
   }
 });
 
-// lib/serena-parse.js
-function isSerenaError(resultText) {
-  if (!resultText || typeof resultText !== "string") return false;
-  if (ERROR_PATTERNS.test(resultText)) return true;
-  if (/^Error: /.test(resultText)) return true;
-  try {
-    const outer = JSON.parse(resultText);
-    const raw = outer?.result;
-    if (typeof raw === "string" && ERROR_PATTERNS.test(raw)) return true;
-  } catch {
-  }
-  return false;
-}
-function parseSerenaFindSymbol(resultText) {
-  try {
-    const outer = JSON.parse(resultText);
-    const raw = outer?.result ?? "";
-    if (typeof raw !== "string") return { items: [], truncated: false };
-    if (raw.startsWith("Matched ")) return { items: [], truncated: true };
-    const items = [];
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr)) return { items: [], truncated: false };
-    for (const item of arr) {
-      if (!item || typeof item !== "object") continue;
-      const path3 = normPath(item.relative_path || "");
-      if (!path3) continue;
-      items.push({
-        path: path3,
-        startLine: item.body_location?.start_line ?? 0,
-        endLine: item.body_location?.end_line ?? 0,
-        body: typeof item.body === "string" ? item.body : null
-      });
-    }
-    return { items, truncated: false };
-  } catch {
-    return { items: [], truncated: false };
-  }
-}
-function parseSerenaReferencing(resultText) {
-  try {
-    const outer = JSON.parse(resultText);
-    const raw = outer?.result ?? "";
-    if (typeof raw !== "string") return { files: {} };
-    const dict = JSON.parse(raw);
-    if (typeof dict !== "object" || dict === null || Array.isArray(dict)) return { files: {} };
-    const files = /* @__PURE__ */ Object.create(null);
-    for (const [filePath, kinds] of Object.entries(dict)) {
-      if (typeof kinds !== "object" || kinds === null) continue;
-      const entries = [];
-      for (const refs of Object.values(kinds)) {
-        if (!Array.isArray(refs)) continue;
-        for (const ref of refs) {
-          if (!ref || typeof ref !== "object") continue;
-          entries.push({
-            startLine: ref.body_location?.start_line ?? 0,
-            endLine: ref.body_location?.end_line ?? 0,
-            context: ref.content_around_reference || ""
-          });
-        }
-      }
-      if (entries.length > 0) files[normPath(filePath)] = entries;
-    }
-    return { files };
-  } catch {
-    return { files: {} };
-  }
-}
-function parseSerenaPlainText(resultText) {
-  try {
-    const outer = JSON.parse(resultText);
-    const raw = outer?.result;
-    return typeof raw === "string" ? raw : resultText;
-  } catch {
-    return resultText;
-  }
-}
-function normPath(p) {
-  if (!p) return "";
-  return p.replace(/\\\\/g, "/").replace(/\\/g, "/");
-}
-var ERROR_PATTERNS;
-var init_serena_parse = __esm({
-  "lib/serena-parse.js"() {
-    ERROR_PATTERNS = /^Error executing tool[:\s]|^No \w+ found matching/;
-  }
-});
-
 // lib/bash-feature.js
 function stripShellPreamble(command) {
   let rest = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim();
-  let effectiveCwd = null;
-  let headerLines = 0;
   for (; ; ) {
     let m = rest.match(CD_PREAMBLE_RE);
     if (m) {
-      effectiveCwd = m[1];
       rest = rest.slice(m[0].length);
       continue;
     }
     m = rest.match(ECHO_PREAMBLE_RE);
     if (m) {
-      headerLines += 1;
       rest = rest.slice(m[0].length);
       continue;
     }
@@ -55925,7 +55956,7 @@ function stripShellPreamble(command) {
       rest = rest.slice(m[0].length);
       continue;
     }
-    return { rest, effectiveCwd, headerLines };
+    return rest;
   }
 }
 function splitByPipe(s) {
@@ -55999,7 +56030,7 @@ function redactCmd(cmd) {
   return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
 }
 function pipeActorDisplay(cmd) {
-  const stripped = stripShellPreamble(cmd).rest;
+  const stripped = stripShellPreamble(cmd);
   const firstLine = stripped.split("\n")[0].split(";")[0];
   const catMatch = firstLine.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
   const headMatch = !catMatch && firstLine.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
@@ -56024,12 +56055,12 @@ function bashFeature(command) {
   if (pipeActorResult) return pipeActorResult;
   cmd = cmd.split("|")[0].trim();
   cmd = cmd.replace(/^source\s+\S+\s*;\s*/i, "");
-  cmd = stripShellPreamble(cmd).rest;
+  cmd = stripShellPreamble(cmd);
   while (/^(sudo|env|time|nohup)\s+/.test(cmd)) cmd = cmd.replace(/^(sudo|env|time|nohup)\s+/, "");
   for (; ; ) {
     const before = cmd;
     cmd = cmd.replace(/^([A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s"']*)(?:\s+|\s*(?:&&|;)\s*))+/, "");
-    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, "")).rest;
+    cmd = stripShellPreamble(cmd.replace(/^(?:&&|;)\s*/, ""));
     if (cmd === before) break;
   }
   const firstLine = cmd.split("\n")[0];
@@ -56093,683 +56124,64 @@ var init_bash_feature = __esm({
   "lib/bash-feature.js"() {
     LEADING_COMMENT_RE = /^(\s*#[^\n]*(\n|$))+/;
     DISPLAY_CHARS = 40;
-    CD_PREAMBLE_RE = /^cd\s+(\S+)\s*(?:&&|;)\s*/;
+    CD_PREAMBLE_RE = /^cd\s+\S+\s*(?:&&|;)\s*/;
     ECHO_PREAMBLE_RE = /^echo\s+("[^"$`\\\n]*"|'[^'\n]*'|[^\s"'$`;&|<>]+)\s*(?:&&|;)\s*/;
     FN_PREAMBLE_RE = /^fn\w+\s*&&\s*/;
     SED_LINE_DROP_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)[\d,$p;\s]+\1$/;
   }
 });
 
-// lib/tool-effects.js
-function lineFragments(lines) {
-  const byLine = /* @__PURE__ */ new Map();
-  for (const [line, tokens] of lines) byLine.set(line, tokens);
-  return [...byLine].map(([key, tokens]) => ({ key, tokens }));
-}
-function effectFor(update, resourceKey) {
-  const spentTokens = update.spent > 0 ? update.spent : 0;
-  if (update.type === "grepMultiFile") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: Object.entries(update.files).map(([key, entries]) => ({
-        resourceKey: key,
-        mutation: { kind: "merge-fragments", fragments: lineFragments(entries) }
-      }))
-    };
-  }
-  if (update.type === "fullSet") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "write") {
-    return {
-      access: "write",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  if (update.type === "lineUpdate") {
-    return {
-      access: "read",
-      overheadTokens: update.overhead,
-      spentTokens,
-      impacts: [{ resourceKey, mutation: { kind: "merge-fragments", fragments: lineFragments(update.lines) } }]
-    };
-  }
-  return {
-    access: "write",
-    overheadTokens: 0,
-    spentTokens,
-    impacts: [{ resourceKey, mutation: { kind: "adjust-total", deltaTokens: update.value } }]
-  };
-}
-function pathEventsFor(update, resourceKey, rawPath, toolType) {
-  if (update.type === "grepMultiFile") {
-    return Object.keys(update.files).map((key) => ({ path: key, rawPath: key, toolType, isFullRead: 0 }));
-  }
-  if (resourceKey == null) return [];
-  const isFullRead = update.type === "fullSet" ? 1 : update.type === "lineUpdate" ? 0 : null;
-  return [{ path: resourceKey, rawPath, toolType, isFullRead }];
-}
-var init_tool_effects = __esm({
-  "lib/tool-effects.js"() {
-  }
-});
-
-// lib/harness/claude-code/native-tools.js
-function canonicalizerFor(context) {
-  const ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  const homedir9 = context.homedir;
-  return (raw, base) => {
-    let value = raw;
-    if (value === "~" || value.startsWith("~/")) value = ops.join(homedir9(), value.slice(1));
-    const abs = ops.isAbsolute(value) ? value : ops.resolve(base || "/", value);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor(observation, context) {
-  if (typeof observation.cwd === "string" && observation.cwd.length > 0) return observation.cwd;
-  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
-  return context.transcriptDir ?? null;
-}
-function resultTextOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n");
-  }
-  return "";
-}
-function hasTrailingSegment(cmd) {
-  if (cmd.includes("\n")) return true;
-  return /;|&&/.test(stripQuotedStrings(cmd));
-}
-function sedSegmentsOf(spec) {
-  const parts2 = String(spec).split(";").map((s) => s.trim()).filter((s) => s.length > 0);
-  if (parts2.length === 0) return null;
-  const segments = [];
-  for (const part of parts2) {
-    const m = part.match(SED_SEGMENT_RE);
-    if (!m) return null;
-    const start2 = Number(m[1]);
-    if (start2 < 1) return null;
-    const end = m[2] === void 0 ? start2 : m[2] === "$" ? null : Number(m[2]);
-    if (end !== null && end < start2) return null;
-    segments.push({ start: start2, end });
-  }
-  if (segments.length > 1 && segments.some((s) => s.end === null)) return null;
-  segments.sort((a, b) => a.start - b.start);
-  for (let i2 = 1; i2 < segments.length; i2++) if (segments[i2].start <= segments[i2 - 1].end) return null;
-  return segments;
-}
-function sedPromisedWidth(segments) {
-  let width = 0;
-  for (const s of segments) {
-    if (s.end === null) return null;
-    width += s.end - s.start + 1;
-  }
-  return width;
-}
-function sedLineKeys(segments, count) {
-  const keys = [];
-  for (const s of segments) {
-    const end = s.end === null ? Infinity : s.end;
-    for (let line = s.start; line <= end && keys.length < count; line++) keys.push(line);
-    if (keys.length >= count) break;
-  }
-  let next = keys.length ? keys[keys.length - 1] + 1 : 1;
-  while (keys.length < count) keys.push(next++);
-  return keys;
-}
-function sedKeysFor(segments, printed, count) {
-  if (segments.length > 1 && printed !== sedPromisedWidth(segments)) return null;
-  return sedLineKeys(segments, count);
-}
-function parseBashFileRead(command) {
-  const preamble = stripShellPreamble(command);
-  const effectiveCwd = preamble.effectiveCwd;
-  const headerLines = preamble.headerLines;
-  let cmd = preamble.rest;
-  if (!cmd) return null;
-  if (/^sed\s/.test(cmd)) cmd = cmd.replace(STDERR_DISCARD_RE, "");
-  let m = cmd.match(SED_CAT_PIPE_RE);
-  if (m && !hasShellExpansion(m[1]) && !hasTrailingSegment(cmd)) {
-    const segments = sedSegmentsOf(m[3]);
-    if (segments) return { type: "sed", path: m[1], effectiveCwd, headerLines, segments, numbered: false };
-  }
-  m = cmd.match(/^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)/);
-  if (m && !hasShellExpansion(m[1])) {
-    if (hasTrailingSegment(cmd)) return null;
-    const pipeType = classifyPipe(cmd, "cat");
-    if (pipeType === null) return null;
-    return { type: pipeType, path: m[1], effectiveCwd, headerLines };
-  }
-  m = cmd.match(/^head\s+(?:-[A-Za-z]*\s*\d*\s+)*['"]?([^\s|;><'"]+)/);
-  if (m && !hasShellExpansion(m[1])) {
-    if (hasTrailingSegment(cmd)) return null;
-    const pipeType = classifyPipe(cmd, "head");
-    if (pipeType === null) return null;
-    return { type: pipeType, path: m[1], effectiveCwd, headerLines };
-  }
-  m = cmd.match(SED_READ_RE);
-  if (m && !hasShellExpansion(m[3])) {
-    if (hasTrailingSegment(cmd)) return null;
-    const segments = sedSegmentsOf(m[2]);
-    if (segments) return { type: "sed", path: m[3], effectiveCwd, headerLines, segments, numbered: m[4] != null };
-  }
-  m = cmd.match(/^(grep|rg)\s+(.*)/);
-  if (m) {
-    const hasLineNum = /(?:^|\s)-[A-Za-z]*n/.test(m[2]) && !/(?:^|\s)-[A-Za-z]*[clL]/.test(m[2]);
-    if (!hasLineNum) return null;
-    const bare = stripQuotedStrings(m[2]);
-    const firstStage = bare.split("|")[0];
-    const tokens = firstStage.replace(/\s*\d*>{1,2}.*$/, "").trim().split(/\s+/).filter(Boolean);
-    let filePath = null;
-    for (let i2 = tokens.length - 1; i2 >= 0; i2--) {
-      const t = tokens[i2];
-      if (t.startsWith("-")) continue;
-      if (/[./]/.test(t)) {
-        filePath = t;
-        break;
-      }
-      break;
-    }
-    if (filePath && !isUnresolvablePath(filePath)) {
-      if (hasTrailingSegment(cmd)) return null;
-      const pipeType = classifyPipe(cmd, "grep-n");
-      if (pipeType === null) return null;
-      return { type: pipeType, path: filePath, effectiveCwd, headerLines };
-    }
-  }
-  const heredocMatch = cmd.split("\n")[0].match(/^cat\s+<<-?\s*['"]?([\w-]+)['"]?\s*>\s*['"]?([^\s'"]+)['"]?\s*$/);
-  if (heredocMatch) {
-    const marker = heredocMatch[1];
-    const writePath = heredocMatch[2];
-    if (hasShellExpansion(writePath)) return null;
-    const allLines = String(command || "").split("\n");
-    let startIdx = 0;
-    for (let i2 = 0; i2 < allLines.length; i2++) {
-      if (allLines[i2].includes("<<") && allLines[i2].includes(marker)) {
-        startIdx = i2;
-        break;
-      }
-    }
-    let endIdx = -1;
-    for (let i2 = startIdx + 1; i2 < allLines.length; i2++) {
-      if (allLines[i2].trim() === marker) {
-        endIdx = i2;
-        break;
-      }
-    }
-    if (endIdx < 0) return null;
-    return { type: "cat-write", path: writePath, effectiveCwd, headerLines, heredocBody: allLines.slice(startIdx + 1, endIdx).join("\n") };
-  }
-  return null;
-}
-function splitShellSegments(cmd) {
-  if (HEREDOC_RE.test(cmd)) return null;
-  const segments = [];
-  let current = "";
-  let i2 = 0;
-  while (i2 < cmd.length) {
-    const ch = cmd[i2];
-    if (ch === "'") {
-      const end = cmd.indexOf("'", i2 + 1);
-      if (end < 0) {
-        current += cmd.slice(i2);
-        break;
-      }
-      current += cmd.slice(i2, end + 1);
-      i2 = end + 1;
-      continue;
-    }
-    if (ch === '"') {
-      let j = i2 + 1;
-      while (j < cmd.length && cmd[j] !== '"') {
-        if (cmd[j] === "\\") j++;
-        j++;
-      }
-      current += cmd.slice(i2, j + 1);
-      i2 = j + 1;
-      continue;
-    }
-    if (ch === "\\" && i2 + 1 < cmd.length) {
-      current += cmd.slice(i2, i2 + 2);
-      i2 += 2;
-      continue;
-    }
-    if (ch === "\n" || ch === ";") {
-      segments.push(current);
-      current = "";
-      i2++;
-      continue;
-    }
-    if ((ch === "&" || ch === "|") && cmd[i2 + 1] === ch) {
-      segments.push(current);
-      current = "";
-      i2 += 2;
-      continue;
-    }
-    current += ch;
-    i2++;
-  }
-  segments.push(current);
-  return segments.map((s) => s.trim()).filter((s) => s.length > 0 && !s.startsWith("#"));
-}
-function blockOf(items) {
-  const commands = items.filter((item) => item.kind === "command");
-  if (commands.length !== 1) return { command: null, lead: 0, trail: 0 };
-  const at = items.indexOf(commands[0]);
-  return { command: commands[0].text, lead: at, trail: items.length - at - 1 };
-}
-function parseBashCompound(command) {
-  const cmd = String(command || "").trim().replace(LEADING_COMMENT_RE, "").trim();
-  const segments = splitShellSegments(cmd);
-  if (!segments || segments.length < 2) return null;
-  const items = [];
-  let cwd = null;
-  for (const text of segments) {
-    let m;
-    if (m = text.match(CD_SEGMENT_RE)) {
-      cwd = m[1];
-      continue;
-    }
-    if (DIRECTORY_CHANGE_RE.test(text)) return null;
-    if (BLANK_ECHO_RE.test(text)) {
-      items.push({ kind: "blank" });
-      continue;
-    }
-    if (m = text.match(ECHO_LITERAL_RE)) {
-      items.push({ kind: "anchor", literal: m[1] ?? m[2] ?? m[3] });
-      continue;
-    }
-    items.push({ kind: "command", text: cwd ? `cd ${cwd} && ${text}` : text });
-  }
-  const anchors = items.filter((item) => item.kind === "anchor").map((item) => item.literal);
-  if (anchors.length === 0) return null;
-  const blocks = [];
-  let run2 = [];
-  for (const item of items) {
-    if (item.kind === "anchor") {
-      blocks.push(blockOf(run2));
-      run2 = [];
-    } else run2.push(item);
-  }
-  blocks.push(blockOf(run2));
-  return { anchors, blocks };
-}
-function anchorLinesOf(anchors, lines) {
-  const at = [];
-  let from = 0;
-  for (const literal2 of anchors) {
-    let hit = -1;
-    for (let i2 = 0; i2 < lines.length; i2++) {
-      if (lines[i2] !== literal2) continue;
-      if (hit >= 0) return null;
-      hit = i2;
-    }
-    if (hit < from) return null;
-    at.push(hit);
-    from = hit + 1;
-  }
-  return at;
-}
-function promisedLineCount(command) {
-  const read = stripShellPreamble(command).rest;
-  let m = read.match(SED_SPEC_PREFIX_RE);
-  if (m) {
-    const segments = sedSegmentsOf(m[2]);
-    if (segments) return sedPromisedWidth(segments);
-  }
-  m = read.match(SED_CAT_PIPE_RE);
-  if (m) {
-    const segments = sedSegmentsOf(m[3]);
-    if (segments) return sedPromisedWidth(segments);
-  }
-  m = read.match(HEAD_COUNT_RE);
-  if (m) return Number(m[1]);
-  if (/^head\s/.test(read)) return HEAD_DEFAULT_LINES;
-  return null;
-}
-function blockPassesGuards(parsed, content, command) {
-  if (content.length === 1 && READ_DIAGNOSTIC_RE.test(content[0])) return false;
-  const promised = promisedLineCount(command);
-  if (promised != null && content.length > promised) return false;
-  if (parsed.type === "grep-n") return content.every((line) => line === "" || /^\d+:/.test(line));
-  return true;
-}
-function stripHarnessLines(lines) {
-  if (lines.length && CWD_RESET_LINE_RE.test(lines[lines.length - 1])) lines.pop();
-  return lines;
-}
-function compoundFor(input, base, canon, adapter) {
-  const plan = parseBashCompound(input.command);
-  if (!plan) return null;
-  const blocks = plan.blocks.map((block) => {
-    let target = null;
-    if (block.command !== null) {
-      try {
-        target = adapter.extractTarget({ command: block.command }, base, canon);
-      } catch {
-        target = null;
-      }
-    }
-    return { ...block, target };
-  });
-  if (!blocks.some((block) => block.target !== null)) return null;
-  return { anchors: plan.anchors, blocks };
-}
-function stripQuotedStrings(s) {
-  let result = "";
-  let i2 = 0;
-  while (i2 < s.length) {
-    if (s[i2] === "'") {
-      const end = s.indexOf("'", i2 + 1);
-      if (end === -1) break;
-      i2 = end + 1;
-    } else if (s[i2] === '"') {
-      let j = i2 + 1;
-      while (j < s.length) {
-        if (s[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (s[j] === '"') break;
-        j++;
-      }
-      if (j >= s.length) break;
-      i2 = j + 1;
-    } else {
-      result += s[i2];
-      i2++;
-    }
-  }
-  return result;
-}
-function hasShellExpansion(p) {
-  if (p === "~" || p.startsWith("~/")) {
-    const rest = p.slice(1);
-    if (/\$[({A-Za-z_]|`/.test(rest)) return true;
-    return /[*?]/.test(rest);
-  }
-  if (/\$[({A-Za-z_]|`/.test(p) || p.startsWith("~")) return true;
-  return /[*?]/.test(p);
-}
-function isUnresolvablePath(p) {
-  if (p === "~" || p.startsWith("~/")) {
-    const rest = p.slice(1);
-    if (/\$[({A-Za-z_]|`/.test(rest)) return true;
-    return /[*?]/.test(rest);
-  }
-  if (p.includes("$(") || p.includes("`") || p.startsWith("~")) return true;
-  if (/[*?]/.test(p)) return true;
-  if (p === "." || p === "/") return true;
-  return p === "/dev/null";
-}
-function serenaInsert(input, result, _base, ctp) {
-  if (isSerenaError(result)) return null;
-  const body2 = input.body ?? "";
-  if (!body2) return null;
-  const bodyTokens = charsToTokens(body2, ctp);
-  return { type: "editDelta", value: bodyTokens, spent: bodyTokens + TOOL_OVERHEAD.Serena };
-}
-function adapterFor(toolName) {
-  return NATIVE_ADAPTERS.find((a) => a.match(toolName)) || null;
-}
-function isEffectiveUpdate(update, target) {
-  if (!update) return false;
-  if (update.type === "grepMultiFile") return Object.keys(update.files || {}).length > 0;
-  if (update.type === "fullSet" || update.type === "lineUpdate") {
-    return target != null && Array.isArray(update.lines) && update.lines.length > 0;
-  }
-  if (update.type === "write" || update.type === "editDelta") return target != null;
-  return false;
-}
+// lib/harness/claude-code/tool-evidence-profile.js
 function mcpDisplay(toolName) {
-  if (!toolName || !toolName.startsWith("mcp__")) return toolName;
-  let name2 = toolName.slice(5).replace(/^plugin_/, "");
-  const segments = name2.split("__");
-  if (segments.length > 0) {
-    const firstSeg = segments[0];
-    const halfLen = Math.floor(firstSeg.length / 2);
-    for (let len = halfLen + 1; len >= 2; len--) {
-      const candidate = firstSeg.slice(0, len);
-      if (firstSeg.slice(len) === "_" + candidate) {
-        segments[0] = candidate;
-        break;
-      }
+  const segments = toolName.slice(MCP_PREFIX.length).replace(/^plugin_/, "").split("__");
+  const firstSeg = segments[0];
+  const halfLen = Math.floor(firstSeg.length / 2);
+  for (let len = halfLen + 1; len >= 2; len--) {
+    const candidate = firstSeg.slice(0, len);
+    if (firstSeg.slice(len) === "_" + candidate) {
+      segments[0] = candidate;
+      break;
     }
   }
   return segments.join(" ");
 }
-function residualIdentityFor(toolName, input) {
-  const isBash = toolName === "Bash";
-  const isMcp = typeof toolName === "string" && toolName.startsWith("mcp__");
-  if (!isBash && !isMcp) return null;
-  if (isBash) {
+function residualIdentity(name2, input) {
+  if (name2 === "Bash") {
     const feature = bashFeature(input.command);
-    return {
-      groupKey: feature.name || "(bash)",
-      kind: "bash",
-      detail: feature.detail || "",
-      // The serialized length is a weight component; the raw input itself is never stored.
-      inputLength: JSON.stringify(input).length
-    };
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail };
   }
-  return { groupKey: mcpDisplay(toolName), kind: "mcp", detail: "", inputLength: JSON.stringify(input).length };
-}
-function isLoadHandoffTool(toolName) {
-  return typeof toolName === "string" && toolName.endsWith("load_handoff");
-}
-function resolvedLoadToken(resultText) {
-  try {
-    const parsed = JSON.parse(resultText);
-    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
-  } catch {
-    return null;
+  if (name2.startsWith(MCP_PREFIX)) {
+    return { groupKey: mcpDisplay(name2), kind: "mcp", detail: "" };
   }
+  return { groupKey: name2, kind: "tool", detail: "" };
 }
-function policyFor(context, modelId) {
-  return context.resolveModelPolicy(modelId ?? null);
+function isLoadHandoffTool(name2) {
+  return name2.endsWith("load_handoff");
 }
-function interpretClaudeCodeToolUse(observation, context) {
-  const toolUseId = observation.toolUseId;
-  const issuingStepId = observation.messageId ?? null;
-  const issuingPolicy = policyFor(context, observation.model);
-  const input = observation.input || {};
-  const explicitToken = isLoadHandoffTool(observation.name) && typeof input.load_token === "string" ? input.load_token : null;
-  const awaitLoadToken = isLoadHandoffTool(observation.name) && explicitToken === null;
-  const telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] };
-  const adapter = adapterFor(observation.name);
-  const base = baseDirFor(observation, context);
-  const canon = canonicalizerFor(context);
-  let target = null;
-  let targetResolved = adapter !== null;
-  if (adapter) {
-    try {
-      target = adapter.extractTarget(input, base, canon);
-    } catch {
-      targetResolved = false;
-    }
-  }
-  const isBash = adapter !== null && adapter.name === "Bash";
-  const effectEligible = targetResolved && !(isBash && target === null);
-  const compound = isBash && targetResolved && target === null ? compoundFor(input, base, canon, adapter) : null;
-  const residual = effectEligible || compound ? null : residualIdentityFor(observation.name, input);
-  let correlation = null;
-  if (effectEligible) {
-    correlation = {
-      kind: "effect",
-      toolUseId,
-      issuingStepId,
-      issuingPolicy,
-      awaitLoadToken,
-      adapter,
-      input,
-      target,
-      rawPath: input.file_path || input.path || target,
-      base,
-      // A shell result its adapter cannot price is still evidence, so the shell identity rides along.
-      residual: isBash ? residualIdentityFor(observation.name, input) : null
-    };
-  } else if (compound) {
-    correlation = {
-      kind: "compound",
-      toolUseId,
-      issuingStepId,
-      issuingPolicy,
-      awaitLoadToken,
-      adapter,
-      base,
-      compound,
-      residual: residualIdentityFor(observation.name, input)
-    };
-  } else if (residual) {
-    correlation = { kind: "residual", toolUseId, issuingStepId, issuingPolicy, awaitLoadToken, residual };
-  } else if (awaitLoadToken) {
-    correlation = { kind: "load-token", toolUseId, issuingStepId, issuingPolicy, awaitLoadToken };
-  }
-  return {
-    pending: correlation,
-    effects: [],
-    residuals: [],
-    telemetry
-  };
+function nonFileResource({ name: name2, input }) {
+  return name2 === "Skill" && input.skill ? { resourceKey: "skill:" + input.skill } : null;
 }
-function residualCompletion(residual, resultText, observation, telemetry) {
-  const { groupKey, kind, detail, inputLength } = residual;
-  return {
-    effects: [],
-    residuals: [{
-      groupKey,
-      weight: inputLength + resultText.length,
-      hadError: observation.isError === true,
-      meta: { kind, detail }
-    }],
-    telemetry,
-    skillContinuation: null
-  };
-}
-function completeCompound(correlation, observation, resultText, context, telemetry) {
-  const fallback = () => residualCompletion(correlation.residual, resultText, observation, telemetry);
-  if (observation.isError === true || PERSISTED_OUTPUT_RE.test(resultText)) return fallback();
-  const lines = resultText.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  stripHarnessLines(lines);
-  const at = anchorLinesOf(correlation.compound.anchors, lines);
-  if (!at) return fallback();
-  const { adapter, base, issuingPolicy } = correlation;
-  const canon = canonicalizerFor(context);
-  const effects = [];
-  let remainder = 0;
-  let start2 = 0;
-  correlation.compound.blocks.forEach((block, i2) => {
-    const end = i2 < at.length ? at[i2] : lines.length;
-    const content = lines.slice(start2, end);
-    start2 = end + 1;
-    const chars = content.join("\n").length;
-    if (block.target === null) {
-      remainder += chars;
-      return;
-    }
-    let lead = block.lead;
-    let trail = block.trail;
-    while (lead-- > 0 && content.length && content[0] === "") content.shift();
-    while (trail-- > 0 && content.length && content[content.length - 1] === "") content.pop();
-    if (content.length === 0) return;
-    if (!blockPassesGuards(parseBashFileRead(block.command), content, block.command)) {
-      remainder += chars;
-      return;
-    }
-    let update;
-    try {
-      update = adapter.computeUpdate({ command: block.command }, content.join("\n"), base, issuingPolicy.ctp, canon);
-    } catch {
-      update = null;
-    }
-    if (!isEffectiveUpdate(update, block.target)) {
-      remainder += chars;
-      return;
-    }
-    const effect = effectFor(update, block.target);
-    effects.push(effects.length === 0 ? effect : { ...effect, overheadTokens: 0, spentTokens: Math.max(0, effect.spentTokens - effect.overheadTokens) });
-    telemetry.pathEvents.push(...pathEventsFor(update, block.target, block.target, adapter.name));
-  });
-  if (effects.length === 0) return fallback();
-  const residuals = [];
-  if (remainder > 0) {
-    const { groupKey, kind, detail, inputLength } = correlation.residual;
-    residuals.push({ groupKey, weight: inputLength + remainder, hadError: false, meta: { kind, detail } });
-  }
-  return { effects, residuals, telemetry, skillContinuation: null };
-}
-function completeClaudeCodeToolResult(awaitResult, observation, context) {
-  const correlation = awaitResult;
-  const resultText = resultTextOf(observation.content);
-  const telemetry = {
-    toolUseId: correlation.toolUseId,
-    issuingStepId: correlation.issuingStepId,
-    loadToken: correlation.awaitLoadToken ? resolvedLoadToken(resultText) : null,
-    pathEvents: []
-  };
-  const nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
-  if (correlation.kind === "residual") return residualCompletion(correlation.residual, resultText, observation, telemetry);
-  if (correlation.kind === "compound") return completeCompound(correlation, observation, resultText, context, telemetry);
-  if (correlation.kind !== "effect") return nothing2;
-  const declined = () => correlation.residual ? residualCompletion(correlation.residual, resultText, observation, telemetry) : nothing2;
-  if (observation.isError === true) return declined();
-  const adapter = correlation.adapter;
-  let update;
-  try {
-    update = adapter.computeUpdate(
-      correlation.input,
-      resultText,
-      correlation.base,
-      correlation.issuingPolicy.ctp,
-      canonicalizerFor(context)
-    );
-  } catch {
-    return declined();
-  }
-  if (!isEffectiveUpdate(update, correlation.target)) return declined();
-  telemetry.pathEvents = pathEventsFor(update, correlation.target, correlation.rawPath, adapter.name);
-  return {
-    effects: [effectFor(update, correlation.target)],
-    residuals: [],
-    telemetry,
-    // A Skill result carries only a launch confirmation; the payload arrives as its own harness row, so
-    // the continuation is what lets that row replace this placeholder with the real content.
-    skillContinuation: adapter.name === "Skill" ? { resourceKey: correlation.target, issuingPolicy: correlation.issuingPolicy } : null
-  };
-}
-function interpretClaudeCodeSkillPayload(continuation, observation) {
+function interpretSkillPayload(continuation, observation) {
   const text = typeof observation.text === "string" ? observation.text : "";
   if (!text) return { effects: [], residuals: [], telemetry: null };
   const tokens = charsToTokens(text, continuation.issuingPolicy.ctp);
   return {
     effects: [{
       access: "read",
-      overheadTokens: TOOL_OVERHEAD.Read,
+      overheadTokens: SKILL_FRAMING_TOKENS,
       // The launch confirmation already carried this call's spend; the payload restates the same content
       // at its real size and buys nothing further.
       spentTokens: 0,
       impacts: [{
         resourceKey: continuation.resourceKey,
-        mutation: { kind: "replace-fragments", fragments: lineFragments([[1, tokens]]) }
+        mutation: { kind: "replace-fragments", fragments: [{ key: 1, tokens }] }
       }]
     }],
     residuals: [],
     telemetry: null
   };
 }
-function interpretClaudeCodeTaskNotification(observation) {
+function interpretTaskNotification(observation) {
   const text = typeof observation.text === "string" ? observation.text : "";
   const idMatch = text.match(TASK_ID_RE);
   const idPrefix = idMatch ? idMatch[1].slice(0, TASK_ID_PREFIX_CHARS) : "";
@@ -56786,311 +56198,1096 @@ function interpretClaudeCodeTaskNotification(observation) {
     telemetry: null
   };
 }
-function resolveClaudeCodeToolTarget(pair, context) {
-  const adapter = adapterFor(pair.name);
-  if (!adapter) return null;
-  const base = baseDirFor(pair, context);
-  try {
-    return adapter.extractTarget(pair.input || {}, base, canonicalizerFor(context)) ?? null;
-  } catch {
-    return null;
-  }
-}
-function classifyToolPair(pair, ctp) {
-  const adapter = adapterFor(pair.name);
-  if (!adapter) return "residual";
-  if (pair.result == null) return "residual";
-  if (pair.isError === true) return "residual";
-  let update;
-  try {
-    update = adapter.computeUpdate(pair.input || {}, resultTextOf(pair.result), null, ctp, canonicalizerFor(null));
-  } catch {
-    return "residual";
-  }
-  if (!isEffectiveUpdate(update, pair.resourceKey ?? null)) return "residual";
-  return adapter.name === "Skill" ? "skill" : "path";
-}
-var TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, SED_READ_RE, SED_SPEC_PREFIX_RE, SED_SEGMENT_RE, SED_CAT_PIPE_RE, STDERR_DISCARD_RE, HEREDOC_RE, CD_SEGMENT_RE, BLANK_ECHO_RE, DIRECTORY_CHANGE_RE, READ_DIAGNOSTIC_RE, ECHO_LITERAL_RE, HEAD_COUNT_RE, HEAD_DEFAULT_LINES, CWD_RESET_LINE_RE, PERSISTED_OUTPUT_RE, NATIVE_ADAPTERS;
-var init_native_tools = __esm({
-  "lib/harness/claude-code/native-tools.js"() {
+var MCP_PREFIX, TASK_ID_RE, TASK_SUMMARY_RE, AGENT_FINISHED_RE, TASK_ID_PREFIX_CHARS, claudeCodeToolEvidenceProfile;
+var init_tool_evidence_profile = __esm({
+  "lib/harness/claude-code/tool-evidence-profile.js"() {
     init_constants();
-    init_token_estimate();
-    init_serena_parse();
     init_bash_feature();
-    init_tool_effects();
+    init_token_estimate();
+    MCP_PREFIX = "mcp__";
     TASK_ID_RE = /<task-id>([^<]+)<\/task-id>/;
     TASK_SUMMARY_RE = /<summary>([^<]*)<\/summary>/;
     AGENT_FINISHED_RE = /^Agent "(.+)" finished$/;
     TASK_ID_PREFIX_CHARS = 8;
-    SED_READ_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s+([^\s|;><&'"]+)\s*(\|\s*cat\s+-n\s*)?$/;
-    SED_SPEC_PREFIX_RE = /^sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\1\s/;
-    SED_SEGMENT_RE = /^(\d+)(?:,(\d+|\$))?p$/;
-    SED_CAT_PIPE_RE = /^cat\s+(?:-[A-Za-z]*\s*)*['"]?([^\s|;><'"]+)['"]?\s*\|\s*sed\s+-n\s+(?:-e\s+)?(['"]?)([\d,$p;\s]+)\2\s*$/;
-    STDERR_DISCARD_RE = /\s+2>\s*\/dev\/null$/;
-    HEREDOC_RE = /<<-?\s*['"]?\w/;
-    CD_SEGMENT_RE = /^cd\s+(\S+)$/;
-    BLANK_ECHO_RE = /^echo(?:\s+(?:""|''))?$/;
-    DIRECTORY_CHANGE_RE = /^(?:cd|pushd|popd)\b/;
-    READ_DIAGNOSTIC_RE = /^(?:cat|head|sed|grep|rg): /;
-    ECHO_LITERAL_RE = /^echo\s+(?:"([^"$`\\\n]*)"|'([^'\n]*)'|([^\s"'$`;&|<>]+))$/;
-    HEAD_COUNT_RE = /^head\s+(?:-n\s*|-)(\d+)/;
-    HEAD_DEFAULT_LINES = 10;
-    CWD_RESET_LINE_RE = /^Shell cwd was reset to /;
-    PERSISTED_OUTPUT_RE = /^<persisted-output>/;
-    NATIVE_ADAPTERS = [
-      {
-        name: "Read",
-        match: (name2) => name2 === "Read",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        computeUpdate: (input, result, base, ctp) => {
-          if (result.length < 100 && !result.includes("\n")) return null;
-          const lineEntries = [];
-          for (const physicalLine of result.split("\n")) {
-            const m = physicalLine.match(/^(\d+)\t/);
-            if (!m) continue;
-            lineEntries.push([Number(m[1]), charsToTokens(physicalLine, ctp)]);
-          }
-          const requestedFull = input.offset == null && input.limit == null;
-          const looksComplete = lineEntries.length > 0 && !/(truncated|use offset|too large)/i.test(result.slice(-200));
-          const isFullRead = requestedFull && looksComplete;
-          const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Read;
-          return { type: isFullRead ? "fullSet" : "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Read, spent };
-        }
-      },
-      {
-        name: "Write",
-        match: (name2) => name2 === "Write",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        computeUpdate: (input, _result, _base, ctp) => {
-          const rawLines = String(input.content ?? "").split("\n");
-          const lineEntries = rawLines.map((l, i2) => [i2 + 1, charsToTokens(String(i2 + 1) + "	" + l, ctp)]);
-          const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
-          return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
-        }
-      },
-      {
-        name: "Edit",
-        match: (name2) => name2 === "Edit",
-        extractTarget: (input, base, canon) => input.file_path ? canon(input.file_path, base) : null,
-        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
-        // framing overhead because the corrective Read that follows most edits charges its own, and charging
-        // both would count one framing cost twice.
-        computeUpdate: (input, _result, _base, ctp) => {
-          const tokenDelta = charsToTokens(input.new_string ?? "", ctp) - charsToTokens(input.old_string ?? "", ctp);
-          const lineDelta = ((input.new_string ?? "").match(/\n/g) || []).length - ((input.old_string ?? "").match(/\n/g) || []).length;
-          const spent = charsToTokens(input.old_string ?? "", ctp) + charsToTokens(input.new_string ?? "", ctp) + TOOL_OVERHEAD.Edit;
-          return { type: "editDelta", value: tokenDelta + lineDelta * (4 / ctp.ascii), spent };
-        }
-      },
-      {
-        name: "Grep",
-        match: (name2) => name2 === "Grep",
-        extractTarget: () => null,
-        // the files are named by the result, not by the input
-        computeUpdate: (_input, result, base, ctp, canon) => {
-          const files = /* @__PURE__ */ Object.create(null);
-          for (const line of result.split("\n")) {
-            const m = line.match(/^(.+?):(\d+):(.*)$/);
-            if (!m) continue;
-            const [, rawPath, lineNum, content] = m;
-            const key = canon(rawPath, base);
-            (files[key] ||= []).push([parseInt(lineNum, 10), charsToTokens(String(lineNum) + "	" + content, ctp)]);
-          }
-          let spent = TOOL_OVERHEAD.Grep;
-          for (const entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
-        }
-      },
-      {
-        name: "Bash",
-        match: (name2) => name2 === "Bash",
-        extractTarget: (input, base, canon) => {
-          const parsed = parseBashFileRead(input.command);
-          if (!parsed) return null;
-          const anchor = parsed.effectiveCwd ? canon(parsed.effectiveCwd, base) : base;
-          return canon(parsed.path, anchor);
-        },
-        computeUpdate: (input, result, _base, ctp) => {
-          const parsed = parseBashFileRead(input.command);
-          if (!parsed) return null;
-          const lines = result.split("\n").slice(parsed.headerLines);
-          if (parsed.type === "cat") {
-            const lineEntries = lines.map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]);
-            const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "fullSet", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "head") {
-            const lineEntries = lines.map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]);
-            const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "sed") {
-            const printed = lines.length && lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
-            if (parsed.numbered && !lines.slice(0, printed).every((l) => /^\s*\d+\t/.test(l))) return null;
-            const keys = sedKeysFor(parsed.segments, printed, lines.length);
-            if (!keys) return null;
-            const lineEntries = lines.map((l, i2) => [keys[i2], charsToTokens(l, ctp)]);
-            const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "grep-n") {
-            const lineEntries = [];
-            for (const line of lines) {
-              const m = line.match(/^(\d+):(.*)$/);
-              if (!m) continue;
-              lineEntries.push([parseInt(m[1], 10), charsToTokens(m[2], ctp)]);
-            }
-            if (lineEntries.length === 0) return null;
-            const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Bash;
-            return { type: "lineUpdate", lines: lineEntries, overhead: TOOL_OVERHEAD.Bash, spent };
-          }
-          if (parsed.type === "cat-write") {
-            const bodyLines = parsed.heredocBody.split("\n");
-            const lineEntries = bodyLines.map((l, i2) => [i2 + 1, charsToTokens(String(i2 + 1) + "	" + l, ctp)]);
-            const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Write;
-            return { type: "write", lines: lineEntries, overhead: TOOL_OVERHEAD.Write, spent };
-          }
-          return null;
-        }
-      },
-      {
-        name: "Skill",
-        match: (name2) => name2 === "Skill",
-        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
-        extractTarget: (input) => "skill:" + input.skill,
-        computeUpdate: (_input, result, _base, ctp) => {
-          const tokens = charsToTokens(result, ctp);
-          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
-        }
-      },
-      // ─── Serena read-like adapters ───────────────────────────────────────────
-      {
-        name: "serena_find_symbol",
-        match: (name2) => name2 === "mcp__serena__find_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: (input, result, base, ctp, canon) => {
-          if (isSerenaError(result)) return null;
-          const parsed = parseSerenaFindSymbol(result);
-          if (parsed.truncated || parsed.items.length === 0) return null;
-          const withBody = parsed.items.filter((item) => item.body);
-          if (withBody.length === 0) return null;
-          if (input.relative_path) {
-            const allLines = [];
-            for (const item of withBody) {
-              const lines = item.body.split("\n");
-              for (let i2 = 0; i2 < lines.length; i2++) {
-                allLines.push([item.startLine + 1 + i2, charsToTokens(lines[i2], ctp)]);
-              }
-            }
-            const spent2 = allLines.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Serena;
-            return { type: "lineUpdate", lines: allLines, overhead: TOOL_OVERHEAD.Serena, spent: spent2 };
-          }
-          const files = /* @__PURE__ */ Object.create(null);
-          for (const item of withBody) {
-            const key = canon(item.path, base);
-            const lines = item.body.split("\n");
-            (files[key] ||= []).push(...lines.map((l, i2) => [item.startLine + 1 + i2, charsToTokens(l, ctp)]));
-          }
-          let spent = TOOL_OVERHEAD.Serena;
-          for (const entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      {
-        name: "serena_get_symbols_overview",
-        match: (name2) => name2 === "mcp__serena__get_symbols_overview",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        // An overview lists names without their source. Producing no update leaves whatever a real Read of
-        // this file already established, where a name-only replacement would destroy it.
-        computeUpdate: () => null
-      },
-      {
-        name: "serena_find_referencing_symbols",
-        match: (name2) => name2 === "mcp__serena__find_referencing_symbols",
-        extractTarget: () => null,
-        // the referencing files are named by the result
-        computeUpdate: (_input, result, base, ctp, canon) => {
-          if (isSerenaError(result)) return null;
-          const parsed = parseSerenaReferencing(result);
-          if (Object.keys(parsed.files).length === 0) return null;
-          const files = /* @__PURE__ */ Object.create(null);
-          for (const [rawPath, entries] of Object.entries(parsed.files)) {
-            const key = canon(rawPath, base);
-            const lineEntries = [];
-            for (const entry of entries) {
-              if (!entry.context) continue;
-              const lines = entry.context.split("\n");
-              for (let i2 = 0; i2 < lines.length; i2++) {
-                lineEntries.push([entry.startLine + 1 + i2, charsToTokens(lines[i2], ctp)]);
-              }
-            }
-            if (lineEntries.length > 0) files[key] = lineEntries;
-          }
-          if (Object.keys(files).length === 0) return null;
-          let spent = TOOL_OVERHEAD.Serena;
-          for (const entries of Object.values(files)) spent += entries.reduce((s, [, t]) => s + t, 0);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      {
-        name: "serena_read_memory",
-        match: (name2) => name2 === "mcp__serena__read_memory",
-        extractTarget: (input, base, canon) => {
-          const name2 = input.memory_name || "";
-          if (!name2) return null;
-          return canon(".serena/memories/" + (name2.endsWith(".md") ? name2 : name2 + ".md"), base);
-        },
-        computeUpdate: (_input, result, _base, ctp) => {
-          if (isSerenaError(result)) return null;
-          const text = parseSerenaPlainText(result);
-          if (!text) return null;
-          const lineEntries = text.split("\n").map((l, i2) => [i2 + 1, charsToTokens(l, ctp)]);
-          const spent = lineEntries.reduce((s, [, t]) => s + t, 0) + TOOL_OVERHEAD.Serena;
-          return { type: "fullSet", lines: lineEntries, overhead: TOOL_OVERHEAD.Serena, spent };
-        }
-      },
-      // ─── Serena write-like adapters ──────────────────────────────────────────
-      {
-        name: "serena_replace_content",
-        match: (name2) => name2 === "mcp__serena__replace_content",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: (input, result, _base, ctp) => {
-          if (isSerenaError(result)) return null;
-          if (input.mode && input.mode !== "literal") return null;
-          const needle = input.needle ?? "";
-          const repl = input.repl ?? "";
-          const tokenDelta = charsToTokens(repl, ctp) - charsToTokens(needle, ctp);
-          const lineDelta = (repl.match(/\n/g) || []).length - (needle.match(/\n/g) || []).length;
-          const spent = charsToTokens(needle, ctp) + charsToTokens(repl, ctp) + TOOL_OVERHEAD.Serena;
-          return { type: "editDelta", value: tokenDelta + lineDelta * (4 / ctp.ascii), spent };
-        }
-      },
-      {
-        name: "serena_replace_symbol_body",
-        match: (name2) => name2 === "mcp__serena__replace_symbol_body",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        // The replaced body is not in the input, so the size change is unknown: assume net zero and let the
-        // next Read of this file correct it.
-        computeUpdate: (input, result, _base, ctp) => {
-          if (isSerenaError(result)) return null;
-          const body2 = input.body ?? "";
-          if (!body2) return null;
-          return { type: "editDelta", value: 0, spent: charsToTokens(body2, ctp) + TOOL_OVERHEAD.Serena };
-        }
-      },
-      {
-        name: "serena_insert_after_symbol",
-        match: (name2) => name2 === "mcp__serena__insert_after_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: serenaInsert
-      },
-      {
-        name: "serena_insert_before_symbol",
-        match: (name2) => name2 === "mcp__serena__insert_before_symbol",
-        extractTarget: (input, base, canon) => input.relative_path ? canon(input.relative_path, base) : null,
-        computeUpdate: serenaInsert
+    claudeCodeToolEvidenceProfile = {
+      residualIdentity,
+      isLoadHandoffTool,
+      nonFileResource,
+      interpretSkillPayload,
+      interpretTaskNotification
+    };
+  }
+});
+
+// lib/working-tree.js
+import { statSync as statSync3, readFileSync as readFileSync7 } from "node:fs";
+function requireBound(name2, value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Working Tree ${name2} must be a finite positive number`);
+  }
+}
+function slashed(text) {
+  return text.replaceAll("\\", "/");
+}
+function createResolver({ path: path3, homeDir }) {
+  if (!path3 || typeof path3.isAbsolute !== "function" || typeof path3.resolve !== "function" || typeof path3.normalize !== "function") {
+    throw new TypeError("Working Tree path must provide isAbsolute, resolve and normalize");
+  }
+  if (homeDir !== null && typeof homeDir !== "string") {
+    throw new TypeError("Working Tree homeDir must be a string or null");
+  }
+  return function resolve3(base, raw) {
+    if (typeof raw !== "string" || raw.length === 0) return null;
+    let value = raw;
+    if (homeDir !== null && raw === "~") value = homeDir;
+    else if (homeDir !== null && raw.startsWith("~/")) value = `${homeDir}/${raw.slice(2)}`;
+    value = slashed(value);
+    if (!path3.isAbsolute(value)) {
+      if (typeof base !== "string" || base.length === 0) return null;
+      const root = slashed(base);
+      if (!path3.isAbsolute(root)) return null;
+      value = path3.resolve(root, value);
+    }
+    return slashed(path3.normalize(value));
+  };
+}
+function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars } = {}) {
+  const resolve3 = createResolver({ path: path3, homeDir });
+  requireBound("cacheEntries", cacheEntries);
+  requireBound("cacheChars", cacheChars);
+  const cache = /* @__PURE__ */ new Map();
+  let cachedChars = 0;
+  const orNull = (attempt) => {
+    try {
+      return attempt();
+    } catch {
+      return null;
+    }
+  };
+  function remember(file, st, text) {
+    const old = cache.get(file);
+    if (old) {
+      cachedChars -= old.text.length;
+      cache.delete(file);
+    }
+    if (text.length > cacheChars) return;
+    cache.set(file, { size: st.size, mtimeMs: st.mtimeMs, text });
+    cachedChars += text.length;
+    for (const [key, entry] of cache) {
+      if (cache.size <= cacheEntries && cachedChars <= cacheChars) break;
+      cache.delete(key);
+      cachedChars -= entry.text.length;
+    }
+  }
+  return {
+    resolve: resolve3,
+    stat: (file) => orNull(() => {
+      const st = statSync3(file);
+      return { size: st.size, isFile: st.isFile() };
+    }),
+    readText: (file) => orNull(() => {
+      const st = statSync3(file);
+      if (!st.isFile()) return null;
+      const hit = cache.get(file);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.text;
+      const text = readFileSync7(file, "utf8");
+      remember(file, st, text);
+      return text;
+    })
+  };
+}
+var init_working_tree = __esm({
+  "lib/working-tree.js"() {
+  }
+});
+
+// lib/line-align.js
+function splitLines(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+function normalizeLine(line) {
+  return line.trimEnd();
+}
+function fingerprintOf(normalizedLine) {
+  let hash = FNV_OFFSET;
+  for (let i2 = 0; i2 < normalizedLine.length; i2++) {
+    hash = Math.imul(hash ^ normalizedLine.charCodeAt(i2), FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+function stripLinePrefix(line) {
+  for (const cue of CUES) {
+    const match = cue.pattern.exec(line);
+    if (!match) continue;
+    const declaredLine = Number(match[cue.line]);
+    if (!Number.isSafeInteger(declaredLine) || declaredLine < 1) continue;
+    return { text: match[cue.text], declaredLine, path: cue.path ? match[cue.path] : null };
+  }
+  return { text: line, declaredLine: null, path: null };
+}
+function trimEnds(a, b, minTrim) {
+  const shared = Math.min(a.length, b.length);
+  let head = 0;
+  while (head < shared && a[head] === b[head]) head++;
+  if (!(head >= minTrim)) head = 0;
+  const room = shared - head;
+  let tail = 0;
+  while (tail < room && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  if (!(tail >= minTrim)) tail = 0;
+  return { head, tail, cells: (a.length - head - tail) * (b.length - head - tail) };
+}
+function alignOrdered(a, b, { maxCells, minTrim }) {
+  const { head, tail, cells } = trimEnds(a, b, minTrim);
+  if (!(cells <= maxCells)) return null;
+  const pairs = [];
+  for (let k = 0; k < head; k++) pairs.push([k, k]);
+  const n = a.length - head - tail;
+  const m = b.length - head - tail;
+  if (n > 0 && m > 0) {
+    const width = m + 1;
+    const lcs = new Uint32Array((n + 1) * width);
+    for (let i3 = n - 1; i3 >= 0; i3--) {
+      for (let j2 = m - 1; j2 >= 0; j2--) {
+        lcs[i3 * width + j2] = a[head + i3] === b[head + j2] ? lcs[(i3 + 1) * width + j2 + 1] + 1 : Math.max(lcs[(i3 + 1) * width + j2], lcs[i3 * width + j2 + 1]);
       }
+    }
+    let i2 = 0;
+    let j = 0;
+    while (i2 < n && j < m) {
+      if (a[head + i2] === b[head + j]) {
+        pairs.push([head + i2, head + j]);
+        i2++;
+        j++;
+      } else if (lcs[(i2 + 1) * width + j] > lcs[i2 * width + j + 1]) {
+        i2++;
+      } else {
+        j++;
+      }
+    }
+  }
+  for (let k = tail; k > 0; k--) pairs.push([a.length - k, b.length - k]);
+  return pairs;
+}
+var FNV_OFFSET, FNV_PRIME, CUES;
+var init_line_align = __esm({
+  "lib/line-align.js"() {
+    FNV_OFFSET = 2166136261;
+    FNV_PRIME = 16777619;
+    CUES = [
+      { pattern: /^ *(\d+)\t(.*)$/s, line: 1, text: 2 },
+      { pattern: /^ *(\d+)→(.*)$/s, line: 1, text: 2 },
+      { pattern: /^Line (\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(.+?):(\d+):(.*)$/s, path: 1, line: 2, text: 3 },
+      { pattern: /^(\d+)-(.*)$/s, line: 1, text: 2 },
+      // The path of a context row is not kept: its separators are indistinguishable from the path's own dashes.
+      { pattern: /^(\S+?)-(\d+)-(.*)$/s, line: 2, text: 3 }
     ];
+  }
+});
+
+// lib/resource-attribution.js
+function partsOf(value) {
+  if (typeof value === "string") return [value];
+  if (value === void 0 || value === null) return [];
+  if (Array.isArray(value) && value.every(isBlock)) {
+    return value.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text);
+  }
+  try {
+    return [JSON.stringify(value) ?? ""];
+  } catch {
+    return [];
+  }
+}
+function sideTextOf(value) {
+  return partsOf(value).join("\n");
+}
+function newlinesIn(text) {
+  let count = 0;
+  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) count++;
+  return count;
+}
+function scanLeaves(text, baseDepth) {
+  if (!/^\s*[{[]/.test(text)) return null;
+  try {
+    JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const leaves = [];
+  let depth = baseDepth;
+  let deepest = baseDepth;
+  let line = 0;
+  for (let i2 = 0; i2 < text.length; i2++) {
+    const code = text.charCodeAt(i2);
+    if (code === 34) {
+      let end = i2 + 1;
+      while (text.charCodeAt(end) !== 34) end += text.charCodeAt(end) === 92 ? 2 : 1;
+      let next = end + 1;
+      while (isJsonSpace(text.charCodeAt(next))) next++;
+      if (text.charCodeAt(next) !== 58) leaves.push({ value: JSON.parse(text.slice(i2, end + 1)), depth, line });
+      i2 = end;
+    } else if (code === 123 || code === 91) {
+      depth++;
+      if (depth > deepest) deepest = depth;
+    } else if (code === 125 || code === 93) {
+      depth--;
+    } else if (code === 10) {
+      line++;
+    }
+  }
+  return { leaves, deepest };
+}
+function collectLeaves(parts2, maxDepth, report) {
+  const leaves = [];
+  const descend = (text, lineBase2, baseDepth, parent) => {
+    const layer = scanLeaves(text, baseDepth);
+    if (layer === null) return;
+    report.deepest = Math.max(report.deepest, layer.deepest);
+    for (const leaf of layer.leaves) {
+      if (leaf.depth > maxDepth) continue;
+      const decoded = { value: leaf.value, line: lineBase2 + leaf.line, parent };
+      leaves.push(decoded);
+      descend(leaf.value, 0, leaf.depth, decoded);
+    }
+  };
+  let lineBase = 0;
+  for (const part of parts2) {
+    descend(part, lineBase, 0, null);
+    lineBase += newlinesIn(part) + 1;
+  }
+  return leaves;
+}
+function segmentOf(side, text, owner, counter) {
+  const id = counter.segments++;
+  const lines = splitLines(text).map((raw, index) => {
+    const cue = side === "output" ? stripLinePrefix(raw) : { text: raw, declaredLine: null, path: null };
+    return {
+      side,
+      raw,
+      norm: normalizeLine(cue.text),
+      declared: cue.declaredLine,
+      prefixPath: cue.path,
+      restrict: null,
+      list: false,
+      seq: counter.lines++,
+      key: `${id}:${index}`,
+      ancestors: owner ? [owner.key, ...owner.ancestors] : [],
+      pos: owner ? owner.pos : index
+    };
+  });
+  return { side, lines, inner: owner !== null };
+}
+function segmentsOf(side, maxDepth, report, counter) {
+  const whole = segmentOf(side.name, side.text, null, counter);
+  const segments = [whole];
+  for (const leaf of collectLeaves(side.parts, maxDepth, report)) {
+    const owner = (leaf.parent ? leaf.parent.segment : whole).lines[leaf.line];
+    leaf.segment = segmentOf(side.name, leaf.value, owner, counter);
+    segments.push(leaf.segment);
+  }
+  return segments;
+}
+function tokensOf(line, shell = false) {
+  const tokens = [];
+  let token = "";
+  let quote = null;
+  let open = false;
+  let previous = "";
+  for (const char of line) {
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else token += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      open = true;
+    } else if (TOKEN_BREAK.test(char) || shell && (char === "(" || char === ")")) {
+      if (open) tokens.push(token);
+      token = "";
+      open = false;
+      if (shell) {
+        const mark = char === "|" ? previous === "|" ? STATEMENT_END : null : MARKS.get(char);
+        if (mark) tokens.push(mark);
+      }
+    } else {
+      token += char;
+      open = true;
+    }
+    previous = char;
+  }
+  if (open) tokens.push(token);
+  return tokens;
+}
+function literalOf(word, names) {
+  let length = word.length;
+  const value = word.replace(VARIABLE, (match, braced, bare) => {
+    const text = names.get(braced ?? bare);
+    if (text === void 0) return match;
+    length += text.length - match.length;
+    return length > PATH_CHARS ? "$" : text;
+  });
+  return EXPANSION.test(value) ? null : value;
+}
+function directoryOf(workingTree, directory, target) {
+  if (target === null || target.startsWith("-")) return null;
+  const resolved = workingTree.resolve(directory, target);
+  if (resolved === null) return null;
+  const key = resolved.length > 1 && resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+  return workingTree.stat(key)?.isFile === false ? key : null;
+}
+function holdsCd(lines) {
+  for (const line of lines) {
+    let head = true;
+    for (const token of tokensOf(line.raw, true)) {
+      if (typeof token === "symbol") head = true;
+      else if (head && token === "cd") return true;
+      else head = false;
+    }
+  }
+  return false;
+}
+function followCommand(lines, base, workingTree, visit) {
+  const names = /* @__PURE__ */ new Map();
+  const outer = [];
+  let directory = base;
+  let began = base;
+  let words = [];
+  const settle = () => {
+    const statement = words;
+    words = [];
+    if (statement[0] === "cd") {
+      directory = directoryOf(workingTree, directory, statement.length > 1 ? literalOf(statement[1], names) : null);
+    } else {
+      for (const word of statement.slice(statement[0] === "export" ? 1 : 0)) {
+        const assignment = ASSIGNMENT.exec(word);
+        if (assignment === null) break;
+        names.set(assignment[1], assignment[2]);
+      }
+    }
+  };
+  for (const line of lines) {
+    for (const token of tokensOf(line.raw, true)) {
+      if (token === STATEMENT_END) {
+        settle();
+      } else if (token === SUBSHELL_OPEN) {
+        settle();
+        outer.push(directory);
+      } else if (token === SUBSHELL_CLOSE) {
+        settle();
+        if (outer.length > 0) directory = outer.pop();
+      } else {
+        began = directory;
+        words.push(token);
+        const word = literalOf(token, names);
+        if (word !== null && PATH_SHAPE.test(word)) visit(directory, word, line);
+      }
+    }
+    settle();
+  }
+  return began;
+}
+function gatherCandidates(segments, base, workingTree) {
+  const spelled = /* @__PURE__ */ new Map();
+  const candidates = /* @__PURE__ */ new Map();
+  const fileOf = (directory, spelling) => {
+    const id = `${directory}\0${spelling}`;
+    if (!spelled.has(id)) {
+      const key = workingTree.resolve(directory, spelling);
+      const stat = key === null ? null : workingTree.stat(key);
+      spelled.set(id, stat?.isFile === true ? { key, size: stat.size } : null);
+    }
+    return spelled.get(id);
+  };
+  const cite = (file, line) => {
+    let candidate = candidates.get(file.key);
+    if (!candidate) {
+      candidate = { key: file.key, size: file.size, order: candidates.size, cited: 1, outputAt: [] };
+      candidates.set(file.key, candidate);
+    }
+    if (line.side === "input") candidate.cited = 0;
+    else candidate.outputAt.push(line.pos);
+  };
+  const readCues = (lines, directory) => {
+    for (const line of lines) {
+      const tokens = tokensOf(line.raw);
+      const spellings = tokens.filter((token) => PATH_SHAPE.test(token));
+      if (line.prefixPath !== null) {
+        spellings.push(line.prefixPath);
+        line.restrict = fileOf(directory, line.prefixPath)?.key ?? "";
+      }
+      line.list = line.side === "output" && tokens.length === 1 && PATH_SHAPE.test(tokens[0]) && fileOf(directory, tokens[0]) !== null;
+      for (const spelling of spellings) {
+        const file = fileOf(directory, spelling);
+        if (file !== null) cite(file, line);
+      }
+    }
+  };
+  const input = segments.filter(({ side }) => side === "input");
+  const followed = new Set(input.filter(({ lines }) => holdsCd(lines)));
+  const dropsRawView = followed.size > 0 && input.some(({ inner }) => inner);
+  let outputDirectory = base;
+  for (const segment of input) {
+    if (dropsRawView && !segment.inner) continue;
+    if (followed.has(segment)) {
+      outputDirectory = followCommand(segment.lines, base, workingTree, (directory, spelling, line) => {
+        const file = fileOf(directory, spelling);
+        if (file !== null) cite(file, line);
+      });
+    } else {
+      readCues(segment.lines, base);
+    }
+  }
+  for (const { side, lines } of segments) {
+    if (side === "output") readCues(lines, outputDirectory);
+  }
+  return [...candidates.values()];
+}
+function readCandidates(candidates, bound, workingTree, stats) {
+  stats.candidates.observed.push(candidates.length);
+  if (candidates.length > bound.candidates) stats.candidates.rejected.push(candidates.length);
+  for (const { size } of candidates) {
+    stats.fileBytes.observed.push(size);
+    if (size > bound.fileBytes) stats.fileBytes.rejected.push(size);
+  }
+  const readable = [];
+  for (const candidate of candidates.slice(0, bound.candidates)) {
+    if (candidate.size > bound.fileBytes) continue;
+    const text = workingTree.readText(candidate.key);
+    if (text === null || text.includes("\0")) continue;
+    candidate.norms = splitLines(text).map(normalizeLine);
+    readable.push(candidate);
+  }
+  return readable;
+}
+function runOf(candidate, pairs, declared) {
+  const [first] = pairs;
+  return {
+    candidate,
+    pairs,
+    declared,
+    cohesion: pairs.length,
+    distance: distanceOf(candidate, first.line),
+    start: first.file,
+    seq: first.line.seq
+  };
+}
+function createClaims() {
+  const taken = [];
+  const self = /* @__PURE__ */ new Set();
+  const under = /* @__PURE__ */ new Set();
+  return {
+    taken,
+    blocked: (line) => self.has(line.key) || under.has(line.key) || line.ancestors.some((key) => self.has(key)),
+    take(line, candidate, file, tier) {
+      self.add(line.key);
+      for (const key of line.ancestors) under.add(key);
+      taken.push({ line, candidate, file, tier });
+    }
+  };
+}
+function holdsEvidence(lines, floor) {
+  return lines.length >= floor && lines.reduce((chars, line) => chars + line.norm.trim().length, 0) >= EVIDENCE_CHARS;
+}
+function claimRuns(runs, claims, floor) {
+  runs.sort(byPriority);
+  for (const run2 of runs) {
+    let part = [];
+    const flush = () => {
+      if (run2.declared ? part.length > 0 : holdsEvidence(part.map(({ line }) => line), floor)) {
+        for (const { line, file, tier } of part) claims.take(line, run2.candidate, file, tier);
+      }
+      part = [];
+    };
+    for (const pair of run2.pairs) {
+      if (claims.blocked(pair.line)) flush();
+      else part.push(pair);
+    }
+    flush();
+  }
+}
+function declaredRuns(segments, candidates) {
+  const runs = [];
+  for (const candidate of candidates) {
+    for (const { lines } of segments) {
+      let pairs = [];
+      const close = () => {
+        if (pairs.length > 0) runs.push(runOf(candidate, pairs, true));
+        pairs = [];
+      };
+      for (const line of lines) {
+        const verified = line.declared !== null && !line.list && (line.restrict === null || line.restrict === candidate.key) && candidate.norms[line.declared - 1]?.trimStart() === line.norm.trimStart();
+        if (verified) pairs.push({ line, file: line.declared - 1, tier: "declared" });
+        else close();
+      }
+      close();
+    }
+  }
+  return runs;
+}
+function positionsOf(candidate) {
+  if (!candidate.positions) {
+    candidate.positions = /* @__PURE__ */ new Map();
+    candidate.norms.forEach((norm, at) => {
+      if (candidate.positions.has(norm)) candidate.positions.get(norm).push(at);
+      else candidate.positions.set(norm, [at]);
+    });
+  }
+  return candidate.positions;
+}
+function repeatsElsewhere(candidate, start2, length, budget) {
+  const { norms } = candidate;
+  for (const at of positionsOf(candidate).get(norms[start2])) {
+    if (budget.cells <= 0) return false;
+    let same = 0;
+    if (at !== start2 && at + length <= norms.length) {
+      while (same < length && norms[at + same] === norms[start2 + same]) same++;
+      if (same === length) return true;
+    }
+    budget.cells = Math.max(0, budget.cells - 1 - same);
+  }
+  return false;
+}
+function longestRun(a, alo, ahi, b, blo, bhi) {
+  let best = { file: 0, at: 0, length: 0 };
+  let above = new Uint32Array(bhi - blo + 1);
+  let row = new Uint32Array(bhi - blo + 1);
+  for (let i2 = alo; i2 < ahi; i2++) {
+    for (let j = blo; j < bhi; j++) {
+      const length = a[i2] === b[j] ? above[j - blo] + 1 : 0;
+      row[j - blo + 1] = length;
+      if (length > best.length) best = { file: i2 - length + 1, at: j - length + 1, length };
+    }
+    [above, row] = [row, above];
+  }
+  return best;
+}
+function outrun(candidate, b, from, to, length, forward, budget) {
+  const a = candidate.norms;
+  const own = forward ? 0 : a.length - b.length;
+  const step = forward ? 1 : -1;
+  for (let p = from; p < to; p++) {
+    for (const q of positionsOf(candidate).get(b[p]) ?? []) {
+      if (q === p + own) continue;
+      if (budget.cells <= 0) return true;
+      let run2 = 1;
+      while (a[q + step * run2] !== void 0 && a[q + step * run2] === b[p + step * run2]) run2++;
+      budget.cells = Math.max(0, budget.cells - run2);
+      if (forward ? run2 > length : run2 >= length) return true;
+    }
+  }
+  return false;
+}
+function commonRuns(candidate, b, floor, budget, stats) {
+  const a = candidate.norms;
+  const shared = Math.min(a.length, b.length);
+  let head = 0;
+  while (head < shared && a[head] === b[head]) head++;
+  if (head < floor || head < shared && outrun(candidate, b, 0, head, head, true, budget)) head = 0;
+  let tail = 0;
+  while (tail < shared - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  if (tail < floor || head + tail < shared && outrun(candidate, b, b.length - tail, b.length, tail, false, budget)) {
+    tail = 0;
+  }
+  const runs = [];
+  if (head > 0) runs.push({ file: 0, at: 0, length: head });
+  if (tail > 0) runs.push({ file: a.length - tail, at: b.length - tail, length: tail });
+  const middle = [head, a.length - tail, head, b.length - tail];
+  if ((middle[1] - middle[0]) * (middle[3] - middle[2]) === 0) stats.alignCells.observed.push(0);
+  const ranges = [middle];
+  while (ranges.length > 0) {
+    const [alo, ahi, blo, bhi] = ranges.pop();
+    const cells = (ahi - alo) * (bhi - blo);
+    if (cells === 0) continue;
+    stats.alignCells.observed.push(cells);
+    if (cells > budget.cells) {
+      stats.alignCells.rejected.push(cells);
+      continue;
+    }
+    budget.cells -= cells;
+    const run2 = longestRun(a, alo, ahi, b, blo, bhi);
+    if (run2.length === 0) continue;
+    runs.push(run2);
+    if (run2.length >= floor) {
+      ranges.push([run2.file + run2.length, ahi, run2.at + run2.length, bhi], [alo, run2.file, blo, run2.at]);
+    }
+  }
+  return runs.sort((x, y) => x.at - y.at);
+}
+function keepRuns(runs, stretch, floor, stats) {
+  const kept = [];
+  for (const run2 of runs) {
+    stats.evidenceFloor.observed.push(run2.length);
+    if (!holdsEvidence(stretch.slice(run2.at, run2.at + run2.length), floor)) {
+      stats.evidenceFloor.rejected.push(run2.length);
+      continue;
+    }
+    const group = Array.from({ length: run2.length }, (_, k) => ({ file: run2.file + k, at: run2.at + k }));
+    const previous = kept.at(-1);
+    const end = previous?.at(-1);
+    const gap = end ? run2.at - end.at - 1 : 0;
+    if (gap > 0 && gap === run2.file - end.file - 1 && stretch.slice(end.at + 1, run2.at).every((line) => line.norm.trim().length <= GAP_FILL_CHARS)) {
+      for (let k = 1; k <= gap; k++) previous.push({ file: end.file + k, at: end.at + k });
+      previous.push(...group);
+    } else {
+      kept.push(group);
+    }
+  }
+  return kept;
+}
+function alignedRuns(segments, candidates, claims, bound, budget, stats) {
+  const runs = [];
+  const align = (candidate, stretch) => {
+    const found = commonRuns(candidate, stretch.map((line) => line.norm), bound.evidenceFloor, budget, stats);
+    for (const group of keepRuns(found, stretch, bound.evidenceFloor, stats)) {
+      const tied = repeatsElsewhere(candidate, group[0].file, group.length, budget);
+      runs.push(runOf(candidate, group.map(({ file, at }) => ({
+        line: stretch[at],
+        file,
+        tier: tied ? "tied" : placedTier(stretch[at])
+      })), false));
+    }
+  };
+  for (const candidate of candidates) {
+    for (const { lines } of segments) {
+      let stretch = [];
+      const close = () => {
+        if (stretch.length >= bound.evidenceFloor) align(candidate, stretch);
+        stretch = [];
+      };
+      for (const line of lines) {
+        if (!claims.blocked(line) && !line.list && (line.restrict === null || line.restrict === candidate.key)) {
+          stretch.push(line);
+        } else {
+          close();
+        }
+      }
+      close();
+    }
+  }
+  return runs;
+}
+function anchoredLines(segments, candidates, claims) {
+  const free = segments.flatMap(({ lines }) => lines.filter((line) => !claims.blocked(line) && !line.list && line.norm.trim().length >= ANCHOR_CHARS));
+  if (free.length === 0) return;
+  const homes = new Map(free.map((line) => [line.norm, []]));
+  for (const candidate of candidates) {
+    candidate.norms.forEach((norm, file) => homes.get(norm)?.push({ candidate, file }));
+  }
+  for (const line of free) {
+    if (claims.blocked(line)) continue;
+    const held = homes.get(line.norm);
+    const mine = line.restrict === null ? held : held.filter(({ candidate }) => candidate.key === line.restrict);
+    if (mine.length === 1) claims.take(line, mine[0].candidate, mine[0].file, placedTier(line));
+  }
+}
+function requireLimit(limits, name2) {
+  const value = limits?.[name2];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Resource Attribution limit ${name2} must be a finite positive number`);
+  }
+  return value;
+}
+function answerOf(sides, taken, stats) {
+  taken.sort((a, b) => a.line.seq - b.line.seq);
+  const groups = /* @__PURE__ */ new Map();
+  const files = {};
+  const matched = { input: 0, output: 0 };
+  for (const { line, candidate, file, tier } of taken) {
+    const id = `${line.side}\0${candidate.key}`;
+    if (!groups.has(id)) groups.set(id, { resourceKey: candidate.key, side: line.side, lines: [] });
+    groups.get(id).lines.push({ line: file + 1, text: line.raw, tier });
+    matched[line.side] += line.raw.length;
+    files[candidate.key] ??= candidate.norms.map(fingerprintOf);
+  }
+  return {
+    matches: [...groups.values()],
+    files,
+    unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length - matched[side.name]])),
+    stats
+  };
+}
+function createResourceAttribution({ workingTree, limits } = {}) {
+  const bound = Object.fromEntries(LIMIT_NAMES.map((name2) => [name2, requireLimit(limits, name2)]));
+  for (const method of ["resolve", "stat", "readText"]) {
+    if (typeof workingTree?.[method] !== "function") {
+      throw new TypeError(`Resource Attribution workingTree must provide ${method}`);
+    }
+  }
+  function attributeSides(sides, base) {
+    const stats = newStats();
+    const counter = { lines: 0, segments: 0 };
+    const segments = [];
+    for (const side of sides) {
+      stats.sideChars.observed.push(side.text.length);
+      if (side.text.length > bound.sideChars) {
+        stats.sideChars.rejected.push(side.text.length);
+        continue;
+      }
+      const report = { deepest: 0 };
+      segments.push(...segmentsOf(side, bound.decodeDepth, report, counter));
+      stats.decodeDepth.observed.push(report.deepest);
+      if (report.deepest > bound.decodeDepth) stats.decodeDepth.rejected.push(report.deepest);
+    }
+    const candidates = readCandidates(gatherCandidates(segments, base, workingTree), bound, workingTree, stats);
+    const claims = createClaims();
+    claimRuns(declaredRuns(segments, candidates), claims, bound.evidenceFloor);
+    const budget = { cells: bound.alignCells };
+    claimRuns(alignedRuns(segments, candidates, claims, bound, budget, stats), claims, bound.evidenceFloor);
+    anchoredLines(segments, candidates, claims);
+    return answerOf(sides, claims.taken, stats);
+  }
+  function attribute({ base, input, output } = {}) {
+    const values = { input, output };
+    const sides = SIDES.map((name2) => {
+      const parts2 = partsOf(values[name2]);
+      return { name: name2, parts: parts2, text: parts2.join("\n") };
+    });
+    try {
+      return attributeSides(sides, base);
+    } catch (error2) {
+      return {
+        matches: [],
+        files: {},
+        unmatched: Object.fromEntries(sides.map((side) => [side.name, side.text.length])),
+        stats: { ...newStats(), failed: true, failure: String(error2?.message ?? error2) }
+      };
+    }
+  }
+  return { attribute };
+}
+var LIMIT_NAMES, SIDES, GAP_FILL_CHARS, ANCHOR_CHARS, PATH_CHARS, EVIDENCE_CHARS, isBlock, isJsonSpace, TOKEN_BREAK, PATH_SHAPE, UNCITED, STATEMENT_END, SUBSHELL_OPEN, SUBSHELL_CLOSE, MARKS, VARIABLE, EXPANSION, ASSIGNMENT, distanceOf, byPriority, placedTier, newStats;
+var init_resource_attribution = __esm({
+  "lib/resource-attribution.js"() {
+    init_line_align();
+    LIMIT_NAMES = ["candidates", "fileBytes", "sideChars", "decodeDepth", "alignCells", "evidenceFloor"];
+    SIDES = ["input", "output"];
+    GAP_FILL_CHARS = 3;
+    ANCHOR_CHARS = 24;
+    PATH_CHARS = 4096;
+    EVIDENCE_CHARS = 12;
+    isBlock = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && typeof value.type === "string";
+    isJsonSpace = (code) => code === 32 || code === 9 || code === 10 || code === 13;
+    TOKEN_BREAK = /[\s|;&<>]/;
+    PATH_SHAPE = /[/\\.]/;
+    UNCITED = Number.MAX_SAFE_INTEGER;
+    STATEMENT_END = /* @__PURE__ */ Symbol("statement end");
+    SUBSHELL_OPEN = /* @__PURE__ */ Symbol("subshell open");
+    SUBSHELL_CLOSE = /* @__PURE__ */ Symbol("subshell close");
+    MARKS = /* @__PURE__ */ new Map([[";", STATEMENT_END], ["&", STATEMENT_END], ["(", SUBSHELL_OPEN], [")", SUBSHELL_CLOSE]]);
+    VARIABLE = /\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/g;
+    EXPANSION = /[$`]/;
+    ASSIGNMENT = /^([A-Za-z_]\w*)=(.*)$/;
+    distanceOf = (candidate, line) => line.side === "input" ? UNCITED : candidate.outputAt.reduce((nearest, at) => Math.min(nearest, Math.abs(at - line.pos)), UNCITED);
+    byPriority = (a, b) => b.cohesion - a.cohesion || a.candidate.cited - b.candidate.cited || a.distance - b.distance || a.candidate.order - b.candidate.order || a.start - b.start || a.seq - b.seq;
+    placedTier = (line) => line.declared !== null ? "drifted" : "aligned";
+    newStats = () => ({
+      failed: false,
+      ...Object.fromEntries(LIMIT_NAMES.map((name2) => [name2, { observed: [], rejected: [] }]))
+    });
+  }
+});
+
+// lib/tool-evidence.js
+function baseOf(row, sessionCwd) {
+  if (typeof row.cwd === "string" && row.cwd.length > 0) return row.cwd;
+  if (typeof sessionCwd === "string" && sessionCwd.length > 0) return sessionCwd;
+  return null;
+}
+function resolvedLoadToken(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
+  } catch {
+    return null;
+  }
+}
+function readEntry(raw) {
+  if (!isObject2(raw) || !isCount(raw.key) || !isCount(raw.chars) || !isCount(raw.cjk) || raw.cjk > raw.chars) return null;
+  const entry = { key: raw.key, chars: raw.chars, cjk: raw.cjk };
+  if (isFingerprint(raw.fp)) entry.fp = raw.fp;
+  if (raw.moved === true) entry.moved = true;
+  return entry;
+}
+function readImpact(raw) {
+  if (!isObject2(raw) || !isText(raw.resourceKey) || raw.resourceKey.length === 0) return null;
+  if (raw.kind !== "replace-fragments" && raw.kind !== "merge-fragments") return null;
+  if (!Array.isArray(raw.entries) || raw.entries.length === 0) return null;
+  const entries = raw.entries.map(readEntry);
+  if (entries.includes(null) || new Set(entries.map((entry) => entry.key)).size !== entries.length) return null;
+  return { resourceKey: raw.resourceKey, kind: raw.kind, entries };
+}
+function readEffect(raw) {
+  if (!isObject2(raw) || raw.access !== "read" && raw.access !== "write") return null;
+  if (!Array.isArray(raw.impacts) || raw.impacts.length === 0) return null;
+  const impacts = raw.impacts.map(readImpact);
+  return impacts.includes(null) ? null : { access: raw.access, impacts };
+}
+function readResidual(raw) {
+  if (!isObject2(raw) || !isText(raw.groupKey) || raw.groupKey.length === 0) return void 0;
+  if (!isText(raw.kind) || !isText(raw.detail) || !isCount(raw.weight)) return void 0;
+  return { groupKey: raw.groupKey, kind: raw.kind, detail: raw.detail, weight: raw.weight };
+}
+function readRecord(raw) {
+  if (!isObject2(raw) || raw.v !== RECORD_VERSION || !Array.isArray(raw.effects)) return null;
+  const effects = raw.effects.map(readEffect);
+  if (effects.includes(null)) return null;
+  const residual = raw.residual === null ? null : readResidual(raw.residual);
+  return residual === void 0 ? null : { v: RECORD_VERSION, effects, residual };
+}
+function impactFor({ resourceKey, lines }, files) {
+  const fingerprints = files?.[resourceKey];
+  const entries = /* @__PURE__ */ new Map();
+  for (const { line, text } of lines) {
+    const entry = { key: line, chars: text.length, cjk: cjkOf(text) };
+    const fp = fingerprints?.[line - 1];
+    if (isFingerprint(fp)) entry.fp = fp;
+    entries.set(line, entry);
+  }
+  let whole = Array.isArray(fingerprints) && fingerprints.length > 0 && entries.size === fingerprints.length;
+  for (let line = 1; whole && line <= fingerprints.length; line++) whole = entries.has(line);
+  return { resourceKey, kind: whole ? "replace-fragments" : "merge-fragments", entries: [...entries.values()] };
+}
+function priced(effects, ctp) {
+  return effects.map(({ access, impacts }) => {
+    let spentTokens = 0;
+    const pricedImpacts = impacts.map(({ resourceKey, kind, entries }) => ({
+      resourceKey,
+      mutation: {
+        kind,
+        fragments: entries.map(({ key, chars, cjk, moved }) => {
+          const tokens = countsToTokens({ chars, cjk }, ctp);
+          if (moved !== true) spentTokens += tokens;
+          return { key, tokens };
+        })
+      }
+    }));
+    return { access, overheadTokens: 0, spentTokens, impacts: pricedImpacts };
+  });
+}
+function pathEventsFor(effects, toolType) {
+  return effects.flatMap(({ access, impacts }) => impacts.map(({ resourceKey, mutation }) => ({
+    path: resourceKey,
+    rawPath: resourceKey,
+    toolType,
+    isFullRead: access === "write" ? null : mutation.kind === "replace-fragments" ? 1 : 0
+  })));
+}
+function foldInto(scratch, recorded, effects) {
+  recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
+    const { fragments } = effects[effectAt].impacts[impactAt].mutation;
+    const held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
+    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+      const entry = { chars, cjk, tokens: fragments[entryAt].tokens };
+      if (fp !== void 0) entry.fp = fp;
+      held.set(key, entry);
+    });
+    scratch.set(resourceKey, held);
+  }));
+}
+function movedEntries(held, fingerprints, { maxCells, minTrim }) {
+  if (held === void 0) return { moved: [], judged: true };
+  if (!Array.isArray(fingerprints)) return { moved: [], judged: false };
+  const reach = fingerprints.length + maxCells;
+  const recorded = [];
+  let stranded = false;
+  for (const item of held) {
+    const [key, entry] = item;
+    if (entry.fp !== void 0 && Number.isInteger(key) && key >= 1 && key <= reach) recorded.push(item);
+    else if (entry.chars > 0) stranded = true;
+  }
+  const judged = !stranded;
+  if (recorded.every(([key, entry]) => fingerprints[key - 1] === entry.fp)) return { moved: [], judged };
+  recorded.sort(([a], [b]) => a - b);
+  const slots = new Array(recorded[recorded.length - 1][0]).fill(NaN);
+  for (const [key, entry] of recorded) slots[key - 1] = entry.fp;
+  const pairs = alignOrdered(slots, fingerprints, { maxCells, minTrim });
+  if (pairs === null) return { moved: [], judged: false };
+  const landing = new Map(pairs.map(([from, to]) => [from + 1, to + 1]));
+  const zeroed = [];
+  const shifted = [];
+  for (const [key, entry] of recorded) {
+    const at = landing.get(key);
+    if (at === key) continue;
+    zeroed.push({ key, chars: 0, cjk: 0 });
+    if (at !== void 0) shifted.push({ key: at, chars: entry.chars, cjk: entry.cjk, fp: entry.fp, moved: true });
+  }
+  return { moved: [...zeroed, ...shifted], judged };
+}
+function relocated(impact, moved) {
+  if (moved.length === 0) return impact;
+  const entries = /* @__PURE__ */ new Map();
+  for (const entry of moved) entries.set(entry.key, entry);
+  for (const entry of impact.entries) entries.set(entry.key, entry);
+  return { ...impact, entries: [...entries.values()] };
+}
+function residentPart(matches, effects, scratch, unjudged, ctp) {
+  const matched = /* @__PURE__ */ new Map();
+  for (const { resourceKey, lines } of matches) {
+    let chars = matched.get(resourceKey) ?? 0;
+    for (const { text } of lines) chars += text.length;
+    matched.set(resourceKey, chars);
+  }
+  const folded = new Map([...matched.keys()].map((resourceKey) => [resourceKey, new Map(scratch.get(resourceKey))]));
+  foldInto(folded, effects, priced(effects, ctp));
+  let part = 0;
+  for (const [resourceKey, chars] of matched) {
+    if (unjudged.has(resourceKey)) continue;
+    part += Math.max(0, chars - (charsHeld(folded.get(resourceKey)) - charsHeld(scratch.get(resourceKey))));
+  }
+  return part;
+}
+function requireLimit2(limits, name2) {
+  const value = limits?.[name2];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError(`Tool Evidence Interpreter limit ${name2} must be a finite positive number`);
+  }
+}
+function requireMethods(owner, label, methods) {
+  for (const method of methods) {
+    if (typeof owner?.[method] !== "function") {
+      throw new TypeError(`Tool Evidence Interpreter ${label} must provide ${method}`);
+    }
+  }
+}
+function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
+  requireMethods(attribution, "attribution", ["attribute"]);
+  requireMethods(profile, "profile", ["residualIdentity", "isLoadHandoffTool", "nonFileResource"]);
+  for (const name2 of LIMIT_NAMES2) requireLimit2(limits, name2);
+  const readsSkillPayload = typeof profile.interpretSkillPayload === "function";
+  const bound = { maxCells: limits.alignCells, minTrim: limits.evidenceFloor };
+  function partition(pending, observation, scratch) {
+    const { matches, files, unmatched } = attribution.attribute({
+      base: pending.base,
+      input: pending.input,
+      output: observation.content
+    });
+    const handled = /* @__PURE__ */ new Set();
+    const unjudged = /* @__PURE__ */ new Set();
+    const effects = [];
+    for (const access of ["write", "read"]) {
+      const impacts = matches.filter((match) => match.side === "input" === (access === "write")).map((match) => {
+        const impact = impactFor(match, files);
+        const later = handled.has(match.resourceKey);
+        handled.add(match.resourceKey);
+        if (later || impact.kind === "replace-fragments") return impact;
+        const { moved, judged } = movedEntries(scratch.get(match.resourceKey), files?.[match.resourceKey], bound);
+        if (!judged) unjudged.add(match.resourceKey);
+        return relocated(impact, moved);
+      });
+      if (impacts.length > 0) effects.push({ access, impacts });
+    }
+    const weight = unmatched.input + unmatched.output + residentPart(matches, effects, scratch, unjudged, pending.issuingPolicy.ctp);
+    const { groupKey, kind, detail } = pending.residual;
+    return {
+      v: RECORD_VERSION,
+      effects,
+      residual: weight > 0 ? { groupKey, kind, detail, weight } : null
+    };
+  }
+  function recordOf(pending, observation, frameCtx, scratch) {
+    const recalled = typeof frameCtx.recall === "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
+    if (recalled !== null) return recalled;
+    const record2 = partition(pending, observation, scratch);
+    if (typeof frameCtx.remember === "function") frameCtx.remember(pending.toolUseId, record2);
+    return record2;
+  }
+  function emit2(record2, pending, observation, telemetry, scratch) {
+    const effects = priced(record2.effects, pending.issuingPolicy.ctp);
+    foldInto(scratch, record2.effects, effects);
+    telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    const residuals = record2.residual === null ? [] : [{
+      groupKey: record2.residual.groupKey,
+      weight: record2.residual.weight,
+      hadError: observation.isError === true,
+      meta: { kind: record2.residual.kind, detail: record2.residual.detail }
+    }];
+    return { effects, residuals, telemetry, skillContinuation: null };
+  }
+  function completeNonFileResource(pending, observation, telemetry) {
+    if (observation.isError === true) return { effects: [], residuals: [], telemetry, skillContinuation: null };
+    const { resourceKey } = pending.nonFile;
+    const tokens = charsToTokens(sideTextOf(observation.content), pending.issuingPolicy.ctp);
+    const effects = [{
+      access: "read",
+      overheadTokens: SKILL_FRAMING_TOKENS,
+      spentTokens: tokens + SKILL_FRAMING_TOKENS,
+      impacts: [{ resourceKey, mutation: { kind: "replace-fragments", fragments: [{ key: 1, tokens }] } }]
+    }];
+    telemetry.pathEvents = pathEventsFor(effects, pending.name);
+    const skillContinuation = readsSkillPayload ? { resourceKey, issuingPolicy: pending.issuingPolicy } : null;
+    return { effects, residuals: [], telemetry, skillContinuation };
+  }
+  function interpretToolUse(observation, context) {
+    const { toolUseId, name: name2 } = observation;
+    const input = observation.input ?? {};
+    const issuingStepId = observation.messageId ?? null;
+    const loadsHandoff = profile.isLoadHandoffTool(name2);
+    const explicitToken = loadsHandoff && typeof input.load_token === "string" ? input.load_token : null;
+    const nonFile = profile.nonFileResource({ name: name2, input }) ?? null;
+    return {
+      pending: {
+        toolUseId,
+        issuingStepId,
+        issuingPolicy: context.resolveModelPolicy(observation.model ?? null),
+        // An auto-matched load carries no token in its input; the resolved one comes back in its result.
+        awaitLoadToken: loadsHandoff && explicitToken === null,
+        name: name2,
+        input,
+        base: baseOf(observation, context.sessionCwd),
+        nonFile,
+        residual: nonFile === null ? profile.residualIdentity(name2, input) : null
+      },
+      effects: [],
+      residuals: [],
+      telemetry: { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] }
+    };
+  }
+  function completeToolResult(pending, observation, _context, { scratch = /* @__PURE__ */ new Map(), frameCtx } = {}) {
+    const telemetry = {
+      toolUseId: pending.toolUseId,
+      issuingStepId: pending.issuingStepId,
+      loadToken: pending.awaitLoadToken ? resolvedLoadToken(sideTextOf(observation.content)) : null,
+      pathEvents: []
+    };
+    if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
+    return emit2(recordOf(pending, observation, frameCtx ?? {}, scratch), pending, observation, telemetry, scratch);
+  }
+  function resourceKeysOf(pair, capture) {
+    try {
+      const { recall, sessionCwd } = capture ?? {};
+      const input = pair.input ?? {};
+      const resource = profile.nonFileResource({ name: pair.name, input });
+      if (resource) return [resource.resourceKey];
+      const recorded = typeof recall === "function" ? readRecord(recall(pair.toolUseId)) : null;
+      const impacts = recorded ? recorded.effects.flatMap((effect) => effect.impacts) : attribution.attribute({ base: baseOf(pair, sessionCwd), input, output: pair.result }).matches;
+      return [...new Set(impacts.map((impact) => impact.resourceKey))];
+    } catch {
+      return [];
+    }
+  }
+  return { interpretToolUse, completeToolResult, resourceKeysOf };
+}
+var cjkOf, isFingerprint, RECORD_VERSION, isObject2, isCount, isText, charsHeld, LIMIT_NAMES2;
+var init_tool_evidence = __esm({
+  "lib/tool-evidence.js"() {
+    init_constants();
+    init_line_align();
+    init_resource_attribution();
+    init_token_estimate();
+    cjkOf = (text) => (text.match(CJK_RE) ?? []).length;
+    isFingerprint = (value) => Number.isInteger(value) && value >= 0 && value <= 4294967295;
+    RECORD_VERSION = 1;
+    isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    isCount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+    isText = (value) => typeof value === "string";
+    charsHeld = (held) => {
+      let total = 0;
+      for (const { chars } of held?.values() ?? []) total += chars;
+      return total;
+    };
+    LIMIT_NAMES2 = ["alignCells", "evidenceFloor"];
   }
 });
 
@@ -57126,7 +57323,7 @@ var init_project_key = __esm({
 // lib/legacy-cleanup.js
 import { readdirSync as readdirSync3, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { join as join8 } from "node:path";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir5 } from "node:os";
 var init_legacy_cleanup = __esm({
   "lib/legacy-cleanup.js"() {
   }
@@ -57224,7 +57421,7 @@ var init_pricing_store = __esm({
 });
 
 // lib/state-reaper.js
-import { readdirSync as readdirSync4, statSync as statSync3, unlinkSync as unlinkSync2, readFileSync as readFileSync7, rmSync as rmSync2 } from "node:fs";
+import { readdirSync as readdirSync4, statSync as statSync4, unlinkSync as unlinkSync2, readFileSync as readFileSync8, rmSync as rmSync2 } from "node:fs";
 import { join as join9 } from "node:path";
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -57240,7 +57437,7 @@ function isLivePortFile(sessionId, portDir) {
   if (!sessionId || /[/\\\0]/.test(sessionId) || sessionId === ".." || sessionId === ".") return false;
   try {
     const p = join9(portDir, `${sessionId}.json`);
-    const record2 = JSON.parse(readFileSync7(p, "utf8"));
+    const record2 = JSON.parse(readFileSync8(p, "utf8"));
     return record2.pid && isPidAlive(record2.pid);
   } catch {
     return false;
@@ -57275,10 +57472,10 @@ function sweepStalePortFiles(portDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS 
     if (!f.endsWith(".json")) continue;
     const p = join9(portDir, f);
     try {
-      const st = statSync3(p);
+      const st = statSync4(p);
       if (now - st.mtimeMs > maxAgeMs) {
         try {
-          const record2 = JSON.parse(readFileSync7(p, "utf8"));
+          const record2 = JSON.parse(readFileSync8(p, "utf8"));
           if (record2.pid && isPidAlive(record2.pid)) continue;
         } catch {
         }
@@ -57303,10 +57500,10 @@ function sweepStaleTurnNotes(stateDir, { now = Date.now(), maxAgeMs = MAX_AGE_MS
     if (!entry.isDirectory()) continue;
     const dir = join9(root, entry.name);
     try {
-      let latest = statSync3(dir).mtimeMs;
+      let latest = statSync4(dir).mtimeMs;
       for (const name2 of readdirSync4(dir)) {
         try {
-          latest = Math.max(latest, statSync3(join9(dir, name2)).mtimeMs);
+          latest = Math.max(latest, statSync4(join9(dir, name2)).mtimeMs);
         } catch {
         }
       }
@@ -57934,7 +58131,7 @@ var init_gitignore_loader = __esm({
 });
 
 // lib/carry-sweep.js
-import { existsSync as existsSync2, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync2, statSync as statSync5 } from "node:fs";
 function replaySessionTelemetry(sessionId, transcriptPath, {
   store,
   createWatcher,
@@ -57946,7 +58143,7 @@ function replaySessionTelemetry(sessionId, transcriptPath, {
   }
   if (!transcriptPath || !existsSync2(transcriptPath)) return null;
   try {
-    const stat = statSync4(transcriptPath);
+    const stat = statSync5(transcriptPath);
     if (!stat.isFile()) return null;
     if (stat.size === 0) return true;
   } catch {
@@ -58006,6 +58203,7 @@ async function projectSession(store, entry, readSource) {
   const addressable = ordinals !== null && ordinals.size > 0;
   const records = [];
   for (const row of store.listTurnNotes(entry.sessionId)) {
+    if (!admitsTurn(entry, row.sourceTimestamp)) continue;
     const record2 = projectTurnRecord(row, ordinals);
     if (record2.t === null && addressable) continue;
     records.push({
@@ -58023,7 +58221,7 @@ async function projectSession(store, entry, readSource) {
 async function buildTurnPage({ store, lineage, before = null, dialogueSource, dialogueProjection, notice }) {
   invariant5(typeof notice === "string" && notice.length > 0, "notice is required");
   const sources = labelHistorySources(lineage);
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
   const parsed = /* @__PURE__ */ new Map();
   const sessionAt = (index) => {
     if (!parsed.has(index)) parsed.set(index, projectSession(store, sources[index], readSource));
@@ -58090,14 +58288,13 @@ function foldAscii(s) {
   }
   return out2;
 }
-function canonicalEntities(fold, includeToolEvidence) {
+function canonicalEntities(fold) {
   const entities = [];
   for (const line of dialogueFoldLines(fold)) {
     if (line.kind === "visible") {
       entities.push({ text: line.message.text, line: line.sourceOrdinal });
       continue;
     }
-    if (!includeToolEvidence(line.tool)) continue;
     const useLine = line.sourceOrdinal;
     if (typeof line.tool.name === "string") entities.push({ text: line.tool.name, line: useLine });
     if (line.tool.input != null) entities.push({ text: stableStringify(line.tool.input), line: useLine });
@@ -58155,7 +58352,7 @@ async function scopedSession(sources, scope, readSource) {
   const read = await readSource(entry.sourceLocator);
   if (!read.readable) throw scopeNotFound();
   const turns = read.turns.filter((turn) => turn.sourceOrdinal === parsed.sourceOrdinal);
-  if (turns.length !== 1) throw scopeNotFound();
+  if (turns.length !== 1 || !admitsTurn(entry, turns[0].timestamp)) throw scopeNotFound();
   const span = new Set(turns[0].lines.map((line) => line.foldOrdinal));
   return {
     entry,
@@ -58182,20 +58379,19 @@ async function searchTranscripts({
   q,
   scope = null,
   dialogueSource,
-  dialogueProjection,
-  includeToolEvidence
+  dialogueProjection
 }) {
   const sources = labelHistorySources(lineage);
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
   const needle = foldAscii(String(q));
   const wire = (ranges, truncated2) => ({ found: true, ranges, truncated: truncated2 });
   const groupsOf = (matches) => {
     const out2 = [];
-    let session = null;
+    let index = null;
     let byTurn = /* @__PURE__ */ new Map();
     for (const m of matches) {
-      if (m.sessionId !== session) {
-        session = m.sessionId;
+      if (m.index !== index) {
+        index = m.index;
         byTurn = /* @__PURE__ */ new Map();
       }
       const open = byTurn.get(m.turnKey);
@@ -58236,7 +58432,7 @@ async function searchTranscripts({
       let headFolds = null;
       for (let i2 = folds.length - 1; i2 >= 0; i2--) {
         const fold = folds[i2];
-        const hit = firstHit(canonicalEntities(fold, includeToolEvidence), needle);
+        const hit = firstHit(canonicalEntities(fold), needle);
         if (!hit) continue;
         headFolds ??= headFoldsOf(turns);
         if (fold.message && fold.message.role === "human" && !headFolds.has(fold.ordinal)) continue;
@@ -58244,13 +58440,14 @@ async function searchTranscripts({
         let record2 = null;
         if (scope == null) {
           membership ??= turnByFold(turns);
-          recordByHead ??= await recordByTurnHead(store, entry, turns);
           const member = membership.get(fold.ordinal);
+          if (!admitsTurn(entry, member ? turns[member.turnIndex].timestamp : fold.timestamp)) continue;
+          recordByHead ??= await recordByTurnHead(store, entry, turns);
           turnKey = member ? member.turnIndex : `fold:${fold.ordinal}`;
           record2 = member && member.sourceEntryId ? recordByHead.get(member.sourceEntryId) ?? null : null;
         }
         const candidate = {
-          sessionId: entry.sessionId,
+          index: entry.index,
           label: entry.label,
           turnKey,
           record: record2,
@@ -58269,11 +58466,11 @@ async function searchTranscripts({
 }
 async function locateRanges({ store, lineage, q, dialogueSource, dialogueProjection }) {
   if (!store.turnFtsAvailable()) throw locateUnavailable();
-  const readSource = (locator) => readHistorySource({ dialogueSource, dialogueProjection }, locator);
-  const sessions = new Map(labelHistorySources(lineage).map((entry) => [entry.sessionId, entry]));
+  const readSource = createHistoryReader({ dialogueSource, dialogueProjection });
+  const members = Map.groupBy(labelHistorySources(lineage), (entry) => entry.sessionId);
   let rows;
   try {
-    rows = store.locateTurnNotes([...sessions.keys()], buildFtsMatch(q, "plain"));
+    rows = store.locateTurnNotes([...members.keys()], buildFtsMatch(q, "plain"));
   } catch (error2) {
     throw locateUnavailable(error2);
   }
@@ -58281,13 +58478,13 @@ async function locateRanges({ store, lineage, q, dialogueSource, dialogueProject
   let accumulated = /* @__PURE__ */ new Map();
   let hits = 0;
   for (const row of rows) {
-    const entry = sessions.get(row.sourceSessionId);
+    const entry = members.get(row.sourceSessionId)?.find((e) => admitsTurn(e, row.sourceTimestamp));
     if (!entry) continue;
-    if (!projected.has(entry.sessionId)) {
+    if (!projected.has(entry.index)) {
       const { readable, records } = await projectSession(store, entry, readSource);
-      projected.set(entry.sessionId, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
+      projected.set(entry.index, readable ? { records, indexByAnchor: new Map(records.map((r, i2) => [r.anchorUuid, i2])) } : null);
     }
-    const session = projected.get(entry.sessionId);
+    const session = projected.get(entry.index);
     if (!session) continue;
     const at = session.indexByAnchor.get(row.anchorUuid);
     if (at === void 0 || session.records[at].record.t === null) continue;
@@ -58366,7 +58563,6 @@ function createTurnReadService({
   sessionId,
   dialogueSource,
   dialogueProjection,
-  includeToolEvidence,
   recovery,
   turnPageBuilder = buildTurnPage
 }) {
@@ -58398,8 +58594,7 @@ function createTurnReadService({
           lineage,
           q,
           scope: scope || null,
-          ...history,
-          includeToolEvidence
+          ...history
         });
         return withSearchRecovery(found, { hitRecovery: recovery.searchHit });
       } catch (err2) {
@@ -58432,8 +58627,8 @@ var init_turn_read_service = __esm({
 });
 
 // lib/harness/claude-code/dialogue-source.js
-import { readFileSync as readFileSync8 } from "node:fs";
-function createClaudeCodeDialogueSource({ readFile = readFileSync8 } = {}) {
+import { readFileSync as readFileSync9 } from "node:fs";
+function createClaudeCodeDialogueSource({ readFile = readFileSync9 } = {}) {
   return {
     async read(sourceLocator) {
       let buffer;
@@ -58454,8 +58649,6 @@ var init_dialogue_source = __esm({
 });
 
 // lib/harness/claude-code/history-turn-rules.js
-import { isAbsolute as isAbsolute3, join as join10, normalize as normalize2, resolve as resolve2 } from "node:path";
-import { homedir as osHomedir } from "node:os";
 function cleanUserText(rawText) {
   const s = String(rawText || "").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g, "");
   const captured = [];
@@ -58519,21 +58712,14 @@ function createClaudeCodeAskHeadRule() {
     return { kind: "HEAD", text: cleaned };
   };
 }
-function createClaudeCodeDialogueProjection({ sessionCwd = null } = {}) {
-  const context = { path: { join: join10, isAbsolute: isAbsolute3, resolve: resolve2, normalize: normalize2 }, homedir: osHomedir, sessionCwd };
+function createClaudeCodeDialogueProjection() {
   const rules = [
     createClaudeCodeHumanHeadRule(),
     createClaudeCodeAskHeadRule()
   ];
   return {
     project(observations) {
-      const { folds } = projectDialogue(observations);
-      for (const fold of folds) {
-        for (const pair of fold.toolPairs) {
-          pair.resourceKey = resolveClaudeCodeToolTarget(pair, context);
-        }
-      }
-      return { folds };
+      return projectDialogue(observations);
     },
     groupTurns(lines) {
       return groupTurns(lines, rules);
@@ -58546,7 +58732,6 @@ var init_history_turn_rules = __esm({
     init_turn();
     init_dialogue_fold();
     init_turn_history_budget();
-    init_native_tools();
     TAG_BLOCKS = /<(command-[a-z-]+|local-command-[a-z-]+|bash-[a-z-]+)>[\s\S]*?<\/\1>/g;
     CAPTURE = /<(command-name|command-args|bash-input)>([\s\S]*?)<\/\1>/g;
     EXIT_ECHO = "<command-name>/exit</command-name>";
@@ -58573,9 +58758,9 @@ __export(replay_exports, {
   ReplayController: () => ReplayController,
   indexTranscript: () => indexTranscript
 });
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync10 } from "node:fs";
 function indexTranscript(filePath) {
-  const buf = readFileSync9(filePath);
+  const buf = readFileSync10(filePath);
   const steps = [];
   let pos = 0;
   let lastTs = null;
@@ -58794,11 +58979,11 @@ function faultOf(checks) {
 function envelopeChecks(event) {
   return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
 }
-function baseOf(event) {
+function baseOf2(event) {
   return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
 }
 function isContent(content, ...shapes) {
-  return Array.isArray(content) && content.every((block) => isObject2(block) && shapes.every((shaped) => shaped(block)));
+  return Array.isArray(content) && content.every((block) => isObject3(block) && shapes.every((shaped) => shaped(block)));
 }
 function textOf(content) {
   return content.filter((block) => block.type === "text").map((block) => block.text).join("");
@@ -58814,7 +58999,7 @@ function parseArguments(raw) {
   }
 }
 function isUsage(usage) {
-  return isObject2(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
+  return isObject3(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
 }
 function usageOf(usage) {
   return {
@@ -58832,7 +59017,7 @@ function reduceHumanMessage(event) {
     ["data.content", isContent(data.content, textShaped)]
   ]);
   if (fault !== null) return violation(event, fault);
-  const base = baseOf(event);
+  const base = baseOf2(event);
   const observations = [{ type: "turn-boundary", ...base, provenance: "human" }];
   const text = textOf(data.content);
   if (text !== "") {
@@ -58852,7 +59037,7 @@ function reduceCheckpoint(event) {
   if (event.surfaceOp === "append") return nothing();
   const fault = faultOf(envelopeChecks(event));
   if (fault !== null) return violation(event, fault);
-  return { observations: [{ type: "epoch-boundary", ...baseOf(event), provenance: "harness" }], diagnostics: [] };
+  return { observations: [{ type: "epoch-boundary", ...baseOf2(event), provenance: "harness" }], diagnostics: [] };
 }
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
@@ -58873,7 +59058,7 @@ function reduceAssistantMessage(event) {
     ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
   ]);
   if (fault !== null) return violation(event, fault);
-  const base = baseOf(event);
+  const base = baseOf2(event);
   const messageId = MESSAGE_NAMESPACE + message.id;
   const model = message.source.model;
   const observations = [];
@@ -58930,7 +59115,7 @@ function reduceToolResult(event) {
       // The tool's private metadata and failure identity ride uninterpreted, as Claude Code's
       // `toolUseResult` does.
       resultMeta: { meta: data.meta ?? null, error: data.error ?? null },
-      ...baseOf(event),
+      ...baseOf2(event),
       provenance: "harness"
     }],
     diagnostics: []
@@ -58958,15 +59143,15 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-var SCOPE, MESSAGE_NAMESPACE, isObject2, isIndex, isId, isSurfaceOp, nothing, textShaped, toolCallShaped;
+var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex, isId, isSurfaceOp, nothing, textShaped, toolCallShaped;
 var init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     SCOPE = "dsh-transcript-observation";
     MESSAGE_NAMESPACE = "dsh:message:";
-    isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
     isId = (value) => typeof value === "string" && value !== "";
-    isSurfaceOp = (value) => value === "append" || isObject2(value) && value.op === "replace";
+    isSurfaceOp = (value) => value === "append" || isObject3(value) && value.op === "replace";
     nothing = () => ({ observations: [], diagnostics: [] });
     textShaped = (block) => block.type !== "text" || typeof block.text === "string";
     toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
@@ -59002,9 +59187,9 @@ var replay_source_exports = {};
 __export(replay_source_exports, {
   openReplaySource: () => openReplaySource
 });
-import { readFileSync as readFileSync10 } from "node:fs";
+import { readFileSync as readFileSync11 } from "node:fs";
 function openReplaySource(path3) {
-  const log = decodeDshLog(readFileSync10(path3));
+  const log = decodeDshLog(readFileSync11(path3));
   if (log !== null) {
     const { header, events } = log;
     return {
@@ -59052,209 +59237,7 @@ var init_dialogue_source2 = __esm({
   }
 });
 
-// lib/harness/dsh/native-tools.js
-function canonicalizerFor2(context) {
-  const ops = context && context.path;
-  if (!ops) return (raw) => String(raw);
-  return (raw, base) => {
-    const abs = ops.isAbsolute(raw) ? raw : ops.resolve(base || "/", raw);
-    return ops.normalize(abs).split("\\").join("/");
-  };
-}
-function baseDirFor2(row, context) {
-  if (typeof row.cwd === "string" && row.cwd.length > 0) return row.cwd;
-  if (typeof context.sessionCwd === "string" && context.sessionCwd.length > 0) return context.sessionCwd;
-  return null;
-}
-function isEffectiveUpdate2(update, target) {
-  if (update.type === "grepMultiFile") return Object.keys(update.files).length > 0;
-  if (update.type === "fullSet" || update.type === "lineUpdate") return target != null && update.lines.length > 0;
-  return target != null;
-}
-function residualIdentityFor2(name2, input) {
-  const inputLength = JSON.stringify(input).length;
-  if (name2 === "bash") {
-    const feature = bashFeature(input.command);
-    return { groupKey: feature.name, kind: "bash", detail: feature.detail, inputLength };
-  }
-  if (name2.startsWith(MCP_PREFIX)) {
-    return { groupKey: name2.slice(MCP_PREFIX.length), kind: "mcp", detail: "", inputLength };
-  }
-  return { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "", inputLength };
-}
-function isLoadHandoffTool2(name2) {
-  return name2.endsWith("load_handoff");
-}
-function resolvedLoadToken2(text) {
-  try {
-    const parsed = JSON.parse(text);
-    return typeof parsed?.load_token === "string" ? parsed.load_token : null;
-  } catch {
-    return null;
-  }
-}
-function interpretDshToolUse(observation, context) {
-  const { toolUseId, name: name2 } = observation;
-  const issuingStepId = observation.messageId ?? null;
-  const issuingPolicy = context.resolveModelPolicy(observation.model ?? null);
-  const input = observation.input ?? {};
-  const explicitToken = isLoadHandoffTool2(name2) && typeof input.load_token === "string" ? input.load_token : null;
-  const awaitLoadToken = isLoadHandoffTool2(name2) && explicitToken === null;
-  const telemetry = { toolUseId, issuingStepId, loadToken: explicitToken, pathEvents: [] };
-  const call = { toolUseId, issuingStepId, issuingPolicy, awaitLoadToken };
-  const adapter = EFFECT_ADAPTERS.get(name2);
-  let pending = null;
-  if (adapter === void 0) {
-    pending = { kind: "residual", ...call, residual: residualIdentityFor2(name2, input) };
-  } else {
-    const base = baseDirFor2(observation, context);
-    try {
-      const target = adapter.extractTarget(input, base, canonicalizerFor2(context));
-      pending = { kind: "effect", ...call, adapter, input, base, target, rawPath: input.file_path || target };
-    } catch {
-    }
-  }
-  return { pending, effects: [], residuals: [], telemetry };
-}
-function completeDshToolResult(pending, observation, context) {
-  const text = observation.content;
-  const telemetry = {
-    toolUseId: pending.toolUseId,
-    issuingStepId: pending.issuingStepId,
-    loadToken: pending.awaitLoadToken ? resolvedLoadToken2(text) : null,
-    pathEvents: []
-  };
-  const hadError = observation.isError === true;
-  if (pending.kind === "residual") {
-    const { groupKey, kind, detail, inputLength } = pending.residual;
-    return {
-      effects: [],
-      residuals: [{ groupKey, weight: inputLength + text.length, hadError, meta: { kind, detail } }],
-      telemetry,
-      skillContinuation: null
-    };
-  }
-  const nothing2 = { effects: [], residuals: [], telemetry, skillContinuation: null };
-  if (hadError) return nothing2;
-  const { adapter, input, base, target, rawPath, issuingPolicy } = pending;
-  let update;
-  try {
-    update = adapter.computeUpdate(input, text, base, issuingPolicy.ctp, canonicalizerFor2(context));
-  } catch {
-    return nothing2;
-  }
-  if (!isEffectiveUpdate2(update, target)) return nothing2;
-  telemetry.pathEvents = pathEventsFor(update, target, rawPath, adapter.toolType);
-  return { effects: [effectFor(update, target)], residuals: [], telemetry, skillContinuation: null };
-}
-function resolveDshToolTarget(pair, context) {
-  const adapter = EFFECT_ADAPTERS.get(pair.name);
-  if (adapter === void 0) return null;
-  try {
-    return adapter.extractTarget(pair.input ?? {}, baseDirFor2(pair, context), canonicalizerFor2(context));
-  } catch {
-    return null;
-  }
-}
-var READ_LINE_RE, END_OF_FILE_RE, GREP_SECTION_SEPARATOR, GREP_ROW_RE, sumTokens, fileTarget, EFFECT_ADAPTERS, MCP_PREFIX, AGENT_TOOLS;
-var init_native_tools2 = __esm({
-  "lib/harness/dsh/native-tools.js"() {
-    init_constants();
-    init_token_estimate();
-    init_bash_feature();
-    init_tool_effects();
-    READ_LINE_RE = /^(\d+): /;
-    END_OF_FILE_RE = /^\(End of file - total \d+ lines\)$/;
-    GREP_SECTION_SEPARATOR = "\n\n";
-    GREP_ROW_RE = /^Line (\d+): /;
-    sumTokens = (lines) => lines.reduce((sum, [, tokens]) => sum + tokens, 0);
-    fileTarget = (input, base, canon) => input.file_path ? canon(input.file_path, base) : null;
-    EFFECT_ADAPTERS = /* @__PURE__ */ new Map([
-      ["read", {
-        toolType: "read",
-        extractTarget: fileTarget,
-        computeUpdate: (_input, text, _base, ctp) => {
-          const lines = [];
-          let reachedEnd = false;
-          for (const line of text.split("\n")) {
-            const numbered = READ_LINE_RE.exec(line);
-            if (numbered) lines.push([Number(numbered[1]), charsToTokens(line, ctp)]);
-            else if (END_OF_FILE_RE.test(line)) reachedEnd = true;
-          }
-          const isFullRead = reachedEnd && lines.length > 0 && lines[0][0] === 1;
-          const spent = sumTokens(lines) + TOOL_OVERHEAD.Read;
-          return { type: isFullRead ? "fullSet" : "lineUpdate", lines, overhead: TOOL_OVERHEAD.Read, spent };
-        }
-      }],
-      ["write", {
-        toolType: "write",
-        extractTarget: fileTarget,
-        // Written content is raw and a later read numbers it, so the write prices the read's form and the two
-        // observations of one file agree. `buildWindow` counts a final unterminated line but no line after a
-        // final newline, so neither does this.
-        computeUpdate: (input, _text, _base, ctp) => {
-          const rawLines = String(input.content ?? "").split("\n");
-          if (rawLines.at(-1) === "") rawLines.pop();
-          const lines = rawLines.map((line, index) => [index + 1, charsToTokens(`${index + 1}: ${line}`, ctp)]);
-          return { type: "write", lines, overhead: TOOL_OVERHEAD.Write, spent: sumTokens(lines) + TOOL_OVERHEAD.Write };
-        }
-      }],
-      ["edit", {
-        toolType: "edit",
-        extractTarget: fileTarget,
-        // An edit adjusts the total rather than replacing content: it observes no whole file. It charges no
-        // framing overhead because the corrective read that follows most edits charges its own. Each line it
-        // adds or removes carries a line-number prefix in the read's form.
-        computeUpdate: (input, _text, _base, ctp) => {
-          const oldString = input.old_string ?? "";
-          const newString = input.new_string ?? "";
-          const oldTokens = charsToTokens(oldString, ctp);
-          const newTokens = charsToTokens(newString, ctp);
-          const lineDelta = (newString.match(/\n/g) || []).length - (oldString.match(/\n/g) || []).length;
-          const value = newTokens - oldTokens + lineDelta * (4 / ctp.ascii);
-          return { type: "editDelta", value, spent: oldTokens + newTokens + TOOL_OVERHEAD.Edit };
-        }
-      }],
-      ["grep", {
-        toolType: "grep",
-        extractTarget: () => null,
-        // the files are named by the result, not by the input
-        computeUpdate: (_input, text, base, ctp, canon) => {
-          const files = /* @__PURE__ */ Object.create(null);
-          for (const section of text.split(GREP_SECTION_SEPARATOR)) {
-            const [path3, ...rows] = section.split("\n");
-            if (GREP_ROW_RE.test(path3)) continue;
-            const lines = [];
-            for (const row of rows) {
-              const numbered = GREP_ROW_RE.exec(row);
-              if (!numbered) continue;
-              const rendered = `${numbered[1]}: ${row.slice(numbered[0].length)}`;
-              lines.push([Number(numbered[1]), charsToTokens(rendered, ctp)]);
-            }
-            if (lines.length === 0) continue;
-            files[canon(path3, base)] = lines;
-          }
-          const spent = Object.values(files).reduce((sum, lines) => sum + sumTokens(lines), TOOL_OVERHEAD.Grep);
-          return { type: "grepMultiFile", files, overhead: TOOL_OVERHEAD.Grep, spent };
-        }
-      }],
-      ["skill", {
-        toolType: "skill",
-        // A skill is a resource without a file: its key is its own namespace, so no base path applies.
-        extractTarget: (input) => input.name ? "skill:" + input.name : null,
-        computeUpdate: (_input, text, _base, ctp) => {
-          const tokens = charsToTokens(text, ctp);
-          return { type: "fullSet", lines: [[1, tokens]], overhead: TOOL_OVERHEAD.Read, spent: tokens + TOOL_OVERHEAD.Read };
-        }
-      }]
-    ]);
-    MCP_PREFIX = "mcp__";
-    AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
-  }
-});
-
 // lib/harness/dsh/history-turn-rules.js
-import { isAbsolute as isAbsolute4, normalize as normalize3, resolve as resolve3 } from "node:path";
 function createDshHumanHeadRule() {
   return (line) => {
     if (line.kind !== "visible" || line.message.role !== "human") return PASS;
@@ -59284,21 +59267,14 @@ function createDshAskHeadRule() {
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
-function createDshDialogueProjection({ sessionCwd }) {
-  const context = { path: { isAbsolute: isAbsolute4, resolve: resolve3, normalize: normalize3 }, sessionCwd };
+function createDshDialogueProjection() {
   const rules = [
     createDshHumanHeadRule(),
     createDshAskHeadRule()
   ];
   return {
     project(observations) {
-      const { folds } = projectDialogue(observations);
-      for (const fold of folds) {
-        for (const pair of fold.toolPairs) {
-          pair.resourceKey = resolveDshToolTarget(pair, context);
-        }
-      }
-      return { folds };
+      return projectDialogue(observations);
     },
     groupTurns(lines) {
       return groupTurns(lines, rules);
@@ -59310,13 +59286,11 @@ var init_history_turn_rules2 = __esm({
   "lib/harness/dsh/history-turn-rules.js"() {
     init_turn();
     init_dialogue_fold();
-    init_native_tools2();
     ASK_TOOL_NAME2 = "ask_user_question";
   }
 });
 
 // lib/harness/dsh/measurement-projection.js
-import nodePath2 from "node:path";
 function invariant6(ok, message) {
   if (!ok) throw new Error(`dsh measurement projection invariant: ${message}`);
 }
@@ -59332,7 +59306,7 @@ function createDshMeasurementProjection({
 } = {}) {
   invariant6(typeof interpretToolUse === "function", "interpretToolUse must be a function");
   invariant6(typeof completeToolResult === "function", "completeToolResult must be a function");
-  const context = { path: nodePath2, sessionCwd: cwd || projectRoot || null, resolveModelPolicy };
+  const context = { sessionCwd: cwd || projectRoot || null, resolveModelPolicy };
   return createMeasurementProjection({
     scope: "dsh-measurement-projection",
     context,
@@ -59348,6 +59322,33 @@ var init_measurement_projection3 = __esm({
   }
 });
 
+// lib/harness/dsh/tool-evidence-profile.js
+function residualIdentity2(name2, input) {
+  if (name2 === "bash") {
+    const feature = bashFeature(input.command);
+    return { groupKey: feature.name, kind: "bash", detail: feature.detail };
+  }
+  if (name2.startsWith(MCP_PREFIX2)) {
+    return { groupKey: name2.slice(MCP_PREFIX2.length), kind: "mcp", detail: "" };
+  }
+  return { groupKey: name2, kind: AGENT_TOOLS.has(name2) ? "agent" : "tool", detail: "" };
+}
+function isLoadHandoffTool2(name2) {
+  return name2.endsWith("load_handoff");
+}
+function nonFileResource2({ name: name2, input }) {
+  return name2 === "skill" && input.name ? { resourceKey: "skill:" + input.name } : null;
+}
+var MCP_PREFIX2, AGENT_TOOLS, dshToolEvidenceProfile;
+var init_tool_evidence_profile2 = __esm({
+  "lib/harness/dsh/tool-evidence-profile.js"() {
+    init_bash_feature();
+    MCP_PREFIX2 = "mcp__";
+    AGENT_TOOLS = /* @__PURE__ */ new Set(["subagent", "subagent_fork", "workflow", "send_message"]);
+    dshToolEvidenceProfile = { residualIdentity: residualIdentity2, isLoadHandoffTool: isLoadHandoffTool2, nonFileResource: nonFileResource2 };
+  }
+});
+
 // dsh/src/composition.js
 var composition_exports = {};
 __export(composition_exports, {
@@ -59355,10 +59356,42 @@ __export(composition_exports, {
   composeWatcher: () => composeWatcher
 });
 import { tmpdir } from "node:os";
-import { join as join11 } from "node:path";
-function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl }) {
+import nodePath, { join as join10 } from "node:path";
+function nodeWorkingTree() {
+  sharedWorkingTree ??= createNodeWorkingTree({
+    path: nodePath,
+    homeDir: null,
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS
+  });
+  return sharedWorkingTree;
+}
+function interpretersFor({ workingTree, cwd }) {
+  const attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree(), limits: ATTRIBUTION_LIMITS });
+  const interpreter = createToolEvidenceInterpreter({
+    attribution,
+    profile: dshToolEvidenceProfile,
+    limits: ATTRIBUTION_LIMITS
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: cwd })
+  };
+}
+function composeWatcher({
+  sessionId,
+  cwd,
+  store,
+  turnNotesRoot,
+  readSession,
+  isIgnored,
+  cacheTtl,
+  workingTree
+}) {
   const dialogueSource = createDshDialogueSource({ readSession });
-  const dialogueProjection = createDshDialogueProjection({ sessionCwd: cwd });
+  const dialogueProjection = createDshDialogueProjection();
+  const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
   const watcher = new SessionWatcher({
     sessionId,
     sourceLocator: sessionId,
@@ -59377,9 +59410,10 @@ function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isI
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse: interpretDshToolUse,
-      completeToolResult: completeDshToolResult
+      interpretToolUse,
+      completeToolResult
     }),
+    resourceKeysOf,
     modelPolicyFor: (modelId) => {
       const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
       const saved = loadPricingOverride(modelId);
@@ -59389,7 +59423,7 @@ function composeWatcher({ sessionId, cwd, store, turnNotesRoot, readSession, isI
   });
   return { watcher, dialogueSource, dialogueProjection };
 }
-var DSH_TURN_NOTES_ROOT;
+var DSH_TURN_NOTES_ROOT, sharedWorkingTree;
 var init_composition = __esm({
   "dsh/src/composition.js"() {
     init_session_watcher();
@@ -59402,11 +59436,15 @@ var init_composition = __esm({
     init_project_key();
     init_version();
     init_constants();
+    init_working_tree();
+    init_resource_attribution();
+    init_tool_evidence();
     init_dialogue_source2();
     init_history_turn_rules2();
     init_measurement_projection3();
-    init_native_tools2();
-    DSH_TURN_NOTES_ROOT = join11(tmpdir(), "session-watcher", "turn-notes");
+    init_tool_evidence_profile2();
+    DSH_TURN_NOTES_ROOT = join10(tmpdir(), "session-watcher", "turn-notes");
+    sharedWorkingTree = null;
   }
 });
 
@@ -59431,9 +59469,9 @@ __export(server_exports, {
 });
 import { createServer as createHttpServer } from "node:http";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
-import { dirname as dirname3, join as join12, resolve as resolve4, basename as basename2, extname as extname2, isAbsolute as isAbsolute5 } from "node:path";
-import { readdirSync as readdirSync5, statSync as statSync5, readFileSync as readFileSync11, mkdirSync as mkdirSync4, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync3, appendFileSync as appendFileSync3, rmSync as rmSync3, realpathSync } from "node:fs";
-import { homedir as homedir7 } from "node:os";
+import { dirname as dirname3, join as join11, resolve as resolve2, basename as basename2, extname as extname2, isAbsolute as isAbsolute3, normalize as normalize2 } from "node:path";
+import { readdirSync as readdirSync5, statSync as statSync6, readFileSync as readFileSync12, mkdirSync as mkdirSync4, unlinkSync as unlinkSync3, openSync as openSync2, writeSync, closeSync as closeSync2, writeFileSync as writeFileSync3, appendFileSync as appendFileSync3, rmSync as rmSync3, realpathSync } from "node:fs";
+import { homedir as homedir6 } from "node:os";
 function safeSessionId2(sessionId) {
   const s = String(sessionId ?? "");
   if (!s || s === "." || s === ".." || /[/\\\0]/.test(s) || s.includes("..")) return "__invalid_session__";
@@ -59450,7 +59488,7 @@ function writeStateFileExclusive(path3, record2) {
 function resolveJsonl(target) {
   let targetStat;
   try {
-    targetStat = statSync5(target);
+    targetStat = statSync6(target);
   } catch {
     return target;
   }
@@ -59459,7 +59497,7 @@ function resolveJsonl(target) {
   const walk2 = (dir, depth) => {
     if (depth > 3) return;
     for (const e of readdirSync5(dir, { withFileTypes: true })) {
-      const p = join12(dir, e.name);
+      const p = join11(dir, e.name);
       if (e.isDirectory()) walk2(p, depth + 1);
       else if (e.name.endsWith(".jsonl")) found.push(p);
     }
@@ -59471,7 +59509,7 @@ function resolveJsonl(target) {
   const decorated = found.map((p) => {
     let mtime = -Infinity;
     try {
-      mtime = statSync5(p).mtimeMs;
+      mtime = statSync6(p).mtimeMs;
     } catch {
     }
     return { p, mtime };
@@ -59492,7 +59530,7 @@ function resolveBySessionId(projectsRoot, sessionId) {
       return;
     }
     for (const e of entries) {
-      const p = join12(dir, e.name);
+      const p = join11(dir, e.name);
       if (e.isDirectory()) walk2(p, depth + 1);
       else if (e.name === wanted) hits.push(p);
     }
@@ -59502,6 +59540,30 @@ function resolveBySessionId(projectsRoot, sessionId) {
 }
 function shouldIdleShutdown({ sseClientsSize, lastRequestMono, now }) {
   return sseClientsSize === 0 && now - lastRequestMono > IDLE_SHUTDOWN_MS;
+}
+function nodeWorkingTree2() {
+  sharedWorkingTree2 ??= createNodeWorkingTree({
+    path: { isAbsolute: isAbsolute3, resolve: resolve2, normalize: normalize2 },
+    homeDir: homedir6(),
+    cacheEntries: WORKING_TREE_CACHE_ENTRIES,
+    cacheChars: WORKING_TREE_CACHE_CHARS
+  });
+  return sharedWorkingTree2;
+}
+function interpretersFor2({ workingTree, projectRoot }) {
+  const attribution = createResourceAttribution({ workingTree: workingTree ?? nodeWorkingTree2(), limits: ATTRIBUTION_LIMITS });
+  const interpreter = createToolEvidenceInterpreter({
+    attribution,
+    profile: claudeCodeToolEvidenceProfile,
+    limits: ATTRIBUTION_LIMITS
+  });
+  return {
+    interpretToolUse: interpreter.interpretToolUse,
+    completeToolResult: interpreter.completeToolResult,
+    interpretSkillPayload: claudeCodeToolEvidenceProfile.interpretSkillPayload,
+    interpretTaskNotification: claudeCodeToolEvidenceProfile.interpretTaskNotification,
+    resourceKeysOf: (pair, capture) => interpreter.resourceKeysOf(pair, { ...capture, sessionCwd: projectRoot })
+  };
 }
 function createWatcherComposition({
   sessionId = null,
@@ -59516,10 +59578,18 @@ function createWatcherComposition({
   // place production reads the declaration, and every layer below receives the lifetime already bound into
   // the policy resolver.
   cacheTtl = resolveClaudeCodeCacheTtl(),
-  now = () => Date.now()
+  now = () => Date.now(),
+  workingTree
 } = {}) {
   const resourcePolicy = createResourcePolicy({ projectRoot, isIgnored });
   const resourceEnrichment = createResourceEnrichment();
+  const {
+    interpretToolUse,
+    completeToolResult,
+    interpretSkillPayload: interpretSkillPayload2,
+    interpretTaskNotification: interpretTaskNotification2,
+    resourceKeysOf
+  } = interpretersFor2({ workingTree, projectRoot });
   return new SessionWatcher({
     sessionId,
     sourceLocator,
@@ -59527,27 +59597,28 @@ function createWatcherComposition({
     projectRoot,
     // Derived once from the host's existing state directory. `SessionWatcher` has no state-directory
     // fallback, so a composition that forgot this cannot silently write Turn Notes into the real install.
-    turnNotesRoot: join12(stateDir || PORT_DIR2, "turn-notes"),
+    turnNotesRoot: join11(stateDir || PORT_DIR2, "turn-notes"),
     resourcePolicy,
     resourceEnrichment,
     handoffComposition: createHandoffComposition(),
     loaderVersion: PLUGIN_VERSION,
     store,
     dialogueSource: dialogueSource || createClaudeCodeDialogueSource(),
-    dialogueProjection: createClaudeCodeDialogueProjection({ sessionCwd: projectRoot || process.cwd() }),
+    dialogueProjection: createClaudeCodeDialogueProjection(),
     createEngine: createMeasurementEngine,
-    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the locator and the
-    // effective model resolver the application owns rather than closing over either.
-    createMeasurementProjection: (locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
+    // The Projection is rebuilt per `replace` and per `rotate`, so the factory takes the effective model resolver
+    // the application owns rather than closing over it. The locator the application hands first is not read: a
+    // relative path resolves against the row's own `cwd`, else `projectRoot`.
+    createMeasurementProjection: (_locator, resolveModelPolicy) => createClaudeCodeMeasurementProjection({
       cwd: projectRoot,
       projectRoot,
-      sourceLocator: locator,
       resolveModelPolicy,
-      interpretToolUse: interpretClaudeCodeToolUse,
-      completeToolResult: completeClaudeCodeToolResult,
-      interpretSkillPayload: interpretClaudeCodeSkillPayload,
-      interpretTaskNotification: interpretClaudeCodeTaskNotification
+      interpretToolUse,
+      completeToolResult,
+      interpretSkillPayload: interpretSkillPayload2,
+      interpretTaskNotification: interpretTaskNotification2
     }),
+    resourceKeysOf,
     // The C ratio is a function of the model AND the prompt-cache lifetime this host declared, and that
     // lifetime is one fact for the whole composition. Binding it here leaves the measured layers below
     // passing a model id and nothing else, so no cache lifetime enters their vocabulary.
@@ -59555,17 +59626,14 @@ function createWatcherComposition({
     now
   });
 }
-function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join12(__dirname2, "public"), store = null, disableTelemetrySweep = false, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
+function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId = null, onIdleShutdown = null, onOwnerFatal = null, projectsRoot = null, projectRoot = null, projectId = null, stateDir = null, sourceLocator = null, ratioOverride = null, cacheTtl, publicDir = join11(__dirname2, "public"), store = null, disableTelemetrySweep = false, turnPageBuilder: injectedTurnPageBuilder = buildTurnPage, dialogueSource: injectedDialogueSource = null, createSourceDriver = createClaudeCodeSourceDriver, resolveSourceLocator = resolveBySessionId }) {
   const app = (0, import_express.default)();
   const startMs = Date.now();
   const sseClients = /* @__PURE__ */ new Set();
   const server = createHttpServer(app);
   const resolveStore = () => store || getStore();
   const dialogueSource = injectedDialogueSource || createClaudeCodeDialogueSource();
-  const dialogueProjection = createClaudeCodeDialogueProjection({
-    sessionCwd: projectRoot || process.cwd()
-  });
-  const includeToolEvidence = (pair) => classifyToolPair(pair, DEFAULT_CTP) === "residual";
+  const dialogueProjection = createClaudeCodeDialogueProjection();
   const history = { dialogueSource, dialogueProjection, notice: TURN_NOTICE };
   const formatLoadedHandoff = (core) => loadedHandoffPayload(core, {
     store: resolveStore(),
@@ -59596,7 +59664,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
   let nextResolveMono = -Infinity;
   const publishedDiscoveryPaths = /* @__PURE__ */ new Set();
   function writeDiscovery(targetSessionId) {
-    const path3 = join12(effectiveStateDir, `${safeSessionId2(targetSessionId)}.json`);
+    const path3 = join11(effectiveStateDir, `${safeSessionId2(targetSessionId)}.json`);
     try {
       mkdirSync4(effectiveStateDir, { recursive: true });
       writeFileSync3(path3, JSON.stringify({
@@ -59761,7 +59829,7 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
           sessionId: null,
           cwd: source.header.cwd,
           store: resolveStore(),
-          turnNotesRoot: join12(effectiveStateDir, "turn-notes"),
+          turnNotesRoot: join11(effectiveStateDir, "turn-notes"),
           readSession: async () => source.dialogueSnapshot,
           isIgnored: null,
           cacheTtl: () => cacheTtl
@@ -59925,8 +59993,7 @@ data: ${JSON.stringify({ type: "scan" })}
           lineage,
           q: req.query.q,
           scope,
-          ...history,
-          includeToolEvidence
+          ...history
         }));
       } catch (err2) {
         if (err2 && err2.code === "scope_not_found") return res.status(404).json({ error: "scope_not_found" });
@@ -60020,8 +60087,8 @@ data: ${JSON.stringify({ type: "scan" })}
     };
     res.json({ ledger, counters, sizes, enospcPaused: isEnospcPaused(sid) });
   });
-  app.get("/", (req, res) => res.sendFile(join12(publicDir, "dashboard.html")));
-  app.get("/dashboard", (req, res) => res.sendFile(join12(publicDir, "dashboard.html")));
+  app.get("/", (req, res) => res.sendFile(join11(publicDir, "dashboard.html")));
+  app.get("/dashboard", (req, res) => res.sendFile(join11(publicDir, "dashboard.html")));
   app.use(import_express.default.static(publicDir, {
     setHeaders: (res) => {
       res.setHeader("Cache-Control", "no-cache");
@@ -60171,7 +60238,7 @@ data: ${JSON.stringify({ type: "scan" })}
     driver = rotated;
     currentSessionId = newSessionId;
     lastSnapshotMono = -Infinity;
-    const oldStateFile = join12(effectiveStateDir, `${safeSessionId2(oldSessionId)}.json`);
+    const oldStateFile = join11(effectiveStateDir, `${safeSessionId2(oldSessionId)}.json`);
     const published = writeDiscovery(newSessionId);
     let warning;
     if (published.ok) {
@@ -60266,7 +60333,6 @@ data: ${JSON.stringify({ type: "scan" })}
     sessionId: () => currentSessionId,
     dialogueSource,
     dialogueProjection,
-    includeToolEvidence,
     recovery: { notice: TURN_NOTICE, searchHit: SEARCH_HIT_RECOVERY, locateHit: LOCATE_HIT_RECOVERY },
     turnPageBuilder: injectedTurnPageBuilder
   });
@@ -60351,7 +60417,7 @@ function parseArgs(argv) {
     warnings
   };
 }
-var import_express, _major, _minor, __dirname2, PORT_DIR2, stateFileFor2, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery;
+var import_express, _major, _minor, __dirname2, PORT_DIR2, stateFileFor2, _globalTestClockMono, _idleEnv, IDLE_SHUTDOWN_MS, SNAPSHOT_THROTTLE_MS, isValidTurnQuery, sharedWorkingTree2;
 var init_server3 = __esm({
   "server.js"() {
     import_express = __toESM(require_express2(), 1);
@@ -60361,7 +60427,10 @@ var init_server3 = __esm({
     init_engine();
     init_source_driver();
     init_measurement_projection2();
-    init_native_tools();
+    init_tool_evidence_profile();
+    init_working_tree();
+    init_resource_attribution();
+    init_tool_evidence();
     init_cache_ttl();
     init_rate_lamp_manager();
     init_wire();
@@ -60386,7 +60455,6 @@ var init_server3 = __esm({
     init_turn_query();
     init_dialogue_source();
     init_history_turn_rules();
-    init_native_tools();
     init_turn_recovery();
     [_major, _minor] = process.versions.node.split(".").map(Number);
     if (_major < 22 || _major === 22 && _minor < 16) {
@@ -60394,20 +60462,21 @@ var init_server3 = __esm({
       process.exit(1);
     }
     __dirname2 = dirname3(fileURLToPath2(import.meta.url));
-    PORT_DIR2 = process.env.SW_STATE_DIR || join12(homedir7(), ".session-watcher");
-    stateFileFor2 = (sessionId) => join12(PORT_DIR2, `${safeSessionId2(sessionId || "default")}.json`);
+    PORT_DIR2 = process.env.SW_STATE_DIR || join11(homedir6(), ".session-watcher");
+    stateFileFor2 = (sessionId) => join11(PORT_DIR2, `${safeSessionId2(sessionId || "default")}.json`);
     _globalTestClockMono = null;
     _idleEnv = Number(process.env.SW_IDLE_TTL_MS);
     IDLE_SHUTDOWN_MS = Number.isFinite(_idleEnv) ? _idleEnv : 24 * 60 * 60 * 1e3;
     SNAPSHOT_THROTTLE_MS = 3e4;
     isValidTurnQuery = (q) => typeof q === "string" && q.trim() !== "" && q.length <= HISTORY_EXCERPT_CHARS;
+    sharedWorkingTree2 = null;
     if (false) {
       const argv = process.argv.slice(2);
       const { transcript, project, session, lbase, ratioOverride, wantPort, open, warnings } = parseArgs(argv);
       for (const w of warnings) console.error(`session-watcher: ${w}`);
-      const projectsRoot = join12(homedir7(), ".claude", "projects");
+      const projectsRoot = join11(homedir6(), ".claude", "projects");
       const byId = resolveBySessionId(projectsRoot, session);
-      const jsonlPath = transcript ? resolve4(transcript) : byId || resolveJsonl(resolve4(project || projectsRoot));
+      const jsonlPath = transcript ? resolve2(transcript) : byId || resolveJsonl(resolve2(project || projectsRoot));
       const sessionId = jsonlPath.endsWith(".jsonl") ? basename2(jsonlPath).replace(/\.jsonl$/, "") : session || "default";
       const hookSessionId = session || null;
       const projectId = resolveProjectKey({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd: project }) || process.env.CLAUDE_PROJECT_ID || null;
@@ -60501,9 +60570,9 @@ var init_server3 = __esm({
 
 // index.js
 import { pathToFileURL as pathToFileURL2, fileURLToPath as fileURLToPath3 } from "node:url";
-import { realpathSync as realpathSync2, readFileSync as readFileSync12, unlinkSync as unlinkSync4, mkdirSync as mkdirSync5 } from "node:fs";
-import { join as join13 } from "node:path";
-import { homedir as homedir8 } from "node:os";
+import { realpathSync as realpathSync2, readFileSync as readFileSync13, unlinkSync as unlinkSync4, mkdirSync as mkdirSync5 } from "node:fs";
+import { join as join12 } from "node:path";
+import { homedir as homedir7 } from "node:os";
 
 // lib/probe.js
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -60555,23 +60624,23 @@ function sessionIdOf(env = process.env) {
   return env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || "default";
 }
 function probeHealth(port, timeoutMs = 2e3) {
-  return new Promise((resolve5) => {
-    if (!port) return resolve5(false);
+  return new Promise((resolve3) => {
+    if (!port) return resolve3(false);
     const req = httpGet({ host: "127.0.0.1", port, path: "/api/health", timeout: timeoutMs }, (res) => {
       let body2 = "";
       res.on("data", (d) => body2 += d);
       res.on("end", () => {
         try {
-          resolve5(JSON.parse(body2).ok === true);
+          resolve3(JSON.parse(body2).ok === true);
         } catch {
-          resolve5(false);
+          resolve3(false);
         }
       });
     });
-    req.on("error", () => resolve5(false));
+    req.on("error", () => resolve3(false));
     req.on("timeout", () => {
       req.destroy();
-      resolve5(false);
+      resolve3(false);
     });
   });
 }
@@ -60723,7 +60792,7 @@ if (__selfReal === __argvReal) {
     const { loadIsIgnored: loadIsIgnored2 } = await Promise.resolve().then(() => (init_gitignore_loader(), gitignore_loader_exports));
     const { resolveClaudeCodeCacheTtl: resolveClaudeCodeCacheTtl2 } = await Promise.resolve().then(() => (init_cache_ttl(), cache_ttl_exports));
     const sessionId = process.env.CLAUDE_CODE_SESSION_ID || "default";
-    const projectsRoot = join13(homedir8(), ".claude", "projects");
+    const projectsRoot = join12(homedir7(), ".claude", "projects");
     const transcriptPath = resolveBySessionId2(projectsRoot, sessionId);
     const cwd = process.cwd();
     const projectId = resolveProjectKey2({ claudeProjectDir: process.env.CLAUDE_PROJECT_DIR, cwd });
@@ -60820,7 +60889,7 @@ if (__selfReal === __argvReal) {
       }
       for (const stateFile of publishedDiscoveryPaths()) {
         try {
-          const st = JSON.parse(readFileSync12(stateFile, "utf8"));
+          const st = JSON.parse(readFileSync13(stateFile, "utf8"));
           if (st.pid === process.pid) unlinkSync4(stateFile);
         } catch {
         }
@@ -60918,7 +60987,7 @@ if (__selfReal === __argvReal) {
       }));
     });
     mcpServer.registerTool("load_handoff", {
-      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per session, oldest to newest, beside the newest page of its turns.",
+      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its turns.",
       inputSchema: {
         load_token: z.string().optional().describe("Semantic token from prepare_handoff (exact match)"),
         query: z.string().optional().describe("Free-text search when the token is unknown; returns top matches"),

@@ -1,29 +1,30 @@
 // The DSH tool set over the host's watcher table: the registered names, the watcher each call selects, the bootstrap wait, and the values each tool shares with the shared functions the Claude Code tools answer through.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { applyHost } from '../dsh/src/host.js';
+import { composeWatcher } from '../dsh/src/composition.js';
 import { createTools } from '../dsh/src/tools.js';
-import { getStore, closeStoreGlobal } from '../lib/store.js';
+import { createWatcherTable } from '../dsh/src/watcher-table.js';
+import { initStore, getStore, closeStoreGlobal } from '../lib/store.js';
 import { _resetRateLampManagerForTest, getLiveLedger } from '../lib/rate-lamp-manager.js';
 import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload, statusDigest, statusWireWithLedger } from '../lib/wire.js';
 import { buildTurnPage } from '../lib/turn-page.js';
 import { createTurnReadService } from '../lib/turn-read-service.js';
 import { withLoadRecovery } from '../lib/turn-tool-recovery.js';
 import { createDshTurnRecovery } from '../lib/harness/dsh/turn-recovery.js';
-import { classifyDshToolPair } from '../lib/harness/dsh/native-tools.js';
 import { initParser, loadGrammar } from '../lib/symbol-outline.js';
-import { DEFAULT_CTP } from '../lib/constants.js';
 import { HISTORY_EXCERPT_CHARS } from '../lib/turn-history-budget.js';
 import {
-  reusedCallIdAcrossSteps, sessionLog, compactCheckpoint, turnStart, turnEnd, stepStart, stepEnd, userMessage,
-  assistantMessage, header,
+  reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, REUSED_CALL_ID_SYMBOL_FILES, sessionLog, compactCheckpoint, turnStart,
+  turnEnd, stepStart, stepEnd, userMessage, assistantMessage, header,
 } from './helpers/dsh-events.js';
-import { createFakeContext, fakeSession } from './helpers/dsh-fake-context.js';
+import { createFakeContext, fakeSession, fakeSessionTitle } from './helpers/dsh-fake-context.js';
+import { filesUnder, watchedTree, writeFilesUnder } from './helpers/attribution-fixtures.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 const NODE_MODULES = fileURLToPath(new URL('../node_modules/', import.meta.url));
@@ -62,10 +63,10 @@ afterEach(() => {
 });
 
 // The host over a fake context, every definition `ctx.tools.register` receives recorded by name; `snapshots` maps a session id to its snapshot's events, empty unless given, and `listSessions` backs the persisted listing.
-function mountHost({ sessions = [], snapshots = {}, readSession, listSessions } = {}) {
+function mountHost({ sessions = [], snapshots = {}, readSession, listSessions, sessionTitle } = {}) {
   const read = readSession
     ?? (async sessionId => ({ session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] }));
-  const ctx = createFakeContext({ sessions, readSession: read, listSessions });
+  const ctx = createFakeContext({ sessions, readSession: read, listSessions, sessionTitle });
   const registered = [];
   const register = ctx.tools.register;
   ctx.tools.register = (definition) => { registered.push(definition); register(definition); };
@@ -407,15 +408,15 @@ test('the turn reads carry the DSH recovery sentences', async () => {
 });
 
 test('load_handoff, get_bucket_summary and the turn reads answer the values the shared functions answer over the same store', async (t) => {
+  // The host attributes by the lines a call shows, so the destination session's directory holds the files its log
+  // reads, and they carry symbols. The source session's log keeps `export const` lines for the search below.
   await initParser({ wasmDir: join(NODE_MODULES, 'web-tree-sitter') });
   await loadGrammar('.js', { wasmDir: join(NODE_MODULES, 'tree-sitter-javascript') });
   const cwd = join(dir, 'repo');
-  mkdirSync(join(cwd, 'src'), { recursive: true });
-  writeFileSync(join(cwd, 'src/a.js'), 'export function a() { return 1; }\n');
-  writeFileSync(join(cwd, 'src/b.js'), 'export function b() { return 2; }\nexport default b;\n');
+  writeFilesUnder(cwd, REUSED_CALL_ID_SYMBOL_FILES);
   const { ctx, table } = mountHost({
     sessions: [fakeSession({ id: 's-src', cwd }), fakeSession({ id: 's-dst', cwd })],
-    snapshots: { 's-src': notedLog(), 's-dst': reusedCallIdAcrossSteps() },
+    snapshots: { 's-src': notedLog(), 's-dst': reusedCallIdAcrossSteps({ files: REUSED_CALL_ID_SYMBOL_FILES }) },
   });
   await settled();
   const store = getStore();
@@ -449,10 +450,7 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   })));
   unreadable.mock.restore();
 
-  const service = createTurnReadService({
-    store: () => store, sessionId: () => 's-dst', ...history,
-    includeToolEvidence: pair => classifyDshToolPair(pair, DEFAULT_CTP) === 'residual', recovery,
-  });
+  const service = createTurnReadService({ store: () => store, sessionId: () => 's-dst', ...history, recovery });
   const firstPage = await run(tool('turn_page'), {}, 's-dst');
   assert.ok(firstPage.next_before, 'the notes overflow one page');
   assert.deepEqual({ turn_page: loaded.turn_page, next_before: loaded.next_before }, firstPage);
@@ -460,10 +458,7 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   assert.deepEqual(secondPage, await service.turnPage({ before: firstPage.next_before }));
   assert.notDeepEqual(secondPage, firstPage);
 
-  const admitAll = createTurnReadService({
-    store: () => store, sessionId: () => 's-dst', ...history, includeToolEvidence: () => true, recovery,
-  });
-  assert.equal((await admitAll.turnSearch({ q: 'export const a' })).found, true, 'only a file read holds the literal');
+  assert.equal((await service.turnSearch({ q: 'export const a' })).found, true, 'only a file read holds the literal');
   assert.deepEqual(await run(tool('turn_search'), { q: 'export const a' }, 's-dst'),
     await service.turnSearch({ q: 'export const a' }));
 
@@ -474,6 +469,46 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   assert.equal(searched.found, true);
   assert.deepEqual(searched, await service.turnSearch({ q: 'answer3', scope }));
   ctx.dispose();
+});
+
+// The files `reusedCallIdAcrossSteps` and `notedLog` read, as the working tree of their sessions' directory.
+const READ_FILES = filesUnder('/repo', REUSED_CALL_ID_FILES);
+
+// The tools over a watcher table composed over `workingTree`. A `compose` of the production composition is all
+// `applyHost` adds, and it hands the composition no tree: the process's own reads the real files.
+function mountAttributedTable({ snapshots, workingTree }) {
+  initStore(join(dir, 'store.sqlite'));
+  const readSession = async sessionId => ({ session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] });
+  const table = createWatcherTable({
+    readSession,
+    compose: ({ sessionId, cwd, cacheTtl }) => composeWatcher({
+      sessionId, cwd, cacheTtl, store: getStore(), turnNotesRoot: join(dir, 'turn-notes'), readSession, isIgnored: null,
+      workingTree,
+    }),
+  });
+  for (const id of Object.keys(snapshots)) table.ensure({ id, header: { cwd: '/repo' } });
+  const tools = createTools({ defineTool: definition => definition, table, store: getStore() });
+  return { table, tool: name => tools.find(definition => definition.name === name) };
+}
+
+test('the turn reads and load_handoff over a table composed over a working tree ask it nothing', async () => {
+  const snapshots = { 's-src': notedLog(), 's-dst': reusedCallIdAcrossSteps() };
+  const tree = watchedTree(READ_FILES);
+  const { table, tool } = mountAttributedTable({ snapshots, workingTree: tree.workingTree });
+  try {
+    await settled();
+    const token = await prepareNotedHandoff(tool, 's-src');
+    assert.ok(tree.calls.stat > 0, 'folding a snapshot and taking its keys at capture ask the tree, where no record is kept');
+
+    const before = { ...tree.calls };
+    assert.equal((await run(tool('load_handoff'), { load_token: token }, 's-dst')).found, true);
+    assert.ok((await run(tool('turn_page'), {}, 's-dst')).turn_page.length > 0);
+    assert.equal((await run(tool('turn_search'), { q: 'answer3' }, 's-dst')).found, true);
+    assert.ok((await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst')).ranges.length > 0);
+    assert.deepEqual(tree.calls, before);
+  } finally {
+    table.disposeAll();
+  }
 });
 
 test('a tool\'s value is the JSON its Claude Code text encodes', async (t) => {
@@ -540,5 +575,104 @@ test('malformed before, scope and q are refused inside execute', async () => {
   await assert.rejects(run(tool('turn_search'), { q: '   ' }, 's-live'), /\bq\b/);
   await assert.rejects(run(tool('turn_locate'), { q: '' }, 's-live'), /\bq\b/);
   await assert.rejects(run(tool('turn_locate'), { q: 'x'.repeat(HISTORY_EXCERPT_CHARS + 1) }, 's-live'), /\bq\b/);
+  ctx.dispose();
+});
+
+// A source and a destination session over a fake title service; a handoff prepared in the source is loaded as the destination session.
+function mountTitled() {
+  const sessionTitle = fakeSessionTitle();
+  const src = fakeSession({ id: 's-src' });
+  const dst = fakeSession({ id: 's-dst' });
+  const host = mountHost({
+    sessions: [src, dst], snapshots: { 's-src': reusedCallIdAcrossSteps(), 's-dst': reusedCallIdAcrossSteps() }, sessionTitle,
+  });
+  const prepare = async (nextTask) => {
+    const prepared = await run(host.tool('prepare_handoff'), {
+      paths_to_keep: [], summary: 'summary', ...(nextTask === undefined ? {} : { next_task: nextTask }),
+    }, 's-src');
+    assert.equal(prepared.status, 'ready');
+    return prepared.load_token;
+  };
+  const load = args => host.tool('load_handoff').execute(args, { agent: { session: dst }, signal: new AbortController().signal });
+  return { ...host, sessionTitle, dst, prepare, load };
+}
+
+test('a delivered handoff renames the loading session after its next_task as stored', async () => {
+  const { ctx, sessionTitle, dst, prepare, load } = mountTitled();
+  await settled();
+  const nextTask = 'migrate the auth middleware\nto the new session store';
+  assert.equal((await load({ load_token: await prepare(nextTask) })).found, true);
+  assert.deepEqual(sessionTitle.renamed, [{ session: dst, title: nextTask }]);
+  ctx.dispose();
+});
+
+test('an auto-matched delivery renames the loading session too', async () => {
+  const { ctx, sessionTitle, dst, prepare, load } = mountTitled();
+  await settled();
+  await prepare('the only pending task');
+  assert.equal((await load({})).found, true);
+  assert.deepEqual(sessionTitle.renamed, [{ session: dst, title: 'the only pending task' }]);
+  ctx.dispose();
+});
+
+test('a later delivery into the same session renames it again, over the title the earlier delivery set', async () => {
+  const { ctx, sessionTitle, dst, prepare, load } = mountTitled();
+  await settled();
+  const first = await prepare('first task');
+  const second = await prepare('second task');
+  assert.equal((await load({ load_token: first })).found, true);
+  assert.equal((await load({ load_token: second })).found, true);
+  assert.deepEqual(sessionTitle.renamed, [{ session: dst, title: 'first task' }, { session: dst, title: 'second task' }]);
+  ctx.dispose();
+});
+
+test('a handoff without a usable next_task leaves the title alone', async () => {
+  const { ctx, sessionTitle, prepare, load } = mountTitled();
+  await settled();
+  for (const nextTask of [undefined, '   ']) {
+    assert.equal((await load({ load_token: await prepare(nextTask) })).found, true);
+  }
+  assert.deepEqual(sessionTitle.renamed, []);
+  ctx.dispose();
+});
+
+test('a response that is not a delivery renames nothing and writes no line', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'error', line => lines.push(line));
+  const { ctx, sessionTitle, prepare, load } = mountTitled();
+  await settled();
+  await prepare('first task');
+  await prepare('second task');
+  assert.equal((await load({ query: 'summary' })).mode, 'search');
+  assert.equal((await load({})).ambiguous, true);
+  assert.equal((await load({ load_token: 'no-such-token' })).found, false);
+  assert.deepEqual(sessionTitle.renamed, []);
+  assert.deepEqual(lines, []);
+  ctx.dispose();
+});
+
+test('a title service that is no longer provided at the call is not asked, and no line is written', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'error', line => lines.push(line));
+  const { ctx, sessionTitle, prepare, load } = mountTitled();
+  await settled();
+  const token = await prepare('next');
+  ctx.unprovide('sessionTitle');
+  assert.equal((await load({ load_token: token })).found, true);
+  assert.deepEqual(sessionTitle.renamed, []);
+  assert.deepEqual(lines, []);
+  ctx.dispose();
+});
+
+test('a failing rename is a stderr line and the load still answers', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'error', line => lines.push(line));
+  const { ctx, sessionTitle, prepare, load } = mountTitled();
+  await settled();
+  t.mock.method(sessionTitle, 'rename', () => { throw new Error('session title must contain visible characters'); });
+  const loaded = await load({ load_token: await prepare('next') });
+  assert.equal(loaded.found, true);
+  assert.ok(loaded.turn_page !== undefined || loaded.turn_page_error !== undefined, 'the payload is the full load');
+  assert.deepEqual(lines, ['s-dst [dsh-host] title_rename_failed: session title must contain visible characters']);
   ctx.dispose();
 });

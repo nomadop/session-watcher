@@ -12,8 +12,15 @@ process.on('exit', () => { try { closeStoreGlobal(); } catch {} try { rmSync(TMP
 import { createServer } from '../server.js';
 import { bootTestServer, composeForTranscript, writeMeasuredTranscript } from './helpers/server-boot.js';
 import { assistantToolUse, toolResult, ts, usage } from './helpers/transcript-fixtures.js';
+import { CC_HOME, linesText, treeOf } from './helpers/attribution-fixtures.js';
 
 void createServer;   // wired by the composition helper below
+
+// The files the reads below show, declared once: the results are numbered from these lines and the working tree
+// the composition attributes against holds the same files.
+const PROJECT_ROOT = '/workspace';
+const PARTIAL_LINES = Array.from({ length: 21 }, (unused, i) => `const v${i + 1} = ${i + 1};`);
+const FULL_LINES = [1, 2, 3].map(n => `const w${n} = ${n};`);
 
 // Read tool pairs that make one path resident with EXACTLY the given line coverage. A partial read is a
 // line-fragment update keyed by source line, so the coverage is what the result's own `N\t` prefixes say —
@@ -22,7 +29,7 @@ function partialReads(path, ranges) {
   const rows = [];
   ranges.forEach(([from, to], i) => {
     const lines = [];
-    for (let n = from; n <= to; n++) lines.push(`${n}\tconst v${n} = ${n};`);
+    for (let n = from; n <= to; n++) lines.push(`${n}\t${PARTIAL_LINES[n - 1]}`);
     rows.push(assistantToolUse({
       uuid: `xr${i}`, messageId: `xrm${i}`, toolUseId: `xrt${i}`, name: 'Read',
       input: { file_path: path, offset: from, limit: to - from + 1 }, timestamp: ts(3),
@@ -36,8 +43,7 @@ function partialReads(path, ranges) {
 // A WHOLE-content read: no offset, so the resource is marked `fullSnapshot` and its line coverage is
 // suppressed by that flag rather than by holding no lines.
 function fullRead(path) {
-  const lines = [];
-  for (let n = 1; n <= 3; n++) lines.push(`${n}\tconst w${n} = ${n};`);
+  const lines = FULL_LINES.map((line, i) => `${i + 1}\t${line}`);
   return [
     assistantToolUse({
       uuid: 'xf0', messageId: 'xfm0', toolUseId: 'xft0', name: 'Read',
@@ -86,10 +92,13 @@ function partialMarkdownRead(path, lines, from) {
   ];
 }
 
-async function withServer(fn, { extraEntries = [], projectRoot = null } = {}) {
+// `files` (absolute path → text) composes the server over a memory tree that holds them; absent, the composition
+// reads the process's own tree.
+async function withServer(fn, { extraEntries = [], projectRoot = null, files = null } = {}) {
   const composed = composeForTranscript({
     transcriptPath: writeMeasuredTranscript({ steps: 30, extraEntries }),
     sessionId: 'sid-srv', projectId: 'proj-srv', projectRoot,
+    ...(files ? { workingTree: treeOf(files, CC_HOME) } : {}),
   });
   const { server, stopTimers } = composed.handle;
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -167,7 +176,10 @@ test('prepare auto-injects line ranges from the resident coverage when the path 
     const entry0 = load.paths_to_keep[0];
     assert.equal(entry0.path, testPath);
     assert.deepEqual(entry0.lines, [[10, 12], [20, 21]], 'the resident lines collapse into ranges');
-  }, { extraEntries: partialReads(testPath, [[10, 12], [20, 21]]) });
+  }, {
+    extraEntries: partialReads(testPath, [[10, 12], [20, 21]]), projectRoot: PROJECT_ROOT,
+    files: { [`${PROJECT_ROOT}/${testPath}`]: linesText(PARTIAL_LINES) },
+  });
 });
 
 test('prepare skips lines injection when the path was read whole (full snapshot)', async () => {
@@ -185,7 +197,10 @@ test('prepare skips lines injection when the path was read whole (full snapshot)
     const entry0 = load.paths_to_keep[0];
     assert.equal(entry0.path, testPath);
     assert.strictEqual(entry0.lines, undefined, 'a whole-file read injects no line ranges');
-  }, { extraEntries: fullRead(testPath) });
+  }, {
+    extraEntries: fullRead(testPath), projectRoot: PROJECT_ROOT,
+    files: { [`${PROJECT_ROOT}/${testPath}`]: linesText(FULL_LINES) },
+  });
 });
 
 // The symbol-range sibling of the lines-injection cases above, and the only symbol-range case over the
@@ -224,12 +239,12 @@ test('prepare captures symbol ranges from the real read-time coverage, leaving a
 // The whole-then-partial half of the same chain, and the one shape where a source line is observed by more
 // than one read: the second read starts at `OVERLAP_FROM`, inside what the first read already saw, and runs
 // past the section appended between them. A control resource holding the grown document, read whole in one
-// go, is what the belief has to land on — each read is a single-impact `Read`, so both resources carry
-// `TOOL_OVERHEAD.Read`, and equal beliefs mean equal fragment unions. The repeated lines are still charged
+// go, is what the belief has to land on — each read is a single-impact read, so both resources carry the same
+// overhead, and equal beliefs mean equal fragment unions. The repeated lines are still charged
 // in SPEND, where `resource.overhead` is assigned per impact rather than accumulated — which is what
 // separates the belief from what it cost. `test/measurement-engine.effects.test.js`
 // (`upserts by resource-local natural key`) holds the same upsert at the ledger's own boundary; what this
-// case adds is the chain from the Read adapter's numbered lines through prepare into the Store.
+// case adds is the chain from the numbered lines of a read through prepare into the Store.
 test('an overlapping partial read extends the coverage without re-counting the lines it repeats', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'sw-shf-grow-'));
   const notesPath = join(projectDir, 'notes.md');
