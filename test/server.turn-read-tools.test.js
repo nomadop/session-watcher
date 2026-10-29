@@ -7,7 +7,7 @@ import { bootTestServer } from './helpers/server-boot.js';
 import { _seedDeliveredHandoff } from './helpers/handoff-seed.js';
 import { writeTranscript, userMessage, assistantObservation, ts } from './helpers/transcript-fixtures.js';
 import { ccCallLog, ccReadResultText } from './helpers/attribution-fixtures.js';
-import { STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE } from '../lib/turn-tool-recovery.js';
+import { STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, UNUSABLE_POSITIONS_MESSAGE } from '../lib/turn-tool-recovery.js';
 
 describe('turn read tools', () => {
   let ctx, loadToken, handoffId, dir;
@@ -90,6 +90,28 @@ describe('turn read tools', () => {
       { message: SCOPE_ABSENT_MESSAGE });
   });
 
+  // The service runs over the real store here, so the headline projection's own reads are exercised, not a
+  // stand-in for them: the root's headline is its opening, which is the text of the turn the note is on.
+  test('lineageHeadlines reads a position of the lineage a load delivered and throws for one it lacks', async () => {
+    assert.deepEqual(await ctx.turnReadService.lineageHeadlines({ k: '1' }), {
+      lineage: [{ label: 'S1', headline: 'turn9data' }],
+    });
+    await assert.rejects(() => ctx.turnReadService.lineageHeadlines({ k: '2' }), { message: UNUSABLE_POSITIONS_MESSAGE });
+    await assert.rejects(() => ctx.turnReadService.lineageHeadlines({ k: 'S1' }), { message: UNUSABLE_POSITIONS_MESSAGE });
+  });
+
+  // The route exists so this equality can be pinned (it has no production caller): the tool's answer is
+  // the route's body for the same head and positions, nothing added and nothing bounded.
+  test('lineage_headlines equals curling the HTTP route with the resolved head', async () => {
+    const head = ctx.store.findLatestDeliveryInSession(sessionId).handoffId;
+    for (const k of ['1', '1-1,1']) {
+      const viaTool = await ctx.turnReadService.lineageHeadlines({ k });
+      const viaHttp = await ctx.request(`/api/lineage/headlines?lineage_head=${head}&k=${k}`, {});
+      assert.deepEqual(viaTool, viaHttp, k);
+      assert.equal(viaHttp.lineage.length, 1, k);
+    }
+  });
+
   test('a bare session label reaches the same page over MCP and HTTP, and a missing one is the stale-cursor sentence', async () => {
     // The tool resolves its own head through this delivery lookup, so the HTTP side asks the lookup
     // too and both surfaces stay on one head however many loads this session has already performed.
@@ -118,11 +140,11 @@ describe('turn read tools', () => {
     assert.ok(viaTool.turn_page.includes('crossreadneedle'));
   });
 
-  test('a session with no delivered handoff gets no_handoff_loaded from all three', async () => {
+  test('a session with no delivered handoff gets no_handoff_loaded from every read', async () => {
     const fresh = await bootTestServer({ sessionId: 'sid-no-delivery' });
     try {
-      for (const call of ['turnPage', 'turnSearch', 'turnLocate']) {
-        const out = await fresh.turnReadService[call]({ q: 'anything' });
+      for (const call of ['turnPage', 'turnSearch', 'turnLocate', 'lineageHeadlines']) {
+        const out = await fresh.turnReadService[call]({ q: 'anything', k: '1' });
         assert.equal(out.error, 'no_handoff_loaded', call);
         assert.match(out.recovery, /load_handoff/, call);
       }
@@ -140,6 +162,7 @@ describe('turn read tools', () => {
         ['turnPage', {}, 'turn_page_unavailable'],
         ['turnSearch', { q: 'anything' }, 'search_unavailable'],
         ['turnLocate', { q: 'anything' }, 'locate_unavailable'],
+        ['lineageHeadlines', { k: '1' }, 'lineage_headlines_unavailable'],
       ]) {
         const out = await ctx.turnReadService[call](args);
         assert.equal(out.error, error, call);

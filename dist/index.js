@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.10.0",
+      version: "0.10.1",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -437,7 +437,7 @@ var init_bill_regret = __esm({
 });
 
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS;
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS;
 var init_constants = __esm({
   "lib/constants.js"() {
     RECENT_STOP_EVENTS_LIMIT = 32;
@@ -524,6 +524,7 @@ var init_constants = __esm({
     HANDOFF_MAX_PATHS = 50;
     HANDOFF_MAX_SUMMARY_CHARS = 1e4;
     HANDOFF_MAX_NEXT_TASK_CHARS = 2e3;
+    LINEAGE_HEADLINE_TOKEN_BUDGET = 3e3;
     HANDOFF_HOOK_TTL_DAYS = 7;
     HANDOFF_HOOK_MAX_DISPLAY = 3;
     HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1;
@@ -1771,6 +1772,138 @@ var init_turn = __esm({
     tailCut = (s, n) => s.length > n ? "\u2026" + safeSuffix(s, n) : s;
     NOTE_SECTION_RE = /^## NOTE\[(\d+)\]\s*$/;
     TURN_NOTE_PROTOCOL = "Read skeleton_path, then write one note into each `## NOTE[T]` section of notes_path. The headings are already written; put each note under its own heading and leave the heading lines exactly as they are. On a first pass one Write of the whole file is enough. After a re-fetch, Edit the empty sections instead \u2014 a whole-file Write would replace notes that file already holds. Then call submit_turn_notes with snapshot_id alone: it reads notes_path itself and accepts no note text.";
+  }
+});
+
+// lib/lineage-headlines.js
+function collapseRuns(entries) {
+  const runs = [];
+  let from = null;
+  let to = null;
+  for (const entry of entries) {
+    const n = positionOf(entry);
+    if (to !== null && n === to + 1) {
+      to = n;
+      continue;
+    }
+    if (to !== null) runs.push(runOf(from, to));
+    from = to = n;
+  }
+  if (to !== null) runs.push(runOf(from, to));
+  return runs;
+}
+function boundLineageHeadlines(entries, budget = LINEAGE_HEADLINE_TOKEN_BUDGET) {
+  let start2 = entries.length;
+  while (start2 > 0 && estimateWireTokens({ lineage: entries.slice(start2 - 1) }, DEFAULT_CTP) <= budget) {
+    start2--;
+  }
+  return [...collapseRuns(entries.slice(0, start2)), ...entries.slice(start2)];
+}
+function parseLineagePositions(text) {
+  if (typeof text !== "string" || !POSITIONS.test(text)) return null;
+  const ranges = text.split(",").map((item) => {
+    const [from, to = from] = item.split("-").map(Number);
+    return [from, to];
+  });
+  return ranges.some(([from, to]) => from > to) ? null : ranges;
+}
+function selectLineagePositions(entries, ranges) {
+  const positions = entries.map(positionOf);
+  const inside = ([from, to], n) => n >= from && n <= to;
+  const covered = ranges.every((range) => {
+    const [from, to] = range;
+    return positions.filter((n) => inside(range, n)).length === to - from + 1;
+  });
+  if (!covered) return null;
+  return entries.filter((_, i2) => ranges.some((range) => inside(range, positions[i2])));
+}
+var positionOf, runOf, ITEM, POSITIONS;
+var init_lineage_headlines = __esm({
+  "lib/lineage-headlines.js"() {
+    init_constants();
+    init_turn_history_budget();
+    positionOf = (entry) => Number(entry.label.slice(1));
+    runOf = (from, to) => ({ label: from === to ? `S${from}` : `S${from}-S${to}`, omitted: true });
+    ITEM = "[1-9][0-9]*(?:-[1-9][0-9]*)?";
+    POSITIONS = new RegExp(`^${ITEM}(?:,${ITEM})*$`);
+  }
+});
+
+// lib/turn-tool-recovery.js
+var turn_tool_recovery_exports = {};
+__export(turn_tool_recovery_exports, {
+  NO_HANDOFF_LOADED: () => NO_HANDOFF_LOADED,
+  SCOPE_ABSENT_MESSAGE: () => SCOPE_ABSENT_MESSAGE,
+  STALE_CURSOR_MESSAGE: () => STALE_CURSOR_MESSAGE,
+  UNUSABLE_POSITIONS_MESSAGE: () => UNUSABLE_POSITIONS_MESSAGE,
+  withHeadlinesRecovery: () => withHeadlinesRecovery,
+  withLoadRecovery: () => withLoadRecovery,
+  withLocateRecovery: () => withLocateRecovery,
+  withPageRecovery: () => withPageRecovery,
+  withSearchRecovery: () => withSearchRecovery
+});
+function withPageRecovery(result) {
+  if (result?.error === "turn_page_unavailable") {
+    return { ...result, recovery: "Call turn_page again; it reads the transcript and the store afresh on every call. Search and locate have independent projections and may still answer." };
+  }
+  return result;
+}
+function withSearchRecovery(result, { hitRecovery } = {}) {
+  if (result?.error === "search_unavailable") {
+    return { ...result, recovery: PAGE_IS_THE_FALLBACK };
+  }
+  if (result?.found === false) {
+    return { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment or a token seen verbatim \u2014 an id, a path, a commit hash \u2014 or call turn_locate with a remembered term for candidate turns and the wording actually used." };
+  }
+  if (result?.truncated === true) {
+    return { ...result, recovery: "Older matches were dropped to fit the budget, and the cut falls on a match, so the oldest entry may be incomplete. Narrow and search again: a longer literal, the scope of an entry near what you are after, or turn_locate for a candidate." };
+  }
+  if (result?.found === true) {
+    return { ...result, recovery: hitRecovery };
+  }
+  return result;
+}
+function withLocateRecovery(result, { hitRecovery } = {}) {
+  if (result?.error === "locate_unavailable") {
+    return { ...result, recovery: PAGE_IS_THE_FALLBACK };
+  }
+  if (result?.found === false) {
+    return { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." };
+  }
+  if (result?.found === true) {
+    return { ...result, recovery: hitRecovery };
+  }
+  return result;
+}
+function withHeadlinesRecovery(result) {
+  if (result?.error === "lineage_headlines_unavailable") {
+    return { ...result, recovery: "Call lineage_headlines again; it reads the store afresh on every call." };
+  }
+  return result;
+}
+function withLoadRecovery(result) {
+  if (result?.error === "handoff_delivery_unavailable") {
+    return { ...result, recovery: "The delivery record could not be written, so this response carries no content. Call load_handoff again with the same token once the store is writable." };
+  }
+  if (result?.turn_page_error) {
+    return { ...result, recovery: "The handoff loaded and the rest of this response is complete; only its turn page and the lineage headlines beside it failed to build. Call turn_page to obtain the page." };
+  }
+  if (result?.lineage?.some((entry) => entry.omitted)) {
+    return { ...result, recovery: "The older sessions of the lineage are collapsed into runs marked omitted, each run labelled by its first and last session. lineage_headlines reads the headlines of a run when the next task or what is already in context needs them: pass the run's numbers as k, where S2-S5 is 2-5." };
+  }
+  return result;
+}
+var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, UNUSABLE_POSITIONS_MESSAGE, PAGE_IS_THE_FALLBACK;
+var init_turn_tool_recovery = __esm({
+  "lib/turn-tool-recovery.js"() {
+    NO_HANDOFF_LOADED = Object.freeze({
+      error: "no_handoff_loaded",
+      recovery: "This session has no delivered handoff, so there is no lineage to read. Call load_handoff first; the read tools resolve their lineage from that delivery."
+    });
+    STALE_CURSOR_MESSAGE = "That before boundary resolves to nothing in this lineage. Omit before to start again from the newest page, or take a session label from the load reply's lineage.";
+    SCOPE_ABSENT_MESSAGE = "That S{k}:{T} scope names a turn this lineage does not contain. Call turn_locate for a current scope, or omit scope to cover the whole lineage.";
+    UNUSABLE_POSITIONS_MESSAGE = "k must be positions of this lineage: numbers and closed ranges separated by commas, such as 3, 2-5 or 1,4-6, with no spaces and no S prefix, and each number must name a session that has a headline. Take them from the labels of the load reply's lineage, where S2-S5 is 2-5.";
+    PAGE_IS_THE_FALLBACK = "Read the lineage with turn_page instead \u2014 it paginates deterministically over the same sessions and needs no query.";
   }
 });
 
@@ -3795,7 +3928,7 @@ async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSour
     const sessions = fromHandoff({ store, handoffId: core.handoff_id });
     return {
       ...core,
-      lineage: lineageHeadlines({ store, lineage: sessions }),
+      lineage: boundLineageHeadlines(lineageHeadlines({ store, lineage: sessions })),
       ...turnPageWire(await turnPageBuilder({ store, lineage: sessions, dialogueSource, dialogueProjection, notice }))
     };
   } catch (err2) {
@@ -3811,6 +3944,7 @@ var init_wire = __esm({
     init_rate_lamp_store();
     init_lineage();
     init_turn_browse();
+    init_lineage_headlines();
     INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
   }
 });
@@ -25974,72 +26108,6 @@ var init_stdio2 = __esm({
         });
       }
     };
-  }
-});
-
-// lib/turn-tool-recovery.js
-var turn_tool_recovery_exports = {};
-__export(turn_tool_recovery_exports, {
-  NO_HANDOFF_LOADED: () => NO_HANDOFF_LOADED,
-  SCOPE_ABSENT_MESSAGE: () => SCOPE_ABSENT_MESSAGE,
-  STALE_CURSOR_MESSAGE: () => STALE_CURSOR_MESSAGE,
-  withLoadRecovery: () => withLoadRecovery,
-  withLocateRecovery: () => withLocateRecovery,
-  withPageRecovery: () => withPageRecovery,
-  withSearchRecovery: () => withSearchRecovery
-});
-function withPageRecovery(result) {
-  if (result?.error === "turn_page_unavailable") {
-    return { ...result, recovery: "Call turn_page again; it reads the transcript and the store afresh on every call. Search and locate have independent projections and may still answer." };
-  }
-  return result;
-}
-function withSearchRecovery(result, { hitRecovery } = {}) {
-  if (result?.error === "search_unavailable") {
-    return { ...result, recovery: PAGE_IS_THE_FALLBACK };
-  }
-  if (result?.found === false) {
-    return { ...result, recovery: "No readable transcript holds that literal; a near-miss misses like an absent one. Search a shorter fragment or a token seen verbatim \u2014 an id, a path, a commit hash \u2014 or call turn_locate with a remembered term for candidate turns and the wording actually used." };
-  }
-  if (result?.truncated === true) {
-    return { ...result, recovery: "Older matches were dropped to fit the budget, and the cut falls on a match, so the oldest entry may be incomplete. Narrow and search again: a longer literal, the scope of an entry near what you are after, or turn_locate for a candidate." };
-  }
-  if (result?.found === true) {
-    return { ...result, recovery: hitRecovery };
-  }
-  return result;
-}
-function withLocateRecovery(result, { hitRecovery } = {}) {
-  if (result?.error === "locate_unavailable") {
-    return { ...result, recovery: PAGE_IS_THE_FALLBACK };
-  }
-  if (result?.found === false) {
-    return { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." };
-  }
-  if (result?.found === true) {
-    return { ...result, recovery: hitRecovery };
-  }
-  return result;
-}
-function withLoadRecovery(result) {
-  if (result?.error === "handoff_delivery_unavailable") {
-    return { ...result, recovery: "The delivery record could not be written, so this response carries no content. Call load_handoff again with the same token once the store is writable." };
-  }
-  if (result?.turn_page_error) {
-    return { ...result, recovery: "The handoff loaded and the rest of this response is complete; only its turn page and the lineage headlines beside it failed to build. Call turn_page to obtain the page." };
-  }
-  return result;
-}
-var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, PAGE_IS_THE_FALLBACK;
-var init_turn_tool_recovery = __esm({
-  "lib/turn-tool-recovery.js"() {
-    NO_HANDOFF_LOADED = Object.freeze({
-      error: "no_handoff_loaded",
-      recovery: "This session has no delivered handoff, so there is no lineage to read. Call load_handoff first; the read tools resolve their lineage from that delivery."
-    });
-    STALE_CURSOR_MESSAGE = "That before boundary resolves to nothing in this lineage. Omit before to start again from the newest page, or take a session label from the load reply's lineage.";
-    SCOPE_ABSENT_MESSAGE = "That S{k}:{T} scope names a turn this lineage does not contain. Call turn_locate for a current scope, or omit scope to cover the whole lineage.";
-    PAGE_IS_THE_FALLBACK = "Read the lineage with turn_page instead \u2014 it paginates deterministically over the same sessions and needs no query.";
   }
 });
 
@@ -56661,7 +56729,7 @@ function readCandidates(candidates, bound, workingTree, stats) {
   }
   return readable;
 }
-function runOf(candidate, pairs, declared) {
+function runOf2(candidate, pairs, declared) {
   const [first] = pairs;
   return {
     candidate,
@@ -56713,7 +56781,7 @@ function declaredRuns(segments, candidates) {
     for (const { lines } of segments) {
       let pairs = [];
       const close = () => {
-        if (pairs.length > 0) runs.push(runOf(candidate, pairs, true));
+        if (pairs.length > 0) runs.push(runOf2(candidate, pairs, true));
         pairs = [];
       };
       for (const line of lines) {
@@ -56842,7 +56910,7 @@ function alignedRuns(segments, candidates, claims, bound, budget, stats) {
     const found = commonRuns(candidate, stretch.map((line) => line.norm), bound.evidenceFloor, budget, stats);
     for (const group of keepRuns(found, stretch, bound.evidenceFloor, stats)) {
       const tied = repeatsElsewhere(candidate, group[0].file, group.length, budget);
-      runs.push(runOf(candidate, group.map(({ file, at }) => ({
+      runs.push(runOf2(candidate, group.map(({ file, at }) => ({
         line: stretch[at],
         file,
         tier: tied ? "tied" : placedTier(stretch[at])
@@ -58613,13 +58681,33 @@ function createTurnReadService({
         if (process.env.SW_DEBUG) console.error("[turn_locate_tool]", err2);
         return withLocateRecovery({ error: "locate_unavailable" });
       }
+    },
+    // The lineage resolves first, then `k`, then the headline reads: a caller that loaded nothing meets
+    // no_handoff_loaded whatever it passed, and a `k` that cannot parse costs no turn-note read. The throw
+    // stays outside the try so that it is not mistaken for a store failure.
+    async lineageHeadlines({ k } = {}) {
+      try {
+        const lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        const ranges = parseLineagePositions(k);
+        if (ranges !== null) {
+          const selected = selectLineagePositions(lineageHeadlines({ store: store(), lineage }), ranges);
+          if (selected !== null) return { lineage: selected };
+        }
+      } catch (err2) {
+        if (process.env.SW_DEBUG) console.error("[lineage_headlines_tool]", err2);
+        return withHeadlinesRecovery({ error: "lineage_headlines_unavailable", retryable: true });
+      }
+      throw new Error(UNUSABLE_POSITIONS_MESSAGE);
     }
   };
 }
 var init_turn_read_service = __esm({
   "lib/turn-read-service.js"() {
     init_lineage();
+    init_lineage_headlines();
     init_turn_tool_recovery();
+    init_turn_browse();
     init_turn_page();
     init_turn_query();
     init_wire();
@@ -60022,6 +60110,27 @@ data: ${JSON.stringify({ type: "scan" })}
       next(e);
     }
   });
+  app.get("/api/lineage/headlines", (req, res, next) => {
+    try {
+      const headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
+      try {
+        const store2 = resolveStore();
+        const lineage = fromHandoff({ store: store2, handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
+        const ranges = parseLineagePositions(req.query.k);
+        if (ranges === null) return res.status(400).json({ error: "invalid_k" });
+        const selected = selectLineagePositions(lineageHeadlines({ store: store2, lineage }), ranges);
+        if (selected === null) return res.status(404).json({ error: "not_found" });
+        return res.json({ lineage: selected });
+      } catch (err2) {
+        if (process.env.SW_DEBUG) console.error("[lineage_headlines]", err2);
+        return res.status(503).json({ error: "lineage_headlines_unavailable", retryable: true });
+      }
+    } catch (e) {
+      next(e);
+    }
+  });
   app.get("/api/turn/browse", (req, res) => {
     const store2 = resolveStore();
     const lineage = forLoadedHandoff({ store: store2, sessionId: currentSessionId });
@@ -60450,6 +60559,7 @@ var init_server3 = __esm({
     init_turn_history_budget();
     init_lineage();
     init_turn_read_service();
+    init_lineage_headlines();
     init_turn_page();
     init_turn_browse();
     init_turn_query();
@@ -60606,6 +60716,8 @@ function probeMcp({ tool, envSessionId, serverSessionId, serverTranscript }) {
 init_version();
 init_turn_history_budget();
 init_turn();
+init_lineage_headlines();
+init_turn_tool_recovery();
 init_wire();
 
 // lib/launcher.js
@@ -60744,7 +60856,7 @@ function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) {
     description: "Read a page of the history turns carried by the handoff loaded into this session, newest first.",
     inputSchema: {
       before: z.string().regex(TURN_PAGE_BOUNDARY_RE).optional().describe(
-        "Where to read back from: an S{k}:{T} cursor from the next_before of the handoff load reply or of a previous page, which ends the page before that turn; or a bare S{k} session label from the load reply's lineage, which starts at that session's end. Omit for the newest page."
+        "Where to read back from: an S{k}:{T} cursor from the next_before of the handoff load reply or of a previous page, which ends the page before that turn; or a bare S{k} session label from the load reply's lineage, which starts at that session's end; a session inside an omitted run is addressed as S{k}, k being its own number. Omit for the newest page."
       )
     },
     annotations: { readOnlyHint: true }
@@ -60770,6 +60882,15 @@ function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) {
     },
     annotations: { readOnlyHint: true }
   }, async (input) => reply(await turnReadService.turnLocate(input || {})));
+  mcpServer.registerTool("lineage_headlines", {
+    description: "Read the headlines of chosen sessions of the lineage behind the handoff loaded into this session, such as an omitted run of the load reply's lineage. Returns one entry per chosen lineage member, oldest to newest.",
+    inputSchema: {
+      k: z.string().refine((v) => parseLineagePositions(v) !== null, { message: UNUSABLE_POSITIONS_MESSAGE }).describe(
+        'Positions in the lineage, as numbers and closed ranges separated by commas, such as "3", "2-5" or "1,4-6". Each number is the k of an S{k} label and must name a session that has a headline.'
+      )
+    },
+    annotations: { readOnlyHint: true }
+  }, async (input) => reply(await turnReadService.lineageHeadlines(input || {})));
 }
 var __selfReal = realpathSync2(fileURLToPath3(import.meta.url));
 var __argvReal = (() => {
@@ -60987,7 +61108,7 @@ if (__selfReal === __argvReal) {
       }));
     });
     mcpServer.registerTool("load_handoff", {
-      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its turns.",
+      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it, oldest to newest, as the headlines of the newest sessions within a budget, ahead of them the older sessions collapsed into runs marked omitted, beside the newest page of its turns.",
       inputSchema: {
         load_token: z.string().optional().describe("Semantic token from prepare_handoff (exact match)"),
         query: z.string().optional().describe("Free-text search when the token is unknown; returns top matches"),

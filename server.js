@@ -44,8 +44,9 @@ import { parseTurnAddress } from './lib/turn.js';
 import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { fromHandoff, forLoadedHandoff } from './lib/lineage.js';
 import { createTurnReadService } from './lib/turn-read-service.js';
+import { parseLineagePositions, selectLineagePositions } from './lib/lineage-headlines.js';
 import { buildTurnPage } from './lib/turn-page.js';
-import { buildTurnBrowse } from './lib/turn-browse.js';
+import { buildTurnBrowse, lineageHeadlines } from './lib/turn-browse.js';
 import { searchTranscripts, locateRanges } from './lib/turn-query.js';
 import { createClaudeCodeDialogueSource } from './lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from './lib/harness/claude-code/history-turn-rules.js';
@@ -779,11 +780,39 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
     } catch (e) { next(e); }
   });
 
+  // GET /api/lineage/headlines — the complete headlines of the named positions of one lineage, for an
+  // explicit head. `k` is the position grammar of lib/lineage-headlines.js. No production caller reads
+  // it: it exists so the tool and the route can be tested as one answer, which is why it carries no
+  // recovery text and no budget. A position the lineage lacks is 404, as an unresolvable head is.
+  app.get('/api/lineage/headlines', (req, res, next) => {
+    try {
+      const headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: 'not_found' });
+      // Lineage resolution is INSIDE this try, as on the turn routes: a store failure while walking the
+      // parent chain is a 503 the caller may retry, not an internal 500. Every 4xx here is a `return`,
+      // never a throw, so this catch never sees one.
+      try {
+        const store = resolveStore();
+        const lineage = fromHandoff({ store, handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: 'not_found' });
+
+        const ranges = parseLineagePositions(req.query.k);
+        if (ranges === null) return res.status(400).json({ error: 'invalid_k' });
+        const selected = selectLineagePositions(lineageHeadlines({ store, lineage }), ranges);
+        if (selected === null) return res.status(404).json({ error: 'not_found' });
+        return res.json({ lineage: selected });
+      } catch (err) {
+        if (process.env.SW_DEBUG) console.error('[lineage_headlines]', err);
+        return res.status(503).json({ error: 'lineage_headlines_unavailable', retryable: true });
+      }
+    } catch (e) { next(e); }
+  });
+
   // ── Turn browse REST route ────────────────────────────────────────────────────
 
   // GET /api/turn/browse — the whole-lineage browse snapshot behind the dashboard's History drawer.
   // It takes NO parameters: the head is the newest handoff delivered into THIS session, resolved by
-  // the same forLoadedHandoff walk the three MCP read tools use, so an `S{k}` a drawer prints and one
+  // the same forLoadedHandoff walk the MCP read tools use, so an `S{k}` a drawer prints and one
   // an agent reports name the same lineage member. A browser has no handoff id to send, and accepting one
   // would keep the head in two places at once.
   //

@@ -1,6 +1,6 @@
 {
   "name": "@nomadop/session-watcher-dsh",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Session Watcher as a DeepSeek Harness host plugin",
   "type": "module",
   "license": "MIT",

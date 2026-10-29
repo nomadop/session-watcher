@@ -7,12 +7,14 @@ import { probeMcp } from './lib/probe.js';
 import { PLUGIN_VERSION } from './lib/version.js';
 import { HISTORY_EXCERPT_CHARS } from './lib/turn-history-budget.js';
 import { TURN_ADDRESS_RE, TURN_PAGE_BOUNDARY_RE } from './lib/turn.js';
+import { parseLineagePositions } from './lib/lineage-headlines.js';
+import { UNUSABLE_POSITIONS_MESSAGE } from './lib/turn-tool-recovery.js';
 import { bucketSummaryPayload, statusDigest } from './lib/wire.js';
 // Re-export launcher functions for backward compatibility (tests, manual usage)
 export { stateFileFor, sessionIdOf, probeHealth, readState, watcherStatus, getBucketSummary, prepareHandoff, loadHandoff, rotateSession } from './lib/launcher.js';
 
-// Turn history read surface. All three resolve their own lineage from the newest handoff delivered
-// into this session, so none takes a lineage identifier: a caller that never loaded a handoff gets
+// The read surface over a loaded handoff's lineage: turn history and the lineage map. Each resolves its own
+// lineage from the newest handoff delivered into this session, so none takes a lineage identifier: a caller that never loaded a handoff gets
 // no_handoff_loaded instead of a guessable integer. Keeping this registration in index.js follows the
 // project's single-file MCP-host rule; exporting the bounded helper lets tests use the real SDK without
 // spawning stdio or starting the dashboard.
@@ -25,7 +27,8 @@ export function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) 
       before: z.string().regex(TURN_PAGE_BOUNDARY_RE).optional().describe(
         'Where to read back from: an S{k}:{T} cursor from the next_before of the handoff load reply or of a '
         + 'previous page, which ends the page before that turn; or a bare S{k} session label from the load '
-        + 'reply\'s lineage, which starts at that session\'s end. Omit for the newest page.'),
+        + 'reply\'s lineage, which starts at that session\'s end; a session inside an omitted run is addressed as S{k}, '
+        + 'k being its own number. Omit for the newest page.'),
     },
     annotations: { readOnlyHint: true },
   }, async (input) => reply(await turnReadService.turnPage(input || {})));
@@ -56,6 +59,18 @@ export function registerTurnReadTools({ mcpServer, z, turnReadService, reply }) 
     },
     annotations: { readOnlyHint: true },
   }, async (input) => reply(await turnReadService.turnLocate(input || {})));
+
+  mcpServer.registerTool('lineage_headlines', {
+    description: 'Read the headlines of chosen sessions of the lineage behind the handoff loaded into this session, '
+      + 'such as an omitted run of the load reply\'s lineage. Returns one entry per chosen lineage member, oldest '
+      + 'to newest.',
+    inputSchema: {
+      k: z.string().refine((v) => parseLineagePositions(v) !== null, { message: UNUSABLE_POSITIONS_MESSAGE }).describe(
+        'Positions in the lineage, as numbers and closed ranges separated by commas, such as "3", "2-5" or '
+        + '"1,4-6". Each number is the k of an S{k} label and must name a session that has a headline.'),
+    },
+    annotations: { readOnlyHint: true },
+  }, async (input) => reply(await turnReadService.lineageHeadlines(input || {})));
 }
 
 // MCP wiring — only when run as the entrypoint (not when imported by tests).
@@ -274,8 +289,8 @@ if (__selfReal === __argvReal) {
     mcpServer.registerTool('load_handoff', {
       description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — '
         + 'by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries '
-        + 'the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its '
-        + 'turns.',
+        + 'the lineage behind it, oldest to newest, as the headlines of the newest sessions within a budget, ahead of '
+        + 'them the older sessions collapsed into runs marked omitted, beside the newest page of its turns.',
       inputSchema: {
         load_token: z.string().optional().describe('Semantic token from prepare_handoff (exact match)'),
         query: z.string().optional().describe('Free-text search when the token is unknown; returns top matches'),

@@ -937,10 +937,78 @@ describe('Turn page endpoint — 负载形态与 load_handoff 同一性', () => 
     assert.deepEqual(res, { found: false });
   });
 
-  test('load 带 lineage：每段一条 headline，label 与页里的 session 头同源', async () => {
+  test('load 带 lineage：label 与页里的 session 头同源', async () => {
     const res = await ctx.request(`/api/handoff/load?load_token=${loadToken}`, {});
     assert.deepEqual(res.lineage, [{ label: 'S1', headline: 'turn0data' }]);
     assert.ok(res.turn_page.includes(`S1  ${pageTranscriptPath}`));
+  });
+
+  test('lineage headlines：整条目答 {lineage}，不带 omitted 与恢复文字', async () => {
+    const res = await ctx.request(`/api/lineage/headlines?lineage_head=${handoffId}&k=1`, {});
+    assert.deepEqual(res, { lineage: [{ label: 'S1', headline: 'turn0data' }] });
+  });
+
+  test('lineage headlines 的 head 缺失、非正或解析出空 lineage → 404 not_found，且先于 k 校验', async () => {
+    for (const url of [
+      '/api/lineage/headlines?k=1',
+      '/api/lineage/headlines?lineage_head=0&k=1',
+      '/api/lineage/headlines?lineage_head=999999&k=1',
+      '/api/lineage/headlines?lineage_head=999999&k=bad',
+    ]) {
+      const res = await ctx.requestRaw(url);
+      assert.equal(res.status, 404, url);
+      assert.deepEqual(await res.json(), { error: 'not_found' }, url);
+    }
+  });
+
+  test('lineage headlines 的 k 不合文法 → 400 invalid_k；lineage 没有的位置 → 404 not_found', async () => {
+    for (const k of ['', 'S1', '01', '3-2', '1,,2', '1 ,2']) {
+      const res = await ctx.requestRaw(`/api/lineage/headlines?lineage_head=${handoffId}&k=${encodeURIComponent(k)}`);
+      assert.equal(res.status, 400, k);
+      assert.deepEqual(await res.json(), { error: 'invalid_k' }, k);
+    }
+    const missingK = await ctx.requestRaw(`/api/lineage/headlines?lineage_head=${handoffId}`);
+    assert.equal(missingK.status, 400);
+    assert.deepEqual(await missingK.json(), { error: 'invalid_k' });
+
+    for (const k of ['2', '1-2', '1,5']) {
+      const res = await ctx.requestRaw(`/api/lineage/headlines?lineage_head=${handoffId}&k=${k}`);
+      assert.equal(res.status, 404, k);
+      assert.deepEqual(await res.json(), { error: 'not_found' }, k);
+    }
+  });
+
+  test('lineage headlines 的 store 失败 → 可重试 503；SW_DEBUG 下报成因，不开则静默', async (t) => {
+    const orig = store.getHandoff;
+    const origDebug = process.env.SW_DEBUG;
+    const origError = console.error;
+    t.after(() => {
+      store.getHandoff = orig;
+      console.error = origError;
+      if (origDebug === undefined) delete process.env.SW_DEBUG;
+      else process.env.SW_DEBUG = origDebug;
+    });
+    store.getHandoff = () => { throw new Error('store unavailable: fixture cause'); };
+
+    const drive = async () => {
+      const lines = [];
+      console.error = (...args) => { lines.push(args.map(a => (typeof a === 'string' ? a : inspect(a))).join(' ')); };
+      try {
+        const res = await ctx.requestRaw(`/api/lineage/headlines?lineage_head=${handoffId}&k=1`);
+        assert.equal(res.status, 503);
+        assert.deepEqual(await res.json(), { error: 'lineage_headlines_unavailable', retryable: true });
+      } finally { console.error = origError; }
+      return lines.filter(l => l.includes('[lineage_headlines]'));
+    };
+
+    process.env.SW_DEBUG = '1';
+    const logged = await drive();
+    assert.equal(logged.length, 1);
+    assert.match(logged[0], /store unavailable: fixture cause/);
+    assert.match(logged[0], /\n\s+at /);
+
+    delete process.env.SW_DEBUG;
+    assert.deepEqual(await drive(), []);
   });
 
 });

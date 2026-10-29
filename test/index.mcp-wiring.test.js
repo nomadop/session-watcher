@@ -6,15 +6,15 @@
 // the replies rather than asserting source-file text.
 //
 // What each reply pins, and why a reply can only come from the real wiring:
-//   * the tool list is exactly the set the guard registers — the three read tools are there only if the
+//   * the tool list is exactly the set the guard registers — the read tools are there only if the
 //     guard actually CALLS registerTurnReadTools (its own exported definition repeats the parameter
 //     list, so a source pattern could not tell the call from the definition);
 //   * get_turn_skeleton renders this process's own seeded transcript, which only the turnService that
 //     createServer handed over can read;
 //   * submit_turn_notes accepts that same snapshot_id as current, so both capture tools are bound to one
 //     service instance rather than to two independent captures;
-//   * turn_page / turn_search / turn_locate answer no_handoff_loaded, which is turnReadService's own
-//     precondition result;
+//   * turn_page / turn_search / turn_locate / lineage_headlines answer no_handoff_loaded, which is
+//     turnReadService's own precondition result;
 //   * load_handoff's degradation reply carries a `recovery` sentence the HTTP route does not add —
 //     withLoadRecovery lives in the index.js handler, and this file asserts both sides of that seam;
 //   * a store read and a store write both answer over the in-process HTTP surface, so initStore() has
@@ -60,7 +60,7 @@ const TRANSCRIPT_ENTRIES = [
 ];
 
 const EXPECTED_TOOLS = [
-  'get_bucket_summary', 'get_turn_skeleton', 'load_handoff', 'prepare_handoff', 'rotate_session',
+  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'load_handoff', 'prepare_handoff', 'rotate_session',
   'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
@@ -201,11 +201,12 @@ describe('index.js entrypoint wiring, over a real MCP stdio session', { timeout:
       { committed: false, error: 'stale_snapshot' });
   });
 
-  test('the three read tools answer turnReadService\'s no-handoff precondition', async () => {
+  test('the read tools answer turnReadService\'s no-handoff precondition', async () => {
     for (const [name, args] of [
       ['turn_page', {}],
       ['turn_search', { q: 'nothing-in-this-fixture' }],
       ['turn_locate', { q: 'nothing-in-this-fixture' }],
+      ['lineage_headlines', { k: '1' }],
     ]) {
       const payload = await call(name, args, name);
       assert.equal(payload.error, 'no_handoff_loaded', name);

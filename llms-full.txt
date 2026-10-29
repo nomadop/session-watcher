@@ -505,7 +505,7 @@ When a session ends, the agent can package its working context for the next sess
 
 2. On `/clear`, the session-start hook fires for the new session. The hook queries persistent storage, finds the undelivered handoff for this project, and injects a reminder into the session context containing the load token, age, and task preview. The load skill reads this reminder and initiates the restore flow.
 
-3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (line ranges when present, the lines each resolved symbol names next, the opening of the file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, and the lines each result holds, matched against the file on disk, are added to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: one headline per lineage member behind the handoff, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
+3. The load skill extracts the token from the injected reminder, retrieves the handoff package, and reads the kept paths using the cheapest strategy available (line ranges when present, the lines each resolved symbol names next, the opening of the file otherwise). As these files are read, they flow through the normal pipeline — fold processes them, and the lines each result holds, matched against the file on disk, are added to B — so the baseline naturally rebuilds to reflect the carried context. The response also carries a page of the history turns behind the handoff — the newest ones that fit a fixed budget, each a user request carrying the note written for it where the turn had one — plus a cursor for the next page, whose presence proves more history remains while its absence does not prove none does. Beside that page it carries the lineage itself: the headlines of the newest lineage members behind the handoff within a fixed budget, the older ones collapsed into runs marked `omitted`, so a successor sees the chain it inherits and not only the session immediately before it. Three read tools go further into that same history: page deeper, search a literal that occurs verbatim, or locate the turn ranges that mention a remembered term; a fourth, `lineage_headlines`, reads the headlines of an omitted run. Each resolves the lineage from the handoff this session loaded, so none of them takes a lineage identifier.
 
 **Why this works**
 
@@ -612,13 +612,14 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 | `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
 | `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
 | `prepare_handoff` | Persist the kept paths and a summary as a handoff package; returns a load token |
-| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. On DSH a delivery also renames the loading session after the package's next task. A delivered package carries the lineage headlines and the newest page of turns |
+| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. On DSH a delivery also renames the loading session after the package's next task. A delivered package carries the newest lineage headlines within a budget, the older sessions collapsed into runs marked `omitted`, and the newest page of turns |
 | `rotate_session` | Claude Code only: switch the watcher to a new session and transcript |
 | `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
 | `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
 | `turn_locate` | Find which turn ranges mention a remembered term, when the source wording is unknown |
+| `lineage_headlines` | Read the headlines of chosen sessions of the loaded handoff's lineage, such as an omitted run of the load reply's lineage, by their positions `k` (`S2-S5` is `2-5`) |
 
-The three history tools resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
+The three history tools and `lineage_headlines` resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
 
 On DSH the human command `/sw-continue` takes no arguments and clears the session in place: it shadows the session's history behind a checkpoint that opens a new epoch, then has the model load the session's newest handoff through the `sw-load` skill. It leaves the session untouched and says why when the session has prepared no handoff, when its newest handoff was prepared before the latest context reset, or while the agent is busy. The session's earlier epochs stay readable as their own lineage entries, each with the turns up to the handoff it produced.
 
@@ -652,7 +653,7 @@ dsh plugin --profile <name> add @nomadop/session-watcher-dsh
 
 `<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`.
 
-The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool.
+The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool. With DSH's optional Session search bundle switched on, the bundle patch's `tool-session-query` row and Session search's own copy of that package register the same prompt section, so the one that loads second fails to activate and the other keeps serving `session_event_read`; to give Session search its own tools, disable the row in the profile's patch layer and restart, and switch the row on again whenever Session search is off, since no other row serves `session_event_read`.
 
 ### What gets watched
 
@@ -668,7 +669,7 @@ The host measures a model call under the `name` its `llm` model catalog gives th
 
 ### The Session Watcher tab
 
-The tab sits in the conversation view strip, labelled **Session Watcher**, and shows the session open in that conversation. It mounts the dashboard's own elements:
+The tab sits in the conversation view strip, labelled **SW Meter**, and shows the session open in that conversation. It mounts the dashboard's own elements:
 
 - the hero chart and its position verdict
 - the depth bar

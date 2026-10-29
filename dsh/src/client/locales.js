@@ -18,7 +18,8 @@ export function resultSignalState(result) {
 
 /** English tab and dock strings. */
 export const en = {
-  'view.label': 'Session Watcher',
+  // The host's view strip truncates a long tab label, so this one is short; the product name heads the dock as `dock.title`.
+  'view.label': 'SW Meter',
   'state.unobserved': 'Session Watcher is not observing this session.',
   'state.bootstrapping': 'Session Watcher is reading this session…',
   'state.failed': 'Session Watcher could not measure this session: {message}',
@@ -30,6 +31,7 @@ export const en = {
   'signal.unobserved': 'unobserved',
   'signal.failed': 'failed',
   'signal.unreachable': 'unreachable',
+  'dock.title': 'Session Watcher',
   'dock.label': 'Session Watcher readings',
   'dock.pill': 'Session Watcher: {summary}',
   'dock.separator': ', ',
@@ -56,7 +58,7 @@ export const en = {
 
 /** Simplified-Chinese tab and dock strings. */
 export const zh = {
-  'view.label': 'Session Watcher',
+  'view.label': 'SW Meter',
   'state.unobserved': 'Session Watcher 未在观测此会话。',
   'state.bootstrapping': 'Session Watcher 正在读取此会话…',
   'state.failed': 'Session Watcher 无法测量此会话：{message}',
@@ -68,6 +70,7 @@ export const zh = {
   'signal.unobserved': '未观测',
   'signal.failed': '失败',
   'signal.unreachable': '无法连接',
+  'dock.title': 'Session Watcher',
   'dock.label': 'Session Watcher 读数',
   'dock.pill': 'Session Watcher：{summary}',
   'dock.separator': '，',

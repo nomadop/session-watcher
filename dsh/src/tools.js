@@ -4,7 +4,8 @@ import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload, statusDiges
 import { getLiveLedger } from '../../lib/rate-lamp-manager.js';
 import { buildTurnPage } from '../../lib/turn-page.js';
 import { createTurnReadService } from '../../lib/turn-read-service.js';
-import { withLoadRecovery } from '../../lib/turn-tool-recovery.js';
+import { UNUSABLE_POSITIONS_MESSAGE, withLoadRecovery } from '../../lib/turn-tool-recovery.js';
+import { parseLineagePositions } from '../../lib/lineage-headlines.js';
 import { TURN_ADDRESS_RE, TURN_PAGE_BOUNDARY_RE } from '../../lib/turn.js';
 import { HISTORY_EXCERPT_CHARS } from '../../lib/turn-history-budget.js';
 import { createDshTurnRecovery } from '../../lib/harness/dsh/turn-recovery.js';
@@ -24,6 +25,10 @@ function assertBefore(before) {
 
 function assertScope(scope) {
   if (scope !== undefined && !TURN_ADDRESS_RE.test(scope)) throw new Error('scope must be an S{k}:{T} turn address');
+}
+
+function assertPositions(k) {
+  if (parseLineagePositions(k) === null) throw new Error(UNUSABLE_POSITIONS_MESSAGE);
 }
 
 function assertQuery(q) {
@@ -147,7 +152,7 @@ export function createTools({
     }),
     tool({
       name: 'load_handoff',
-      description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it as one headline per lineage member, oldest to newest, beside the newest page of its turns.',
+      description: 'Retrieve a prepared handoff package by token, by free-text search, or — with neither given — by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it, oldest to newest, as the headlines of the newest sessions within a budget, ahead of them the older sessions collapsed into runs marked omitted, beside the newest page of its turns.',
       parameters: {
         load_token: { type: 'string', description: 'Semantic token from prepare_handoff (exact match)' },
         query: { type: 'string', description: 'Free-text search when the token is unknown; returns top matches' },
@@ -172,7 +177,7 @@ export function createTools({
       name: 'turn_page',
       description: 'Read a page of the history turns carried by the handoff loaded into this session, newest first.',
       parameters: {
-        before: { type: 'string', description: 'Where to read back from: an S{k}:{T} cursor from the next_before of the handoff load reply or of a previous page, which ends the page before that turn; or a bare S{k} session label from the load reply\'s lineage, which starts at that session\'s end. Omit for the newest page.' },
+        before: { type: 'string', description: 'Where to read back from: an S{k}:{T} cursor from the next_before of the handoff load reply or of a previous page, which ends the page before that turn; or a bare S{k} session label from the load reply\'s lineage, which starts at that session\'s end; a session inside an omitted run is addressed as S{k}, k being its own number. Omit for the newest page.' },
       },
       check: ({ before }) => assertBefore(before),
       run: (args, entry) => turnReads(entry).turnPage(args),
@@ -198,6 +203,15 @@ export function createTools({
       },
       check: ({ q }) => assertQuery(q),
       run: (args, entry) => turnReads(entry).turnLocate(args),
+    }),
+    tool({
+      name: 'lineage_headlines',
+      description: 'Read the headlines of chosen sessions of the lineage behind the handoff loaded into this session, such as an omitted run of the load reply\'s lineage. Returns one entry per chosen lineage member, oldest to newest.',
+      parameters: {
+        k: { type: 'string', required: true, description: 'Positions in the lineage, as numbers and closed ranges separated by commas, such as "3", "2-5" or "1,4-6". Each number is the k of an S{k} label and must name a session that has a headline.' },
+      },
+      check: ({ k }) => assertPositions(k),
+      run: (args, entry) => turnReads(entry).lineageHeadlines(args),
     }),
   ];
 }

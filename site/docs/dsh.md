@@ -12,7 +12,7 @@ dsh plugin --profile <name> add @nomadop/session-watcher-dsh
 
 `<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`.
 
-The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool.
+The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool. With DSH's optional Session search bundle switched on, the bundle patch's `tool-session-query` row and Session search's own copy of that package register the same prompt section, so the one that loads second fails to activate and the other keeps serving `session_event_read`; to give Session search its own tools, disable the row in the profile's patch layer and restart, and switch the row on again whenever Session search is off, since no other row serves `session_event_read`.
 
 ## What gets watched
 
@@ -28,7 +28,7 @@ The host measures a model call under the `name` its `llm` model catalog gives th
 
 ## The Session Watcher tab
 
-The tab sits in the conversation view strip, labelled **Session Watcher**, and shows the session open in that conversation. It mounts the dashboard's own elements:
+The tab sits in the conversation view strip, labelled **SW Meter**, and shows the session open in that conversation. It mounts the dashboard's own elements:
 
 - the hero chart and its position verdict
 - the depth bar

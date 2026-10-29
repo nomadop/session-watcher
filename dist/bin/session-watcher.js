@@ -45,7 +45,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // lib/constants.js
-var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS, init_constants = __esm({
+var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS, init_constants = __esm({
   "lib/constants.js"() {
     C_RATIO_TABLE = [
       // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
@@ -104,7 +104,7 @@ var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE,
       // Anthropic tokenizer (n=5881)
       { match: /deepseek/i, ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, SKILL_FRAMING_TOKENS = 40, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5, WORKING_TREE_CACHE_ENTRIES = 256, WORKING_TREE_CACHE_CHARS = 8e6, ATTRIBUTION_LIMITS = {
+    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, SKILL_FRAMING_TOKENS = 40, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, LINEAGE_HEADLINE_TOKEN_BUDGET = 3e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5, WORKING_TREE_CACHE_ENTRIES = 256, WORKING_TREE_CACHE_CHARS = 8e6, ATTRIBUTION_LIMITS = {
       candidates: 64,
       fileBytes: 1e6,
       sideChars: 1e5,
@@ -28268,6 +28268,49 @@ var ROOT_HEADLINE_JOIN, init_turn_browse = __esm({
   }
 });
 
+// lib/lineage-headlines.js
+function collapseRuns(entries) {
+  let runs = [], from = null, to = null;
+  for (let entry of entries) {
+    let n = positionOf(entry);
+    if (to !== null && n === to + 1) {
+      to = n;
+      continue;
+    }
+    to !== null && runs.push(runOf2(from, to)), from = to = n;
+  }
+  return to !== null && runs.push(runOf2(from, to)), runs;
+}
+function boundLineageHeadlines(entries, budget = LINEAGE_HEADLINE_TOKEN_BUDGET) {
+  let start2 = entries.length;
+  for (; start2 > 0 && estimateWireTokens({ lineage: entries.slice(start2 - 1) }, DEFAULT_CTP) <= budget; )
+    start2--;
+  return [...collapseRuns(entries.slice(0, start2)), ...entries.slice(start2)];
+}
+function parseLineagePositions(text) {
+  if (typeof text != "string" || !POSITIONS.test(text)) return null;
+  let ranges = text.split(",").map((item) => {
+    let [from, to = from] = item.split("-").map(Number);
+    return [from, to];
+  });
+  return ranges.some(([from, to]) => from > to) ? null : ranges;
+}
+function selectLineagePositions(entries, ranges) {
+  let positions = entries.map(positionOf), inside = ([from, to], n) => n >= from && n <= to;
+  return ranges.every((range) => {
+    let [from, to] = range;
+    return positions.filter((n) => inside(range, n)).length === to - from + 1;
+  }) ? entries.filter((_, i2) => ranges.some((range) => inside(range, positions[i2]))) : null;
+}
+var positionOf, runOf2, ITEM, POSITIONS, init_lineage_headlines = __esm({
+  "lib/lineage-headlines.js"() {
+    init_constants();
+    init_turn_history_budget();
+    positionOf = (entry) => Number(entry.label.slice(1)), runOf2 = (from, to) => ({ label: from === to ? `S${from}` : `S${from}-S${to}`, omitted: !0 });
+    ITEM = "[1-9][0-9]*(?:-[1-9][0-9]*)?", POSITIONS = new RegExp(`^${ITEM}(?:,${ITEM})*$`);
+  }
+});
+
 // lib/wire.js
 function statusWire(status) {
   let { sourceLocator, ...rest } = status, rateLamp = status.rateLamp, lamp = rateLamp?.reliable ? lampZone(rateLamp.br, { u: rateLamp.u, mf: rateLamp.mf }) : null;
@@ -28321,7 +28364,7 @@ async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSour
     let sessions = fromHandoff({ store, handoffId: core.handoff_id });
     return {
       ...core,
-      lineage: lineageHeadlines({ store, lineage: sessions }),
+      lineage: boundLineageHeadlines(lineageHeadlines({ store, lineage: sessions })),
       ...turnPageWire(await turnPageBuilder({ store, lineage: sessions, dialogueSource, dialogueProjection, notice }))
     };
   } catch (err2) {
@@ -28335,6 +28378,7 @@ var INVALID_OVERRIDES_MESSAGE, init_wire = __esm({
     init_rate_lamp_store();
     init_lineage();
     init_turn_browse();
+    init_lineage_headlines();
     INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
   }
 });
@@ -28979,7 +29023,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.10.0",
+      version: "0.10.1",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -29071,12 +29115,15 @@ function withSearchRecovery(result, { hitRecovery } = {}) {
 function withLocateRecovery(result, { hitRecovery } = {}) {
   return result?.error === "locate_unavailable" ? { ...result, recovery: PAGE_IS_THE_FALLBACK } : result?.found === !1 ? { ...result, recovery: "The index holds only turns captured at handoff time, so a miss bounds the index, not the history. Retry with fewer words, read the lineage with turn_page, or turn_search a fragment you are sure of." } : result?.found === !0 ? { ...result, recovery: hitRecovery } : result;
 }
-var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, PAGE_IS_THE_FALLBACK, init_turn_tool_recovery = __esm({
+function withHeadlinesRecovery(result) {
+  return result?.error === "lineage_headlines_unavailable" ? { ...result, recovery: "Call lineage_headlines again; it reads the store afresh on every call." } : result;
+}
+var NO_HANDOFF_LOADED, STALE_CURSOR_MESSAGE, SCOPE_ABSENT_MESSAGE, UNUSABLE_POSITIONS_MESSAGE, PAGE_IS_THE_FALLBACK, init_turn_tool_recovery = __esm({
   "lib/turn-tool-recovery.js"() {
     NO_HANDOFF_LOADED = Object.freeze({
       error: "no_handoff_loaded",
       recovery: "This session has no delivered handoff, so there is no lineage to read. Call load_handoff first; the read tools resolve their lineage from that delivery."
-    }), STALE_CURSOR_MESSAGE = "That before boundary resolves to nothing in this lineage. Omit before to start again from the newest page, or take a session label from the load reply's lineage.", SCOPE_ABSENT_MESSAGE = "That S{k}:{T} scope names a turn this lineage does not contain. Call turn_locate for a current scope, or omit scope to cover the whole lineage.", PAGE_IS_THE_FALLBACK = "Read the lineage with turn_page instead \u2014 it paginates deterministically over the same sessions and needs no query.";
+    }), STALE_CURSOR_MESSAGE = "That before boundary resolves to nothing in this lineage. Omit before to start again from the newest page, or take a session label from the load reply's lineage.", SCOPE_ABSENT_MESSAGE = "That S{k}:{T} scope names a turn this lineage does not contain. Call turn_locate for a current scope, or omit scope to cover the whole lineage.", UNUSABLE_POSITIONS_MESSAGE = "k must be positions of this lineage: numbers and closed ranges separated by commas, such as 3, 2-5 or 1,4-6, with no spaces and no S prefix, and each number must name a session that has a headline. Take them from the labels of the load reply's lineage, where S2-S5 is 2-5.", PAGE_IS_THE_FALLBACK = "Read the lineage with turn_page instead \u2014 it paginates deterministically over the same sessions and needs no query.";
   }
 });
 
@@ -29418,13 +29465,32 @@ function createTurnReadService({
       } catch (err2) {
         return process.env.SW_DEBUG && console.error("[turn_locate_tool]", err2), withLocateRecovery({ error: "locate_unavailable" });
       }
+    },
+    // The lineage resolves first, then `k`, then the headline reads: a caller that loaded nothing meets
+    // no_handoff_loaded whatever it passed, and a `k` that cannot parse costs no turn-note read. The throw
+    // stays outside the try so that it is not mistaken for a store failure.
+    async lineageHeadlines({ k } = {}) {
+      try {
+        let lineage = forLoadedHandoff({ store: store(), sessionId: sessionId() });
+        if (lineage.length === 0) return NO_HANDOFF_LOADED;
+        let ranges = parseLineagePositions(k);
+        if (ranges !== null) {
+          let selected = selectLineagePositions(lineageHeadlines({ store: store(), lineage }), ranges);
+          if (selected !== null) return { lineage: selected };
+        }
+      } catch (err2) {
+        return process.env.SW_DEBUG && console.error("[lineage_headlines_tool]", err2), withHeadlinesRecovery({ error: "lineage_headlines_unavailable", retryable: !0 });
+      }
+      throw new Error(UNUSABLE_POSITIONS_MESSAGE);
     }
   };
 }
 var init_turn_read_service = __esm({
   "lib/turn-read-service.js"() {
     init_lineage();
+    init_lineage_headlines();
     init_turn_tool_recovery();
+    init_turn_browse();
     init_turn_page();
     init_turn_query();
     init_wire();
@@ -30139,6 +30205,23 @@ data: ${JSON.stringify({ type: "scan" })}
     } catch (e) {
       next(e);
     }
+  }), app.get("/api/lineage/headlines", (req, res, next) => {
+    try {
+      let headId = Number(req.query.lineage_head);
+      if (!Number.isInteger(headId) || headId <= 0) return res.status(404).json({ error: "not_found" });
+      try {
+        let store2 = resolveStore(), lineage = fromHandoff({ store: store2, handoffId: headId });
+        if (lineage.length === 0) return res.status(404).json({ error: "not_found" });
+        let ranges = parseLineagePositions(req.query.k);
+        if (ranges === null) return res.status(400).json({ error: "invalid_k" });
+        let selected = selectLineagePositions(lineageHeadlines({ store: store2, lineage }), ranges);
+        return selected === null ? res.status(404).json({ error: "not_found" }) : res.json({ lineage: selected });
+      } catch (err2) {
+        return process.env.SW_DEBUG && console.error("[lineage_headlines]", err2), res.status(503).json({ error: "lineage_headlines_unavailable", retryable: !0 });
+      }
+    } catch (e) {
+      next(e);
+    }
   }), app.get("/api/turn/browse", (req, res) => {
     let store2 = resolveStore(), lineage = forLoadedHandoff({ store: store2, sessionId: currentSessionId }), { sections } = buildTurnBrowse({ store: store2, lineage });
     return res.json({ sections });
@@ -30461,6 +30544,7 @@ var import_express, _major, _minor, __dirname2, PORT_DIR, _globalTestClockMono, 
     init_turn_history_budget();
     init_lineage();
     init_turn_read_service();
+    init_lineage_headlines();
     init_turn_page();
     init_turn_browse();
     init_turn_query();
@@ -30729,7 +30813,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.10.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.10.1", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

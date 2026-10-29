@@ -209,6 +209,41 @@ test('loadedHandoffPayload attaches lineage headlines and the page, and names tu
     { ...core, turn_page_error: 'turn_page_unavailable' });
 });
 
+// Three sessions that all hold turn_note rows (a session without rows is a gap, not a member of the
+// list), the second and third headlines being the predecessors' next tasks. Two of them no longer fit one
+// budget, so only the newest session keeps its headline.
+test('loadedHandoffPayload carries the lineage within its budget, the older remainder as an omitted run', async () => {
+  const longTask = (tag) => tag + '字'.repeat(1500 - tag.length);
+  const row = (id, sessionId, day, nextTask) => ({
+    handoffId: id, projectId: 'p', sessionId, transcriptPath: `/t/${sessionId}.jsonl`,
+    createdAt: Date.parse(`2026-07-0${day}T00:00:00Z`), nextTask,
+  });
+  const handoffs = { 5: row(5, 's-a', 1, longTask('二')), 6: row(6, 's-b', 2, longTask('三')), 7: row(7, 's-c', 3, 'unused') };
+  const parentOf = { 's-c': handoffs[6], 's-b': handoffs[5] };
+  const store = {
+    getHandoff: (id) => handoffs[id] ?? null,
+    findParentDelivery: (_project, sessionId) => parentOf[sessionId] ?? null,
+    listTurnNotes: (sessionId) => [{ turnNoteId: 1, uText: `ask of ${sessionId}`, note: 'done', sourceTimestamp: 1 }],
+  };
+  const history = { dialogueSource: { read: async () => ({}) }, dialogueProjection: {}, notice: 'notice' };
+  const turnPageBuilder = async () => ({ turnPage: 'page', nextBefore: null });
+
+  const loaded = await loadedHandoffPayload({ found: true, handoff_id: 7 }, { store, turnPageBuilder, ...history });
+  assert.deepEqual(loaded.lineage, [
+    { label: 'S1-S2', omitted: true },
+    { label: 'S3', headline: handoffs[6].nextTask },
+  ]);
+
+  // The bound is a computation over the list already built, so a fault in either projection still
+  // leaves only the shared error.
+  const failing = async () => { throw new Error('transcript unreadable'); };
+  assert.deepEqual(await loadedHandoffPayload({ found: true, handoff_id: 7 }, { store, turnPageBuilder: failing, ...history }),
+    { found: true, handoff_id: 7, turn_page_error: 'turn_page_unavailable' });
+  const unreadable = { ...store, listTurnNotes: () => { throw new Error('store unavailable'); } };
+  assert.deepEqual(await loadedHandoffPayload({ found: true, handoff_id: 7 }, { store: unreadable, turnPageBuilder, ...history }),
+    { found: true, handoff_id: 7, turn_page_error: 'turn_page_unavailable' });
+});
+
 test('isOverrideMap accepts a plain object and rejects arrays, null and primitives', () => {
   assert.equal(isOverrideMap({}), true);
   assert.equal(isOverrideMap({ '/a.js': 'exclude' }), true);

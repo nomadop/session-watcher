@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.1 (2026-10-29) — Lineage headlines within a budget, and the SW Meter tab
+
+### DSH plugin
+
+- **The tab is labelled SW Meter** — DSH 0.2.1-rc.3's view strip cuts a tab label to a fixed width, which turned "Session Watcher" into "Session Wat…". The composer dock's panel keeps the name Session Watcher, and the `sw-explain` skill points at the tab by its new label.
+- **`/sw-continue` is checked against DSH 0.2.1-rc.3** — the tests that run the plugin on real DSH packages now run on rc.3, whose session loader checks the compaction lifecycle when a stored session opens and no longer when an event is appended. The peer range stays at `>=0.2.0-rc.1`.
+- **The DSH page says what switching on Session search does beside the `tool-session-query` row** — the row and Session search's own copy of that package register the same prompt section, so the one that loads second fails to activate and the other keeps serving `session_event_read`.
+- **A handoff load carries the newest lineage headlines within a budget, and `lineage_headlines` reads the rest** — the older sessions that the budget leaves out are collapsed into runs marked `omitted`, labelled by their first and last session, ahead of the newest sessions' headlines, so the `lineage` field no longer grows with every lineage member. The new `lineage_headlines` tool takes the positions of a run's label as `k` (`S2-S5` is `2-5`) and answers the complete headlines of those sessions; a position the lineage lacks fails the whole call. A session inside a run stays addressable by `turn_page` as `S{k}`.
+
+### Claude Code
+
+- **A handoff load carries the newest lineage headlines within a budget, and `lineage_headlines` reads the rest** — the older sessions that the budget leaves out are collapsed into runs marked `omitted`, labelled by their first and last session, ahead of the newest sessions' headlines, so the `lineage` field no longer grows with every lineage member. The new `lineage_headlines` tool takes the positions of a run's label as `k` (`S2-S5` is `2-5`) and answers the complete headlines of those sessions; a position the lineage lacks fails the whole call. A session inside a run stays addressable by `turn_page` as `S{k}`.
+
+---
+
 ## 0.10.0 (2026-10-27) — Attribution by the working tree and /sw-continue
 
 ### DSH plugin

@@ -15,7 +15,7 @@ import { _resetRateLampManagerForTest, getLiveLedger } from '../lib/rate-lamp-ma
 import { bucketsPayload, bucketSummaryPayload, loadedHandoffPayload, statusDigest, statusWireWithLedger } from '../lib/wire.js';
 import { buildTurnPage } from '../lib/turn-page.js';
 import { createTurnReadService } from '../lib/turn-read-service.js';
-import { withLoadRecovery } from '../lib/turn-tool-recovery.js';
+import { UNUSABLE_POSITIONS_MESSAGE, withLoadRecovery } from '../lib/turn-tool-recovery.js';
 import { createDshTurnRecovery } from '../lib/harness/dsh/turn-recovery.js';
 import { initParser, loadGrammar } from '../lib/symbol-outline.js';
 import { HISTORY_EXCERPT_CHARS } from '../lib/turn-history-budget.js';
@@ -31,7 +31,7 @@ const NODE_MODULES = fileURLToPath(new URL('../node_modules/', import.meta.url))
 
 // The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` removed.
 const EXPECTED_TOOLS = [
-  'get_bucket_summary', 'get_turn_skeleton', 'load_handoff', 'prepare_handoff',
+  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'load_handoff', 'prepare_handoff',
   'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
@@ -47,6 +47,7 @@ const MINIMAL_ARGS = {
   turn_page: {},
   turn_search: { q: 'literal' },
   turn_locate: { q: 'term' },
+  lineage_headlines: { k: '1' },
 };
 
 let dir;
@@ -462,6 +463,11 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   assert.deepEqual(await run(tool('turn_search'), { q: 'export const a' }, 's-dst'),
     await service.turnSearch({ q: 'export const a' }));
 
+  const headlines = await run(tool('lineage_headlines'), { k: '1' }, 's-dst');
+  assert.deepEqual(headlines.lineage.map(({ label }) => label), ['S1']);
+  assert.deepEqual(headlines, await service.lineageHeadlines({ k: '1' }));
+  await assert.rejects(run(tool('lineage_headlines'), { k: '2' }, 's-dst'), { message: UNUSABLE_POSITIONS_MESSAGE });
+
   const located = await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst');
   assert.deepEqual(located, await service.turnLocate({ q: 'turn3data' }));
   const { scope } = located.ranges.find(range => range.transcript_path === 's-src');
@@ -505,6 +511,7 @@ test('the turn reads and load_handoff over a table composed over a working tree 
     assert.ok((await run(tool('turn_page'), {}, 's-dst')).turn_page.length > 0);
     assert.equal((await run(tool('turn_search'), { q: 'answer3' }, 's-dst')).found, true);
     assert.ok((await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst')).ranges.length > 0);
+    assert.equal((await run(tool('lineage_headlines'), { k: '1' }, 's-dst')).lineage.length, 1);
     assert.deepEqual(tree.calls, before);
   } finally {
     table.disposeAll();
@@ -567,7 +574,7 @@ test('prepare_handoff maps its snake-case input and returns an error result as d
   ctx.dispose();
 });
 
-test('malformed before, scope and q are refused inside execute', async () => {
+test('malformed before, scope, q and k are refused inside execute', async () => {
   const { ctx, tool } = mountHost({ sessions: [fakeSession({ id: 's-live' })] });
   await settled();
   await assert.rejects(run(tool('turn_page'), { before: 'S1:x' }, 's-live'), /before/);
@@ -575,6 +582,11 @@ test('malformed before, scope and q are refused inside execute', async () => {
   await assert.rejects(run(tool('turn_search'), { q: '   ' }, 's-live'), /\bq\b/);
   await assert.rejects(run(tool('turn_locate'), { q: '' }, 's-live'), /\bq\b/);
   await assert.rejects(run(tool('turn_locate'), { q: 'x'.repeat(HISTORY_EXCERPT_CHARS + 1) }, 's-live'), /\bq\b/);
+  // The session delivered no handoff, so a service call would answer no_handoff_loaded: the check refuses first.
+  for (const k of ['S1', '', '0', '3-2', '1,,2', '1 - 2']) {
+    await assert.rejects(run(tool('lineage_headlines'), { k }, 's-live'), { message: UNUSABLE_POSITIONS_MESSAGE }, k);
+  }
+  assert.equal((await run(tool('lineage_headlines'), { k: '1' }, 's-live')).error, 'no_handoff_loaded');
   ctx.dispose();
 });
 

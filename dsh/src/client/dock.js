@@ -145,7 +145,7 @@ export function createDock({ useAnchoredPosition, useDismissOnOutsidePointer, cr
     const failing = status === null && ['failed', 'unreachable'].includes(resultSignalState(result));
     const header = [
       h('div', { key: 'title', className: 'sw-title' },
-        h('span', { className: 'sw-title-label' }, lamp, t('view.label')),
+        h('span', { className: 'sw-title-label' }, lamp, t('dock.title')),
         h('span', { className: 'sw-title-value', 'data-tone': failing ? 'error' : undefined }, rateLamp === null ? word : t(`dock.zone.${status.lamp}`))),
       h('div', { key: 'rule', className: 'sw-title-rule' }),
     ];

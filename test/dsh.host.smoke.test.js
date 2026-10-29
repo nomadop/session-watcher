@@ -23,7 +23,7 @@ const fromCheckout = path => import(pathToFileURL(join(CHECKOUT, path)).href);
 
 // The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` removed.
 const EXPECTED_TOOLS = [
-  'get_bucket_summary', 'get_turn_skeleton', 'load_handoff', 'prepare_handoff',
+  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'load_handoff', 'prepare_handoff',
   'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
@@ -112,7 +112,7 @@ test('the plugin loads on a real context, measures an appended session, serves i
 }, async (t) => {
   const [
     { Context }, { SessionStore }, { SystemPrompt }, { ToolRuntime, defineTool }, { SkillRegistry }, { SessionQueryEngine },
-    connectionPlugin, { WebServer }, { default: JsonlSessionPersistence }, { LlmRuntime, LlmAdapter },
+    connectionPlugin, { WebServer }, jsonlPersistence, { LlmRuntime, LlmAdapter },
   ] = await Promise.all([
     CORDIS,
     'packages/core/session/lib/index.js',
@@ -156,7 +156,7 @@ test('the plugin loads on a real context, measures an appended session, serves i
   await ctx.plugin(SystemPrompt);
   await ctx.plugin(ToolRuntime);
   await ctx.plugin(SkillRegistry);
-  await ctx.plugin(JsonlSessionPersistence, { root: join(dir, 'sessions') });
+  await ctx.plugin(jsonlPersistence, { root: join(dir, 'sessions') });
   await ctx.plugin(EmptySearchEngine);
   // Each its own plugin, as the Loader mounts them: `webServer` comes from a sibling fiber, not from the root.
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 });

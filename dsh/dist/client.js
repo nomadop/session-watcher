@@ -49,7 +49,8 @@ function resultSignalState(result) {
   return result === null || result.state === "bootstrapping" ? "reading" : result.kind === "unreachable" ? "unreachable" : result.state;
 }
 var en = {
-  "view.label": "Session Watcher",
+  // The host's view strip truncates a long tab label, so this one is short; the product name heads the dock as `dock.title`.
+  "view.label": "SW Meter",
   "state.unobserved": "Session Watcher is not observing this session.",
   "state.bootstrapping": "Session Watcher is reading this session\u2026",
   "state.failed": "Session Watcher could not measure this session: {message}",
@@ -61,6 +62,7 @@ var en = {
   "signal.unobserved": "unobserved",
   "signal.failed": "failed",
   "signal.unreachable": "unreachable",
+  "dock.title": "Session Watcher",
   "dock.label": "Session Watcher readings",
   "dock.pill": "Session Watcher: {summary}",
   "dock.separator": ", ",
@@ -85,7 +87,7 @@ var en = {
   "dock.growth": "Growth per call"
 };
 var zh = {
-  "view.label": "Session Watcher",
+  "view.label": "SW Meter",
   "state.unobserved": "Session Watcher \u672A\u5728\u89C2\u6D4B\u6B64\u4F1A\u8BDD\u3002",
   "state.bootstrapping": "Session Watcher \u6B63\u5728\u8BFB\u53D6\u6B64\u4F1A\u8BDD\u2026",
   "state.failed": "Session Watcher \u65E0\u6CD5\u6D4B\u91CF\u6B64\u4F1A\u8BDD\uFF1A{message}",
@@ -97,6 +99,7 @@ var zh = {
   "signal.unobserved": "\u672A\u89C2\u6D4B",
   "signal.failed": "\u5931\u8D25",
   "signal.unreachable": "\u65E0\u6CD5\u8FDE\u63A5",
+  "dock.title": "Session Watcher",
   "dock.label": "Session Watcher \u8BFB\u6570",
   "dock.pill": "Session Watcher\uFF1A{summary}",
   "dock.separator": "\uFF0C",
@@ -18584,7 +18587,7 @@ function createDock({ useAnchoredPosition: useAnchoredPosition2, useDismissOnOut
       h3(
         "div",
         { key: "title", className: "sw-title" },
-        h3("span", { className: "sw-title-label" }, lamp, t("view.label")),
+        h3("span", { className: "sw-title-label" }, lamp, t("dock.title")),
         h3("span", { className: "sw-title-value", "data-tone": failing ? "error" : void 0 }, rateLamp === null ? word : t(`dock.zone.${status.lamp}`))
       ),
       h3("div", { key: "rule", className: "sw-title-rule" })

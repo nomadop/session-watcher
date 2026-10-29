@@ -27,7 +27,7 @@ Restore a previous session's handoff package into context so work can resume.
 
    Unresolvable path → tell the user, skip. Empty `paths_to_keep` → ask the user what they are working on.
 
-3. **Place the summary in its lineage.** `lineage` runs oldest to newest, one headline per lineage member; the injected page holds the newest turns and is already in context. From the page, list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address. When a headline bears on the next task and the page does not reach that member, call `turn_page` with that member's label as `before`. That list is what step 5 reports.
+3. **Place the summary in its lineage.** `lineage` runs oldest to newest. The sessions the budget left out are collapsed into runs marked `omitted`, ahead of the newest sessions' headlines, and the budget may keep none. When the next task or what is already in context needs the headlines of an omitted run, `lineage_headlines` with that run's numbers as `k` (`S2-S5` is `2-5`) reads them; read a run for that need only, not by default. The injected page holds the newest turns and is already in context. From the page, list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address. When a headline bears on the next task and the page does not reach that member, call `turn_page` with that member's label as `before`; a session inside an omitted run is `S{k}`, `k` being its own number. That list is what step 5 reports.
 
 4. **Load the kept skills** — invoke each name in `skills_to_keep` through the host's skill tool. A skill named only in the summary text is invoked after the user agrees.
 

@@ -1,4 +1,4 @@
-// `clearSurface` and the `/sw-continue` command against the real DSH packages of the checkout `SW_DSH_CHECKOUT` names, imported from it by file path: the session store, the invariant registry with the compaction invariant, the projection registry, the token meter and the command runtime, mounted standalone. The fake session of `test/dsh.continue.test.js` cannot refuse a transaction DSH refuses or price a replacement as the meter does; this file can. Without the checkout every case skips.
+// `clearSurface` and the `/sw-continue` command against the real DSH packages of the checkout `SW_DSH_CHECKOUT` names, imported from it by file path: the session store, the projection registry, the token meter and the command runtime, mounted standalone, and the JSONL persistence for the one control that reloads the cleared session. The fake session of `test/dsh.continue.test.js` cannot refuse a transaction DSH refuses or price a replacement as the meter does; this file can. Without the checkout every case skips.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -27,13 +27,11 @@ const FILLER = 'fixture '.repeat(60).trim();
 // Every service the transaction touches, mounted on one context, and the DSH values to build events with; the context is disposed when the case ends.
 async function mountDsh(t) {
   const [
-    { Context }, { SessionStore }, { default: InvariantRegistry }, compactionInvariant, { default: SessionProjectionRegistry },
+    { Context }, { SessionStore }, { default: SessionProjectionRegistry },
     { TokenMeter }, llm, compaction, commandsPkg,
   ] = await Promise.all([
     CORDIS,
     'packages/core/session/lib/index.js',
-    'packages/runtime-diagnostics/invariants/lib/index.js',
-    'packages/compaction/compaction/lib/invariant.js',
     'packages/session/session-projection/lib/index.js',
     'packages/llm/token-meter/lib/index.js',
     'packages/llm/llm/lib/index.js',
@@ -43,8 +41,6 @@ async function mountDsh(t) {
   const ctx = new Context();
   t.after(() => ctx.fiber.dispose());
   await ctx.plugin(SessionStore);
-  await ctx.plugin(InvariantRegistry);
-  await ctx.plugin(compactionInvariant);
   await ctx.plugin(SessionProjectionRegistry);
   await ctx.plugin(TokenMeter);
   const kit = {
@@ -55,7 +51,7 @@ async function mountDsh(t) {
   return { ctx, kit, llm, commandsPkg };
 }
 
-// Two closed turns behind a system head: the first holds a tool call paired with its result, so the range the clear shadows crosses a pair whole.
+// Two closed turns behind a system head: the first holds a tool call paired with its result, so the range the clear shadows crosses a pair whole, and it opens its step before the system message, which the loader refuses outside an open step.
 function converse(session, { llm }) {
   const text = body => [{ type: 'text', text: body }];
   const assistant = (turn, step, content) => session.append('assistant/message', {
@@ -65,9 +61,9 @@ function converse(session, { llm }) {
   const callId = llm.ToolCallId('call-1');
 
   session.append('turn/start', { turn: 1 });
+  session.append('step/start', { turn: 1, step: 1 });
   session.append('system/message', { turn: 1, step: 1, message: llm.createSystemMessage('You are a coding agent.') }, { surfaceOp: 'append' });
   session.append('user/message', llm.createUserMessage({ content: text(`${FILLER} first request`), source: { kind: 'user' } }), { surfaceOp: 'append' });
-  session.append('step/start', { turn: 1, step: 1 });
   session.append('request/header', { header: { config: { provider: ROUTE, model: ROUTE } }, reason: 'initial' });
   assistant(1, 1, [...text(`${FILLER} reading`), { type: 'tool-call', id: callId, name: 'read', arguments: '{}' }]);
   session.append('tool/call', { turn: 1, step: 1, callId, name: 'read', arguments: '{}' });
@@ -155,49 +151,29 @@ test('a surface holding only its head is left as it is', { skip }, async (t) => 
   assert.equal(session.seq, logged);
 });
 
-test('a session with an open turn refuses the start and the clear leaves it as it was', { skip }, async (t) => {
+// DSH validates the lifecycle order when a session log is opened, so the reload is the real-layer proof that the transaction's order conforms.
+test('control: the loader accepts the cleared session', { skip }, async (t) => {
   const dsh = await mountDsh(t);
   const { ctx, kit } = dsh;
+  const jsonl = await fromCheckout('packages/session/session-persistence-jsonl/lib/index.js');
+  const directory = mkdtempSync(join(tmpdir(), 'sw-dsh-loader-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  await ctx.plugin(jsonl, { root: directory });
   const session = ctx.sessions.create();
   converse(session, dsh);
-  session.append('turn/start', { turn: 3 });
-  const logged = session.seq;
+  assert.ok(clear(ctx, kit, session), 'the fixture holds a range to clear');
+  const live = session.snapshotEvents().map(event => event.type);
 
-  assert.throws(() => clear(ctx, kit, session), (error) => {
-    assert.ok(error instanceof ClearError);
-    assert.equal(error.code, 'start');
-    assert.match(error.cause.message, /compaction\/start is standalone but turn 3 is open/);
-    return true;
-  });
-  assert.equal(session.seq, logged);
-});
-
-test('control: the invariant refuses a checkpoint with no compaction start', { skip }, async (t) => {
-  const dsh = await mountDsh(t);
-  const { ctx, kit } = dsh;
-  const session = ctx.sessions.create();
-  converse(session, dsh);
-  const [, ...range] = session.surface.nodes;
-
-  assert.throws(() => session.append('user/message', kit.createUserMessage({
-    content: [{ type: 'text', text: 'checkpoint' }], source: kit.compactCheckpointSource(kit.CompactionId('orphan'), COMMAND_ID),
-  }), {
-    surfaceOp: { op: 'replace', startSeq: range[0], endSeq: range.at(-1) }, sourceEventSeqs: range,
-  }), /compaction checkpoint has no matching compaction\/start/);
-});
-
-test('control: the invariant refuses a successful compaction end with no summary', { skip }, async (t) => {
-  const dsh = await mountDsh(t);
-  const { ctx, kit } = dsh;
-  const session = ctx.sessions.create();
-  converse(session, dsh);
-  const compactionId = kit.CompactionId('unsummarized');
-  session.append('compaction/start', { compactionId, sourceCommandId: COMMAND_ID, turn: null });
-
-  assert.throws(
-    () => session.append('compaction/end', { compactionId, sourceCommandId: COMMAND_ID, turn: null }),
-    /successful compaction\/end requires one compaction\/summary/,
-  );
+  const writer = await ctx.sessionPersistence.create(session.header);
+  await writer.append(session.snapshotEvents());
+  await writer.close();
+  const reader = await ctx.sessionPersistence.open(session.id, 'read');
+  try {
+    const { events } = await reader.read();
+    assert.deepEqual(events.map(event => event.type), live);
+  } finally {
+    await reader.close();
+  }
 });
 
 const thrownBy = (run) => {
@@ -205,17 +181,18 @@ const thrownBy = (run) => {
   return assert.fail('the call did not throw');
 };
 
-// A failure after `compaction/start` that DSH itself raises: the meter leaves a node of the range out, so the summary lists a span it does not cover and the compaction invariant refuses it.
-test('a summary the invariant refuses closes the compaction with an error end, and the next clear of the session succeeds', { skip }, async (t) => {
+// A failure after `compaction/start` that DSH itself raises. The meter is hand-written, as the real one prices every surface node, and drops an interior node of the range: an endpoint would narrow the range, and the clear would succeed. The summary then keeps the range's endpoints and lists one node fewer, which the append accepts; the replacement, the third append, is refused, as its `sourceEventSeqs` leave that node uncited. The log is neither persisted nor reopened: the loader refuses that summary's span, so the case pins no recoverability of the stored session.
+test('a replacement the surface refuses closes the compaction with an error end, and the next clear of the session succeeds', { skip }, async (t) => {
   const dsh = await mountDsh(t);
   const { ctx, kit } = dsh;
   const session = ctx.sessions.create();
   converse(session, dsh);
   const nodes = [...session.surface.nodes];
+  const dropped = nodes[2];
   const omitting = {
     measure(each) {
       const measured = ctx.tokenMeter.measure(each);
-      return { ...measured, nodes: measured.nodes.filter((_, index) => index !== 2) };
+      return { ...measured, nodes: measured.nodes.filter(node => node.seq !== dropped) };
     },
   };
 
@@ -223,10 +200,11 @@ test('a summary the invariant refuses closes the compaction with an error end, a
 
   assert.ok(failure instanceof ClearError);
   assert.equal(failure.code, 'commit');
-  const log = session.snapshotEvents();
-  assert.deepEqual(log.slice(-2).map(event => event.type), ['compaction/start', 'compaction/end']);
-  assert.equal(log.at(-1).data.error, failure.cause.message);
-  assert.equal(log.at(-1).data.compactionId, log.at(-2).data.compactionId);
+  assert.match(failure.cause.message, new RegExp(`must include every shadowed surface node; missing ${dropped}$`));
+  const [start, summary, end] = session.snapshotEvents().slice(-3);
+  assert.deepEqual([start, summary, end].map(event => event.type), ['compaction/start', 'compaction/summary', 'compaction/end']);
+  assert.equal(end.data.error, failure.cause.message);
+  assert.equal(end.data.compactionId, start.data.compactionId);
   assert.deepEqual(session.surface.nodes, nodes, 'the surface is as it was');
 
   const result = clear(ctx, kit, session);

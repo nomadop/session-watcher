@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY } from '../lib/harness/claude-code/turn-recovery.js';
 import {
   NO_HANDOFF_LOADED,
-  withPageRecovery, withSearchRecovery, withLocateRecovery, withLoadRecovery,
+  withPageRecovery, withSearchRecovery, withLocateRecovery, withLoadRecovery, withHeadlinesRecovery,
 } from '../lib/turn-tool-recovery.js';
 
 test('no_handoff_loaded names load_handoff as the precondition', () => {
@@ -24,11 +24,25 @@ test('an unavailable page keeps retryable and gains a recovery sentence', () => 
   assert.match(out.recovery, /turn_page/);
 });
 
-// The two address failures are thrown rather than returned, so nothing here augments them and there is
-// no returned value to assert on: their only legal source is a value this tool handed out, so they get no
-// wire name and the message IS the recovery, which the SDK puts in content[0]. That the service throws
-// each one for its own address fault is behaviour, and it is driven where the service is —
-// test/server.turn-read-tools.test.js `throws the stale-cursor sentence`.
+test('an unavailable lineage_headlines keeps retryable and gains a recovery sentence', () => {
+  const out = withHeadlinesRecovery({ error: 'lineage_headlines_unavailable', retryable: true });
+  assert.equal(out.error, 'lineage_headlines_unavailable');
+  assert.equal(out.retryable, true);
+  assert.match(out.recovery, /lineage_headlines/);
+});
+
+test('a successful lineage_headlines answer is returned untouched', () => {
+  const answer = { lineage: [{ label: 'S2', headline: 'h' }] };
+  assert.deepEqual(withHeadlinesRecovery(answer), answer);
+});
+
+// The address failures and an unusable `k` are thrown rather than returned, so nothing here augments them
+// and there is no returned value to assert on: an address failure's only legal source is a value this tool
+// handed out, and a `k` that fails would fail again on a retry, so none gets a wire name and the message
+// IS the recovery, which the SDK puts in content[0]. That the service throws each one for its own fault is
+// behaviour, and it is driven where the service is:
+// test/server.turn-read-tools.test.js `throws the stale-cursor sentence`,
+// test/turn-read-service.test.js `the one positions sentence`.
 
 test('search found:false routes to locate and to a wider literal', () => {
   const out = withSearchRecovery({ found: false });
@@ -101,6 +115,20 @@ test('a load carrying turn_page_error gains the page-tool recovery and keeps its
   const out = withLoadRecovery({ found: true, summary: 's', turn_page_error: 'turn_page_unavailable' });
   assert.equal(out.summary, 's');
   assert.match(out.recovery, /turn_page/);
+});
+
+test('a load whose lineage holds an omitted run names lineage_headlines and how a run label becomes k', () => {
+  const core = { found: true, summary: 's', lineage: [{ label: 'S2-S5', omitted: true }, { label: 'S6', headline: 'h' }] };
+  const out = withLoadRecovery(core);
+  assert.deepEqual({ ...out, recovery: undefined }, { ...core, recovery: undefined });
+  assert.match(out.recovery, /lineage_headlines/);
+  assert.match(out.recovery, /S2-S5/);
+  assert.match(out.recovery, /2-5/);
+});
+
+test('a load whose lineage holds no omitted run is returned untouched', () => {
+  const core = { found: true, lineage: [{ label: 'S1', headline: 'h' }] };
+  assert.equal(withLoadRecovery(core), core);
 });
 
 test('a clean load is returned untouched', () => {

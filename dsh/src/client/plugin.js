@@ -107,7 +107,7 @@ export function applyClient(ctx, { tabCss, useAnchoredPosition, useDismissOnOuts
     }),
   }, SessionWatcherTab));
   const { Dock } = createDock({ useAnchoredPosition, useDismissOnOutsidePointer, createPortal });
-  // The dock follows the host's own `stats` entry; the slot renders only in the resident composer.
+  // `order` places the dock after the host's own entries; the slot renders only in the resident composer.
   ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
     name: 'conversation.composer.dock',
     id: 'session-watcher',

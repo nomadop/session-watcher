@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
 import { registerTurnReadTools } from '../index.js';
 import { HISTORY_EXCERPT_CHARS } from '../lib/turn-history-budget.js';
+import { UNUSABLE_POSITIONS_MESSAGE } from '../lib/turn-tool-recovery.js';
 
 const decoded = (result) => JSON.parse(result.content[0].text);
 
@@ -29,6 +30,10 @@ describe('registerTurnReadTools', () => {
         calls.push(['locate', args]);
         return { found: false, recovery: 'page' };
       },
+      async lineageHeadlines(args) {
+        calls.push(['headlines', args]);
+        return { lineage: [{ label: 'S1', headline: 'first' }] };
+      },
     };
     const mcpServer = new McpServer({ name: 'turn-read-test', version: '0.0.0' });
     registerTurnReadTools({
@@ -44,17 +49,20 @@ describe('registerTurnReadTools', () => {
 
   after(async () => { await client.close(); });
 
-  test('the real MCP tool list exposes the three schemas', async () => {
+  test('the real MCP tool list exposes the read schemas', async () => {
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map(({ name }) => name).sort(), ['turn_locate', 'turn_page', 'turn_search']);
+    assert.deepEqual(tools.map(({ name }) => name).sort(), ['lineage_headlines', 'turn_locate', 'turn_page', 'turn_search']);
     const page = tools.find(({ name }) => name === 'turn_page');
     const search = tools.find(({ name }) => name === 'turn_search');
     const locate = tools.find(({ name }) => name === 'turn_locate');
+    const headlines = tools.find(({ name }) => name === 'lineage_headlines');
     assert.equal(typeof page.inputSchema.properties.before.pattern, 'string');
     assert.equal(typeof search.inputSchema.properties.scope.pattern, 'string');
     assert.notEqual(search.inputSchema.properties.scope.pattern, page.inputSchema.properties.before.pattern);
     assert.deepEqual(search.inputSchema.required, ['q']);
     assert.deepEqual(locate.inputSchema.required, ['q']);
+    assert.deepEqual(headlines.inputSchema.required, ['k']);
+    assert.deepEqual(Object.keys(headlines.inputSchema.properties), ['k']);
     assert.equal(search.inputSchema.properties.q.maxLength, HISTORY_EXCERPT_CHARS);
     assert.equal(locate.inputSchema.properties.q.maxLength, HISTORY_EXCERPT_CHARS);
     // Every tool and parameter description is the sole carrier of its own contract, and each one has to
@@ -64,11 +72,12 @@ describe('registerTurnReadTools', () => {
     // Testing), and a token check reddens when the wording improves while staying green when the
     // guidance behind it is gutted.
     const described = [
-      page.description, search.description, locate.description,
+      page.description, search.description, locate.description, headlines.description,
       page.inputSchema.properties.before.description,
       search.inputSchema.properties.q.description,
       search.inputSchema.properties.scope.description,
       locate.inputSchema.properties.q.description,
+      headlines.inputSchema.properties.k.description,
     ];
     for (const [i, description] of described.entries()) {
       assert.equal(typeof description, 'string', `described[${i}] never reached the client`);
@@ -76,6 +85,7 @@ describe('registerTurnReadTools', () => {
     }
     for (const tool of tools) {
       assert.equal(tool.inputSchema.properties.lineage_head, undefined, tool.name);
+      assert.equal(tool.annotations.readOnlyHint, true, tool.name);
     }
   });
 
@@ -85,10 +95,14 @@ describe('registerTurnReadTools', () => {
     })), { turn_page: 'page' });
     await client.callTool({ name: 'turn_search', arguments: { q: 'literal', scope: 'S1:2' } });
     await client.callTool({ name: 'turn_locate', arguments: { q: 'term' } });
+    assert.deepEqual(decoded(await client.callTool({
+      name: 'lineage_headlines', arguments: { k: '1,4-6' },
+    })), { lineage: [{ label: 'S1', headline: 'first' }] });
     assert.deepEqual(calls, [
       ['page', { before: 'S1:2' }],
       ['search', { q: 'literal', scope: 'S1:2' }],
       ['locate', { q: 'term' }],
+      ['headlines', { k: '1,4-6' }],
     ]);
   });
 
@@ -107,6 +121,18 @@ describe('registerTurnReadTools', () => {
       assert.equal(result.isError, true, name);
       assert.equal(typeof result.content[0].text, 'string', name);
     }
+    assert.equal(calls.length, count);
+  });
+
+  test('a k that breaks the position grammar is refused by the schema with a readable message, and no service method runs', async () => {
+    const count = calls.length;
+    for (const k of ['', 'S3', '0', '03', '3-2', '1,,2', '1-', '-3', '3,', '1 - 2', ' 3', 'a']) {
+      const result = await client.callTool({ name: 'lineage_headlines', arguments: { k } });
+      assert.equal(result.isError, true, JSON.stringify(k));
+      assert.ok(result.content[0].text.includes(UNUSABLE_POSITIONS_MESSAGE), JSON.stringify(k));
+    }
+    const missing = await client.callTool({ name: 'lineage_headlines', arguments: {} });
+    assert.equal(missing.isError, true);
     assert.equal(calls.length, count);
   });
 
