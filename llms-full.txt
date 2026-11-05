@@ -42,7 +42,7 @@ The baseline measures how many tokens the model would need to re-ingest if the s
 
 **Definition.** The complete rebuild cost: the system overhead floor plus the sum of all tracked file contributions. B_full is the system's unfiltered belief about what a restart would cost.
 
-**Validity.** Non-negative. Becomes positive on the first model interaction (because the system overhead floor is set immediately from the first API response). Zero only before that first interaction.
+**Validity.** Non-negative. Positive from the first step with a positive context stock on, because the system overhead floor and the tracked contributions together are then at least that stock. Content a tool result tracked before that step can make it positive earlier.
 
 ##### B_default
 
@@ -52,11 +52,11 @@ The baseline measures how many tokens the model would need to re-ingest if the s
 
 **Definition.** The subset of B_full that the user would actually carry into a new session: the system overhead floor plus only those files that pass the inclusion filter (not gitignored, not outside the project, plus any user overrides). This is the value used as the position denominator throughout the cost model.
 
-When all tracked files are excluded, B_default still equals the system overhead floor. Before the first interaction B_default is zero, and the baseline validity gate withholds every position quantity except the position ratio, which reports its fallback, until it turns positive.
+When all tracked files are excluded, B_default equals the system overhead floor. While B_default is zero, the baseline validity gate withholds every position quantity except the position ratio, which reports its fallback.
 
 The public API field `B` is a display-capped version of B_full that ensures the physical invariant B ≤ totalStock holds during transient cache-creation lag. The cap self-releases once the provider's cache catches up.
 
-**Validity.** `0 ≤ B_default ≤ B_full`. Positive after the first model interaction.
+**Validity.** `0 ≤ B_default ≤ B_full`. Positive once the system overhead floor is positive or the baseline holds selected content. It stays zero when the first stock was wholly covered by tracked content that the inclusion filter leaves out, since the floor is then zero.
 
 #### System Overhead (Floor)
 
@@ -64,9 +64,9 @@ The public API field `B` is a display-capped version of B_full that ensures the 
 
 **Units.** tokens
 
-**Definition.** The irreducible context that is always present regardless of what files are loaded: system prompt, tool definitions, and conversation scaffolding. Measured once at the start of each segment from the first API response (the maximum of cache-read, cache-creation, and input token counts). Even after a restart, the session cannot go below this floor.
+**Definition.** The context a restart rebuilds beyond the content tracked per file, skill and tool: system prompt, tool definitions, conversation scaffolding and, after a compact, the summary the harness carried over. Anchored once per segment by the first step with a positive context stock (input, cache-read and cache-creation together), less the content already tracked as resident per file, skill and tool when that step arrived, and floored at zero, so content the call carries and a tracked resource can re-read counts once, in its own row. The whole of that first stock is kept apart as the session floor, which the handoff's estimate of the rebuilt size adds to the kept paths.
 
-**Validity.** Set once per segment. Zero before the first model interaction.
+**Validity.** Set once per segment. Zero before the first positive stock, and zero after it when the whole stock was already tracked as resident.
 
 #### x (Position Ratio)
 
@@ -312,7 +312,7 @@ This page collects operational scenarios and guidance for interpreting Session W
 The session has been running beyond the efficient operating zone for an extended period. bp is read from the path the session actually travelled, not from a snapshot of the current L and B: the normalized position behind it only moves forward, so loading more files no longer pulls the session back toward the sweet spot. What can still lower bp is the movable fraction shrinking as the carry grows, or a change of selected files or provider, which re-folds the whole segment under the new economics. If bp stays elevated for many turns, the session is persistently in an inefficient region. Consider preparing a handoff and restarting. If the task is nearly complete, finishing may cost less than the overhead of a fresh context rebuild.
 
 **Scenario: White lamp displays throughout the session.**
-White indicates one of three states. (1) `no_transcript` — the watcher cannot locate or open the transcript file; verify the path configuration. (2) `insufficient_data` — the transcript exists but no usage rows have been ingested yet (the first API call has not been folded). Since the system overhead floor is set from the very first usage row, this state resolves on the first model interaction — no file reads are required. (3) Healthy low-pressure zone — measurement is reliable, but the normalized position is still short of the sweet spot and below the mirrored amber boundary, which is the pair of conditions the lamp whitens on. This is a normal, efficient state (the session has not yet grown enough for the penalty function to engage). To distinguish these causes, check the reason or reliability field in the status output rather than interpreting white solely as a data-quality problem.
+White indicates one of three states. (1) `no_transcript` — the watcher cannot locate or open the transcript file; verify the path configuration. (2) `insufficient_data` — the transcript exists but no usage rows have been ingested yet (the first API call has not been folded). The system overhead floor is anchored by the first usage row with a positive context stock, so this state resolves on the first model interaction — no file reads are required — unless that whole stock was already tracked as resident content the inclusion filter leaves out. (3) Healthy low-pressure zone — measurement is reliable, but the normalized position is still short of the sweet spot and below the mirrored amber boundary, which is the pair of conditions the lamp whitens on. This is a normal, efficient state (the session has not yet grown enough for the penalty function to engage). To distinguish these causes, check the reason or reliability field in the status output rather than interpreting white solely as a data-quality problem.
 
 **Scenario: mf seems low.**
 The movable fraction is the share of the context bill that restart timing can reach. The AM-GM bound caps it at `1/(1+√2)`, and a value well below that cap means most of the cost is fixed overhead — timing optimization has limited leverage. Handoff value is reduced but not zero: the reminder still comes, only at a longer interval, because the wallet clock's unit grows as mf shrinks. A persistently low mf means the session is carry-heavy (large B relative to growth), which is normal for sessions that loaded many files early.
@@ -373,16 +373,16 @@ Session Watcher measures cost geometry, not output quality. Amber/red means you 
 Shortest path: `/sw-handoff` → `/clear` → `/sw-load`.
 
 **Scenario: Verifying carry quality after loading a handoff.**
-After `load_handoff`, the agent receives the handoff package: a list of kept paths (projected to path, symbol names with current line numbers, and stale/missing markers) and a summary. The response does NOT include actual file content — the agent must read kept paths itself. To verify carry quality, read the kept paths and confirm they still exist and contain the expected content. Hash validation exists internally (the server stamps content hashes at load time for telemetry) but is not exposed in the agent-visible response. B_default recovery depends on which kept files are still readable when the agent accesses them in the new session.
+After `load_handoff` on Claude Code, the agent receives the handoff package: a list of kept paths (projected to path, symbol names with current line numbers, and stale/missing markers) and a summary. The response does NOT include actual file content — the agent must read kept paths itself. On DSH the `/sw-load` command delivers the package and reads the kept paths for the model, which receives the results with the payload. To verify carry quality, read the kept paths and confirm they still exist and contain the expected content. Hash validation exists internally (the server stamps content hashes at load time for telemetry) but is not exposed in the agent-visible response. B_default recovery depends on which kept files are still readable when the agent accesses them in the new session.
 
 **Scenario: Handoff completed but new session B is lower than expected.**
-`load_handoff` retrieves the handoff package but does not validate file existence or fail on missing files. Files that have been deleted, renamed, or moved since prepare time will still appear in the returned paths list — the shortfall surfaces only when the agent (or the fold stream) attempts to read those files and finds them absent. This is expected: B reflects actual current file state, not the historical snapshot from prepare time. To diagnose, compare the paths in the loaded package against what exists on disk.
+`load_handoff` retrieves the handoff package but does not validate file existence or fail on missing files. Files that have been deleted, renamed, or moved since prepare time will still appear in the returned paths list — the shortfall surfaces only when the agent (or the fold stream) attempts to read those files and finds them absent. On DSH `/sw-load` makes that attempt itself and names the paths it could not read in its follow-up. This is expected: B reflects actual current file state, not the historical snapshot from prepare time. To diagnose, compare the paths in the loaded package against what exists on disk.
 
 **Scenario: Choosing which paths to keep during prepare.**
 The `prepare_handoff` tool accepts a `paths_to_keep` list. Focus on files that are central to the next task — files you will read or edit in the continuation. The server auto-populates token weights from B_rebuild data. Carrying too many paths inflates B without proportional value; carrying too few means the new session must rediscover context. Aim for the minimal set that lets the next session avoid re-reading core files.
 
 **Scenario: Understanding the load token.**
-The load token is a human-readable semantic identifier (two content words plus a random suffix, e.g., `refactor-baseline-elk`) generated from the handoff's next_task field. Use it to retrieve a specific handoff with `load_handoff`. Tokens are unique within a project's handoff store. If you lose the token, use the free-text `query` parameter to search by summary content.
+The load token is a human-readable semantic identifier (two content words plus a random suffix, e.g., `refactor-baseline-elk`) generated from the handoff's next_task field. Use it to retrieve a specific handoff with `load_handoff` on Claude Code or `/sw-load <token>` on DSH. Tokens are unique within a project's handoff store. If you lose the token, the Claude Code tool's free-text `query` parameter searches by summary content. On DSH the Web composer has a read-only lookup: choosing `/sw-load` from the slash menu, or pressing Enter on a bare `/sw-load` with no attachment, opens a picker over the handoffs the project still retains, delivered ones and this session's own included, searchable by token or task text; selecting a row only fills the composer with `/sw-load <token>`, and nothing loads until you submit it. A bare `/sw-load` that still reaches the command, such as a command claim submitted with no arguments, is a load, not a listing. With one eligible handoff it delivers it at once, binding it to the session and waking the model; with several it lists them with their tokens and loads none; with none it answers that nothing was found. Only handoffs other sessions of the project prepared and nobody has delivered are eligible, within the recent candidate window ([Commands](https://nomadop.github.io/session-watcher/docs/dsh/#commands) has the rule), so a handoff already delivered or prepared by this session is never among them. Save the token when `prepare_handoff` returns it; a token is not a guarantee that an expired or purged handoff can still be loaded.
 
 
 ### Configuration and Operations
@@ -394,7 +394,7 @@ The statusline displays (left to right): lamp emoji (white/green/yellow/red), th
 User overrides control which files count toward B_default. Excluding a file removes it from the baseline denominator — the session appears to be carrying less, and bp may increase (same L, lower B). Including a gitignored or previously-excluded file adds it to the baseline — bp may decrease. Overrides propagate to sibling files in the same directory through inference when the directory shows unanimous inclusion or exclusion state.
 
 **Scenario: How long until metrics become reliable after session start.**
-Metrics become reliable once `B_default` and `cRatio` are both positive. Since the system overhead floor is set from the very first usage row (as `max(cacheRead, cacheCreation, input)`) and is itself part of B_default, B_default becomes positive immediately on the first model interaction — no file reads are required. The transition from white (measuring) to a computed lamp can therefore happen on the very first usage row. Before that first usage, the system shows white with reason `insufficient_data`. Sessions with no transcript at all show white with reason `no_transcript`.
+Metrics become reliable once `B_default` and `cRatio` are both positive. The system overhead floor is anchored by the first usage row with a positive context stock — the whole stock, less the content already tracked as resident per file, skill and tool, never below zero — and is itself part of B_default, so B_default becomes positive on the first model interaction, no file reads required, unless that whole stock was already tracked as resident and the inclusion filter leaves it out. The transition from white (measuring) to a computed lamp can therefore happen on the very first usage row. Before that first usage, the system shows white with reason `insufficient_data`. Sessions with no transcript at all show white with reason `no_transcript`.
 
 **Scenario: Dashboard vs statusline — same data source?**
 Yes. Both the browser dashboard (served via the built-in HTTP server) and the CLI statusline (rendered by the hook into the terminal status area) read from the same `getStatus()` output on the watcher instance. The dashboard uses SSE for event notification (`tick` and `scan` messages), then fetches full snapshots via REST (`/api/status`, `/api/history`, `/api/buckets`) on each `scan` event; polling is the fallback trigger when SSE is unavailable. The statusline formats a compact single-line summary of the same fields. They always reflect the same underlying state, though the dashboard may show historical chart data that the statusline cannot.
@@ -567,7 +567,7 @@ The system publishes a status snapshot after each measurement cycle. Consumers c
 - `g` returns at least the floor value (independent of baseline)
 - Lamp state reports `no_transcript` or `insufficient_data`
 
-Since the system overhead floor is set from the very first usage snapshot and is itself part of B_default, B_default becomes positive on the first interaction — no file operations are required.
+The system overhead floor is anchored by the first usage snapshot with a positive context stock, as that stock less the content already tracked as resident per file, skill and tool, never below zero, and is part of B_default. B_default is therefore positive from that snapshot on without any file operation, except when the whole stock was already tracked as resident and the inclusion filter selects none of it.
 
 **Left-arm silence:** Which arm the session is on is decided by normalized position, never by the position ratio against xSweet. Before the sweet spot the lamp shows white until the position reaches the mirror image of the amber boundary and green from there on; the warning and critical zones are right-arm states only, so a session that has not reached the sweet spot is never coloured as "overstaying."
 
@@ -612,7 +612,7 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 | `get_turn_skeleton` | Write the current context epoch's turn skeleton and a notes file whose `## NOTE[T]` headings are the slots a note fills; returns both paths, the snapshot id to submit against and the protocol for filling them |
 | `submit_turn_notes` | Commit the notes file the latest skeleton wrote. All-or-nothing: every `NOTE` slot must be covered, by a section of the file or by a note the store already holds, and the snapshot must still be current |
 | `prepare_handoff` | Persist the kept paths and a summary as a handoff package; returns a load token |
-| `load_handoff` | Retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. On DSH a delivery also renames the loading session after the package's next task. A delivered package carries the newest lineage headlines within a budget, the older sessions collapsed into runs marked `omitted`, and the newest page of turns |
+| `load_handoff` | Claude Code only: retrieve a handoff package by token, free-text search or auto-match for the project. Delivering a package binds it to the loading session and records the load, so the tool writes. A delivered package carries the newest lineage headlines within a budget, the older sessions collapsed into runs marked `omitted`, and the newest page of turns |
 | `rotate_session` | Claude Code only: switch the watcher to a new session and transcript |
 | `turn_page` | Read a page of the history turns carried by the loaded handoff, newest first |
 | `turn_search` | Find a literal that occurs verbatim in the transcripts behind the loaded handoff |
@@ -621,7 +621,7 @@ Stable commands exposed to the agent. The Claude Code plugin and the DSH plugin 
 
 The three history tools and `lineage_headlines` resolve their own lineage from the handoff delivered into the calling session, so none of them accepts a lineage identifier: a session that has loaded nothing is told so rather than offered a guess. Paging is deterministic and needs no query; the two query tools are distinguished by what the caller actually remembers. Every search or locate result names what to do with it — follow a hit, narrow a truncated match set, or switch tools on a miss — while a page that was built simply arrives.
 
-On DSH the human command `/sw-continue` takes no arguments and clears the session in place: it shadows the session's history behind a checkpoint that opens a new epoch, then has the model load the session's newest handoff through the `sw-load` skill. It leaves the session untouched and says why when the session has prepared no handoff, when its newest handoff was prepared before the latest context reset, or while the agent is busy. The session's earlier epochs stay readable as their own lineage entries, each with the turns up to the handoff it produced.
+On DSH the model has no `load_handoff` tool; the human command `/sw-load`, described on the [DSH page](https://nomadop.github.io/session-watcher/docs/dsh/#commands), delivers the handoff, records the load and renames the loading session after the package's next task. The human command `/sw-continue` takes no arguments and clears the session in place: it shadows the session's history behind a checkpoint that opens a new epoch, then loads the session's newest handoff itself, delivering and reading it as `/sw-load` does, and hands the model the result. The follow-up has the model resume the task in the same turn after a one-sentence note on what it resumes, where the follow-up of `/sw-load` has it present the loaded state and wait for confirmation, and has the model ask any question, approval or permission the task left open and wait for the user. It leaves the session untouched and says why when the session has prepared no handoff, when its newest handoff was prepared before the latest context reset, or while the agent is busy. When the clear succeeds and the load fails, the clear stands and the answer carries the reason and the token to load by hand with `/sw-load <token>`. The session's earlier epochs stay readable as their own lineage entries, each with the turns up to the handoff it produced.
 
 ---
 
@@ -651,7 +651,7 @@ Add the package to a DSH profile:
 dsh plugin --profile <name> add @nomadop/session-watcher-dsh
 ```
 
-`<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`.
+`<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`. The plugin needs DSH 0.2.2-rc.1 or later.
 
 The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool. With DSH's optional Session search bundle switched on, the bundle patch's `tool-session-query` row and Session search's own copy of that package register the same prompt section, so the one that loads second fails to activate and the other keeps serving `session_event_read`; to give Session search its own tools, disable the row in the profile's patch layer and restart, and switch the row on again whenever Session search is off, since no other row serves `session_event_read`.
 
@@ -721,19 +721,23 @@ The tab and the dock are supported on `dsh web`. Whether a page's `EventSource` 
 
 ### Tools
 
-The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
+The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session` and `load_handoff`, which are Claude Code only; a DSH agent receives a handoff through the commands below. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
 
 ### Skills
 
-The package ships the `sw-handoff`, `sw-load` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host.
+The package ships the `sw-handoff` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host. Loading a handoff is a command here, not a skill.
 
 ### Commands
 
-The plugin registers the human command `/sw-continue`, which clears the session in place and resumes it from its newest handoff. Its behavior is stated under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools).
+The plugin registers the human commands below, typed in the Web composer.
+
+`/sw-load [token]` loads a handoff into the session. With a token it loads that handoff. Choosing `/sw-load` from the slash menu, or pressing Enter on a bare `/sw-load` with no attachment, opens a picker instead: it lists the handoffs the project still retains, the undelivered group before the delivered one and each newest first, with the token, the age and the task, and its search matches the token or the task text. Selecting a row replaces the composer's draft with `/sw-load <token>` and loads nothing; the load runs when you submit that line. Enter on a bare `/sw-load` with an attachment is refused, and a bare `/sw-load` that still reaches the command, such as a command claim submitted with no arguments, loads the one handoff pending for the project, which is one that another session of the project prepared, nobody has delivered, and that falls in the recent candidate window; when several are pending it lists them, each with its token, age and task preview, loads none and waits for a run with one token. It runs only while the agent is idle.
+
+The command does the loading itself: it delivers the handoff, which binds it to the session, records the load and renames the session after the handoff's next task, then reads the kept paths with the host's `read` tool. The model gets one harness-owned message holding the delivery's payload and the read results, and a follow-up that names any path skipped or not read to the end of its range and leaves the rest to the model: placing the summary in its lineage with `lineage_headlines` and the turn tools, invoking the kept skills, and presenting the state it found for the user to confirm or correct before work resumes. The model holds neither `load_handoff` nor a skill for this, so it cannot load a handoff for the user on a path where a typed line is not claimed as a command, such as ACP, a headless run or an SDK; the supported entry is the Web composer.
+
+`/sw-continue` clears the session in place and resumes it from its newest handoff: after the clear it loads that handoff itself, as `/sw-load` does, and hands the model the result. The follow-up has the model resume the task in the same turn after a one-sentence note on what it resumes, where the follow-up of `/sw-load` has it present the loaded state for you to confirm first, and has the model ask any question, approval or permission the task left open and wait for you. Its behavior is stated under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools).
 
 ### Handoff across sessions
-
-When an agent starts or resumes, it receives a message listing the pending handoffs that other sessions prepared for its project. That message is the same text the Claude Code SessionStart hook shows. Subagents do not receive it. The message is not measured as a turn.
 
 Both hosts store handoffs in the same place. If a lineage crosses from one host to the other, each host reads the other host's sessions in it as unverified turn records: the summary, the lineage headlines and the turn notes are all there, but those turns have no `S{k}:{T}` address and `turn_search` and `turn_locate` find nothing in them.
 

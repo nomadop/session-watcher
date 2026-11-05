@@ -1,6 +1,6 @@
 {
   "name": "@nomadop/session-watcher-dsh",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Session Watcher as a DeepSeek Harness host plugin",
   "type": "module",
   "license": "MIT",
@@ -15,10 +15,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "dsh": ">=0.2.2-rc.1"
+  },
   "peerDependencies": {
-    "@deepseek-ai/dsh-compaction": ">=0.2.0-rc.1",
-    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.1",
-    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1"
+    "@deepseek-ai/dsh-compaction": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.2.2-rc.1"
   },
   "dsh": {
     "client": {

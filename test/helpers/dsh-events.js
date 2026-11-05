@@ -189,6 +189,31 @@ export function requestContext({ model = MODEL, contextWindow = 1_000_000 } = {}
   return { type: 'request/context', ...stamp(), data: { provider: PROVIDER, model, contextWindow } };
 }
 
+/**
+ * An appended `user/message` of the plugin's load kind, written out in the shape `/sw-load` hands the model:
+ * `{ content, source: { kind: 'session-watcher-load', route, calls }, role: 'user', id }`, one text block per entry
+ * of `calls` holding its `text`, and each call `{ id, name, arguments }`.
+ */
+export function loadMessage({
+  route = { provider: PROVIDER, model: MODEL },
+  calls = [{ id: 'sw-load-0000aaaa-1', name: 'load_handoff', arguments: '{}', text: '{"found":true}' }],
+} = {}) {
+  const { seq, time } = stamp();
+  return {
+    type: 'user/message', seq, time,
+    data: {
+      content: calls.map(({ text }) => ({ type: 'text', text })),
+      source: {
+        kind: 'session-watcher-load', route,
+        calls: calls.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
+      },
+      role: 'user',
+      id: messageId(seq),
+    },
+    surfaceOp: 'append',
+  };
+}
+
 /** A `compaction/start` taking the compaction lock inside turn `turn`. */
 export function compactionStart({ compactionId = 'compaction-1', turn = 1 } = {}) {
   return { type: 'compaction/start', ...stamp(), data: { compactionId, turn } };

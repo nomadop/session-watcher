@@ -1,9 +1,10 @@
-// dsh/src/client/plugin.js — the client half's registrations: the locale, the stylesheet, the signal stream and the `conversation.view` and `conversation.composer.dock` entries over one store per session, each under the caller's effects.
+// dsh/src/client/plugin.js — the client half's registrations: the locale, the stylesheet, the signal stream, the `conversation.view` and `conversation.composer.dock` entries over one store per session and the `/sw-load` picker, each under the caller's effects.
 import { NS, en, zh } from './locales.js';
 import { SessionWatcherTab } from './tab.js';
 import { createSessionStores } from './session-store.js';
 import { openSignalStream } from './signal.js';
 import { createDock } from './dock.js';
+import { registerHandoffPicker } from './handoff-picker.js';
 
 const PLUGIN_ID = '@nomadop/session-watcher-dsh';
 const CHANNEL = '/session-watcher';
@@ -19,6 +20,7 @@ const EVENTS_URL = 'api/session-watcher.events';
  * A hidden page leaves the last state in place: the tab is not shown, and the stream that opens on turning visible restarts from `connecting`.
  * The view entry's `inject(sessionId)` hands the session's store, the stream's connection state as `signalState` (one subscribable `connecting`, `live` or `disconnected` for every session), a call that binds the session into every RPC call the tab's elements make, and the theme as the `useTheme` hook;
  * the dock entry's hands the same store, and the dock is built from the handed placement hooks and portal.
+ * The `/sw-load` picker (`handoff-picker.js`) registers under its own `ctx.inject` on `commandUi`, `sessions` and `conversation`, so the view and the dock do not wait for those services.
  *
  * @param {object} ctx - the client plugin context with `slots`, `locale`, `theme` and `connection`.
  * @param {{ tabCss: string, useAnchoredPosition: Function, useDismissOnOutsidePointer: Function, createPortal: Function }} options
@@ -33,9 +35,8 @@ export function applyClient(ctx, { tabCss, useAnchoredPosition, useDismissOnOuts
     document.head.appendChild(tag);
     return () => { tag.remove(); };
   }, 'session-watcher: tab stylesheet');
-  const sessions = createSessionStores({
-    call: (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal),
-  });
+  const call = (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal);
+  const sessions = createSessionStores({ call });
   // Read by the tab's badge; an unchanged state notifies nobody.
   let signalState = 'connecting';
   const signalListeners = new Set();
@@ -115,4 +116,6 @@ export function applyClient(ctx, { tabCss, useAnchoredPosition, useDismissOnOuts
     locale: NS,
     inject: sessionId => ({ store: sessions.for(sessionId) }),
   }, Dock));
+  // Its own injection, so the tab and the dock above do not wait for the services the picker reads.
+  ctx.inject(['commandUi', 'sessions', 'conversation'], child => registerHandoffPicker(child, { call, t }));
 }

@@ -35,7 +35,7 @@ is retired; `.serena/memories/domain_model.md` keeps it as history and marks it 
 
 - **Never hardcode environment values.** The context floor, the growth rate and the warm-up length are
   computed live; empirical anchors belong to test fixtures only.
-- **Zero context pollution**: ambient injection (hook stdout, the catalog message) carries no metric numbers;
+- **Zero context pollution**: ambient injection (hook stdout) carries no metric numbers;
   an explicit tool call may carry a reading.
 - **Sidecar pattern** (the name `.serena/memories/core.md` uses for it): measurement state lives in the process
   that owns the transcript, and the MCP face, the dashboard and the statusline are stateless readers of it.

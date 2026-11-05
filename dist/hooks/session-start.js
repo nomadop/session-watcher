@@ -36,6 +36,7 @@ var C_RATIO_TABLE = [
   { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
   { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
   { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
+  { match: /6.?1.?(sol|terra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }
 ];
@@ -138,6 +139,15 @@ function discoverHandoffs(dbPath, projectId, sessionId, { ttlDays, queryLimit })
     }
   }
 }
+function formatAge(createdAt) {
+  const diffMs = Math.max(0, Date.now() - createdAt);
+  const mins = Math.floor(diffMs / 6e4);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 function formatHandoffContext(rows, maxDisplay, taskPreviewChars) {
   if (!rows || rows.length === 0) return null;
   const hasMore = rows.length > maxDisplay;
@@ -147,15 +157,6 @@ function formatHandoffContext(rows, maxDisplay, taskPreviewChars) {
     if (total === 0) return null;
     if (total >= 1e3) return `~${Math.round(total / 1e3)}k tokens`;
     return `~${total} tokens`;
-  };
-  const formatAge = (createdAt) => {
-    const diffMs = Math.max(0, Date.now() - createdAt);
-    const mins = Math.floor(diffMs / 6e4);
-    if (mins < 60) return `${mins} min ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
   };
   const truncTask = (task) => {
     if (!task) return "";

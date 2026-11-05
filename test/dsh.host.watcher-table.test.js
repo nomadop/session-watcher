@@ -1,7 +1,7 @@
 // The DSH host's watcher table over the production composition: one `SessionWatcher` per session through the bootstrap snapshot, the live feed, failure and disposal, over a temporary store the process singleton holds.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,8 +17,9 @@ import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
 import {
   reusedCallIdAcrossSteps, FIRST_STEP_END, toolResult, sessionLog, compactCheckpoint,
-  turnStart, userMessage, requestHeader, stepStart, assistantMessage, stepEnd, turnEnd,
+  turnStart, userMessage, requestHeader, stepStart, assistantMessage, stepEnd, turnEnd, loadMessage,
 } from './helpers/dsh-events.js';
+import { readResultText } from './helpers/attribution-fixtures.js';
 
 let dir;
 
@@ -876,4 +877,100 @@ test('a failure that lands during the warm-up stops the bootstrap, which install
   await settled();
   assert.equal(table.get('s-warm-failed').state, 'failed');
   assert.equal(composed.get('s-warm-failed').watcher.getHistory().length, 0, 'the snapshot never installed');
+});
+
+// A route whose id falls under the fallback chars-per-token row and whose catalog name falls under a calibrated one, so a kept file's row is priced apart under each.
+const LOAD_PROVIDER = 'bedrock';
+const LOAD_ID = 'us.raw-load-route';
+const LOAD_NAME = 'claude-load-route';
+
+const KEPT_LINES = {
+  first: ['export function first() {', '  return "the first kept module body";', '}'],
+  second: ['export function second() {', '  return "the second kept module body";', '}'],
+};
+
+// A load reading the whole of the kept file `name` under the temporary directory, priced under `model`; `serial` keeps its call ids its own.
+function keptLoad(name, { model = LOAD_ID, serial = name } = {}) {
+  const path = join(dir, `${name}.txt`);
+  writeFileSync(path, `${KEPT_LINES[name].join('\n')}\n`);
+  return loadMessage({
+    route: { provider: LOAD_PROVIDER, model },
+    calls: [{
+      id: `sw-load-${serial}-1`, name: 'read', arguments: JSON.stringify({ file_path: path, offset: 1, limit: 40 }),
+      text: readResultText(path, KEPT_LINES[name]),
+    }],
+  });
+}
+
+const loadHeader = () => {
+  const built = requestHeader();
+  return { ...built, data: { ...built.data, header: { config: { provider: LOAD_PROVIDER, model: LOAD_ID } } } };
+};
+
+// The bucket data of a watcher fed `events` live after an empty snapshot under no model names: the oracle for an entry that measured those events with the routes they carry.
+async function bucketsOf(sessionId, events) {
+  const { table, reader } = buildTable();
+  table.ensure(sessionOf(sessionId));
+  reader.settle(sessionId, []);
+  await settled();
+  for (const event of events) table.feed(sessionId, event);
+  return JSON.stringify(table.get(sessionId).watcher.getBucketData());
+}
+
+const bucketsOfEntry = (table, sessionId) => JSON.stringify(table.get(sessionId).watcher.getBucketData());
+
+test('a snapshot whose only pair is a load route installs once the pair resolves, with the load priced under its name', async () => {
+  const names = controlledNames();
+  const { table, reader } = buildTable({ modelNames: names.modelNames });
+  const log = sessionLog([keptLoad('first')]);
+  table.ensure(sessionOf('s-load-named'));
+  reader.settle('s-load-named', log);
+  await settled();
+  assert.deepEqual(table.get('s-load-named'), { state: 'bootstrapping' }, 'the install waits for the load route');
+  assert.deepEqual(names.calls, [[LOAD_PROVIDER, LOAD_ID]]);
+
+  names.fulfil(LOAD_PROVIDER, LOAD_ID, LOAD_NAME);
+  await settled();
+  assert.equal(table.get('s-load-named').state, 'live');
+  const named = sessionLog([keptLoad('first', { model: LOAD_NAME })]);
+  assert.equal(bucketsOfEntry(table, 's-load-named'), await bucketsOf('s-load-reference-named', named));
+  assert.notEqual(bucketsOfEntry(table, 's-load-named'), await bucketsOf('s-load-reference-raw', log), 'the two rows price apart');
+});
+
+test('a live load fed while its header\'s resolve is pending stays under the id, and one fed after the resolve settles maps', async () => {
+  const names = controlledNames();
+  const { table, reader } = buildTable({ modelNames: names.modelNames });
+  table.ensure(sessionOf('s-load-live'));
+  reader.settle('s-load-live', []);
+  await settled();
+  const [header, early, late] = sessionLog([loadHeader(), keptLoad('first'), keptLoad('second')]);
+  table.feed('s-load-live', header);
+  assert.deepEqual(names.calls, [[LOAD_PROVIDER, LOAD_ID]]);
+  table.feed('s-load-live', early);
+
+  names.fulfil(LOAD_PROVIDER, LOAD_ID, LOAD_NAME);
+  await settled();
+  table.feed('s-load-live', late);
+  const mappedLate = { ...late, data: { ...late.data, source: { ...late.data.source, route: { provider: LOAD_PROVIDER, model: LOAD_NAME } } } };
+  assert.equal(bucketsOfEntry(table, 's-load-live'), await bucketsOf('s-load-live-reference', [header, early, mappedLate]));
+  assert.deepEqual(names.calls, [[LOAD_PROVIDER, LOAD_ID]]);
+});
+
+test('a live load maps under a pair another session on the host resolved, without a header of its own', async () => {
+  const names = controlledNames();
+  const { table, reader } = buildTable({ modelNames: names.modelNames });
+  table.ensure(sessionOf('s-load-resolver'));
+  reader.settle('s-load-resolver', sessionLog([loadHeader()]));
+  await settled();
+  names.fulfil(LOAD_PROVIDER, LOAD_ID, LOAD_NAME);
+  await settled();
+  table.ensure(sessionOf('s-load-borrower'));
+  reader.settle('s-load-borrower', []);
+  await settled();
+
+  const [load] = sessionLog([keptLoad('first')]);
+  table.feed('s-load-borrower', load);
+  const named = { ...load, data: { ...load.data, source: { ...load.data.source, route: { provider: LOAD_PROVIDER, model: LOAD_NAME } } } };
+  assert.equal(bucketsOfEntry(table, 's-load-borrower'), await bucketsOf('s-load-borrower-reference', [named]));
+  assert.deepEqual(names.calls, [[LOAD_PROVIDER, LOAD_ID]]);
 });

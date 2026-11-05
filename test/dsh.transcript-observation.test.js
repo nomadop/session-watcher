@@ -6,7 +6,7 @@ import { reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript
 import {
   userMessage, assistantMessage, toolCall, toolResult, attempt, requestHeader, requestContext,
   turnStart, turnEnd, stepStart, stepEnd, compactionStart, compactionSummary, compactCheckpoint, compactionEnd,
-  compactionPrune, prunedResult, unknownEvent, ignorableEvent, sessionLog, reusedCallIdAcrossSteps,
+  compactionPrune, prunedResult, unknownEvent, ignorableEvent, sessionLog, reusedCallIdAcrossSteps, loadMessage,
 } from './helpers/dsh-events.js';
 
 // The coordinates every Observation of one event shares.
@@ -64,6 +64,69 @@ const INJECTED_KINDS = [
 test('any other user/message kind yields nothing and no diagnostic', () => {
   for (const kind of INJECTED_KINDS) {
     assert.deepEqual(reduceDshEvent(userMessage({ text: 'Injected context.', kind })), NOTHING, kind);
+  }
+});
+
+// --- Loads ---
+
+const LOAD_ROUTE = { provider: 'bedrock', model: 'us.anthropic.claude-opus-4-8' };
+const LOAD_CALLS = [
+  { id: 'sw-load-1a2b3c4d-1', name: 'load_handoff', arguments: '{"load_token":"sw-token"}', text: '{"found":true,"load_token":"sw-token"}' },
+  { id: 'sw-load-1a2b3c4d-2', name: 'read', arguments: '{"file_path":"/repo/src/a.js","offset":3,"limit":2}', text: '<path>/repo/src/a.js</path>\n3: three\n4: four' },
+  { id: 'sw-load-1a2b3c4d-3', name: 'read', arguments: '{"file_path":"/repo/src/empty.js","offset":1,"limit":40}', text: '' },
+];
+
+test('a load message yields one tool-use and one tool-result per call, keyed by the call id, priced by its route, with no turn boundary and no usage', () => {
+  const event = loadMessage({ route: LOAD_ROUTE, calls: LOAD_CALLS });
+  const messageId = `dsh:message:${event.data.id}`;
+  const pair = ({ id, name, text }, input) => [
+    {
+      type: 'tool-use', messageId, model: LOAD_ROUTE.model, cwd: null, toolUseId: id, name, input,
+      ...at(event), provenance: 'harness',
+    },
+    {
+      type: 'tool-result', toolUseId: id, content: text, isError: false, resultMeta: { meta: null, error: null },
+      ...at(event), provenance: 'harness',
+    },
+  ];
+  assert.deepEqual(reduceDshEvent(event), {
+    observations: [
+      ...pair(LOAD_CALLS[0], { load_token: 'sw-token' }),
+      ...pair(LOAD_CALLS[1], { file_path: '/repo/src/a.js', offset: 3, limit: 2 }),
+      ...pair(LOAD_CALLS[2], { file_path: '/repo/src/empty.js', offset: 1, limit: 40 }),
+    ],
+    diagnostics: [],
+  });
+});
+
+test('two loads never share a toolUseId', () => {
+  const first = loadMessage({ calls: LOAD_CALLS });
+  const second = loadMessage({ calls: LOAD_CALLS.map(call => ({ ...call, id: call.id.replace('1a2b3c4d', '5e6f7a8b') })) });
+  const idsOf = event => reduceDshEvent(event).observations.map(observation => observation.toolUseId);
+  const ids = [...idsOf(first), ...idsOf(second)];
+  assert.equal(new Set(ids).size, ids.length / 2);
+  assert.deepEqual(new Set(idsOf(second)), new Set(LOAD_CALLS.map(call => call.id.replace('1a2b3c4d', '5e6f7a8b'))));
+});
+
+test('a load message it cannot pair yields nothing and one shape-violation', () => {
+  const valid = loadMessage({ calls: LOAD_CALLS });
+  const variants = {
+    'one block short': { ...valid.data, content: valid.data.content.slice(1) },
+    'one block over': { ...valid.data, content: [...valid.data.content, { type: 'text', text: 'extra' }] },
+    'a call without an id': {
+      ...valid.data, source: { ...valid.data.source, calls: valid.data.source.calls.map(({ id: _id, ...call }) => call) },
+    },
+    'no calls': { ...valid.data, source: { ...valid.data.source, calls: undefined } },
+    'a non-text block': { ...valid.data, content: [{ type: 'image' }, ...valid.data.content.slice(1)] },
+    'a route without a model': { ...valid.data, source: { ...valid.data.source, route: { provider: 'bedrock' } } },
+    'no route': { ...valid.data, source: { ...valid.data.source, route: undefined } },
+  };
+  for (const [label, data] of Object.entries(variants)) {
+    const { observations, diagnostics } = reduceDshEvent({ ...valid, data });
+    assert.deepEqual(observations, [], label);
+    assert.deepEqual(diagnostics.map(({ scope, code }) => ({ scope, code })), [
+      { scope: 'dsh-transcript-observation', code: 'shape-violation' },
+    ], label);
   }
 });
 

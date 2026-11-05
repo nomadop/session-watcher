@@ -115,7 +115,10 @@ async function main() {
   // lib/symbol-outline.js loads the WASM files relative to the bundle
   for (const [src, dest] of WASM_SOURCES)
     cpSync(join(ROOT, 'node_modules', src), join(DSH_DIST, dest));
-  cpSync(join(ROOT, 'skills'), join(DSH_DIST, 'skills'), { recursive: true });
+  // The Claude Code skill `sw-load` stays out: DSH loads a handoff through its `/sw-load` command.
+  cpSync(join(ROOT, 'skills'), join(DSH_DIST, 'skills'), {
+    recursive: true, filter: source => source !== join(ROOT, 'skills', 'sw-load'),
+  });
 
   // 8. Bundle the DSH client half (dsh/dist/client.js), the Web UI's view.
   // The browser loads the artifact as a classic script, so it is CJS inside the loader call: the factory's `require`

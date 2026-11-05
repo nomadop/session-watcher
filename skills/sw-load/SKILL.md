@@ -9,7 +9,7 @@ Restore a previous session's handoff package into context so work can resume.
 
 ## Steps
 
-1. **Load the handoff.** Resolve a token from the skill `args`, from the user's message, or from the host's own handoff notice, which names pending handoffs by token: the Claude Code SessionStart hook's additionalContext, or the message DSH injects when the agent starts or resumes. Then call the `load_handoff` tool, whose schema carries the three ways in.
+1. **Load the handoff.** Resolve a token from the skill `args`, from the user's message, or from the host's own handoff notice, which names pending handoffs by token: the Claude Code SessionStart hook's additionalContext. Then call the `load_handoff` tool, whose schema carries the three ways in.
 
    A token you were handed is the one path that proceeds without asking. Any other way in — a free-text match, an auto-match, or several tokens offered at once — means listing what came back with each one's age and task preview and letting the user pick before you go on. Nothing found → tell the user the token is expired or invalid, and ask for direction.
 

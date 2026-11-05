@@ -35,9 +35,9 @@ const storePath = () => join(dir, 'store.sqlite');
 // The host over a fake context; `readSession` answers an empty snapshot unless given.
 function mountHost({
   sessions = [], readSession = async () => ({ session: {}, inheritedEventCount: 0, events: [] }),
-  connection, llm, settings, loadIsIgnored = () => null,
+  connection, webServer, llm, settings, loadIsIgnored = () => null,
 } = {}) {
-  const ctx = createFakeContext({ sessions, readSession, connection, llm, settings });
+  const ctx = createFakeContext({ sessions, readSession, connection, webServer, llm, settings });
   const { table } = applyHost(ctx, {
     defineTool: definition => definition, storePath: storePath(), turnNotesRoot: join(dir, 'turn-notes'), loadIsIgnored, skillsDir: SKILLS_DIR,
   });
@@ -335,15 +335,19 @@ test('an ignored path is unselected by default through the host\'s ignore loader
   ctx.dispose();
 });
 
-// A connection whose `fetch.register` records each route; both methods answer the real methods' disposer shape.
+// A connection whose `rpc.handle` and `fetch.register` record each channel and route; both methods answer the real methods' disposer shape.
 function fakeConnection() {
+  const handled = [];
   const routes = [];
   const connection = {
-    rpc: { handle() { return async () => {}; } },
+    rpc: { handle(channel) { handled.push(channel); return async () => {}; } },
     fetch: { register(route) { routes.push(route); return async () => {}; } },
   };
-  return { routes, connection };
+  return { handled, routes, connection };
 }
+
+// The host only hands the web server to its registration's shadow, so the fake has no member.
+const webServer = {};
 
 const EVENTS_URL = 'http://h/api/session-watcher.events';
 const decoder = new TextDecoder();
@@ -357,23 +361,38 @@ async function openEvents(route) {
   };
 }
 
-test('with a connection the host registers the events route on the inject child\'s fetch service and unproviding the connection closes every open stream', async () => {
-  const { routes, connection } = fakeConnection();
-  const { ctx } = mountHost({ connection });
-  assert.deepEqual(routes.map(route => [route.path, route.methods, route.requestBody]),
-    [['/api/session-watcher.events', ['GET'], 'buffered']]);
+for (const leaving of ['connection', 'webServer']) {
+  test(`with a connection and a web server the host registers the channel and the events route on the inject child, and unproviding ${leaving} closes every open stream`, async () => {
+    const { handled, routes, connection } = fakeConnection();
+    const { ctx } = mountHost({ connection, webServer });
+    assert.deepEqual(handled, ['/session-watcher']);
+    assert.deepEqual(routes.map(route => [route.path, route.methods, route.requestBody]),
+      [['/api/session-watcher.events', ['GET'], 'buffered']]);
 
-  const reads = [await openEvents(routes[0]), await openEvents(routes[0])];
-  for (const read of reads) assert.equal(await read(), ': open\n\n');
-  ctx.unprovide('connection');
-  for (const read of reads) assert.equal(await read(), null);
+    const reads = [await openEvents(routes[0]), await openEvents(routes[0])];
+    for (const read of reads) assert.equal(await read(), ': open\n\n');
+    ctx.unprovide(leaving);
+    for (const read of reads) assert.equal(await read(), null);
+    ctx.dispose();
+  });
+}
+
+test('without a web server the host still loads and measures, and registers neither the channel nor the events route', async () => {
+  const { handled, routes, connection } = fakeConnection();
+  const session = fakeSession({ id: 's-headless' });
+  const { ctx, table } = mountHost({ sessions: [session], connection });
+  await settled();
+  assert.deepEqual([handled, routes], [[], []]);
+
+  emitLog(ctx, session, reusedCallIdAcrossSteps());
+  assert.equal(table.get('s-headless').watcher.getHistory().length, 2);
   ctx.dispose();
 });
 
 test('an appended session event reaches an open stream as its sessionId', async () => {
   const { routes, connection } = fakeConnection();
   const session = fakeSession({ id: 's-signalled' });
-  const { ctx } = mountHost({ sessions: [session], connection });
+  const { ctx } = mountHost({ sessions: [session], connection, webServer });
   await settled();
   const read = await openEvents(routes[0]);
   assert.equal(await read(), ': open\n\n');

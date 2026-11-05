@@ -1,4 +1,4 @@
-// The DSH tool set over the host's watcher table: the registered names, the watcher each call selects, the bootstrap wait, and the values each tool shares with the shared functions the Claude Code tools answer through.
+// The DSH tool set and the handoff delivery over the host's watcher table: the registered names, the watcher each call selects, the bootstrap wait, the title a delivery gives the loading session, and the values each tool and the delivery share with the shared functions the Claude Code tools answer through.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { applyHost } from '../dsh/src/host.js';
 import { composeWatcher } from '../dsh/src/composition.js';
-import { createTools } from '../dsh/src/tools.js';
+import { createHandoffDelivery, createTools } from '../dsh/src/tools.js';
 import { createWatcherTable } from '../dsh/src/watcher-table.js';
 import { initStore, getStore, closeStoreGlobal } from '../lib/store.js';
 import { _resetRateLampManagerForTest, getLiveLedger } from '../lib/rate-lamp-manager.js';
@@ -29,9 +29,9 @@ import { filesUnder, watchedTree, writeFilesUnder } from './helpers/attribution-
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 const NODE_MODULES = fileURLToPath(new URL('../node_modules/', import.meta.url));
 
-// The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` removed.
+// The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` and `load_handoff` removed.
 const EXPECTED_TOOLS = [
-  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'load_handoff', 'prepare_handoff',
+  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'prepare_handoff',
   'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
@@ -41,7 +41,6 @@ const MINIMAL_ARGS = {
   watcher_status: {},
   get_bucket_summary: {},
   prepare_handoff: { paths_to_keep: [], summary: 'summary' },
-  load_handoff: {},
   get_turn_skeleton: {},
   submit_turn_notes: { snapshot_id: 'snapshot' },
   turn_page: {},
@@ -64,6 +63,7 @@ afterEach(() => {
 });
 
 // The host over a fake context, every definition `ctx.tools.register` receives recorded by name; `snapshots` maps a session id to its snapshot's events, empty unless given, and `listSessions` backs the persisted listing.
+// `deliver` is the commands' delivery over the host's table, store and title service, and `load(args, id, signal)` calls it for the session `id`.
 function mountHost({ sessions = [], snapshots = {}, readSession, listSessions, sessionTitle } = {}) {
   const read = readSession
     ?? (async sessionId => ({ session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] }));
@@ -76,8 +76,16 @@ function mountHost({ sessions = [], snapshots = {}, readSession, listSessions, s
     skillsDir: SKILLS_DIR,
   });
   const tool = name => registered.find(definition => definition.name === name);
-  return { ctx, table, registered, tool };
+  const deliver = createHandoffDelivery({ table, store: getStore(), sessionTitle: () => ctx.get('sessionTitle') });
+  const load = (args, id, signal = new AbortController().signal) => deliver({ agent: { session: { id } }, signal, args });
+  return { ctx, table, registered, tool, deliver, load };
 }
+
+// Each call that waits on the calling session's watcher: every tool by name, and the commands' delivery.
+const waitingCalls = ({ tool, load }) => [
+  ...EXPECTED_TOOLS.map(name => [name, id => run(tool(name), MINIMAL_ARGS[name], id)]),
+  ['createHandoffDelivery', id => load({}, id)],
+];
 
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
@@ -119,7 +127,7 @@ async function prepareNotedHandoff(tool, sessionId) {
   return prepared.load_token;
 }
 
-test('the registered names are the Claude Code set minus rotate_session', async () => {
+test('the registered names are the Claude Code set minus rotate_session and load_handoff', async () => {
   const { ctx, registered } = mountHost();
   assert.deepEqual(registered.map(definition => definition.name).sort(), [...EXPECTED_TOOLS].sort());
   ctx.dispose();
@@ -127,14 +135,15 @@ test('the registered names are the Claude Code set minus rotate_session', async 
 
 test('every tool selects the watcher of exec.agent.session.id', async (t) => {
   t.mock.method(console, 'error', () => {});
-  const { ctx, tool } = mountHost({
+  const host = mountHost({
     sessions: ['s-a', 's-b'].map(id => fakeSession({ id })),
     readSession: sessionId => Promise.reject(new Error(`refused ${sessionId}`)),
   });
+  const { ctx } = host;
   await settled();
-  for (const name of EXPECTED_TOOLS) {
+  for (const [name, call] of waitingCalls(host)) {
     for (const sessionId of ['s-a', 's-b']) {
-      await assert.rejects(run(tool(name), MINIMAL_ARGS[name], sessionId), { message: `refused ${sessionId}` }, `${name} ${sessionId}`);
+      await assert.rejects(call(sessionId), { message: `refused ${sessionId}` }, `${name} ${sessionId}`);
     }
   }
   assert.equal(handoffRows(), 0, 'no handoff was prepared or delivered');
@@ -296,14 +305,14 @@ test('an abort while the listing is pending ends watcher_status with the abort a
   ctx.dispose();
 });
 
-test('a tool called during bootstrapping waits for the snapshot and load_handoff records the installed segment', async () => {
+test('a tool called during bootstrapping waits for the snapshot and the handoff delivery records the installed segment', async () => {
   const source = reusedCallIdAcrossSteps();
   const first = reusedCallIdAcrossSteps();
   const closing = sessionLog([
     ...first, compactCheckpoint({ startSeq: first[0].seq, endSeq: first.at(-1).seq }), ...reusedCallIdAcrossSteps(),
   ]);
   const snapshot = deferred();
-  const { ctx, table, tool } = mountHost({
+  const { ctx, table, tool, load } = mountHost({
     sessions: [fakeSession({ id: 's-src' }), fakeSession({ id: 's-boot' })],
     readSession: sessionId => (sessionId === 's-boot'
       ? snapshot.promise
@@ -312,7 +321,7 @@ test('a tool called during bootstrapping waits for the snapshot and load_handoff
   await settled();
   const prepared = await run(tool('prepare_handoff'), { paths_to_keep: [], summary: 'summary' }, 's-src');
 
-  const loading = run(tool('load_handoff'), { load_token: prepared.load_token }, 's-boot');
+  const loading = load({ load_token: prepared.load_token }, 's-boot');
   await settled();
   assert.equal(table.get('s-boot').state, 'bootstrapping');
   snapshot.resolve({ session: {}, inheritedEventCount: 0, events: closing });
@@ -329,12 +338,12 @@ test('a tool called during bootstrapping waits for the snapshot and load_handoff
 
 test('a tool call from a session the table lacks lists nothing', async () => {
   let listings = 0;
-  const { ctx, table, tool } = mountHost({
+  const host = mountHost({
     listSessions: () => { listings += 1; return [{ header: header({ id: 's-absent' }), live: false, persisted: true }]; },
   });
-  for (const name of EXPECTED_TOOLS) {
-    await assert.rejects(run(tool(name), MINIMAL_ARGS[name], 's-absent'),
-      error => error instanceof Error && error.message.includes('s-absent'), name);
+  const { ctx, table } = host;
+  for (const [name, call] of waitingCalls(host)) {
+    await assert.rejects(call('s-absent'), error => error instanceof Error && error.message.includes('s-absent'), name);
   }
   assert.equal(listings, 0);
   assert.deepEqual(table.get('s-absent'), { state: 'unobserved' });
@@ -343,15 +352,16 @@ test('a tool call from a session the table lacks lists nothing', async () => {
 
 test('a tool on a failed watcher throws an Error whose message is the diagnostic\'s and touches no watcher', async (t) => {
   t.mock.method(console, 'error', () => {});
-  const { ctx, table, tool } = mountHost({
+  const { ctx, table, tool, load } = mountHost({
     sessions: [fakeSession({ id: 's-failed' })], readSession: () => Promise.reject(new Error('read refused')),
   });
   await settled();
   assert.equal(table.get('s-failed').diagnostic.message, 'read refused');
-  for (const name of ['prepare_handoff', 'load_handoff', 'get_turn_skeleton']) {
-    await assert.rejects(run(tool(name), MINIMAL_ARGS[name], 's-failed'),
-      error => error instanceof Error && error.message === 'read refused', name);
+  const isDiagnostic = error => error instanceof Error && error.message === 'read refused';
+  for (const name of ['prepare_handoff', 'get_turn_skeleton']) {
+    await assert.rejects(run(tool(name), MINIMAL_ARGS[name], 's-failed'), isDiagnostic, name);
   }
+  await assert.rejects(load({}, 's-failed'), isDiagnostic, 'createHandoffDelivery');
   assert.equal(handoffRows(), 0);
   ctx.dispose();
 });
@@ -387,13 +397,13 @@ test('an aborted signal ends the wait on another session\'s bootstrapping watche
 });
 
 test('the turn reads carry the DSH recovery sentences', async () => {
-  const { ctx, tool } = mountHost({
+  const { ctx, tool, load } = mountHost({
     sessions: [fakeSession({ id: 's-src' }), fakeSession({ id: 's-dst' })],
     snapshots: { 's-src': notedLog(), 's-dst': reusedCallIdAcrossSteps() },
   });
   await settled();
   const token = await prepareNotedHandoff(tool, 's-src');
-  assert.equal((await run(tool('load_handoff'), { load_token: token }, 's-dst')).found, true);
+  assert.equal((await load({ load_token: token }, 's-dst')).found, true);
   const recovery = createDshTurnRecovery();
 
   const page = await run(tool('turn_page'), {}, 's-dst');
@@ -408,7 +418,7 @@ test('the turn reads carry the DSH recovery sentences', async () => {
   ctx.dispose();
 });
 
-test('load_handoff, get_bucket_summary and the turn reads answer the values the shared functions answer over the same store', async (t) => {
+test('the handoff delivery, get_bucket_summary and the turn reads answer the values the shared functions answer over the same store', async (t) => {
   // The host attributes by the lines a call shows, so the destination session's directory holds the files its log
   // reads, and they carry symbols. The source session's log keeps `export const` lines for the search below.
   await initParser({ wasmDir: join(NODE_MODULES, 'web-tree-sitter') });
@@ -424,6 +434,8 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   const T = Date.UTC(2026, 9, 1);
   const tools = createTools({ defineTool: definition => definition, table, store, now: () => T });
   const tool = name => tools.find(definition => definition.name === name);
+  const deliver = createHandoffDelivery({ table, store });
+  const load = (args, id) => deliver({ agent: { session: { id } }, signal: new AbortController().signal, args });
   const dst = table.get('s-dst');
 
   const buckets = dst.watcher.getBucketData({ includeSymbols: true });
@@ -433,18 +445,16 @@ test('load_handoff, get_bucket_summary and the turn reads answer the values the 
   })));
 
   const token = await prepareNotedHandoff(tool, 's-src');
-  assert.deepEqual(await run(tool('load_handoff'), { query: 'summary' }, 's-dst'),
-    dst.watcher.searchHandoffs({ query: 'summary' }));
-  const loaded = await run(tool('load_handoff'), { load_token: token }, 's-dst');
+  const loaded = await load({ load_token: token }, 's-dst');
   const recovery = createDshTurnRecovery();
   const history = { dialogueSource: dst.dialogueSource, dialogueProjection: dst.dialogueProjection };
   const expectedLoad = withLoadRecovery(await loadedHandoffPayload(await dst.watcher.deliverHandoff({ loadToken: token }), {
     store, turnPageBuilder: buildTurnPage, ...history, notice: recovery.notice,
   }));
-  assert.deepEqual(await run(tool('load_handoff'), { load_token: token }, 's-dst'), expectedLoad);
+  assert.deepEqual(await load({ load_token: token }, 's-dst'), expectedLoad);
 
   const unreadable = t.mock.method(store, 'listTurnNotes', () => { throw new Error('turn notes unreadable'); });
-  const failedPage = await run(tool('load_handoff'), { load_token: token }, 's-dst');
+  const failedPage = await load({ load_token: token }, 's-dst');
   assert.equal(failedPage.turn_page_error, 'turn_page_unavailable');
   assert.deepEqual(failedPage, withLoadRecovery(await loadedHandoffPayload(await dst.watcher.deliverHandoff({ loadToken: token }), {
     store, turnPageBuilder: buildTurnPage, ...history, notice: recovery.notice,
@@ -494,20 +504,24 @@ function mountAttributedTable({ snapshots, workingTree }) {
   });
   for (const id of Object.keys(snapshots)) table.ensure({ id, header: { cwd: '/repo' } });
   const tools = createTools({ defineTool: definition => definition, table, store: getStore() });
-  return { table, tool: name => tools.find(definition => definition.name === name) };
+  const deliver = createHandoffDelivery({ table, store: getStore() });
+  return {
+    table, tool: name => tools.find(definition => definition.name === name),
+    load: (args, id) => deliver({ agent: { session: { id } }, signal: new AbortController().signal, args }),
+  };
 }
 
-test('the turn reads and load_handoff over a table composed over a working tree ask it nothing', async () => {
+test('the turn reads and the handoff delivery over a table composed over a working tree ask it nothing', async () => {
   const snapshots = { 's-src': notedLog(), 's-dst': reusedCallIdAcrossSteps() };
   const tree = watchedTree(READ_FILES);
-  const { table, tool } = mountAttributedTable({ snapshots, workingTree: tree.workingTree });
+  const { table, tool, load } = mountAttributedTable({ snapshots, workingTree: tree.workingTree });
   try {
     await settled();
     const token = await prepareNotedHandoff(tool, 's-src');
     assert.ok(tree.calls.stat > 0, 'folding a snapshot and taking its keys at capture ask the tree, where no record is kept');
 
     const before = { ...tree.calls };
-    assert.equal((await run(tool('load_handoff'), { load_token: token }, 's-dst')).found, true);
+    assert.equal((await load({ load_token: token }, 's-dst')).found, true);
     assert.ok((await run(tool('turn_page'), {}, 's-dst')).turn_page.length > 0);
     assert.equal((await run(tool('turn_search'), { q: 'answer3' }, 's-dst')).found, true);
     assert.ok((await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst')).ranges.length > 0);
@@ -605,7 +619,7 @@ function mountTitled() {
     assert.equal(prepared.status, 'ready');
     return prepared.load_token;
   };
-  const load = args => host.tool('load_handoff').execute(args, { agent: { session: dst }, signal: new AbortController().signal });
+  const load = args => host.deliver({ agent: { session: dst }, signal: new AbortController().signal, args });
   return { ...host, sessionTitle, dst, prepare, load };
 }
 
@@ -655,7 +669,6 @@ test('a response that is not a delivery renames nothing and writes no line', asy
   await settled();
   await prepare('first task');
   await prepare('second task');
-  assert.equal((await load({ query: 'summary' })).mode, 'search');
   assert.equal((await load({})).ambiguous, true);
   assert.equal((await load({ load_token: 'no-such-token' })).found, false);
   assert.deepEqual(sessionTitle.renamed, []);

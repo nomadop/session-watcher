@@ -32,7 +32,7 @@ The baseline measures how many tokens the model would need to re-ingest if the s
 
 **Definition.** The complete rebuild cost: the system overhead floor plus the sum of all tracked file contributions. B_full is the system's unfiltered belief about what a restart would cost.
 
-**Validity.** Non-negative. Becomes positive on the first model interaction (because the system overhead floor is set immediately from the first API response). Zero only before that first interaction.
+**Validity.** Non-negative. Positive from the first step with a positive context stock on, because the system overhead floor and the tracked contributions together are then at least that stock. Content a tool result tracked before that step can make it positive earlier.
 
 #### B_default
 
@@ -42,11 +42,11 @@ The baseline measures how many tokens the model would need to re-ingest if the s
 
 **Definition.** The subset of B_full that the user would actually carry into a new session: the system overhead floor plus only those files that pass the inclusion filter (not gitignored, not outside the project, plus any user overrides). This is the value used as the position denominator throughout the cost model.
 
-When all tracked files are excluded, B_default still equals the system overhead floor. Before the first interaction B_default is zero, and the baseline validity gate withholds every position quantity except the position ratio, which reports its fallback, until it turns positive.
+When all tracked files are excluded, B_default equals the system overhead floor. While B_default is zero, the baseline validity gate withholds every position quantity except the position ratio, which reports its fallback.
 
 The public API field `B` is a display-capped version of B_full that ensures the physical invariant B ≤ totalStock holds during transient cache-creation lag. The cap self-releases once the provider's cache catches up.
 
-**Validity.** `0 ≤ B_default ≤ B_full`. Positive after the first model interaction.
+**Validity.** `0 ≤ B_default ≤ B_full`. Positive once the system overhead floor is positive or the baseline holds selected content. It stays zero when the first stock was wholly covered by tracked content that the inclusion filter leaves out, since the floor is then zero.
 
 ### System Overhead (Floor)
 
@@ -54,9 +54,9 @@ The public API field `B` is a display-capped version of B_full that ensures the 
 
 **Units.** tokens
 
-**Definition.** The irreducible context that is always present regardless of what files are loaded: system prompt, tool definitions, and conversation scaffolding. Measured once at the start of each segment from the first API response (the maximum of cache-read, cache-creation, and input token counts). Even after a restart, the session cannot go below this floor.
+**Definition.** The context a restart rebuilds beyond the content tracked per file, skill and tool: system prompt, tool definitions, conversation scaffolding and, after a compact, the summary the harness carried over. Anchored once per segment by the first step with a positive context stock (input, cache-read and cache-creation together), less the content already tracked as resident per file, skill and tool when that step arrived, and floored at zero, so content the call carries and a tracked resource can re-read counts once, in its own row. The whole of that first stock is kept apart as the session floor, which the handoff's estimate of the rebuilt size adds to the kept paths.
 
-**Validity.** Set once per segment. Zero before the first model interaction.
+**Validity.** Set once per segment. Zero before the first positive stock, and zero after it when the whole stock was already tracked as resident.
 
 ### x (Position Ratio)
 

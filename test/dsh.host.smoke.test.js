@@ -21,9 +21,9 @@ const skip = !CHECKOUT ? 'SW_DSH_CHECKOUT is unset'
 
 const fromCheckout = path => import(pathToFileURL(join(CHECKOUT, path)).href);
 
-// The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` removed.
+// The Claude Code set `test/index.mcp-wiring.test.js` holds, `rotate_session` and `load_handoff` removed.
 const EXPECTED_TOOLS = [
-  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'load_handoff', 'prepare_handoff',
+  'get_bucket_summary', 'get_turn_skeleton', 'lineage_headlines', 'prepare_handoff',
   'submit_turn_notes', 'turn_locate', 'turn_page', 'turn_search',
   'watcher_status',
 ];
@@ -196,10 +196,9 @@ test('the plugin loads on a real context, measures an appended session, serves i
 
   assert.equal((await untilSettled(call, sessionId)).state, 'live');
 
-  // Prepared and never entered, so no event announces it: only the persisted listing knows the session.
+  // Prepared with its log as the seed and never entered, so no event announces it: only the persisted listing knows the session.
   const storedId = 'smoke-persisted-only';
-  const stored = ctx.sessions.prepare(storedId, { meta: { cwd: dir } });
-  appendAll(stored, reusedCallIdAcrossSteps());
+  const stored = ctx.sessions.prepare(storedId, { meta: { cwd: dir }, seed: reusedCallIdAcrossSteps() });
   const handle = await ctx.sessionPersistence.create(stored.header);
   await handle.append(stored.snapshotEvents());
   await handle.close();

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createModelNames } from '../dsh/src/model-names.js';
-import { assistantMessage, requestHeader, stepStart, turnStart } from './helpers/dsh-events.js';
+import { assistantMessage, loadMessage, requestHeader, stepStart, turnStart, userMessage } from './helpers/dsh-events.js';
 
 const PROVIDER = 'deepseek';
 const MODEL = 'deepseek-v4-pro';
@@ -149,4 +149,41 @@ test('mapEvent answers the same object for an unknown pair, a request header and
   for (const event of [assistantMessage({ model: OTHER_MODEL }), requestHeader(), turnStart()]) {
     assert.equal(names.mapEvent(event), event);
   }
+});
+
+test('pairsOf lists the route pair of a load message beside the header and message pairs', () => {
+  const names = createModelNames(tableResolver({}));
+  const events = [requestHeader(), loadMessage({ route: { provider: 'bedrock', model: MODEL } }), userMessage({ text: 'hi' })];
+  assert.deepEqual(names.pairsOf(events), [
+    { provider: PROVIDER, model: MODEL },
+    { provider: 'bedrock', model: MODEL },
+  ]);
+});
+
+test('mapEvent on a frozen load message whose pair has a name answers a path copy carrying the name and sharing the calls and content', async () => {
+  const names = createModelNames(tableResolver({ [`${PROVIDER}/${MODEL}`]: 'DeepSeek V4 Pro' }));
+  await names.warm([{ provider: PROVIDER, model: MODEL }]);
+  const event = deepFreeze(loadMessage());
+
+  const mapped = names.mapEvent(event);
+  assert.notEqual(mapped, event);
+  assert.deepEqual(mapped.data.source.route, { provider: PROVIDER, model: 'DeepSeek V4 Pro' });
+  assert.equal(mapped.data.source.calls, event.data.source.calls);
+  assert.equal(mapped.data.content, event.data.content);
+  assert.equal(mapped.data.source.kind, event.data.source.kind);
+  assert.equal(mapped.seq, event.seq);
+  assert.equal(event.data.source.route.model, MODEL);
+});
+
+test('mapEvent answers the same object for another user message kind, a load whose pair has no name and a load with a malformed route', async () => {
+  const names = createModelNames(tableResolver({ [`${PROVIDER}/${MODEL}`]: 'DeepSeek V4 Pro' }));
+  await names.warm([{ provider: PROVIDER, model: MODEL }]);
+  const unknown = loadMessage({ route: { provider: PROVIDER, model: OTHER_MODEL } });
+  const malformed = loadMessage({ route: { provider: PROVIDER } });
+  const routeless = loadMessage({ route: null });
+  const injected = userMessage({ text: 'context', kind: 'runtime-context' });
+  for (const event of [userMessage({ text: 'hi' }), injected, unknown, malformed, routeless]) {
+    assert.equal(names.mapEvent(event), event);
+  }
+  assert.deepEqual(names.pairsOf([malformed, routeless]), []);
 });

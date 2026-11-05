@@ -84,7 +84,13 @@ var en = {
   "dock.stock": "Context stock",
   "dock.baseline": "Rebuild baseline",
   "dock.effective": "Effective context",
-  "dock.growth": "Growth per call"
+  "dock.growth": "Growth per call",
+  "picker.search": "Search by token or task",
+  "picker.empty": "No handoffs available for this project.",
+  "picker.noResults": "No handoffs match.",
+  "picker.group.undelivered": "Undelivered",
+  "picker.group.delivered": "Delivered",
+  "picker.noSession": "This session is no longer open."
 };
 var zh = {
   "view.label": "SW Meter",
@@ -120,7 +126,13 @@ var zh = {
   "dock.stock": "\u4E0A\u4E0B\u6587\u5B58\u91CF",
   "dock.baseline": "\u91CD\u5EFA\u57FA\u7EBF",
   "dock.effective": "\u6709\u6548\u4E0A\u4E0B\u6587",
-  "dock.growth": "\u6BCF\u6B21\u8C03\u7528\u589E\u957F"
+  "dock.growth": "\u6BCF\u6B21\u8C03\u7528\u589E\u957F",
+  "picker.search": "\u6309 token \u6216\u4EFB\u52A1\u641C\u7D22",
+  "picker.empty": "\u5F53\u524D\u9879\u76EE\u6CA1\u6709\u53EF\u7528\u7684 handoff\u3002",
+  "picker.noResults": "\u6CA1\u6709\u5339\u914D\u7684 handoff\u3002",
+  "picker.group.undelivered": "\u672A\u4EA4\u4ED8",
+  "picker.group.delivered": "\u5DF2\u4EA4\u4ED8",
+  "picker.noSession": "\u6B64\u4F1A\u8BDD\u5DF2\u4E0D\u518D\u6253\u5F00\u3002"
 };
 
 // dsh/src/client/tab.js
@@ -18633,6 +18645,47 @@ function createDock({ useAnchoredPosition: useAnchoredPosition2, useDismissOnOut
   return { Dock, DockView };
 }
 
+// dsh/src/client/handoff-picker.js
+var COMMAND = "sw-load";
+var LIST_ENDPOINT = "handoff/list";
+var DETAIL_SEPARATOR = " \xB7 ";
+function registerHandoffPicker(child, { call, t }) {
+  const { commandUi, sessions, conversation } = child;
+  commandUi.decorate({
+    name: COMMAND,
+    available: () => true,
+    ui: {
+      kind: "popupSelect",
+      searchLabels: () => ({ placeholder: t("picker.search"), empty: t("picker.empty"), noResults: t("picker.noResults") }),
+      async options({ sessionId }, signal) {
+        const reply = await call(LIST_ENDPOINT, { sessionId }, signal);
+        if (reply.ok !== true) throw new Error(stateText({ kind: "unreachable", message: reply.error.message }, t));
+        if (reply.value.state !== "live") {
+          throw new Error(stateText({ kind: "state", state: reply.value.state, diagnostic: reply.value.diagnostic }, t));
+        }
+        const groups = {
+          undelivered: { name: "undelivered", label: t("picker.group.undelivered") },
+          delivered: { name: "delivered", label: t("picker.group.delivered") }
+        };
+        return reply.value.payload.items.map(({ loadToken, age, nextTask, deliveredAt }) => ({
+          id: loadToken,
+          label: loadToken,
+          detail: nextTask ? `${age}${DETAIL_SEPARATOR}${nextTask}` : age,
+          group: deliveredAt == null ? groups.undelivered : groups.delivered
+        }));
+      },
+      onSelect(option, { sessionId }) {
+        const actx = sessions.scope(sessionId);
+        if (actx === void 0) throw new Error(t("picker.noSession"));
+        conversation.input.for(actx).setDraft(`/${COMMAND} ${option.id}`);
+      }
+    }
+  });
+  child.effect(() => () => {
+    commandUi.dismiss(COMMAND);
+  }, "session-watcher: /sw-load popup dismissal");
+}
+
 // dsh/src/client/plugin.js
 var PLUGIN_ID = "@nomadop/session-watcher-dsh";
 var CHANNEL = "/session-watcher";
@@ -18649,9 +18702,8 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
       tag.remove();
     };
   }, "session-watcher: tab stylesheet");
-  const sessions = createSessionStores({
-    call: (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal)
-  });
+  const call = (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal);
+  const sessions = createSessionStores({ call });
   let signalState = "connecting";
   const signalListeners = /* @__PURE__ */ new Set();
   const signalStore = {
@@ -18734,6 +18786,7 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
     locale: NS,
     inject: (sessionId) => ({ store: sessions.for(sessionId) })
   }, Dock));
+  ctx.inject(["commandUi", "sessions", "conversation"], (child) => registerHandoffPicker(child, { call, t }));
 }
 
 // public/themes/base.css

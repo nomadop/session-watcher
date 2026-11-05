@@ -10,7 +10,7 @@ Add the package to a DSH profile:
 dsh plugin --profile <name> add @nomadop/session-watcher-dsh
 ```
 
-`<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`.
+`<name>` is the profile you run; the tab appears in the Web UI, whose profile `dsh web` boots as `web`. The plugin needs DSH 0.2.2-rc.1 or later.
 
 The package's bundle patch also mounts DSH's own `@deepseek-ai/dsh-tool-session-query`, which provides the `session_event_read` tool. With DSH's optional Session search bundle switched on, the bundle patch's `tool-session-query` row and Session search's own copy of that package register the same prompt section, so the one that loads second fails to activate and the other keeps serving `session_event_read`; to give Session search its own tools, disable the row in the profile's patch layer and restart, and switch the row on again whenever Session search is off, since no other row serves `session_event_read`.
 
@@ -80,19 +80,23 @@ The tab and the dock are supported on `dsh web`. Whether a page's `EventSource` 
 
 ## Tools
 
-The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session`, which is Claude Code only. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
+The agent gets the tool set tabled under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools), without `rotate_session` and `load_handoff`, which are Claude Code only; a DSH agent receives a handoff through the commands below. Each tool answers for the session of the agent that calls it, except that `watcher_status` can name another. On DSH, a turn address `S{k}:{T}` names a session and an event `seq`, and the turn tools' replies tell the agent to read that event with `session_event_read(session_id, seq)`.
 
 ## Skills
 
-The package ships the `sw-handoff`, `sw-load` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host.
+The package ships the `sw-handoff` and `sw-explain` skills, the same files the Claude Code plugin ships, and registers them with the host. Loading a handoff is a command here, not a skill.
 
 ## Commands
 
-The plugin registers the human command `/sw-continue`, which clears the session in place and resumes it from its newest handoff. Its behavior is stated under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools).
+The plugin registers the human commands below, typed in the Web composer.
+
+`/sw-load [token]` loads a handoff into the session. With a token it loads that handoff. Choosing `/sw-load` from the slash menu, or pressing Enter on a bare `/sw-load` with no attachment, opens a picker instead: it lists the handoffs the project still retains, the undelivered group before the delivered one and each newest first, with the token, the age and the task, and its search matches the token or the task text. Selecting a row replaces the composer's draft with `/sw-load <token>` and loads nothing; the load runs when you submit that line. Enter on a bare `/sw-load` with an attachment is refused, and a bare `/sw-load` that still reaches the command, such as a command claim submitted with no arguments, loads the one handoff pending for the project, which is one that another session of the project prepared, nobody has delivered, and that falls in the recent candidate window; when several are pending it lists them, each with its token, age and task preview, loads none and waits for a run with one token. It runs only while the agent is idle.
+
+The command does the loading itself: it delivers the handoff, which binds it to the session, records the load and renames the session after the handoff's next task, then reads the kept paths with the host's `read` tool. The model gets one harness-owned message holding the delivery's payload and the read results, and a follow-up that names any path skipped or not read to the end of its range and leaves the rest to the model: placing the summary in its lineage with `lineage_headlines` and the turn tools, invoking the kept skills, and presenting the state it found for the user to confirm or correct before work resumes. The model holds neither `load_handoff` nor a skill for this, so it cannot load a handoff for the user on a path where a typed line is not claimed as a command, such as ACP, a headless run or an SDK; the supported entry is the Web composer.
+
+`/sw-continue` clears the session in place and resumes it from its newest handoff: after the clear it loads that handoff itself, as `/sw-load` does, and hands the model the result. The follow-up has the model resume the task in the same turn after a one-sentence note on what it resumes, where the follow-up of `/sw-load` has it present the loaded state for you to confirm first, and has the model ask any question, approval or permission the task left open and wait for you. Its behavior is stated under MCP Tools on the [Guarantees page](https://nomadop.github.io/session-watcher/docs/guarantees/#mcp-tools).
 
 ## Handoff across sessions
-
-When an agent starts or resumes, it receives a message listing the pending handoffs that other sessions prepared for its project. That message is the same text the Claude Code SessionStart hook shows. Subagents do not receive it. The message is not measured as a turn.
 
 Both hosts store handoffs in the same place. If a lineage crosses from one host to the other, each host reads the other host's sessions in it as unverified turn records: the summary, the lineage headlines and the turn notes are all there, but those turns have no `S{k}:{T}` address and `turn_search` and `turn_locate` find nothing in them.
 

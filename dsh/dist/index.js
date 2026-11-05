@@ -516,6 +516,7 @@ var C_RATIO_TABLE = [
   { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
   { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
   { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
+  { match: /6.?1.?(sol|terra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }
 ];
@@ -1073,6 +1074,11 @@ var Store = class _Store {
          ORDER BY loaded_at DESC, handoff_id DESC LIMIT 1
       ) AS latest JOIN handoff AS h ON h.handoff_id = latest.handoff_id`),
       getHandoff: db.prepare("SELECT * FROM handoff WHERE handoff_id = ?"),
+      // The whole retained catalog of one project, for a person to browse: no age window, no producer exclusion,
+      // no cap. `delivered_at` alone splits the groups; the row's identity breaks a creation-time tie.
+      listHandoffCandidates: db.prepare(`SELECT load_token, created_at, next_task, delivered_at FROM handoff
+        WHERE project_id = ?
+        ORDER BY delivered_at IS NOT NULL, created_at DESC, handoff_id DESC`),
       // Turn note CRUD
       // created_at is written on insert only and deliberately absent from the SET list: the first
       // write's timestamp is the row's own age, while a later submission only revises its content.
@@ -1792,6 +1798,19 @@ var Store = class _Store {
     if (rows.length > 1) return { status: "ambiguous", rows };
     return { status: "unique", row: rows[0] };
   }
+  // Every retained handoff of one project in browsing order — undelivered first, then delivered, each newest
+  // first — as `{ loadToken, createdAt, nextTask, deliveredAt }` rows. READ-ONLY: unlike `deliverHandoffByToken`
+  // it stamps no delivery. A project that is null or empty names no catalog, and the rows stored without a
+  // project are no project's.
+  listHandoffCandidatesByProject(projectId) {
+    if (!projectId) return [];
+    return this._stmts.listHandoffCandidates.all(projectId).map((r) => ({
+      loadToken: r.load_token,
+      createdAt: r.created_at,
+      nextTask: r.next_task,
+      deliveredAt: r.delivered_at
+    }));
+  }
   // R1-H: project-scoped FTS search. Statement prepared LAZILY (handoff_fts may not exist).
   searchHandoff(matchExpr, { projectId = null, limit = 3 } = {}) {
     if (!this.ftsAvailable) return [];
@@ -1995,14 +2014,6 @@ function loadIsIgnored(cwd) {
   }
 }
 
-// lib/project-key.js
-import { resolve } from "node:path";
-function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
-  const raw = claudeProjectDir || cwd;
-  if (!raw) return null;
-  return resolve(raw);
-}
-
 // lib/harness/dsh/cache-ttl.js
 function cacheTtlForRetention(retention) {
   return retention === "long" ? LONG_CACHE_TTL : null;
@@ -2036,7 +2047,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     if (relative && ignoreMatcher && ignoreMatcher(relative)) return "gitignore";
     return null;
   }
-  function resolve2(resourceKey) {
+  function resolve3(resourceKey) {
     const defaultDiscardReason = discardReasonFor(resourceKey);
     return { selectedByDefault: defaultDiscardReason === null, defaultDiscardReason };
   }
@@ -2076,7 +2087,7 @@ function createResourcePolicy({ projectRoot = null, isIgnored = null } = {}) {
     }
     return inferred;
   }
-  return { resolve: resolve2, infer };
+  return { resolve: resolve3, infer };
 }
 
 // lib/dialogue-fold.js
@@ -4194,6 +4205,12 @@ var SessionWatcher = class {
     }
     return this._handoff.searchResponse(results);
   }
+  // The handoffs of this session's project a person may pick one from, in the Store's browsing order. Unlike
+  // `deliverHandoff` it delivers nothing and applies no auto-match window, producer exclusion or cap; a null
+  // project is an empty catalog, and a Store failure propagates.
+  listHandoffCandidates() {
+    return this._store.listHandoffCandidatesByProject(this._projectId);
+  }
   // One session, segment and project captured at entry: the response is composed after the delivery
   // transaction commits, and it must describe the consumer that actually claimed the row.
   async deliverHandoff({ loadToken } = {}) {
@@ -5926,13 +5943,13 @@ async function Module2(moduleArg = {}) {
       }
       readAsync = /* @__PURE__ */ __name(async (url) => {
         if (isFileURI(url)) {
-          return new Promise((resolve2, reject) => {
+          return new Promise((resolve3, reject) => {
             var xhr = new XMLHttpRequest();
             xhr.open("GET", url, true);
             xhr.responseType = "arraybuffer";
             xhr.onload = () => {
               if (xhr.status == 200 || xhr.status == 0 && xhr.response) {
-                resolve2(xhr.response);
+                resolve3(xhr.response);
                 return;
               }
               reject(xhr.status);
@@ -6128,9 +6145,9 @@ async function Module2(moduleArg = {}) {
     __name(receiveInstantiationResult, "receiveInstantiationResult");
     var info2 = getWasmImports();
     if (Module["instantiateWasm"]) {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         Module["instantiateWasm"](info2, (mod, inst) => {
-          resolve2(receiveInstance(mod, inst));
+          resolve3(receiveInstance(mod, inst));
         });
       });
     }
@@ -7461,8 +7478,8 @@ async function Module2(moduleArg = {}) {
   if (runtimeInitialized) {
     moduleRtn = Module;
   } else {
-    moduleRtn = new Promise((resolve2, reject) => {
-      readyPromiseResolve = resolve2;
+    moduleRtn = new Promise((resolve3, reject) => {
+      readyPromiseResolve = resolve3;
       readyPromiseReject = reject;
     });
   }
@@ -9549,11 +9566,12 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
     const model = record.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
-    if (settlementCursor === null && totalStock > 0) {
-      dead = totalStock;
-      sessionFloor = totalStock;
-    }
     const totals = ledger.residentTotals();
+    if (settlementCursor === null && totalStock > 0) {
+      dead = totalStock - Math.min(totalStock, residentTotalOf(totals));
+      sessionFloor = totalStock;
+      pendingResiduals = [];
+    }
     const residentTotal = residentTotalOf(totals);
     const miss = settlementCursor !== null && classifyMiss({ cacheRead: usage.cacheRead, prevL: settlementCursor.L });
     const L = miss ? totalStock : usage.cacheRead;
@@ -10097,10 +10115,18 @@ function deletePricingOverride(model) {
   getStore().deleteConfig(`pricing:${model}`);
 }
 
+// lib/project-key.js
+import { resolve } from "node:path";
+function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
+  const raw = claudeProjectDir || cwd;
+  if (!raw) return null;
+  return resolve(raw);
+}
+
 // package.json
 var package_default = {
   name: "@nomadop/session-watcher",
-  version: "0.10.1",
+  version: "0.10.2",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -10192,7 +10218,7 @@ function createResolver({ path: path3, homeDir }) {
   if (homeDir !== null && typeof homeDir !== "string") {
     throw new TypeError("Working Tree homeDir must be a string or null");
   }
-  return function resolve2(base, raw) {
+  return function resolve3(base, raw) {
     if (typeof raw !== "string" || raw.length === 0) return null;
     let value = raw;
     if (homeDir !== null && raw === "~") value = homeDir;
@@ -10208,7 +10234,7 @@ function createResolver({ path: path3, homeDir }) {
   };
 }
 function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars } = {}) {
-  const resolve2 = createResolver({ path: path3, homeDir });
+  const resolve3 = createResolver({ path: path3, homeDir });
   requireBound("cacheEntries", cacheEntries);
   requireBound("cacheChars", cacheChars);
   const cache = /* @__PURE__ */ new Map();
@@ -10236,7 +10262,7 @@ function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars 
     }
   }
   return {
-    resolve: resolve2,
+    resolve: resolve3,
     stat: (file) => orNull(() => {
       const st = statSync3(file);
       return { size: st.size, isFile: st.isFile() };
@@ -11223,12 +11249,38 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
   return { interpretToolUse, completeToolResult, resourceKeysOf };
 }
 
+// lib/harness/dsh/load-message.js
+var LOAD_MESSAGE_KIND = "session-watcher-load";
+function loadMessageInput({ route, calls }) {
+  return {
+    content: calls.map(({ text }) => ({ type: "text", text })),
+    source: {
+      kind: LOAD_MESSAGE_KIND,
+      route: { provider: route.provider, model: route.model },
+      calls: calls.map(({ id, name: name3, arguments: args2 }) => ({ id, name: name3, arguments: args2 }))
+    }
+  };
+}
+function loadRouteOf(message) {
+  return message?.source?.kind === LOAD_MESSAGE_KIND ? message.source.route : void 0;
+}
+var isId = (value) => typeof value === "string" && value !== "";
+var isCall = (call) => call !== null && typeof call === "object" && isId(call.id) && typeof call.name === "string" && typeof call.arguments === "string";
+var isTextBlock = (block) => block?.type === "text" && typeof block.text === "string";
+function loadCallsOf(message) {
+  const calls = message?.source?.calls;
+  const content = message?.content;
+  if (!Array.isArray(calls) || !Array.isArray(content) || calls.length !== content.length) return null;
+  if (!calls.every(isCall) || !content.every(isTextBlock)) return null;
+  return calls.map(({ id, name: name3, arguments: args2 }, index) => ({ id, name: name3, arguments: args2, text: content[index].text }));
+}
+
 // lib/harness/dsh/transcript-observation.js
 var SCOPE = "dsh-transcript-observation";
 var MESSAGE_NAMESPACE = "dsh:message:";
 var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
-var isId = (value) => typeof value === "string" && value !== "";
+var isId2 = (value) => typeof value === "string" && value !== "";
 var isSurfaceOp = (value) => value === "append" || isObject2(value) && value.op === "replace";
 var nothing = () => ({ observations: [], diagnostics: [] });
 function violation(event, field) {
@@ -11248,7 +11300,7 @@ function baseOf2(event) {
   return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
 }
 var textShaped = (block) => block.type !== "text" || typeof block.text === "string";
-var toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
+var toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
 function isContent(content, ...shapes) {
   return Array.isArray(content) && content.every((block) => isObject2(block) && shapes.every((shaped) => shaped(block)));
 }
@@ -11280,7 +11332,7 @@ function reduceHumanMessage(event) {
   const { data } = event;
   const fault = faultOf([
     ...envelopeChecks(event),
-    ["data.id", isId(data.id)],
+    ["data.id", isId2(data.id)],
     ["data.content", isContent(data.content, textShaped)]
   ]);
   if (fault !== null) return violation(event, fault);
@@ -11306,10 +11358,49 @@ function reduceCheckpoint(event) {
   if (fault !== null) return violation(event, fault);
   return { observations: [{ type: "epoch-boundary", ...baseOf2(event), provenance: "harness" }], diagnostics: [] };
 }
+var isRoute = (route) => isObject2(route) && typeof route.provider === "string" && typeof route.model === "string";
+function reduceLoadMessage(event) {
+  const { data } = event;
+  const calls = loadCallsOf(data);
+  const fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.id", isId2(data.id)],
+    ["data.source.route", isRoute(loadRouteOf(data))],
+    ["data.source.calls", calls !== null]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  const base = baseOf2(event);
+  const messageId = MESSAGE_NAMESPACE + data.id;
+  const { model } = loadRouteOf(data);
+  const observations = calls.flatMap(({ id, name: name3, arguments: args2, text }) => [
+    {
+      type: "tool-use",
+      messageId,
+      model,
+      cwd: null,
+      toolUseId: id,
+      name: name3,
+      input: parseArguments(args2),
+      ...base,
+      provenance: "harness"
+    },
+    {
+      type: "tool-result",
+      toolUseId: id,
+      content: text,
+      isError: false,
+      resultMeta: { meta: null, error: null },
+      ...base,
+      provenance: "harness"
+    }
+  ]);
+  return { observations, diagnostics: [] };
+}
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
   if (kind === "user") return reduceHumanMessage(event);
   if (kind === "compact-checkpoint") return reduceCheckpoint(event);
+  if (kind === LOAD_MESSAGE_KIND) return reduceLoadMessage(event);
   return typeof kind === "string" ? nothing() : violation(event, "data.source.kind");
 }
 function reduceAssistantMessage(event) {
@@ -11319,7 +11410,7 @@ function reduceAssistantMessage(event) {
     ...envelopeChecks(event),
     ["data.turn", isIndex(data?.turn)],
     ["data.step", isIndex(data?.step)],
-    ["data.message.id", isId(message?.id)],
+    ["data.message.id", isId2(message?.id)],
     ["data.message.source.model", typeof message?.source?.model === "string"],
     ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
     ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
@@ -11368,7 +11459,7 @@ function reduceToolResult(event) {
     ...envelopeChecks(event),
     ["data.turn", isIndex(data?.turn)],
     ["data.step", isIndex(data?.step)],
-    ["data.message.toolCallId", isId(message?.toolCallId)],
+    ["data.message.toolCallId", isId2(message?.toolCallId)],
     ["data.message.isError", message?.isError === void 0 || typeof message.isError === "boolean"],
     ["data.message.content", isContent(message?.content, textShaped)]
   ]);
@@ -12629,9 +12720,9 @@ function createWatcherTable({ compose, readSession, cacheTtlFor = () => null, mo
     if (entry.state === "live") return Promise.resolve(liveView(entry));
     if (entry.state === "failed") return Promise.reject(new Error(entry.diagnostic.message));
     if (signal.aborted) return Promise.reject(aborted(sessionId, signal));
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const onAbort = () => reject(aborted(sessionId, signal));
-      const waiter = { resolve: resolve2, reject, release: () => signal.removeEventListener("abort", onAbort) };
+      const waiter = { resolve: resolve3, reject, release: () => signal.removeEventListener("abort", onAbort) };
       entry.waiters.add(waiter);
       signal.addEventListener("abort", onAbort, { once: true });
     });
@@ -12655,9 +12746,10 @@ function pairOf(fields) {
 function pairOfEvent(event) {
   if (event?.type === "request/header") return pairOf(event.data?.header?.config);
   if (event?.type === "assistant/message") return pairOf(event.data?.message?.source);
+  if (event?.type === "user/message") return pairOf(loadRouteOf(event.data));
   return void 0;
 }
-function createModelNames({ resolve: resolve2 }) {
+function createModelNames({ resolve: resolve3 }) {
   const names = /* @__PURE__ */ new Map();
   const inFlight = /* @__PURE__ */ new Map();
   const store = (key) => ({ name: name3 }) => {
@@ -12671,7 +12763,7 @@ function createModelNames({ resolve: resolve2 }) {
       if (names.has(key)) continue;
       let pending = inFlight.get(key);
       if (pending === void 0) {
-        pending = resolve2(provider, model).then(store(key)).finally(() => inFlight.delete(key));
+        pending = resolve3(provider, model).then(store(key)).finally(() => inFlight.delete(key));
         inFlight.set(key, pending);
       }
       waits.push(pending);
@@ -12687,11 +12779,14 @@ function createModelNames({ resolve: resolve2 }) {
     return [...pairs.values()];
   }
   function mapEvent(event) {
-    if (event?.type !== "assistant/message") return event;
-    const pair = pairOf(event.data?.message?.source);
-    const name3 = pair && nameOf(pair.provider, pair.model);
+    const pair = pairOfEvent(event);
+    if (pair === void 0 || event.type === "request/header") return event;
+    const name3 = nameOf(pair.provider, pair.model);
     if (name3 === void 0) return event;
     const { data } = event;
+    if (event.type === "user/message") {
+      return { ...event, data: { ...data, source: { ...data.source, route: { ...data.source.route, model: name3 } } } };
+    }
     const { message } = data;
     return { ...event, data: { ...data, message: { ...message, source: { ...message.source, model: name3 } } } };
   }
@@ -12922,6 +13017,18 @@ async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSour
   }
 }
 
+// lib/handoff-discovery.js
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+function formatAge(createdAt) {
+  const diffMs = Math.max(0, Date.now() - createdAt);
+  const mins = Math.floor(diffMs / 6e4);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 // dsh/src/rpc.js
 var failure = (code, message) => ({ ok: false, error: { code, message, details: {} } });
 var live = (payload) => ({ ok: true, value: { state: "live", payload } });
@@ -12985,7 +13092,17 @@ function createRpcHandler({ table, store, now = Date.now, publish = () => {
       }
       return writePricing(entry, (model) => savePricingOverride(model, { readPrice, writePrice, presetId: sanitizePresetId(presetId) }));
     },
-    "pricing/delete": (entry) => writePricing(entry, deletePricingOverride)
+    "pricing/delete": (entry) => writePricing(entry, deletePricingOverride),
+    // A Store failure rejects the call, which the carrier answers as a transport failure; no empty catalog stands in for it.
+    // The Host shapes each item's age, since the Client imports no `lib/`.
+    "handoff/list": ({ watcher }) => live({
+      items: watcher.listHandoffCandidates().map(({ loadToken, createdAt, nextTask, deliveredAt }) => ({
+        loadToken,
+        age: formatAge(createdAt),
+        nextTask,
+        deliveredAt
+      }))
+    })
   };
   return async (endpoint, payload) => {
     if (!Object.hasOwn(endpoints, endpoint)) return failure("unknown_endpoint", `unknown endpoint ${endpoint}`);
@@ -13596,13 +13713,43 @@ function assertQuery(q) {
   }
 }
 var lossless = (value) => JSON.parse(JSON.stringify(value));
+function createHandoffDelivery({ table, store, sessionTitle = () => void 0 }) {
+  const recovery = createDshTurnRecovery();
+  function retitle(session, handoffId) {
+    try {
+      const titles = sessionTitle();
+      const nextTask = store.getHandoff(handoffId)?.nextTask;
+      if (titles === void 0 || !nextTask?.trim()) return;
+      titles.rename(session, nextTask);
+    } catch (error) {
+      writeDiagnostic(session.id, titleRenameFailed(error));
+    }
+  }
+  async function payloadOf({ watcher, dialogueSource, dialogueProjection }, session, { load_token }) {
+    const delivered = await watcher.deliverHandoff(load_token ? { loadToken: String(load_token) } : {});
+    if (delivered.ok === false) return { error: delivered.error, retryable: delivered.retryable === true };
+    if (!delivered.found) return delivered;
+    retitle(session, delivered.handoff_id);
+    return loadedHandoffPayload(delivered, {
+      store,
+      turnPageBuilder: buildTurnPage,
+      dialogueSource,
+      dialogueProjection,
+      notice: recovery.notice
+    });
+  }
+  return async ({ agent, signal, args: args2 }) => {
+    const { session } = agent;
+    const entry = await table.waitLive(session.id, signal);
+    return lossless(withLoadRecovery(await payloadOf(entry, session, args2)));
+  };
+}
 function createTools({
   defineTool: defineTool2,
   table,
   store,
   now = Date.now,
-  resolvePersisted = async () => null,
-  sessionTitle = () => void 0
+  resolvePersisted = async () => null
 }) {
   const recovery = createDshTurnRecovery();
   const tool = ({ name: name3, description, parameters = {}, check = () => {
@@ -13625,30 +13772,6 @@ function createTools({
     dialogueProjection,
     recovery
   });
-  function retitle(session, handoffId) {
-    try {
-      const titles = sessionTitle();
-      const nextTask = store.getHandoff(handoffId)?.nextTask;
-      if (titles === void 0 || !nextTask?.trim()) return;
-      titles.rename(session, nextTask);
-    } catch (error) {
-      writeDiagnostic(session.id, titleRenameFailed(error));
-    }
-  }
-  async function loadHandoff({ watcher, session, dialogueSource, dialogueProjection }, { load_token, query, query_mode }) {
-    if (!load_token && query) return watcher.searchHandoffs({ query: String(query), queryMode: query_mode });
-    const delivered = await watcher.deliverHandoff(load_token ? { loadToken: String(load_token) } : {});
-    if (delivered.ok === false) return { error: delivered.error, retryable: delivered.retryable === true };
-    if (!delivered.found) return delivered;
-    retitle(session, delivered.handoff_id);
-    return loadedHandoffPayload(delivered, {
-      store,
-      turnPageBuilder: buildTurnPage,
-      dialogueSource,
-      dialogueProjection,
-      notice: recovery.notice
-    });
-  }
   return [
     defineTool2({
       name: "watcher_status",
@@ -13719,16 +13842,6 @@ function createTools({
       })
     }),
     tool({
-      name: "load_handoff",
-      description: "Retrieve a prepared handoff package by token, by free-text search, or \u2014 with neither given \u2014 by auto-match over undelivered handoffs of this project from other sessions. A retrieved package carries the lineage behind it, oldest to newest, as the headlines of the newest sessions within a budget, ahead of them the older sessions collapsed into runs marked omitted, beside the newest page of its turns.",
-      parameters: {
-        load_token: { type: "string", description: "Semantic token from prepare_handoff (exact match)" },
-        query: { type: "string", description: "Free-text search when the token is unknown; returns top matches" },
-        query_mode: { type: "string", enum: ["plain", "advanced"], description: "plain (default) escapes input; advanced passes raw FTS5 syntax" }
-      },
-      run: async (args2, entry) => withLoadRecovery(await loadHandoff(entry, args2))
-    }),
-    tool({
       name: "get_turn_skeleton",
       description: "Write the current context epoch to a turn skeleton file and a notes file whose `## NOTE[T]` headings are the slot set, and return both paths, the snapshot id to submit against, and the protocol for filling them.",
       run: (_args, { watcher }) => watcher.getTurnSkeleton()
@@ -13785,7 +13898,191 @@ function createTools({
 }
 
 // dsh/src/continue.js
+import { randomUUID as randomUUID2 } from "node:crypto";
+
+// dsh/src/load.js
 import { randomUUID } from "node:crypto";
+import { statSync as statSync4 } from "node:fs";
+import { isAbsolute as isAbsolute3, resolve as resolve2 } from "node:path";
+var READ_LINE_CAP = 2e3;
+var HEAD_LINES = 40;
+var RANGED = /\(lines (\d+)-(\d+)\)/;
+var NO_ROUTE = "No model route is known for this session yet.";
+var messageOf2 = (error) => error instanceof Error ? error.message : String(error);
+function locate(path3, cwd, projectDir) {
+  const candidates = isAbsolute3(path3) ? [path3] : [resolve2(cwd, path3), ...projectDir ? [resolve2(projectDir, path3)] : []];
+  return candidates.find((candidate) => statSync4(candidate, { throwIfNoEntry: false })?.isFile()) ?? null;
+}
+function windowsOf(entry) {
+  if (entry.lines?.length) return entry.lines.map(([from, to]) => [from, to]);
+  const ranged = (entry.resolvedSymbols ?? []).map((text) => RANGED.exec(text)).filter(Boolean).map(([, from, to]) => [Number(from), Number(to)]);
+  return ranged.length > 0 ? ranged : null;
+}
+function planReads({ paths_to_keep: entries = [], project_dir: projectDir }, { cwd }) {
+  const reads = [];
+  const skipped = [];
+  const toPlace = [];
+  for (const entry of entries) {
+    const file = locate(entry.path, cwd, projectDir);
+    if (file === null) {
+      skipped.push({ path: entry.path, reason: "no regular file at this path under the working directory or the project directory" });
+      continue;
+    }
+    const windows = windowsOf(entry);
+    if (windows === null && entry.symbols?.length) toPlace.push({ path: file, names: entry.symbols });
+    for (const [offset, end] of windows ?? [[1, HEAD_LINES]]) {
+      reads.push({ file_path: file, offset, limit: Math.min(end - offset + 1, READ_LINE_CAP), end });
+    }
+  }
+  return { reads, skipped, toPlace };
+}
+var textOf2 = (content) => (content ?? []).filter((block) => block.type === "text").map((block) => block.text).join("");
+function routeOf(agent) {
+  const selection = agent.model.current();
+  return selection ? { provider: selection.provider, model: selection.model } : null;
+}
+function ambiguityText(candidates) {
+  const lines = candidates.map(({ load_token: token, created_at: createdAt, next_task_preview: preview }) => `- ${token} (${formatAge(createdAt)})${preview ? ` \u2014 ${preview}` : ""}`);
+  return ["Several handoffs are pending for this project; run /sw-load <token> with one of them:", ...lines].join("\n");
+}
+function refusalOf(payload, token) {
+  if (payload.error !== void 0) return `Loading failed: ${payload.error}`;
+  if (payload.ambiguous) return ambiguityText(payload.candidates);
+  if (!payload.found) return `No handoff found${token ? ` for ${token}; it may have expired` : " pending for this project"}`;
+  return null;
+}
+var failed = (reason) => ({ failed: { reason } });
+async function loadHandoffInto({ agent, session, tools, deliver, kit, signal, token, cwdOf }) {
+  const route = routeOf(agent);
+  if (route === null) return failed(NO_ROUTE);
+  const args2 = token ? { load_token: token } : {};
+  let payload;
+  try {
+    payload = await deliver({ agent, signal, args: args2 });
+  } catch (error) {
+    return failed(`Loading failed: ${messageOf2(error)}`);
+  }
+  const refusal = refusalOf(payload, token);
+  if (refusal !== null) return failed(refusal);
+  const plan = planReads(payload, { cwd: cwdOf(session) });
+  const idPrefix = `sw-load-${randomUUID().slice(0, 8)}`;
+  const calls = [{ id: `${idPrefix}-0`, name: "load_handoff", arguments: JSON.stringify(args2), text: JSON.stringify(payload) }];
+  const skipped = [...plan.skipped];
+  const unread = [];
+  const contexts = [];
+  for (const [index, { file_path, offset, limit, end }] of plan.reads.entries()) {
+    const id = `${idPrefix}-${index + 1}`;
+    const readArgs = { file_path, offset, limit };
+    let batch;
+    try {
+      batch = await tools.execute({ calls: [{ type: "tool-call", id, name: "read", arguments: JSON.stringify(readArgs) }], signal, agent });
+    } catch (error) {
+      skipped.push({ path: file_path, reason: messageOf2(error) });
+      continue;
+    }
+    contexts.push(...batch.additionalContexts);
+    const { result } = batch.results[0];
+    if (result.isError) {
+      skipped.push({ path: file_path, reason: result.error.message });
+      continue;
+    }
+    calls.push({ id, name: "read", arguments: JSON.stringify(readArgs), text: textOf2(result.content) });
+    const { lines = [], totalLines = 0 } = result.meta ?? {};
+    const last = lines.at(-1)?.number ?? offset - 1;
+    if (last < end && last < totalLines) unread.push({ path: file_path, range: [last + 1, end] });
+  }
+  let message;
+  try {
+    message = kit.createUserMessage(loadMessageInput({ route, calls }));
+  } catch (error) {
+    return failed(`Loading did not finish: ${messageOf2(error)}`);
+  }
+  const readCalls = calls.slice(1);
+  return {
+    loaded: {
+      token: payload.load_token,
+      reads: readCalls.length,
+      files: new Set(readCalls.map((call) => JSON.parse(call.arguments).file_path)).size,
+      skipped,
+      unread,
+      toPlace: plan.toPlace,
+      skills: payload.skills_to_keep ?? [],
+      empty: (payload.paths_to_keep ?? []).length === 0,
+      message,
+      contexts
+    }
+  };
+}
+var quoted = (value) => JSON.stringify(value).replace(/(?<=\s)\//g, "\\/");
+var lineageStepOf = (listing, closing) => `1. Place the summary in its lineage. \`lineage\` in the payload runs oldest to newest. The sessions the budget left out are collapsed into runs marked \`omitted\`, ahead of the newest sessions' headlines, and the budget may keep none. When the next task or what is already in context needs the headlines of an omitted run, \`lineage_headlines\` with that run's numbers as \`k\` (\`S2-S5\` is \`2-5\`) reads them; read a run for that need only, not by default. The payload's turn page holds the newest turns. From the page, ${listing}. When a headline bears on the next task and the page does not reach that member, call \`turn_page\` with that member's label as \`before\`; a session inside an omitted run is \`S{k}\`, \`k\` being its own number.${closing}`;
+var presentStep = "3. Present, then hold. Run `git status --short && git log -1 --oneline` once, then write, from the kept paths and that output: the objective, in one line; the working state, each claim the summary makes about the current state set against what the kept paths and the git output show (matches, differs and how, or reaches neither and so unverified); the next task and its entry points, with where the names to place below sit and the turns step 1 named; blockers and risks; the kept paths now in context and the load token. Then stop and wait for the user to confirm or correct it. The next task's first act begins after the reply.";
+var resumeStep = "3. Resume. Run `git status --short && git log -1 --oneline` once and set each claim the summary makes about the current state against the kept paths and that output; a claim they do not reach counts as a deviation when your next step depends on it. Before your first step on the task, say in one sentence which task you are resuming and your next step, adding a deviation or risk only when it changes that step. Then carry the task on in this turn from the summary and the history, within what it was already authorized to do. A question, approval or permission the task left open still stands: ask it and wait. When a deviation from the summary leaves the task's direction or authorization, or a safe next step, undecided, ask one specific question about it and wait; otherwise carry on.";
+function loadedText({ token, skipped, unread, toPlace, skills, empty }, { resume = false } = {}) {
+  const summaryOnly = resume ? "when the task calls for it" : "after the user agrees";
+  const skillStep = skills.length > 0 ? `2. Load the kept skills: invoke ${skills.map(quoted).join(", ")} through the skill tool. A skill named only in the summary is invoked ${summaryOnly}.` : `2. The handoff keeps no skills; a skill named only in the summary is invoked through the skill tool ${summaryOnly}.`;
+  const lineageStep = resume ? lineageStepOf("read the turns whose `A:` note bears on the next task", "") : lineageStepOf("list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address", " That list is what step 3 reports.");
+  const sections = [
+    `Handoff ${quoted(token)} is loaded. The harness has run its delivery, recorded as the \`load_handoff\` call, and the \`read\` calls for the kept ranges, except those listed as skipped below. Their results are in the message the harness placed before this one, in that order and as returned: the delivery's payload, then each read result, which opens with its \`<path>\` line. Do not repeat any of those calls; where a result says part of it was cut or failed, complete it as that result says.`,
+    ["Then:", lineageStep, skillStep, resume ? resumeStep : presentStep].join("\n")
+  ];
+  if (skipped.length > 0) {
+    sections.push(["Skipped, not read:", ...skipped.map(({ path: path3, reason }) => `- ${quoted(path3)}: ${quoted(reason)}`)].join("\n"));
+  }
+  if (unread.length > 0) {
+    sections.push(["Not reached by its read; read the rest of the range:", ...unread.map(({ path: path3, range: [from, to] }) => `- ${quoted(path3)} lines ${from}-${to}`)].join("\n"));
+  }
+  if (toPlace.length > 0) {
+    sections.push(["Names to place with a `grep -n` in the file:", ...toPlace.map(({ path: path3, names }) => `- ${quoted(path3)}: ${names.map(quoted).join(", ")}`)].join("\n"));
+  }
+  if (empty) sections.push(resume ? "The handoff keeps no paths: resume from the summary and the history." : "The handoff keeps no paths: ask the user what they are working on.");
+  return sections.join("\n\n");
+}
+function handOver({ agent, loaded, resume }) {
+  agent.inject(loaded.message);
+  for (const context of loaded.contexts) agent.inject(context);
+  agent.followup({
+    id: randomUUID(),
+    role: "user",
+    content: [{ type: "text", text: loadedText(loaded, { resume }) }],
+    source: { kind: "user" }
+  });
+}
+var COMMAND_NAME = "sw-load";
+var COMMAND_DESCRIPTION = "Load a handoff into the session";
+var COMMAND_INPUT = { hint: "handoff token (optional)" };
+var USAGE = "Usage: /sw-load [token]";
+var NOT_IDLE = "/sw-load runs only while the agent is idle.";
+var failure2 = (text) => ({ kind: "error", text });
+var success = (text) => ({ kind: "success", text });
+function createLoadCommand({ deliver, tools, kit, cwdOf }) {
+  async function handler({ agent, rawInput, signal }) {
+    const token = rawInput.trim();
+    if (/\s/.test(token)) return failure2(USAGE);
+    let maintenance;
+    try {
+      maintenance = agent.runMaintenance(() => loadHandoffInto({
+        agent,
+        session: agent.session,
+        tools,
+        deliver,
+        kit,
+        signal,
+        token,
+        cwdOf
+      }));
+    } catch {
+      return failure2(NOT_IDLE);
+    }
+    const outcome = await maintenance;
+    if (outcome.failed) return failure2(outcome.failed.reason);
+    const { loaded } = outcome;
+    handOver({ agent, loaded });
+    return success(`Loaded handoff ${loaded.token}: ${loaded.reads} reads over ${loaded.files} files, ${loaded.skipped.length} skipped.`);
+  }
+  return { name: COMMAND_NAME, description: COMMAND_DESCRIPTION, input: COMMAND_INPUT, handler };
+}
+
+// dsh/src/continue.js
 var SUMMARY_PROVIDER = "session-watcher";
 var SUMMARY_MODEL = "sw-continue";
 var ClearError = class extends Error {
@@ -13795,21 +14092,21 @@ var ClearError = class extends Error {
     this.code = code;
   }
 };
-var COMMAND_NAME = "sw-continue";
-var COMMAND_DESCRIPTION = "Clear the session and resume from its last handoff";
-var USAGE = "Usage: /sw-continue (no arguments)";
+var COMMAND_NAME2 = "sw-continue";
+var COMMAND_DESCRIPTION2 = "Clear the session and resume from its last handoff";
+var USAGE2 = "Usage: /sw-continue (no arguments)";
 var NO_HANDOFF = "No handoff has been prepared in this session. Run the sw-handoff skill first.";
 var STALE_HANDOFF = "The last handoff was prepared before the session's latest context reset. Run the sw-handoff skill again.";
-var NOT_IDLE = "/sw-continue runs only while the agent is idle.";
+var NOT_IDLE2 = "/sw-continue runs only while the agent is idle.";
 var NOT_STARTED = "Clearing could not start; the session history is unchanged.";
 var NOT_FINISHED = "Clearing did not finish cleanly; some history may be shadowed. Inspect the session before retrying.";
 var NOT_SAVED = "Clearing finished, but the session could not be saved.";
 var NOTHING_TO_CLEAR = "No history to clear.";
 var checkpointText = (token) => `[Session Watcher] Context cleared by /sw-continue. Handoff token: ${token}`;
-var followupText = (token) => `Continue from handoff ${token}: load it with the sw-load skill.`;
-var clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loading handoff ${token}.`;
+var clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loaded handoff ${token}.`;
+var notLoadedText = (reason, token) => `Context cleared, but the handoff was not loaded: ${reason}. Run /sw-load ${token}.`;
 var textBlocks = (token) => [{ type: "text", text: checkpointText(token) }];
-var messageOf2 = (error) => error instanceof Error ? error.message : String(error);
+var messageOf3 = (error) => error instanceof Error ? error.message : String(error);
 function nodesAfterHead(session, meter) {
   const { nodes } = meter.measure(session);
   const first = nodes.length > 0 && session.eventAt(nodes[0].seq).type === "system/message" ? 1 : 0;
@@ -13817,12 +14114,12 @@ function nodesAfterHead(session, meter) {
 }
 function closeWithError(session, lifecycle, cause) {
   try {
-    session.append("compaction/end", { ...lifecycle, error: messageOf2(cause) });
+    session.append("compaction/end", { ...lifecycle, error: messageOf3(cause) });
   } catch {
   }
 }
 function clearSurface({ session, meter, kit, commandId, token }) {
-  const compactionId = kit.CompactionId(randomUUID());
+  const compactionId = kit.CompactionId(randomUUID2());
   const lifecycle = { compactionId, sourceCommandId: commandId, turn: null };
   let range;
   let checkpoint;
@@ -13836,7 +14133,7 @@ function clearSurface({ session, meter, kit, commandId, token }) {
     });
     startEvent = session.append("compaction/start", lifecycle);
   } catch (cause) {
-    throw new ClearError("start", `clearing could not start: ${messageOf2(cause)}`, { cause });
+    throw new ClearError("start", `clearing could not start: ${messageOf3(cause)}`, { cause });
   }
   const shadowedSeqs = range.map((node) => node.seq);
   const shadowedRange = { start: shadowedSeqs[0], end: shadowedSeqs.at(-1) };
@@ -13859,54 +14156,56 @@ function clearSurface({ session, meter, kit, commandId, token }) {
     });
   } catch (cause) {
     closeWithError(session, lifecycle, cause);
-    throw new ClearError("commit", `clearing did not finish: ${messageOf2(cause)}`, { cause });
+    throw new ClearError("commit", `clearing did not finish: ${messageOf3(cause)}`, { cause });
   }
   try {
     session.append("compaction/end", lifecycle);
   } catch (cause) {
-    throw new ClearError("commit", `clearing did not close: ${messageOf2(cause)}`, { cause });
+    throw new ClearError("commit", `clearing did not close: ${messageOf3(cause)}`, { cause });
   }
   return { count: shadowedSeqs.length, shadowedTokenCount };
 }
-var failure2 = (text) => ({ kind: "error", text });
-var success = (text) => ({ kind: "success", text });
-function createContinueCommand({ table, store, kit, meter, flush }) {
+var failure3 = (text) => ({ kind: "error", text });
+var success2 = (text) => ({ kind: "success", text });
+function createContinueCommand({ table, store, kit, meter, flush, deliver, tools, cwdOf }) {
   async function handler({ commandId, agent, rawInput, signal }) {
-    if (rawInput.trim().length > 0) return failure2(USAGE);
+    if (rawInput.trim().length > 0) return failure3(USAGE2);
     const { session } = agent;
     const handoff = store.loadHandoffBySession(session.id);
-    if (handoff === null) return failure2(NO_HANDOFF);
+    if (handoff === null) return failure3(NO_HANDOFF);
     const { watcher } = await table.waitLive(session.id, signal);
-    if (handoff.segment !== watcher.getStatus().segment) return failure2(STALE_HANDOFF);
+    if (handoff.segment !== watcher.getStatus().segment) return failure3(STALE_HANDOFF);
     const token = handoff.loadToken;
     let maintenance;
     try {
       maintenance = agent.runMaintenance(async () => {
         const cleared = clearSurface({ session, meter, kit, commandId, token });
         if (cleared === null) return { status: "empty" };
+        const load = await loadHandoffInto({ agent, session, tools, deliver, kit, signal, token, cwdOf });
         try {
           await flush(session);
         } catch {
           return { status: "unsaved" };
         }
-        return { status: "cleared", cleared };
+        return { status: "cleared", cleared, load };
       });
     } catch {
-      return failure2(NOT_IDLE);
+      return failure3(NOT_IDLE2);
     }
     let outcome;
     try {
       outcome = await maintenance;
     } catch (error) {
-      if (error instanceof ClearError) return failure2(error.code === "start" ? NOT_STARTED : NOT_FINISHED);
+      if (error instanceof ClearError) return failure3(error.code === "start" ? NOT_STARTED : NOT_FINISHED);
       throw error;
     }
-    if (outcome.status === "empty") return success(NOTHING_TO_CLEAR);
-    if (outcome.status === "unsaved") return failure2(NOT_SAVED);
-    agent.followup(kit.createUserMessage({ content: [{ type: "text", text: followupText(token) }], source: { kind: "user" } }));
-    return success(clearedText(outcome.cleared, token));
+    if (outcome.status === "empty") return success2(NOTHING_TO_CLEAR);
+    if (outcome.status === "unsaved") return failure3(NOT_SAVED);
+    if (outcome.load.failed) return failure3(notLoadedText(outcome.load.failed.reason, token));
+    handOver({ agent, loaded: outcome.load.loaded, resume: true });
+    return success2(clearedText(outcome.cleared, token));
   }
-  return { name: COMMAND_NAME, description: COMMAND_DESCRIPTION, handler };
+  return { name: COMMAND_NAME2, description: COMMAND_DESCRIPTION2, handler };
 }
 
 // dsh/src/skills.js
@@ -13937,100 +14236,9 @@ function registerSkills(ctx, { skillsDir }) {
   }
 }
 
-// dsh/src/catalog.js
-import { randomUUID as randomUUID2 } from "node:crypto";
-
-// lib/handoff-discovery.js
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-function discoverHandoffs(dbPath, projectId, sessionId, { ttlDays, queryLimit }) {
-  if (!projectId || !sessionId) return [];
-  let db;
-  try {
-    db = new DatabaseSync2(dbPath, { readOnly: true });
-    const tableCheck = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='handoff'"
-    ).get();
-    if (!tableCheck) return [];
-    const cutoff = Date.now() - ttlDays * 24 * 3600 * 1e3;
-    const stmt = db.prepare(`SELECT load_token, next_task, created_at, summary_tokens, kept_tokens
-      FROM handoff
-      WHERE project_id = ? AND delivered_at IS NULL AND session_id <> ? AND created_at > ?
-      ORDER BY created_at DESC LIMIT ?`);
-    return stmt.all(projectId, sessionId, cutoff, queryLimit);
-  } catch {
-    return [];
-  } finally {
-    try {
-      if (db) db.close();
-    } catch {
-    }
-  }
-}
-function formatHandoffContext(rows, maxDisplay, taskPreviewChars) {
-  if (!rows || rows.length === 0) return null;
-  const hasMore = rows.length > maxDisplay;
-  const display = rows.slice(0, maxDisplay);
-  const formatTokens = (summaryTok, keptTok) => {
-    const total = (summaryTok || 0) + (keptTok || 0);
-    if (total === 0) return null;
-    if (total >= 1e3) return `~${Math.round(total / 1e3)}k tokens`;
-    return `~${total} tokens`;
-  };
-  const formatAge = (createdAt) => {
-    const diffMs = Math.max(0, Date.now() - createdAt);
-    const mins = Math.floor(diffMs / 6e4);
-    if (mins < 60) return `${mins} min ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-  };
-  const truncTask = (task) => {
-    if (!task) return "";
-    if (task.length <= taskPreviewChars) return task;
-    return task.slice(0, taskPreviewChars - 3) + "...";
-  };
-  if (display.length === 1) {
-    const r = display[0];
-    const age = formatAge(r.created_at);
-    const tokens = formatTokens(r.summary_tokens, r.kept_tokens);
-    const tokStr = tokens ? `, ${tokens} to restore` : "";
-    const taskLine = r.next_task ? `
-Task: ${truncTask(r.next_task)}` : "";
-    return `[Session Watcher] Handoff available (token: ${r.load_token}, ${age}${tokStr}).${taskLine}`;
-  }
-  const header = hasMore ? `[Session Watcher] ${maxDisplay}+ pending handoffs (showing newest ${maxDisplay}):` : `[Session Watcher] ${display.length} pending handoffs for this project:`;
-  const lines = display.map((r, i2) => {
-    const age = formatAge(r.created_at);
-    const tokens = formatTokens(r.summary_tokens, r.kept_tokens);
-    const tokStr = tokens ? `, ${tokens}` : "";
-    const task = truncTask(r.next_task);
-    const taskStr = task ? ` \u2014 ${task}` : "";
-    return `${i2 + 1}. ${r.load_token} (${age}${tokStr})${taskStr}`;
-  });
-  const footer = hasMore ? "(older handoffs available \u2014 use load_handoff with a query to search)" : "";
-  return [header, ...lines, footer].join("\n");
-}
-
-// dsh/src/catalog.js
-function catalogMessageFor({ dbPath, projectId, sessionId }) {
-  const rows = discoverHandoffs(dbPath, projectId, sessionId, {
-    ttlDays: HANDOFF_HOOK_TTL_DAYS,
-    queryLimit: HANDOFF_HOOK_QUERY_LIMIT
-  });
-  const text = formatHandoffContext(rows, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_TASK_PREVIEW_CHARS);
-  if (text === null) return null;
-  return {
-    id: randomUUID2(),
-    role: "user",
-    content: [{ type: "text", text }],
-    source: { kind: "session-watcher", form: "catalog" }
-  };
-}
-
 // dsh/src/host.js
 var HOST_INJECT = ["sessions", "sessionQuery", "tools", "skills", "llm"];
-function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir, continueKit }) {
+function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir, commandKit }) {
   initStore(storePath);
   ctx.effect(() => () => {
     try {
@@ -14082,36 +14290,37 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
     table.feed(session.id, event);
   }));
   ctx.on("session/disposed", (session) => guarded(session.id, () => table.dispose(session.id)));
-  ctx.on("agent/created", ({ agent, source }) => guarded(agent.session.id, () => {
-    if (source !== "startup" && source !== "resume") return;
-    if (agent.session.header.origin === "subagent") return;
-    const message = catalogMessageFor({
-      dbPath: storePath,
-      projectId: resolveProjectKey({ cwd: agent.session.header.cwd }),
-      sessionId: agent.session.id
-    });
-    if (message !== null) agent.inject(message);
-  }));
   const sessionTitle = () => ctx.get("sessionTitle");
-  for (const definition of createTools({ defineTool: defineTool2, table, store: getStore(), resolvePersisted, sessionTitle })) ctx.tools.register(definition);
+  for (const definition of createTools({ defineTool: defineTool2, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
+  const deliver = createHandoffDelivery({ table, store: getStore(), sessionTitle });
   registerSkills(ctx, { skillsDir });
-  ctx.inject(["commands", "tokenMeter"], (child) => {
+  ctx.inject(["commands", "tokenMeter", "workingDirectory"], (child) => {
     child.commands.register(createContinueCommand({
       table,
       store: getStore(),
-      kit: continueKit,
+      kit: commandKit,
       meter: child.tokenMeter,
-      flush: (session) => ctx.sessions.flush(session)
+      flush: (session) => ctx.sessions.flush(session),
+      deliver,
+      tools: ctx.tools,
+      cwdOf: (session) => child.workingDirectory.get(session)
     }));
   });
-  ctx.inject(["connection"], (child) => {
-    const remove = child.root.get("connection").rpc.handle("/session-watcher", createRpcHandler({
+  ctx.inject(["commands", "workingDirectory"], (child) => {
+    child.commands.register(createLoadCommand({
+      deliver,
+      tools: ctx.tools,
+      kit: commandKit,
+      cwdOf: (session) => child.workingDirectory.get(session)
+    }));
+  });
+  ctx.inject(["connection", "webServer"], (child) => {
+    child.extend({ webServer: child.webServer }).connection.rpc.handle("/session-watcher", createRpcHandler({
       table,
       store: getStore(),
       publish: hub.publish,
       resolvePersisted
     }));
-    child.effect(() => remove);
     child.connection.fetch.register(hub.route());
     child.effect(() => () => hub.closeAll());
   });
@@ -14138,7 +14347,7 @@ var inject = HOST_INJECT;
 function apply(ctx) {
   applyHost(ctx, {
     defineTool,
-    continueKit: { CompactionId, compactCheckpointSource, createUserMessage },
+    commandKit: { CompactionId, compactCheckpointSource, createUserMessage },
     storePath: defaultDbPath(),
     turnNotesRoot: DSH_TURN_NOTES_ROOT,
     loadIsIgnored,

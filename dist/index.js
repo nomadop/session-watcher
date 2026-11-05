@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.10.1",
+      version: "0.10.2",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -455,6 +455,7 @@ var init_constants = __esm({
       { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
       { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
       { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
+      { match: /6.?1.?(sol|terra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
     ];
@@ -2442,6 +2443,11 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
          ORDER BY loaded_at DESC, handoff_id DESC LIMIT 1
       ) AS latest JOIN handoff AS h ON h.handoff_id = latest.handoff_id`),
           getHandoff: db.prepare("SELECT * FROM handoff WHERE handoff_id = ?"),
+          // The whole retained catalog of one project, for a person to browse: no age window, no producer exclusion,
+          // no cap. `delivered_at` alone splits the groups; the row's identity breaks a creation-time tie.
+          listHandoffCandidates: db.prepare(`SELECT load_token, created_at, next_task, delivered_at FROM handoff
+        WHERE project_id = ?
+        ORDER BY delivered_at IS NOT NULL, created_at DESC, handoff_id DESC`),
           // Turn note CRUD
           // created_at is written on insert only and deliberately absent from the SET list: the first
           // write's timestamp is the row's own age, while a later submission only revises its content.
@@ -3160,6 +3166,19 @@ CREATE INDEX IF NOT EXISTS idx_profile_project_id ON profile(project_id);
         if (rows.length === 0) return { status: "none" };
         if (rows.length > 1) return { status: "ambiguous", rows };
         return { status: "unique", row: rows[0] };
+      }
+      // Every retained handoff of one project in browsing order — undelivered first, then delivered, each newest
+      // first — as `{ loadToken, createdAt, nextTask, deliveredAt }` rows. READ-ONLY: unlike `deliverHandoffByToken`
+      // it stamps no delivery. A project that is null or empty names no catalog, and the rows stored without a
+      // project are no project's.
+      listHandoffCandidatesByProject(projectId) {
+        if (!projectId) return [];
+        return this._stmts.listHandoffCandidates.all(projectId).map((r) => ({
+          loadToken: r.load_token,
+          createdAt: r.created_at,
+          nextTask: r.next_task,
+          deliveredAt: r.delivered_at
+        }));
       }
       // R1-H: project-scoped FTS search. Statement prepared LAZILY (handoff_fts may not exist).
       searchHandoff(matchExpr, { projectId = null, limit = 3 } = {}) {
@@ -49460,6 +49479,12 @@ var init_session_watcher = __esm({
         }
         return this._handoff.searchResponse(results);
       }
+      // The handoffs of this session's project a person may pick one from, in the Store's browsing order. Unlike
+      // `deliverHandoff` it delivers nothing and applies no auto-match window, producer exclusion or cap; a null
+      // project is an empty catalog, and a Store failure propagates.
+      listHandoffCandidates() {
+        return this._store.listHandoffCandidatesByProject(this._projectId);
+      }
       // One session, segment and project captured at entry: the response is composed after the delivery
       // transaction commits, and it must describe the consumer that actually claimed the row.
       async deliverHandoff({ loadToken } = {}) {
@@ -54842,11 +54867,12 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
     const model = record2.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
-    if (settlementCursor === null && totalStock > 0) {
-      dead = totalStock;
-      sessionFloor = totalStock;
-    }
     const totals = ledger.residentTotals();
+    if (settlementCursor === null && totalStock > 0) {
+      dead = totalStock - Math.min(totalStock, residentTotalOf(totals));
+      sessionFloor = totalStock;
+      pendingResiduals = [];
+    }
     const residentTotal = residentTotalOf(totals);
     const miss = settlementCursor !== null && classifyMiss({ cacheRead: usage.cacheRead, prevL: settlementCursor.L });
     const L = miss ? totalStock : usage.cacheRead;
@@ -59053,6 +59079,27 @@ var init_log_frames = __esm({
   }
 });
 
+// lib/harness/dsh/load-message.js
+function loadRouteOf(message) {
+  return message?.source?.kind === LOAD_MESSAGE_KIND ? message.source.route : void 0;
+}
+function loadCallsOf(message) {
+  const calls = message?.source?.calls;
+  const content = message?.content;
+  if (!Array.isArray(calls) || !Array.isArray(content) || calls.length !== content.length) return null;
+  if (!calls.every(isCall) || !content.every(isTextBlock)) return null;
+  return calls.map(({ id, name: name2, arguments: args2 }, index) => ({ id, name: name2, arguments: args2, text: content[index].text }));
+}
+var LOAD_MESSAGE_KIND, isId, isCall, isTextBlock;
+var init_load_message = __esm({
+  "lib/harness/dsh/load-message.js"() {
+    LOAD_MESSAGE_KIND = "session-watcher-load";
+    isId = (value) => typeof value === "string" && value !== "";
+    isCall = (call) => call !== null && typeof call === "object" && isId(call.id) && typeof call.name === "string" && typeof call.arguments === "string";
+    isTextBlock = (block) => block?.type === "text" && typeof block.text === "string";
+  }
+});
+
 // lib/harness/dsh/transcript-observation.js
 function violation(event, field) {
   const at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
@@ -59101,7 +59148,7 @@ function reduceHumanMessage(event) {
   const { data } = event;
   const fault = faultOf([
     ...envelopeChecks(event),
-    ["data.id", isId(data.id)],
+    ["data.id", isId2(data.id)],
     ["data.content", isContent(data.content, textShaped)]
   ]);
   if (fault !== null) return violation(event, fault);
@@ -59127,10 +59174,48 @@ function reduceCheckpoint(event) {
   if (fault !== null) return violation(event, fault);
   return { observations: [{ type: "epoch-boundary", ...baseOf2(event), provenance: "harness" }], diagnostics: [] };
 }
+function reduceLoadMessage(event) {
+  const { data } = event;
+  const calls = loadCallsOf(data);
+  const fault = faultOf([
+    ...envelopeChecks(event),
+    ["data.id", isId2(data.id)],
+    ["data.source.route", isRoute(loadRouteOf(data))],
+    ["data.source.calls", calls !== null]
+  ]);
+  if (fault !== null) return violation(event, fault);
+  const base = baseOf2(event);
+  const messageId = MESSAGE_NAMESPACE + data.id;
+  const { model } = loadRouteOf(data);
+  const observations = calls.flatMap(({ id, name: name2, arguments: args2, text }) => [
+    {
+      type: "tool-use",
+      messageId,
+      model,
+      cwd: null,
+      toolUseId: id,
+      name: name2,
+      input: parseArguments(args2),
+      ...base,
+      provenance: "harness"
+    },
+    {
+      type: "tool-result",
+      toolUseId: id,
+      content: text,
+      isError: false,
+      resultMeta: { meta: null, error: null },
+      ...base,
+      provenance: "harness"
+    }
+  ]);
+  return { observations, diagnostics: [] };
+}
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
   if (kind === "user") return reduceHumanMessage(event);
   if (kind === "compact-checkpoint") return reduceCheckpoint(event);
+  if (kind === LOAD_MESSAGE_KIND) return reduceLoadMessage(event);
   return typeof kind === "string" ? nothing() : violation(event, "data.source.kind");
 }
 function reduceAssistantMessage(event) {
@@ -59140,7 +59225,7 @@ function reduceAssistantMessage(event) {
     ...envelopeChecks(event),
     ["data.turn", isIndex(data?.turn)],
     ["data.step", isIndex(data?.step)],
-    ["data.message.id", isId(message?.id)],
+    ["data.message.id", isId2(message?.id)],
     ["data.message.source.model", typeof message?.source?.model === "string"],
     ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
     ["data.usage", data?.usage === void 0 || isUsage(data.usage)]
@@ -59189,7 +59274,7 @@ function reduceToolResult(event) {
     ...envelopeChecks(event),
     ["data.turn", isIndex(data?.turn)],
     ["data.step", isIndex(data?.step)],
-    ["data.message.toolCallId", isId(message?.toolCallId)],
+    ["data.message.toolCallId", isId2(message?.toolCallId)],
     ["data.message.isError", message?.isError === void 0 || typeof message.isError === "boolean"],
     ["data.message.content", isContent(message?.content, textShaped)]
   ]);
@@ -59231,18 +59316,20 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex, isId, isSurfaceOp, nothing, textShaped, toolCallShaped;
+var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute;
 var init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
+    init_load_message();
     SCOPE = "dsh-transcript-observation";
     MESSAGE_NAMESPACE = "dsh:message:";
     isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
     isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
-    isId = (value) => typeof value === "string" && value !== "";
+    isId2 = (value) => typeof value === "string" && value !== "";
     isSurfaceOp = (value) => value === "append" || isObject3(value) && value.op === "replace";
     nothing = () => ({ observations: [], diagnostics: [] });
     textShaped = (block) => block.type !== "text" || typeof block.text === "string";
-    toolCallShaped = (block) => block.type !== "tool-call" || isId(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
+    toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
+    isRoute = (route) => isObject3(route) && typeof route.provider === "string" && typeof route.model === "string";
   }
 });
 

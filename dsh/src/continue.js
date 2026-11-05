@@ -1,6 +1,8 @@
 // dsh/src/continue.js — `/sw-continue`: the clear as one compaction-protocol transaction the plugin writes itself with no model call, and the command around it.
-// It knows no Cordis: the watcher table, the store, the token meter, the flush and the DSH values it builds events from (`kit`) reach it by parameter.
+// It knows no Cordis: the watcher table, the store, the token meter, the flush, the load's delivery, tool runtime and working directory, and the DSH values it builds events from (`kit`) reach it by parameter.
 import { randomUUID } from 'node:crypto';
+
+import { handOver, loadHandoffInto } from './load.js';
 
 // The summary's route names this plugin and the command: no model wrote it.
 const SUMMARY_PROVIDER = 'session-watcher';
@@ -30,8 +32,8 @@ const NOT_SAVED = 'Clearing finished, but the session could not be saved.';
 const NOTHING_TO_CLEAR = 'No history to clear.';
 
 const checkpointText = token => `[Session Watcher] Context cleared by /sw-continue. Handoff token: ${token}`;
-const followupText = token => `Continue from handoff ${token}: load it with the sw-load skill.`;
-const clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loading handoff ${token}.`;
+const clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loaded handoff ${token}.`;
+const notLoadedText = (reason, token) => `Context cleared, but the handoff was not loaded: ${reason}. Run /sw-load ${token}.`;
 const textBlocks = token => [{ type: 'text', text: checkpointText(token) }];
 const messageOf = error => (error instanceof Error ? error.message : String(error));
 
@@ -111,15 +113,15 @@ const success = text => ({ kind: 'success', text });
 
 /**
  * The `/sw-continue` command definition.
- * A call with arguments is refused; otherwise the calling session's newest handoff must belong to the segment its live watcher reads now, and the clear and the flush run as one `agent.runMaintenance` task.
- * Once the task has settled, `agent.followup` queues the message that wakes the model on the handoff.
+ * A call with arguments is refused; otherwise the calling session's newest handoff must belong to the segment its live watcher reads now, and the clear, the load of that handoff's token (`loadHandoffInto`) and one flush run as one `agent.runMaintenance` task, the flush whatever the load's outcome, so a cleared session is saved either way.
+ * Once the task has settled, a loaded handoff is handed over (`handOver`, with `resume`), which wakes the model; a failed load answers its reason and the token to load by hand, and a rejected flush answers that the session could not be saved, whatever the load's outcome; neither wakes anything.
  * The task is an async function, so a throw inside it is a rejection and only `runMaintenance` refusing the agent throws synchronously.
- * Only a `ClearError` and the flush's rejection become results; any other rejection, the watcher's wait and the wake among them, reaches the caller unchanged.
- * `meter` is the token meter, `flush(session)` saves the session and `kit` is `clearSurface`'s.
+ * Only a `ClearError` and the flush's rejection become results; any other rejection, the watcher's wait among them, and a throw of the hand-over reach the caller unchanged.
+ * `meter` is the token meter, `flush(session)` saves the session, `kit` is `clearSurface`'s and `loadHandoffInto`'s, and `deliver`, `tools` and `cwdOf` are `loadHandoffInto`'s.
  *
  * @returns {{ name: string, description: string, handler: Function }} the definition the command registry takes
  */
-export function createContinueCommand({ table, store, kit, meter, flush }) {
+export function createContinueCommand({ table, store, kit, meter, flush, deliver, tools, cwdOf }) {
   async function handler({ commandId, agent, rawInput, signal }) {
     if (rawInput.trim().length > 0) return failure(USAGE);
     const { session } = agent;
@@ -134,13 +136,14 @@ export function createContinueCommand({ table, store, kit, meter, flush }) {
       maintenance = agent.runMaintenance(async () => {
         const cleared = clearSurface({ session, meter, kit, commandId, token });
         if (cleared === null) return { status: 'empty' };
+        const load = await loadHandoffInto({ agent, session, tools, deliver, kit, signal, token, cwdOf });
         // Only a rejection is a failure: the real flush resolves `false` when no listener saves the session, and the clear stands.
         try {
           await flush(session);
         } catch {
           return { status: 'unsaved' };
         }
-        return { status: 'cleared', cleared };
+        return { status: 'cleared', cleared, load };
       });
     } catch {
       return failure(NOT_IDLE);
@@ -155,7 +158,8 @@ export function createContinueCommand({ table, store, kit, meter, flush }) {
     }
     if (outcome.status === 'empty') return success(NOTHING_TO_CLEAR);
     if (outcome.status === 'unsaved') return failure(NOT_SAVED);
-    agent.followup(kit.createUserMessage({ content: [{ type: 'text', text: followupText(token) }], source: { kind: 'user' } }));
+    if (outcome.load.failed) return failure(notLoadedText(outcome.load.failed.reason, token));
+    handOver({ agent, loaded: outcome.load.loaded, resume: true });
     return success(clearedText(outcome.cleared, token));
   }
   return { name: COMMAND_NAME, description: COMMAND_DESCRIPTION, handler };

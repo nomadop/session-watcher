@@ -23,6 +23,10 @@ const effect = (impacts, over = {}) => ({
 const wholeContent = (resourceKey, tokens) => ({
   resourceKey, mutation: { kind: 'replace-fragments', fragments: [{ key: 'whole-content', tokens }] },
 });
+// Fragments keyed by line number, so the path row the resource lists carries `lineNumbers`.
+const byLine = (resourceKey, lines) => ({
+  resourceKey, mutation: { kind: 'replace-fragments', fragments: lines.map(([key, tokens]) => ({ key, tokens })) },
+});
 const residual = (groupKey, weight = 1, over = {}) => ({
   type: 'residual', groupKey, weight, hadError: false, meta: { kind: 'bash' }, ...over,
 });
@@ -43,7 +47,7 @@ test('a zero-stock first step and its revisions leave the epoch unanchored', () 
   assert.equal(engine.getBucketData().dead, 0);
 
   engine.ingest([step('m2', { input: 5, cacheRead: 40, cacheWrite: 10 })]);
-  assert.equal(engine.getBucketData().dead, 55, 'dead anchors at the whole first-step stock: input + cacheRead + cacheWrite');
+  assert.equal(engine.getBucketData().dead, 55, 'with no resident content before it, dead anchors at the whole first-step stock: input + cacheRead + cacheWrite');
 });
 
 test('a step recorded before the settlement cursor exists carries no position, and the anchoring step is the first stamped', () => {
@@ -65,11 +69,73 @@ test('the first positive-stock step establishes settlement cursors, clears pre-c
 
   assert.equal(engine.getStatus().g, G_FLOOR, 'the anchoring step runs no settlement');
   const [closed] = engine.closeCurrentSegment().closedSegments;
-  assert.equal(closed.metrics.bTotal, 6000, 'pre-cursor growth was never banked, so nothing is corrected out');
+  assert.equal(closed.metrics.bTotal, 5000,
+    'pre-cursor growth was never banked, so nothing is corrected out, and the first stock holds the resident the ledger already read instead of carrying it on top of dead');
 
   const later = makeEngine();
   later.ingest([stock('m1', 5000), stock('m2', 9000)]);
   assert.notEqual(later.getStatus().g, G_FLOOR, 'each later accepted new step runs settlement once');
+});
+
+test('an effect before the first measured call is part of that call\'s stock: dead is the stock less the resident, and the session floor is the whole stock', () => {
+  const engine = makeEngine();
+  engine.ingest([effect([byLine('/repo/a.js', [[1, 400], [2, 600]])], { spentTokens: 1000 })]);
+  engine.ingest([stock('m1', 5000)]);
+
+  assert.equal(engine.getBucketData().dead, 4000, 'the 1000 resident tokens are not counted on top of the first stock');
+  const pathLists = [engine.getBucketData().paths, engine.getHandoffMeasurement().paths];
+  for (const paths of pathLists) {
+    assert.deepEqual(paths.map(({ path, tokens, lineNumbers }) => ({ path, tokens, lineNumbers })),
+      [{ path: '/repo/a.js', tokens: 1000, lineNumbers: [1, 2] }], 'the resident still lists as a path row with its lines');
+  }
+  assert.equal(engine.getHandoffMeasurement().measurement.sessionFloor, 5000,
+    'the warm-up floor is what the first call carried, resident included');
+  const [closed] = engine.closeCurrentSegment().closedSegments;
+  assert.equal(closed.metrics.bTotal, 5000, 'dead plus the resident is the first stock, not more');
+});
+
+// The cold first call carries the resident read before it; the warm second call finds that stock in cacheRead beside the cacheWrite of the read between the calls. The control is the same calls without the pre-anchor resident.
+test('a warm second call confirms none of the read before it, with or without a resident before the cold first call', () => {
+  const closed = (preAnchor) => {
+    const engine = makeEngine();
+    if (preAnchor) engine.ingest([effect([wholeContent('/pre.js', 1000)], { spentTokens: 1000 })]);
+    engine.ingest([step('m1', { cacheWrite: 5000 })]);
+    engine.ingest([effect([wholeContent('/post.js', 800)], { spentTokens: 800 })]);
+    engine.ingest([step('m2', { cacheRead: 5000, cacheWrite: 800 })]);
+    return engine.closeCurrentSegment().closedSegments[0];
+  };
+
+  const control = closed(false);
+  assert.deepEqual(control.paths, [], 'the first stock arriving in cacheRead is no growth of the read, whose credit stays unconfirmed and closes out');
+  assert.equal(control.metrics.bTotal, 5000);
+
+  const resident = closed(true);
+  assert.deepEqual(resident.paths, [{ path: '/pre.js', tokens: 1000 }], 'the resident read before the first call stays; the read after it closes out as in the control');
+  assert.equal(resident.metrics.bTotal, 5000, 'the resident lies inside the first stock, so the closed baseline is the control\'s');
+});
+
+test('with no effect before the first measured call, dead is the whole first stock', () => {
+  const engine = makeEngine();
+  engine.ingest([stock('m1', 5000)]);
+  assert.equal(engine.getBucketData().dead, 5000);
+});
+
+test('an effect larger than the first stock floors dead at zero', () => {
+  const engine = makeEngine();
+  engine.ingest([effect([wholeContent('r1', 5000)], { spentTokens: 5000 })]);
+  engine.ingest([stock('m1', 1000)]);
+  assert.equal(engine.getBucketData().dead, 0, 'dead is never negative: the resident the stock cannot hold is not subtracted twice');
+});
+
+test('a residual ingested before the first measured call is dropped at anchoring, so the second step\'s growth settles against later candidates only', () => {
+  const engine = makeEngine();
+  engine.ingest([residual('before', 1)]);
+  engine.ingest([stock('m1', 5000)]);
+  engine.ingest([residual('after', 1)]);
+  engine.ingest([stock('m2', 9000)]);   // growth no resource accounts for
+
+  assert.equal(residualTokens(engine, 'before'), 0, 'the candidate predates the anchoring step, whose interval no settlement closes');
+  assert.equal(residualTokens(engine, 'after'), 4000, 'the growth meets the candidate completed in its own interval');
 });
 
 test('an accepted revision does not settle or move the settlement cursors', () => {
@@ -261,7 +327,8 @@ test('bucket data reports the belief uncapped before a positive-stock settlement
   assert.equal(engine.getStatus().B, 1000, 'min(uncapped resident total, cursor total stock)');
   assert.equal(engine.getBucketData().totalB, 1000);
   const [closed] = engine.closeCurrentSegment().closedSegments;
-  assert.equal(closed.metrics.bTotal, 6000, 'the frozen segment total is the uncapped belief');
+  assert.equal(closed.metrics.bTotal, 5000,
+    'the frozen segment total is the uncapped belief: the resident exceeds the first stock, so dead is zero and the belief is the resident alone');
 });
 
 test('settlement banks the complete B surplus, leaving no per-resource attribution shortfall', () => {

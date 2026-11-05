@@ -1,4 +1,4 @@
-// The `/session-watcher` RPC channel over the DSH host's watcher table: the state each reply carries, the payload each endpoint shares with its express route, the route's failure codes, and the pricing write's fan-out to every live watcher.
+// The `/session-watcher` RPC channel over the DSH host's watcher table: the state each reply carries, the payload each endpoint shares with its express route, the route's failure codes, the pricing write's fan-out to every live watcher, and the handoff catalog `handoff/list` answers, which has no express route.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -40,6 +40,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// The host only hands the web server to its registration's shadow, so the fake has no member.
+const webServer = {};
+
 // A connection whose `rpc.handle` and `fetch.register` record each registration and answer the real methods' disposer shape.
 function fakeConnection() {
   const handled = [];
@@ -54,14 +57,14 @@ function fakeConnection() {
   };
 }
 
-// The host over a fake context with a connection; `snapshots` maps a session id to its snapshot's events, empty unless given, and `listSessions` backs the persisted listing.
+// The host over a fake context with a connection and a web server; `snapshots` maps a session id to its snapshot's events, empty unless given, and `listSessions` backs the persisted listing.
 function mountHost({
   sessions = [], snapshots = {}, readSession, listSessions, llm, settings, loadIsIgnored = () => null,
 } = {}) {
   const { handled, routes, connection } = fakeConnection();
   const read = readSession
     ?? (async sessionId => ({ session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] }));
-  const ctx = createFakeContext({ sessions, readSession: read, listSessions, connection, llm, settings });
+  const ctx = createFakeContext({ sessions, readSession: read, listSessions, connection, webServer, llm, settings });
   const { table } = applyHost(ctx, {
     defineTool: definition => definition, storePath: join(dir, 'store.sqlite'), turnNotesRoot: join(dir, 'turn-notes'), loadIsIgnored,
     skillsDir: SKILLS_DIR,
@@ -208,6 +211,79 @@ test('every listed endpoint answers a live session with the value its express ro
   ctx.dispose();
 });
 
+const liveReply = payload => ({ ok: true, value: { state: 'live', payload } });
+
+// The project key of a session is its cwd resolved, so an absolute cwd and the projectId of a stored handoff are the same literal.
+const PROJECT_A = '/work/project-a';
+const PROJECT_B = '/work/project-b';
+
+// A handoff of `projectId` made by `sessionId` at `createdAt`; the store's own `insertHandoff` writes it.
+function addHandoff(store, { sessionId, loadToken, createdAt, nextTask = null, projectId }) {
+  store.insertHandoff({ sessionId, segment: 0, loadToken, createdAt, pathsToKeep: '[]', summary: 'sum', summaryTokens: 3, nextTask, projectId });
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+// Handoffs spread across two projects and none, made at known distances before `now`: the session `own` made `self-made-owl` itself, which a bare load never offers it, and `sibling-fox` is the one handoff of another session that a bare load would deliver to it.
+function seedCatalog(store, own, now) {
+  addHandoff(store, { sessionId: own, loadToken: 'self-made-owl', createdAt: now - 3 * HOUR, nextTask: 'continue here', projectId: PROJECT_A });
+  addHandoff(store, { sessionId: 's-prior', loadToken: 'sibling-fox', createdAt: now - 5 * MINUTE, projectId: PROJECT_A });
+  addHandoff(store, { sessionId: 's-prior', loadToken: 'delivered-pine', createdAt: now - 2 * DAY, nextTask: 'delivered task', projectId: PROJECT_A });
+  addHandoff(store, { sessionId: 's-prior', loadToken: 'elsewhere-moth', createdAt: 4000, nextTask: 'other project', projectId: PROJECT_B });
+  addHandoff(store, { sessionId: 's-prior', loadToken: 'nowhere-crow', createdAt: 5000, nextTask: 'no project', projectId: null });
+  store.deliverHandoffByToken('delivered-pine', { sessionId: 's-consumer', loaderVersion: 'test', consumerSegment: 0 });
+}
+
+test('handoff/list answers a live session with its project\'s whole handoff catalog, its own handoffs included and other projects left out, and writes no delivery', async () => {
+  const sessionId = 's-browse';
+  const { ctx, handler } = mountHost({ sessions: [fakeSession({ id: sessionId, cwd: PROJECT_A })] });
+  await settled();
+  const store = getStore();
+  seedCatalog(store, sessionId, Date.now());
+  const deliveredAt = store.getHandoffByToken('delivered-pine').deliveredAt;
+  const tokens = ['self-made-owl', 'sibling-fox', 'delivered-pine', 'elsewhere-moth', 'nowhere-crow'];
+  const facts = () => ({
+    bindings: tokens.map(token => store.getHandoffByToken(token)),
+    loads: store._db.prepare('SELECT * FROM handoff_load ORDER BY handoff_id, session_id, loaded_at').all().map(row => ({ ...row })),
+  });
+  const before = facts();
+  assert.equal(before.loads.length, 1, 'the fixture delivered one handoff');
+
+  assert.deepEqual(await call(handler, 'handoff/list', { sessionId }), liveReply({
+    items: [
+      { loadToken: 'sibling-fox', age: '5 min ago', nextTask: null, deliveredAt: null },
+      { loadToken: 'self-made-owl', age: '3h ago', nextTask: 'continue here', deliveredAt: null },
+      { loadToken: 'delivered-pine', age: '2d ago', nextTask: 'delivered task', deliveredAt },
+    ],
+  }));
+  assert.deepEqual(facts(), before);
+  ctx.dispose();
+});
+
+test('handoff/list answers a session of a project with no handoff an empty catalog, and another project\'s handoffs do not leak into it', async () => {
+  const { ctx, handler } = mountHost({
+    sessions: [fakeSession({ id: 's-owner', cwd: PROJECT_A }), fakeSession({ id: 's-stranger', cwd: '/work/project-none' })],
+  });
+  await settled();
+  seedCatalog(getStore(), 's-owner', Date.now());
+
+  assert.deepEqual(await call(handler, 'handoff/list', { sessionId: 's-stranger' }), liveReply({ items: [] }));
+  ctx.dispose();
+});
+
+test('handoff/list rejects the call when the store under a live watcher cannot answer, instead of answering an empty or wrapped catalog', async () => {
+  const sessionId = 's-down';
+  const { handler } = mountHost({ sessions: [fakeSession({ id: sessionId, cwd: PROJECT_A })] });
+  await settled();
+  seedCatalog(getStore(), sessionId, Date.now());
+  // Closed under the watcher, which a host unload would archive into, so this case leaves the host mounted.
+  closeStore(getStore());
+
+  await assert.rejects(call(handler, 'handoff/list', { sessionId }), Error);
+});
+
 test('status and user-overrides answer the lamp key the express routes answer', async () => {
   const sessionId = 's-lamp';
   const { ctx, table, handler } = mountHost({
@@ -350,7 +426,7 @@ test('preview and the read endpoints publish nothing', async () => {
   await settled();
   const { handler, published } = publishingHandler(table);
 
-  for (const endpoint of ['status', 'history', 'buckets', 'turn/browse', 'pricing']) {
+  for (const endpoint of ['status', 'history', 'buckets', 'turn/browse', 'pricing', 'handoff/list']) {
     assert.equal((await call(handler, endpoint, { sessionId })).ok, true, endpoint);
   }
   assert.equal((await call(handler, 'preview', { sessionId, overrides: { '/repo/src/a.js': 'exclude' } })).ok, true);
@@ -420,7 +496,7 @@ test('the connection registers the channel once', async () => {
 
 // ── On-demand bootstrap ──────────────────────────────────────────────────────
 
-const ENDPOINTS = ['status', 'history', 'buckets', 'turn/browse', 'user-overrides', 'preview', 'pricing', 'pricing/save', 'pricing/delete'];
+const ENDPOINTS = ['status', 'history', 'buckets', 'turn/browse', 'user-overrides', 'preview', 'pricing', 'pricing/save', 'pricing/delete', 'handoff/list'];
 
 // A persisted session's listing record, as `sessionQuery.listSessions` answers it.
 const persisted = (id, over = {}) => ({ header: header({ id, ...over }), live: false, persisted: true });

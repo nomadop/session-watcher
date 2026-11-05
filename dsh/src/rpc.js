@@ -1,11 +1,12 @@
 // dsh/src/rpc.js — the `/session-watcher` RPC channel: the DSH tab's endpoints, answered from the watcher table.
-// Every payload comes from the shapers and reads the express routes call, so a live session answers what its route answers.
+// Every payload but `handoff/list`'s comes from the shapers and reads the express routes call, so a live session answers what its route answers; the handoff catalog has no route.
 import { getLiveLedger } from '../../lib/rate-lamp-manager.js';
 import {
   statusWire, statusWireWithLedger, bucketsPayload, overrideWarnings, pricingResponse, isOverrideMap, INVALID_OVERRIDES_MESSAGE,
 } from '../../lib/wire.js';
 import { buildTurnBrowse } from '../../lib/turn-browse.js';
 import { forLoadedHandoff } from '../../lib/lineage.js';
+import { formatAge } from '../../lib/handoff-discovery.js';
 import {
   loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput, sanitizePresetId, NO_MODEL_MESSAGE,
 } from '../../lib/pricing-store.js';
@@ -88,6 +89,13 @@ export function createRpcHandler({ table, store, now = Date.now, publish = () =>
       return writePricing(entry, model => savePricingOverride(model, { readPrice, writePrice, presetId: sanitizePresetId(presetId) }));
     },
     'pricing/delete': entry => writePricing(entry, deletePricingOverride),
+    // A Store failure rejects the call, which the carrier answers as a transport failure; no empty catalog stands in for it.
+    // The Host shapes each item's age, since the Client imports no `lib/`.
+    'handoff/list': ({ watcher }) => live({
+      items: watcher.listHandoffCandidates().map(({ loadToken, createdAt, nextTask, deliveredAt }) => ({
+        loadToken, age: formatAge(createdAt), nextTask, deliveredAt,
+      })),
+    }),
   };
 
   return async (endpoint, payload) => {

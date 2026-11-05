@@ -44,7 +44,7 @@ const PASS_THROUGH_NAMES = {
  * `ensure` throws once `disposeAll` has run, the table's terminal transition, and plants no entry.
  * `dispose` archives a `live` entry and removes it, marks a `bootstrapping` one so its snapshot installs, archives and removes it, and removes a `failed` one, each archive under the mode the watcher's own live mark decides; every removal and every failure releases the session from the Rate Lamp manager.
  * `cacheTtlFor(route)` maps the route of an `assistant/message` to the cache lifetime its entry's model policy prices under.
- * `modelNames` is a `createModelNames` result, a pass-through when absent: each `request/header` fed warms its pair without the feed awaiting it; a snapshot installs once every pair named by its events and by the events fed before it arrived has settled once; and every `assistant/message` reaches the driver through `mapEvent`.
+ * `modelNames` is a `createModelNames` result, a pass-through when absent: each `request/header` fed warms its pair without the feed awaiting it; a snapshot installs once every pair named by its events and by the events fed before it arrived has settled once; and every event reaches the driver through `mapEvent`, so an `assistant/message` or a load message whose pair has a name by then carries it.
  * The events fed while bootstrapping wait in the entry, in order, and reach the driver after the snapshot's install, ahead of its drain.
  * `onChange(listener)` adds a listener the table calls with the session id once each when an entry turns `live`, when a fed event applies a frame, when an entry fails and when it is removed; the frames the snapshot install drains are covered by the `live` call, and a listener's throw is a `handler_failed` line.
  *

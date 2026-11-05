@@ -954,7 +954,7 @@ describe('named reads', () => {
     assert.deepEqual([...surface].sort(), [
       'applyHarnessFrame', 'closeCurrentSegment', 'deliverHandoff', 'getBucketData', 'getCurrentCtp',
       'getCurrentModel', 'getEpochModel', 'getHistory', 'getStatus', 'getTerminalSnapshot', 'getTurnSkeleton',
-      'prepareHandoff', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceUserOverrides', 'searchHandoffs',
+      'listHandoffCandidates', 'prepareHandoff', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceUserOverrides', 'searchHandoffs',
       'setRatioOverride', 'submitTurnNotes',
     ]);
   });

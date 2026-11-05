@@ -1,4 +1,4 @@
-// dsh/src/client/locales.js — the tab's label, state and badge texts, the state text and the signal state a result without a reading reads as, and the dock's texts under the plugin's locale namespace.
+// dsh/src/client/locales.js — the tab's label, state and badge texts, the state text and the signal state a result without a reading reads as, the dock's texts and the `/sw-load` picker's texts under the plugin's locale namespace.
 
 /** The locale namespace the tab registers and binds. */
 export const NS = 'session-watcher';
@@ -54,6 +54,12 @@ export const en = {
   'dock.baseline': 'Rebuild baseline',
   'dock.effective': 'Effective context',
   'dock.growth': 'Growth per call',
+  'picker.search': 'Search by token or task',
+  'picker.empty': 'No handoffs available for this project.',
+  'picker.noResults': 'No handoffs match.',
+  'picker.group.undelivered': 'Undelivered',
+  'picker.group.delivered': 'Delivered',
+  'picker.noSession': 'This session is no longer open.',
 };
 
 /** Simplified-Chinese tab and dock strings. */
@@ -92,4 +98,10 @@ export const zh = {
   'dock.baseline': '重建基线',
   'dock.effective': '有效上下文',
   'dock.growth': '每次调用增长',
+  'picker.search': '按 token 或任务搜索',
+  'picker.empty': '当前项目没有可用的 handoff。',
+  'picker.noResults': '没有匹配的 handoff。',
+  'picker.group.undelivered': '未交付',
+  'picker.group.delivered': '已交付',
+  'picker.noSession': '此会话已不再打开。',
 };

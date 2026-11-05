@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
@@ -10,11 +10,13 @@ const readJson = (...parts) => JSON.parse(readFileSync(join(ROOT, ...parts), 'ut
 const manifest = readJson('dsh', 'package.json');
 const rootManifest = readJson('package.json');
 
-test('every @deepseek-ai/dsh-* dependency is a peer at >=0.2.0-rc.1 and none is a dependency', () => {
+test('the host floor is the one `engines.dsh` declares, every @deepseek-ai/dsh-* dependency is a peer at that floor and none is a dependency', () => {
+  const floor = manifest.engines.dsh;
+  assert.equal(floor, '>=0.2.2-rc.1');
   const peers = Object.entries(manifest.peerDependencies ?? {});
   assert.ok(peers.length > 0);
   for (const [name, range] of peers) {
-    if (name.startsWith('@deepseek-ai/dsh-')) assert.equal(range, '>=0.2.0-rc.1');
+    if (name.startsWith('@deepseek-ai/dsh-')) assert.equal(range, floor, name);
   }
   for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
     const names = Object.keys(manifest[field] ?? {});
@@ -58,4 +60,10 @@ test('the manifest names its bundle patch file and the file exists', () => {
   const patch = manifest.dsh?.bundle?.patch;
   assert.equal(typeof patch, 'string');
   assert.ok(existsSync(join(ROOT, 'dsh', patch)));
+});
+
+test('the skills the package ships are sw-explain and sw-handoff', () => {
+  const skillsDir = join(ROOT, 'dsh', 'dist', 'skills');
+  const shipped = readdirSync(skillsDir).filter(name => existsSync(join(skillsDir, name, 'SKILL.md'))).sort();
+  assert.deepEqual(shipped, ['sw-explain', 'sw-handoff']);
 });
