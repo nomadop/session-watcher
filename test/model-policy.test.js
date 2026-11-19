@@ -167,3 +167,23 @@ test('modelPolicyFor: a row outranks the broader pattern that also matches its m
     assert.notEqual(own, broader, `claude-fable-5-1 resolved the broader pattern's ratio at ${ttl}`);
   }
 });
+
+// Each id below earns the row of a sibling already priced: the reference id is the row's earlier member, so an
+// equal answer says the id matched that row, and a differing one from the uncalibrated model says the row
+// was reached at all rather than the fallback.
+test('modelPolicyFor: a later fable and a later gpt-6 id resolve their family row at every cache TTL', () => {
+  const families = [
+    ['claude-fable-5-1', ['claude-fable-5-2']],
+    ['gpt-6-1-sol', ['gpt-6-2-sol', 'gpt-6-2-terra', 'gpt-6-2-astra', 'gpt-6-1-astra']],
+  ];
+  for (const ttl of [DEFAULT_CACHE_TTL, '1h']) {
+    const fallback = modelPolicyFor('a-model-nobody-has-heard-of', ttl).cRatio;
+    for (const [reference, ids] of families) {
+      const expected = modelPolicyFor(reference, ttl).cRatio;
+      assert.notEqual(expected, fallback, `${reference} @ ${ttl} resolved the fallback ratio`);
+      for (const id of ids) {
+        assert.equal(modelPolicyFor(id, ttl).cRatio, expected, `${id} @ ${ttl}`);
+      }
+    }
+  }
+});

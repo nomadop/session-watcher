@@ -33,10 +33,10 @@ var C_RATIO_TABLE = [
   // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
   // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
   // precedes the broader one whose pattern also matches its ids.
-  { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
+  { match: /fable.?5.?(1|2)/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
   { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
   { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
-  { match: /6.?1.?(sol|terra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
+  { match: /6.?(1|2).?(sol|terra|astra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }
 ];

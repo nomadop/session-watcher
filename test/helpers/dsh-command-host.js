@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { applyHost } from '../../dsh/src/host.js';
 import { getStore } from '../../lib/store.js';
 import { sessionLog, turnStart, turnEnd, stepStart, stepEnd, userMessage, assistantMessage } from './dsh-events.js';
-import { createFakeContext, fakeCommands, fakeTokenMeter, recordingSession } from './dsh-fake-context.js';
+import { createFakeContext, fakeCommands, fakeFs, fakeTokenMeter, recordingSession } from './dsh-fake-context.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../../skills/', import.meta.url));
 
@@ -46,11 +46,11 @@ export function closedTurn(turn) {
 export const twoTurns = () => sessionLog([...closedTurn(1).events, ...closedTurn(2).events]);
 
 /**
- * The host over a fake context holding one recording session over `events`, which is also the snapshot the host reads for it unless `readSession` is given; `absent` names a service to leave out; `workingDirectory.get` answers `dir`; `executeTool` answers `tools.execute`; `sessionTitle`, when given, is the context's title service. With `forward`, each append to the session is emitted as its `session/event`, so the watcher folds it.
+ * The host over a fake context holding one recording session over `events`, which is also the snapshot the host reads for it unless `readSession` is given; `absent` names a service to leave out; `workingDirectory.get` answers `dir`; `fs` is the context's fs service unless `absent` names it; `sessionTitle`, when given, is the context's title service. With `forward`, each append to the session is emitted as its `session/event`, so the watcher folds it.
  * The store lives under the caller's `dir`, and the context joins the caller's `mounted` list, which the caller disposes.
  */
 export function mountClear({
-  dir, mounted, events = twoTurns(), readSession, failAppend, flushError, absent, forward = false, commandKit = kit, executeTool, sessionTitle,
+  dir, mounted, events = twoTurns(), readSession, failAppend, flushError, absent, forward = false, commandKit = kit, sessionTitle,
 }) {
   const session = recordingSession({ id: SESSION_ID, cwd: PROJECT, events, failAppend });
   const commands = fakeCommands();
@@ -60,9 +60,9 @@ export function mountClear({
     commands: absent === 'commands' ? undefined : commands,
     tokenMeter: absent === 'tokenMeter' ? undefined : fakeTokenMeter(),
     workingDirectory: absent === 'workingDirectory' ? undefined : { get: () => dir },
+    fs: absent === 'fs' ? undefined : fakeFs(),
     flushError,
     sessionTitle,
-    ...(executeTool === undefined ? {} : { executeTool }),
   });
   mounted.push(ctx);
   if (forward) {

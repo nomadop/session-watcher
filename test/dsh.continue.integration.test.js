@@ -214,7 +214,7 @@ test('a replacement the surface refuses closes the compaction with an error end,
   assert.equal(session.surface.nodes.length, 2);
 });
 
-// The command registered the way the host registers it, on a plugin the case can dispose, over the real command runtime and the real session. The watcher table, the delivery and the agent are the stubs the command reads: a live watcher at `SEGMENT`, a delivery answering the handoff with no kept path, so no read runs, and an agent whose maintenance runs the task at once, whose route is its current model selection's and whose injections and wake are recorded. The handoff row is the real store's.
+// The command registered the way the host registers it, on a plugin the case can dispose, over the real command runtime and the real session. The watcher table, the delivery and the agent are the stubs the command reads: a live watcher at `SEGMENT`, a delivery answering the handoff with no kept path, so no read runs, a `readFile` that fails if one does, and an agent whose maintenance runs the task at once, whose route is its current model selection's and whose injections and wake are recorded. The handoff row is the real store's.
 async function mountCommand(t, dsh) {
   const { ctx, kit, commandsPkg } = dsh;
   await ctx.plugin(commandsPkg.CommandRuntime);
@@ -245,7 +245,8 @@ async function mountCommand(t, dsh) {
     apply(root) {
       root.inject(['commands', 'tokenMeter'], (child) => {
         child.commands.register(createContinueCommand({
-          table, store, kit, meter: child.tokenMeter, flush: each => ctx.sessions.flush(each), deliver, tools: {}, cwdOf: () => directory,
+          table, store, kit, meter: child.tokenMeter, flush: each => ctx.sessions.flush(each), deliver,
+          readFile: async () => { throw new Error('the handoff keeps no path'); }, cwdOf: () => directory,
         }));
       });
     },
@@ -286,7 +287,7 @@ test('the registered command clears the session under the real command runtime, 
   assert.deepEqual(injected[0].source.calls.map(call => [call.name, call.arguments]), [['load_handoff', JSON.stringify({ load_token: TOKEN })]]);
   assert.equal(woken.length, 1);
   assert.deepEqual(woken[0].content, [{
-    type: 'text', text: loadedText({ token: TOKEN, skipped: [], unread: [], toPlace: [], skills: [], empty: true }, { resume: true }),
+    type: 'text', text: loadedText({ token: TOKEN, skipped: [], unread: [], toPlace: [], skills: [], empty: true, reads: 0 }, { resume: true }),
   }]);
   assert.deepEqual(woken[0].source, { kind: 'user' });
 });

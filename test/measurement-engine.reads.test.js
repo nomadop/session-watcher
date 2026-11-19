@@ -86,7 +86,7 @@ test('an Engine constructed without a resource policy resolver fails at construc
 test('the Engine exposes exactly its named operations, and getCurrentCtp is not one of them', () => {
   const engine = makeEngine();
   assert.deepEqual(Object.keys(engine).sort(), [
-    'closeCurrentSegment', 'getBucketData', 'getHandoffMeasurement', 'getHistory', 'getStatus',
+    'closeCurrentSegment', 'getBucketData', 'getHandoffMeasurement', 'getHistory', 'getStatus', 'heldLines',
     'ingest', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceResourceOverrides',
   ]);
   assert.equal(engine.getCurrentCtp, undefined);
@@ -342,4 +342,50 @@ test('readRateLampFrame carries one coherent status, progress, and sample snapsh
   assert.equal(cold.status.reliable, false);
   assert.equal(cold.status.unavailableReason, 'insufficient_data');
   assert.deepEqual(cold.samples.map(s => [s.seq, s.reliable, s.unavailableReason]), [[1, false, 'insufficient_data']]);
+});
+
+test('readRateLampFrame asked for the first calls of the segment reads those samples alone, its cursor ends at the last of them, and the status is the whole path\'s', () => {
+  const engine = makeEngine();
+  for (const [id, cacheRead] of [['m1', 10_000], ['m2', 14_000], ['m3', 18_000], ['m4', 22_000]]) engine.ingest([step(id, usage({ cacheRead }))]);
+
+  const whole = engine.readRateLampFrame(0);
+  const frame = engine.readRateLampFrame(0, 2);
+  assert.deepEqual(Object.keys(frame).sort(), ['foldedCallSeq', 'progress', 'qualified', 'samples', 'status', 'turnSeq']);
+  assert.equal(frame.qualified, true);
+  assert.equal(whole.qualified, undefined, 'a read nobody qualified says nothing of it');
+  assert.deepEqual(frame.samples, whole.samples.slice(0, 2));
+  assert.equal(frame.foldedCallSeq, 2, 'the cursor stops where the qualified calls do, not at the segment\'s tail');
+  assert.equal(whole.foldedCallSeq, 4);
+  assert.deepEqual(frame.status, whole.status, 'the lamp reads the whole path whatever the budget counts');
+  assert.equal(frame.turnSeq, whole.turnSeq);
+
+  assert.deepEqual(engine.readRateLampFrame(1, 2).samples.map(s => s.seq), [2]);
+  assert.deepEqual(engine.readRateLampFrame(2, 2).samples, []);
+  assert.deepEqual(engine.readRateLampFrame(0, 9).samples, whole.samples, 'more qualified calls than the segment holds is the whole segment');
+  const none = engine.readRateLampFrame(0, 0);
+  assert.deepEqual([none.qualified, none.samples, none.foldedCallSeq], [true, [], 0], 'no call qualified: nothing to read, and the cursor stays before the first');
+});
+
+test('readRateLampFrame\'s qualified cursor sits before the first call of a segment a later epoch opened', () => {
+  const engine = makeEngine();
+  engine.ingest([step('m1', usage({ cacheRead: 10_000 })), step('m2', usage({ cacheRead: 14_000 }))]);
+  engine.ingest([{ type: 'epoch' }]);
+  assert.equal(engine.readRateLampFrame(0, 0).foldedCallSeq, 2, 'an empty segment has consumed what the Engine has folded');
+  engine.ingest([step('m3', usage({ cacheRead: 11_000 })), step('m4', usage({ cacheRead: 15_000 })), step('m5', usage({ cacheRead: 19_000 }))]);
+  const frame = engine.readRateLampFrame(0, 2);
+  assert.deepEqual(frame.samples.map(s => s.seq), [3, 4]);
+  assert.equal(frame.foldedCallSeq, 4);
+  assert.equal(engine.readRateLampFrame(0, 0).foldedCallSeq, 2, 'the first call of the segment is seq 3');
+});
+
+test('heldLines lists every resource\'s line keys whatever their tokens, a resource of empty lines included, and an epoch clears them', () => {
+  const engine = makeEngine();
+  engine.ingest([
+    step('m1'),
+    effect([lines('/r/a.txt', [[3, 5], [1, 4]]), lines('/r/blank.txt', [[1, 0], [2, 0]])]),
+  ]);
+  assert.deepEqual(engine.heldLines(), new Map([['/r/a.txt', [1, 3]], ['/r/blank.txt', [1, 2]]]));
+  assert.ok(!engine.getBucketData().paths.some(row => row.path === '/r/blank.txt'), 'the bucket rows leave the file of empty lines out');
+  engine.ingest([{ type: 'epoch' }]);
+  assert.deepEqual(engine.heldLines(), new Map());
 });

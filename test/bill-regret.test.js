@@ -118,15 +118,30 @@ describe('wallet interval and its roots', () => {
     near(uAtBr(0.30, BR_AMBER), 2.22);
     near(uAtBr(0.40, BR_AMBER), 2.00);
   });
-  test('walletIntervalFor = uAmber squared, never clamped, Infinity at mf=0', () => {
-    near(walletIntervalFor(0.20, BR_AMBER), 6.85);
-    near(walletIntervalFor(0.30, BR_AMBER), 4.91);
-    near(walletIntervalFor(0.40, BR_AMBER), 4.00);
+  test('walletIntervalFor = half uAmber squared, never clamped, Infinity at mf=0 and on invalid input', () => {
+    near(walletIntervalFor(0.20, BR_AMBER), 3.43);
+    near(walletIntervalFor(0.30, BR_AMBER), 2.45);
+    near(walletIntervalFor(0.40, BR_AMBER), 2.00);
     // The AM-GM ceiling on mf is where the interval bottoms out, and it bottoms out on its own: a
-    // max(4, ·) floor would break the higher-mf-shorter-interval direction rather than protect it.
-    near(walletIntervalFor(0.414, BR_AMBER), 4.0, 0.1);
+    // floor would break the higher-mf-shorter-interval direction rather than protect it.
+    near(walletIntervalFor(0.414, BR_AMBER), 1.95, 0.1);
     assert.ok(walletIntervalFor(0.20, BR_AMBER) > walletIntervalFor(0.40, BR_AMBER));
     assert.equal(walletIntervalFor(0, BR_AMBER), Infinity);
+    assert.equal(walletIntervalFor(-1, BR_AMBER), Infinity);
+    assert.equal(walletIntervalFor(NaN, BR_AMBER), Infinity);
+    assert.equal(walletIntervalFor(null, BR_AMBER), Infinity);
+    assert.equal(walletIntervalFor(0.3, NaN), Infinity);
+  });
+  // A static cycle accumulates u² of wallet time on the way to position u, so two intervals reach the
+  // amber right root at every mf; the roots below are solved by hand from mf·(u−1)² = 2·BR_AMBER·u.
+  test('walletIntervalFor puts the second lap at the amber right root for every mf', () => {
+    near(walletIntervalFor(0.4, BR_AMBER), 2, 1e-12);               // u = 2
+    near(walletIntervalFor(0.3, BR_AMBER), (23 + 8 * Math.sqrt(7)) / 18, 1e-12);   // u = (4+√7)/3
+    for (const mf of [0.2, 0.3, 0.4]) {
+      const uSecondLap = Math.sqrt(2 * walletIntervalFor(mf, BR_AMBER));
+      assert.ok(uSecondLap > 1);
+      near(mf * (uSecondLap - 1) ** 2 / (2 * uSecondLap), 0.10, 1e-12);
+    }
   });
   test('uAtBr guards: mf<=0 or non-finite → Infinity; finite brTarget<=0 → 1; non-finite brTarget → Infinity', () => {
     assert.equal(uAtBr(0, BR_AMBER), Infinity);

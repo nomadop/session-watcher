@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.10.2",
+      version: "0.11.0",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -109,6 +109,7 @@ var init_package = __esm({
       },
       devDependencies: {
         "@playwright/test": "^1.45.0",
+        "ai-json-repair": "1.0.4",
         "chart.js": "^4.5.1",
         esbuild: "^0.28.1",
         "github-slugger": "^2.0.0",
@@ -413,7 +414,7 @@ function uAtBr(mf, brTarget) {
 function walletIntervalFor(mf, brTarget) {
   const u = uAtBr(mf, brTarget);
   if (!Number.isFinite(u)) return Infinity;
-  return u * u;
+  return u * u / 2;
 }
 function uLeftAtBr(mf, brTarget) {
   return 1 / uAtBr(mf, brTarget);
@@ -452,10 +453,10 @@ var init_constants = __esm({
       // cache-write and cache-read multipliers, however far apart their absolute prices are; a model earns a row of
       // its own only where one of those multipliers differs. The lookup takes the first match, so such a row
       // precedes the broader one whose pattern also matches its ids.
-      { match: /fable.?5.?1/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
+      { match: /fable.?5.?(1|2)/i, ratio: { [DEFAULT_CACHE_TTL]: 50, [LONG_CACHE_TTL]: 80 } },
       { match: /(opus|sonnet).?5.?5/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 40 } },
       { match: /claude|opus|sonnet|haiku|fable/i, ratio: { [DEFAULT_CACHE_TTL]: 12.5, [LONG_CACHE_TTL]: 20 } },
-      { match: /6.?1.?(sol|terra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
+      { match: /6.?(1|2).?(sol|terra|astra)/i, ratio: { [DEFAULT_CACHE_TTL]: 25, [LONG_CACHE_TTL]: 50 } },
       { match: /deepseek.*pro/i, ratio: 30 },
       { match: /deepseek/i, ratio: 50 }
     ];
@@ -3543,23 +3544,6 @@ function clearEnospcPause(sessionId) {
   _counters.enospcRecoveries++;
 }
 function persistLedger(sessionId, ledger, { force = false } = {}) {
-  const ledgerRev = ledger.ledgerRevision ?? 0;
-  const lastPersistedRev = _lastPersistedRevision.get(sessionId) ?? 0;
-  if (!force && ledgerRev < lastPersistedRev) {
-    _counters.revisionGateBlocks++;
-    if (process.env.SW_DEBUG) console.error(`[rate-lamp] revision gate: refusing rev ${ledgerRev} <= last-persisted ${lastPersistedRev} for ${sessionId}`);
-    return;
-  }
-  if (ledgerRev === lastPersistedRev && !force) {
-    const savedContent = _lastSaved.get(sessionId);
-    if (savedContent !== void 0) {
-      if (JSON.stringify(ledger) !== savedContent) {
-        _counters.revisionGateBlocks++;
-        console.error(`[rate-lamp] DEAD-LETTER: escaped mutation for ${sessionId} \u2014 content differs at same revision ${ledgerRev}. mutateLedger was bypassed (invariant breach).`);
-      }
-      return;
-    }
-  }
   const serialized = JSON.stringify(ledger);
   if (!force && _lastSaved.get(sessionId) === serialized) return;
   if (_testWriter) {
@@ -3568,7 +3552,6 @@ function persistLedger(sessionId, ledger, { force = false } = {}) {
     saveRateLampState(sessionId, ledger);
   }
   _lastSaved.set(sessionId, serialized);
-  _lastPersistedRevision.set(sessionId, ledgerRev);
   _counters.diskWrites++;
 }
 function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq }) {
@@ -3585,6 +3568,21 @@ function reanchorLedger(persisted, { currentKey, frameTailSeq, frameTurnSeq }) {
     // re-render an alert for context this stream no longer contains.
     lastStopEvent: null,
     currentTurnSeq: frameTurnSeq
+  };
+}
+function qualifiedBudget(base, frame) {
+  let budget = { ...base, billProgress: 0, billCycleCount: 0, walletPhase: 0, walletLapCount: 0, lastAppliedFoldedCallSeq: 0, pausedReason: null };
+  for (const sample of frame.samples) budget = applyFoldedCallSample(budget, sample);
+  const { billProgress, billCycleCount, walletPhase, walletLapCount, pausedReason } = budget;
+  return {
+    billProgress,
+    billCycleCount,
+    walletPhase,
+    walletLapCount,
+    pausedReason,
+    lastAppliedFoldedCallSeq: frame.foldedCallSeq,
+    lastStopEvent: null,
+    currentTurnSeq: frame.turnSeq
   };
 }
 function mergeLedgerIntoStatus(status, ledger, currentKey) {
@@ -3635,14 +3633,13 @@ function hydrateLedger(sessionId) {
   const disk = loadRateLampState(sessionId);
   if (!disk) return null;
   const cleaned = { ...disk, lastStopEvent: null };
-  _lastPersistedRevision.set(sessionId, cleaned.ledgerRevision ?? 0);
   _ledgers.set(sessionId, cleaned);
   return cleaned;
 }
 function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}) {
   void forcePoll;
   let ledger = hydrateLedger(sessionId);
-  const frame = watcher.readRateLampFrame(ledger ? ledger.lastAppliedFoldedCallSeq : 0);
+  let frame = watcher.readRateLampFrame(ledger ? ledger.lastAppliedFoldedCallSeq : 0);
   const reliable = frame.status?.reliable === true;
   if (!reliable) {
     if (!ledger) return { ledger: null, status: frame.status, bill: null };
@@ -3664,7 +3661,15 @@ function advanceRateLampToCurrent(watcher, sessionId, { forcePoll = false } = {}
   }
   let drained = frame;
   if (revisionChanged || sequenceGap || !ledger || ledger.stateKey !== currentKey) {
-    ledger = reanchorLedger(ledger, { currentKey, frameTailSeq: frame.foldedCallSeq, frameTurnSeq: frame.turnSeq });
+    if (frame.qualified === true) {
+      if (ledger && ledger.lastAppliedFoldedCallSeq > 0) frame = watcher.readRateLampFrame(0);
+      const base = ledger && ledger.stateKey === currentKey ? ledger : freshLedger(currentKey);
+      ledger = mutateLedger(base, "replace-budget", (draft) => {
+        Object.assign(draft, qualifiedBudget(draft, frame));
+      });
+    } else {
+      ledger = reanchorLedger(ledger, { currentKey, frameTailSeq: frame.foldedCallSeq, frameTurnSeq: frame.turnSeq });
+    }
     drained = { ...frame, samples: [] };
     _lastSeenRevision.set(sessionId, frame.streamRevision);
   }
@@ -3690,7 +3695,6 @@ function _setRateLampManagerTestHooks({ writer, scheduler } = {}) {
 function _resetRateLampManagerForTest() {
   _ledgers.clear();
   _lastSaved.clear();
-  _lastPersistedRevision.clear();
   _lastSeenRevision.clear();
   _pendingPersistSids.clear();
   _enospcPaused.clear();
@@ -3703,7 +3707,6 @@ function _resetRateLampManagerForTest() {
   _counters.diskWrites = 0;
   _counters.coalesceHits = 0;
   _counters.coalesceMisses = 0;
-  _counters.revisionGateBlocks = 0;
   _counters.enospcEngagements = 0;
   _counters.enospcRecoveries = 0;
 }
@@ -3728,12 +3731,11 @@ function releaseSession(sessionId) {
   }
   _ledgers.delete(sessionId);
   _lastSaved.delete(sessionId);
-  _lastPersistedRevision.delete(sessionId);
   _lastSeenRevision.delete(sessionId);
   _pendingPersistSids.delete(sessionId);
   _enospcPaused.delete(sessionId);
 }
-var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastPersistedRevision, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
+var RENT_METER_DEFAULT, _ledgers, _lastSaved, _lastSeenRevision, _pendingPersistSids, _enospcPaused, _counters, _testWriter, _testScheduler, _coalescedTimer;
 var init_rate_lamp_manager = __esm({
   "lib/rate-lamp-manager.js"() {
     init_rate_lamp_store();
@@ -3749,7 +3751,6 @@ var init_rate_lamp_manager = __esm({
     });
     _ledgers = /* @__PURE__ */ new Map();
     _lastSaved = /* @__PURE__ */ new Map();
-    _lastPersistedRevision = /* @__PURE__ */ new Map();
     _lastSeenRevision = /* @__PURE__ */ new Map();
     _pendingPersistSids = /* @__PURE__ */ new Set();
     _enospcPaused = /* @__PURE__ */ new Set();
@@ -3759,8 +3760,6 @@ var init_rate_lamp_manager = __esm({
       // schedulePersist calls that joined an existing pending
       coalesceMisses: 0,
       // schedulePersist calls that added a new pending
-      revisionGateBlocks: 0,
-      // writes refused by the revision gate
       enospcEngagements: 0,
       enospcRecoveries: 0
     };
@@ -48994,9 +48993,11 @@ var init_session_watcher = __esm({
         this._ratioOverride = null;
         this._hasObservedSource = false;
         this._streamRevision = 0;
+        this._qualifiedCalls = null;
         this._pendingNewResourceKeys = /* @__PURE__ */ new Set();
         this._applying = false;
         this._liveMark = false;
+        this._userOverrides = null;
         this._resolveModelPolicy = (modelId) => {
           let policy = readPolicy(this._modelPolicyFor, modelId);
           if (policy === null) policy = readPolicy(this._modelPolicyFor, null) ?? this._modelPolicyFor(null);
@@ -49014,12 +49015,20 @@ var init_session_watcher = __esm({
       /**
        * Apply one HarnessFrame. The only source-state mutation Interface.
        *
+       * `qualifiedCalls`, when the input states it, is how many of the open epoch's leading calls the Rate Lamp
+       * budget may count at this frame's cut; the input is the authority on it, and a frame that omits it states
+       * none, so every call counts (`readRateLampFrame`).
+       *
        * @param {{ transition: 'append'|'replace'|'rotate', batches: object[][], sourceObserved: boolean,
-       *           captureMode: 'live'|'replay', sourceLocator?: *, sessionId?: string }} frame
+       *           captureMode: 'live'|'replay', sourceLocator?: *, sessionId?: string, qualifiedCalls?: number }} frame
        * @returns {{ changed: boolean, diagnostics: object[] }}
        */
       applyHarnessFrame(frame) {
         invariant(frame !== null && typeof frame === "object", "frame must be an object");
+        invariant(
+          frame.qualifiedCalls === void 0 || Number.isSafeInteger(frame.qualifiedCalls) && frame.qualifiedCalls >= 0,
+          "qualifiedCalls must be a non-negative integer"
+        );
         invariant(this._applying === false, "reentrant applyHarnessFrame is not supported");
         this._applying = true;
         try {
@@ -49059,8 +49068,10 @@ var init_session_watcher = __esm({
               }
             }
           }
+          if (runtimeReplaced) this._restoreUserOverrides();
           this._flushResourcePolicy(diagnostics);
           if (captureMode === "live") this._liveMark = true;
+          this._qualifiedCalls = frame.qualifiedCalls ?? null;
           return { changed: newCalls > 0 || revisedCalls > 0 || runtimeReplaced, diagnostics };
         } finally {
           this._applying = false;
@@ -49140,6 +49151,13 @@ var init_session_watcher = __esm({
           resolveResourcePolicy: this._resolveResourcePolicy
         });
         this._projection = this._createProjection(this._sourceLocator, this._resolveModelPolicy);
+      }
+      // The Engine drops an override set with its segment, so only a rebuild that lands in the segment the set
+      // was applied in carries it forward.
+      _restoreUserOverrides() {
+        const saved = this._userOverrides;
+        if (saved === null || saved.segment !== this._engine.getStatus().segment) return;
+        this._engine.replaceResourceOverrides(saved.entries);
       }
       // The candidate Projection is bound to the new locator BEFORE the old segment closes, so the closing
       // segment's telemetry is joined by the Projection that collected it while the replacement already exists.
@@ -49363,11 +49381,14 @@ var init_session_watcher = __esm({
       getCurrentCtp() {
         return this._resolveModelPolicy(this.getCurrentModel()).ctp;
       }
+      // The Engine's frame under the qualification the input last stated, with the application-owned stream revision.
       readRateLampFrame(sinceFoldedSeq) {
-        return { ...this._engine.readRateLampFrame(sinceFoldedSeq), streamRevision: this._streamRevision };
+        return { ...this._engine.readRateLampFrame(sinceFoldedSeq, this._qualifiedCalls), streamRevision: this._streamRevision };
       }
       replaceUserOverrides(entries) {
-        return this._engine.replaceResourceOverrides(entries);
+        const result = this._engine.replaceResourceOverrides(entries);
+        this._userOverrides = { segment: this._engine.getStatus().segment, entries };
+        return result;
       }
       // The same fold under a CANDIDATE override set. It validates through the same parse Apply does and mutates
       // nothing, so the position a consumer previews is the position the Apply it may follow with then reads.
@@ -54233,34 +54254,38 @@ function baselineOf(dead, carried, selector) {
   for (const [resourceKey, tokens] of carried) if (selector(resourceKey)) sum += tokens;
   return sum;
 }
+function mainCallsBetween(prevOrdinal, ordinal) {
+  return prevOrdinal > 0 && ordinal > 0 ? ordinal - prevOrdinal : 1;
+}
 function createPathFold({ dead, R, selector }) {
   const carried = /* @__PURE__ */ new Map();
   let u = 0, lambda = 0, F = 0;
-  let growthSum = 0, intervals = 0;
+  let growthSum = 0, spanned = 0;
   let prev = null;
-  function absorb(growth) {
+  function absorb(growth, calls) {
     if (!growth) return;
     let excess = growth.stock;
     for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
     growthSum += Math.max(0, excess);
-    intervals += 1;
+    spanned += calls;
   }
-  const rate = () => intervals > 0 ? growthSum / intervals : 0;
+  const rate = () => spanned > 0 ? growthSum / spanned : 0;
   return {
     rate,
     push(frame) {
+      const calls = mainCallsBetween(prev?.ordinal, frame.mainCallOrdinal);
       for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       const B = baselineOf(dead, carried, selector);
       const x = frame.L / B;
       if (prev === null) {
-        absorb(frame.growth);
-        prev = { B, g: rate(), L: frame.L };
+        absorb(frame.growth, calls);
+        prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
         return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       }
-      u += Math.sqrt(prev.g / (2 * R * prev.B));
+      u += calls * Math.sqrt(prev.g / (2 * R * prev.B));
       const V = Math.sqrt(2 * R * prev.B * prev.g);
-      lambda += V;
-      F += prev.B + R * prev.g;
+      lambda += calls * V;
+      F += calls * (prev.B + R * prev.g);
       const mfLocal = V / (prev.B + R * prev.g + V);
       const pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null;
       const mf = lambda / (F + lambda);
@@ -54269,10 +54294,10 @@ function createPathFold({ dead, R, selector }) {
       if (prev.B > 0) {
         const rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R });
         const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
-        deltaW = 0.5 * (rPrev + rNow);
+        deltaW = calls * (0.5 * (rPrev + rNow));
       }
-      absorb(frame.growth);
-      prev = { B, g: rate(), L: frame.L };
+      absorb(frame.growth, calls);
+      prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
       return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
   };
@@ -54360,6 +54385,16 @@ function createResidentLedger() {
     resource.fragments.set(key, tokens);
     resource.fragmentTotal += tokens - previous;
   }
+  function applyFragment(resource, fragment) {
+    if (fragment.vacate !== true) {
+      setFragment(resource, fragment.key, fragment.tokens);
+      return;
+    }
+    const previous = resource.fragments.get(fragment.key);
+    if (previous === void 0) return;
+    resource.fragmentTotal -= previous;
+    resource.fragments.delete(fragment.key);
+  }
   function pushTouch(owner, seq, mode) {
     owner.touches.push({ seq, mode });
     if (owner.touches.length > TOUCH_HISTORY_MAX) {
@@ -54430,10 +54465,10 @@ function createResidentLedger() {
         resource.fragments = /* @__PURE__ */ new Map();
         resource.fragmentTotal = 0;
         resource.adjustment = 0;
-        for (const fragment of mutation.fragments) setFragment(resource, fragment.key, fragment.tokens);
+        for (const fragment of mutation.fragments) applyFragment(resource, fragment);
         resource.overhead = plan.overhead;
       } else if (mutation.kind === "merge-fragments") {
-        for (const fragment of mutation.fragments) setFragment(resource, fragment.key, fragment.tokens);
+        for (const fragment of mutation.fragments) applyFragment(resource, fragment);
         resource.overhead = plan.overhead;
       } else {
         resource.adjustment += mutation.deltaTokens;
@@ -54666,7 +54701,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth) {
+  function recordFrame(step, growth, mainCallOrdinal) {
     const resourceTokens = /* @__PURE__ */ new Map();
     const totals = ledger.residentTotals();
     const present = /* @__PURE__ */ new Set();
@@ -54681,7 +54716,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       resourceTokens.set(resourceKey, 0);
       recordedTokens.set(resourceKey, 0);
     }
-    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens };
+    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal };
     frames.push(frame);
     return frame;
   }
@@ -54867,6 +54902,12 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
     const model = record2.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
+    if (totalStock > 0 && frames.length > 0) {
+      invariant3(
+        mainCallsBetween(frames.at(-1).mainCallOrdinal, record2.mainCallOrdinal) >= 1,
+        "a frame's main call must come after the previous frame's"
+      );
+    }
     const totals = ledger.residentTotals();
     if (settlementCursor === null && totalStock > 0) {
       dead = totalStock - Math.min(totalStock, residentTotalOf(totals));
@@ -54924,7 +54965,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     updateSegmentExtrema(L);
     if (totalStock > 0) {
       settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
-      stampNewFrame(step, recordFrame(step, growth));
+      stampNewFrame(step, recordFrame(step, growth, record2.mainCallOrdinal));
     }
     result.newCalls += 1;
   }
@@ -55142,6 +55183,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     for (const key of resource.fragments.keys()) if (typeof key === "number" && Number.isFinite(key)) out2.push(key);
     return out2.sort((a, b) => a - b);
   }
+  function heldLines() {
+    return new Map(ledger.snapshot().resources.map((resource) => [resource.resourceKey, lineNumbersOf(resource)]));
+  }
   function getBucketData() {
     const totals = ledger.residentTotals();
     const residentTotal = residentTotalOf(totals);
@@ -55240,10 +55284,12 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       paths
     };
   }
-  function readRateLampFrame(sinceFoldedSeq) {
+  function readRateLampFrame(sinceFoldedSeq, qualifiedCalls2 = null) {
     const view = readView();
+    const qualified = qualifiedCalls2 !== null;
+    const steps = qualified ? segmentSteps.slice(0, qualifiedCalls2) : segmentSteps;
     const samples = [];
-    for (const step of segmentSteps) {
+    for (const step of steps) {
       if (!(step.foldedSeq > sinceFoldedSeq)) continue;
       const sample = { seq: step.foldedSeq, reliable: view.rateLamp.reliable, turnSeq: step.turn, L_read: step.L };
       if (view.rateLamp.reliable) {
@@ -55254,12 +55300,14 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       }
       samples.push(sample);
     }
+    const beforeSegment = (segmentSteps.length > 0 ? segmentSteps[0].foldedSeq : foldedSeq + 1) - 1;
     return {
       status: view.rateLamp,
       progress: { segment: segmentSeq, measuredCalls: segmentSteps.length, sinceFoldedSeq },
       samples,
       turnSeq,
-      foldedCallSeq: foldedSeq
+      foldedCallSeq: qualified ? steps.length > 0 ? steps.at(-1).foldedSeq : beforeSegment : foldedSeq,
+      ...qualified ? { qualified: true } : {}
     };
   }
   function parseOverrides(overrides) {
@@ -55285,18 +55333,18 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function replaceResourceOverrides(overrides) {
     const { next, warnings } = parseOverrides(overrides);
-    let changed = next.size !== resourceOverrides.size;
-    if (!changed) {
+    let changed2 = next.size !== resourceOverrides.size;
+    if (!changed2) {
       for (const [resourceKey, value] of next) {
         if (resourceOverrides.get(resourceKey) !== value) {
-          changed = true;
+          changed2 = true;
           break;
         }
       }
     }
     resourceOverrides = next;
-    if (changed) restampSegment();
-    return { changed, warnings, diagnostics: [] };
+    if (changed2) restampSegment();
+    return { changed: changed2, warnings, diagnostics: [] };
   }
   function refreshReadPolicies() {
     const diagnostics = [];
@@ -55305,9 +55353,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     for (const resourceKey of [...resourcePolicyByKey.keys()]) {
       resourcePolicyByKey.set(resourceKey, resolveResourceEntry(resourceKey, diagnostics));
     }
-    const changed = policySignature() !== before;
-    if (changed) restampSegment();
-    return { changed, diagnostics };
+    const changed2 = policySignature() !== before;
+    if (changed2) restampSegment();
+    return { changed: changed2, diagnostics };
   }
   function readScenario(overrides) {
     const { next, warnings } = parseOverrides(overrides);
@@ -55329,6 +55377,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     getStatus,
     getHistory,
     getBucketData,
+    heldLines,
     getHandoffMeasurement,
     readRateLampFrame,
     readScenario,
@@ -55839,6 +55888,7 @@ function createMeasurementProjection({
   let callByToolUseId = /* @__PURE__ */ new Map();
   let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
+  let mainCalls = 0;
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     if (!facts) {
@@ -55864,8 +55914,9 @@ function createMeasurementProjection({
     }
     for (const event of telemetry.pathEvents ?? []) facts.pathEvents.push(event);
   }
-  function pushRecords(interpreted, records) {
+  function pushRecords(interpreted, records, { effectsOnly = false } = {}) {
     for (const effect of interpreted.effects) records.push({ type: "effect", ...effect });
+    if (effectsOnly) return;
     for (const residual of interpreted.residuals) records.push({ type: "residual", ...residual });
   }
   function projectToolUse(observation, frameCtx, records, diagnostics) {
@@ -55897,7 +55948,7 @@ function createMeasurementProjection({
       resourceKey: completed.skillContinuation.resourceKey,
       issuingPolicy: completed.skillContinuation.issuingPolicy
     } : { phase: "completed" });
-    pushRecords(completed, records);
+    pushRecords(completed, records, { effectsOnly: observation.effectsOnly === true });
   }
   function projectSkillPayload(observation, records, diagnostics) {
     const entry = callByToolUseId.get(observation.toolUseId);
@@ -55923,6 +55974,9 @@ function createMeasurementProjection({
       case "turn-boundary":
         records.push({ type: "turn-boundary" });
         break;
+      case "main-call":
+        mainCalls += 1;
+        break;
       case "usage":
         records.push({
           type: "step",
@@ -55934,7 +55988,8 @@ function createMeasurementProjection({
             output: observation.usage.output,
             cacheRead: observation.usage.cacheRead,
             cacheWrite: observation.usage.cacheWrite
-          }
+          },
+          mainCallOrdinal: mainCalls
         });
         break;
       case "tool-use":
@@ -56482,6 +56537,22 @@ var init_line_align = __esm({
   }
 });
 
+// lib/working-tree-text.js
+function readableText(tree, key, { size }, { fileBytes }) {
+  if (size > fileBytes) return unreadable("too-large");
+  const text = tree.readText(key);
+  if (text === null) return unreadable("unreadable");
+  if (text.includes("\0")) return unreadable("binary");
+  return { status: "readable", text };
+}
+var unreadable;
+var init_working_tree_text = __esm({
+  "lib/working-tree-text.js"() {
+    init_line_align();
+    unreadable = (reason) => ({ status: "unreadable", reason });
+  }
+});
+
 // lib/resource-attribution.js
 function partsOf(value) {
   if (typeof value === "string") return [value];
@@ -56747,10 +56818,9 @@ function readCandidates(candidates, bound, workingTree, stats) {
   }
   const readable = [];
   for (const candidate of candidates.slice(0, bound.candidates)) {
-    if (candidate.size > bound.fileBytes) continue;
-    const text = workingTree.readText(candidate.key);
-    if (text === null || text.includes("\0")) continue;
-    candidate.norms = splitLines(text).map(normalizeLine);
+    const judged = readableText(workingTree, candidate.key, candidate, bound);
+    if (judged.status !== "readable") continue;
+    candidate.norms = splitLines(judged.text).map(normalizeLine);
     readable.push(candidate);
   }
   return readable;
@@ -57055,6 +57125,7 @@ var LIMIT_NAMES, SIDES, GAP_FILL_CHARS, ANCHOR_CHARS, PATH_CHARS, EVIDENCE_CHARS
 var init_resource_attribution = __esm({
   "lib/resource-attribution.js"() {
     init_line_align();
+    init_working_tree_text();
     LIMIT_NAMES = ["candidates", "fileBytes", "sideChars", "decodeDepth", "alignCells", "evidenceFloor"];
     SIDES = ["input", "output"];
     GAP_FILL_CHARS = 3;
@@ -57150,10 +57221,11 @@ function priced(effects, ctp) {
       resourceKey,
       mutation: {
         kind,
-        fragments: entries.map(({ key, chars, cjk, moved }) => {
+        fragments: entries.map(({ key, chars, cjk, fp, moved }) => {
           const tokens = countsToTokens({ chars, cjk }, ctp);
           if (moved !== true) spentTokens += tokens;
-          return { key, tokens };
+          const vacated = chars === 0 && cjk === 0 && fp === void 0 && moved !== true;
+          return vacated ? { key, tokens, vacate: true } : { key, tokens };
         })
       }
     }));
@@ -57173,6 +57245,10 @@ function foldInto(scratch, recorded, effects) {
     const { fragments } = effects[effectAt].impacts[impactAt].mutation;
     const held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
     entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+      if (fragments[entryAt].vacate === true) {
+        held.delete(key);
+        return;
+      }
       const entry = { chars, cjk, tokens: fragments[entryAt].tokens };
       if (fp !== void 0) entry.fp = fp;
       held.set(key, entry);
@@ -57199,15 +57275,15 @@ function movedEntries(held, fingerprints, { maxCells, minTrim }) {
   const pairs = alignOrdered(slots, fingerprints, { maxCells, minTrim });
   if (pairs === null) return { moved: [], judged: false };
   const landing = new Map(pairs.map(([from, to]) => [from + 1, to + 1]));
-  const zeroed = [];
+  const vacated = [];
   const shifted = [];
   for (const [key, entry] of recorded) {
     const at = landing.get(key);
     if (at === key) continue;
-    zeroed.push({ key, chars: 0, cjk: 0 });
+    vacated.push({ key, chars: 0, cjk: 0 });
     if (at !== void 0) shifted.push({ key: at, chars: entry.chars, cjk: entry.cjk, fp: entry.fp, moved: true });
   }
-  return { moved: [...zeroed, ...shifted], judged };
+  return { moved: [...vacated, ...shifted], judged };
 }
 function relocated(impact, moved) {
   if (moved.length === 0) return impact;
@@ -59100,6 +59176,95 @@ var init_load_message = __esm({
   }
 });
 
+// lib/harness/dsh/inner-seal-message.js
+function todoItemsOf(value) {
+  if (value === null) return [];
+  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
+  return value.map(({ content, status }) => ({ content, status }));
+}
+function textEntriesOf(value, fields, what) {
+  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && fields.every((field) => typeof entry[field] === "string"))) {
+    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
+  }
+  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
+}
+var INNER_SEAL_KIND, CARRIER_WORDING, isTodoItem, sameEntries, AGENT_FIELDS, TODO_FIELDS, STATE_ITEMS;
+var init_inner_seal_message = __esm({
+  "lib/harness/dsh/inner-seal-message.js"() {
+    init_working_tree_text();
+    init_load_message();
+    INNER_SEAL_KIND = "session-watcher-inner-seal";
+    CARRIER_WORDING = {
+      addresses: "These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: holds the user's own words instead, cut where a marker says so.",
+      slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
+      imageSaved: (name2) => `The image ${name2} is not in the current context; read_image can read the file below when it is needed.`,
+      carried: "Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. The reads behind this file text still count in this session, so edit a file without reading it again.",
+      empty: (path3) => `${path3} is empty.`,
+      unreadable: (path3, reason) => `${path3} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
+      skill: (name2, text) => `Skill ${name2}:
+${text}`,
+      stateHeading: (seq) => `Session state as of session seq ${seq}:`,
+      stateLabels: {
+        workingDirectory: (tool) => `Working directory, as ${tool} would show:`,
+        subagents: (tool) => `Running subagents, as ${tool} would show:`,
+        jobs: (tool) => `Running jobs, as ${tool} would show:`,
+        todos: (tool) => `Todo list, as ${tool} last left it:`
+      },
+      stateList: (entries) => entries.map(({ id, label }) => `${id} \u2014 ${label}`).join("; "),
+      stateUnchanged: "unchanged since the last summary that shows it",
+      stateEmpty: "(empty)",
+      questionMark: "A line marked question: holds the original question.",
+      questionLine: (question) => `question: ${question}`,
+      userLine: (user) => `user: ${user}`,
+      askCall: ({ id, name: name2, arguments: args2 }) => `Original ${name2} call ${id}, arguments:
+${args2}`,
+      askResult: (id, { text, isError }) => `Original result of call ${id}${isError ? " (marked as an error)" : ""}:
+${text}`
+    };
+    isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
+    sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
+    AGENT_FIELDS = ["id", "label"];
+    TODO_FIELDS = ["content", "status"];
+    STATE_ITEMS = Object.freeze([
+      Object.freeze({
+        key: "workingDirectory",
+        tool: "working_directory",
+        normalize: (value) => {
+          if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
+          return value;
+        },
+        isEmpty: () => false,
+        same: (a, b) => a === b,
+        text: (value) => value
+      }),
+      Object.freeze({
+        key: "subagents",
+        tool: "list_agents",
+        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
+        isEmpty: (entries) => entries.length === 0,
+        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+        text: CARRIER_WORDING.stateList
+      }),
+      Object.freeze({
+        key: "jobs",
+        tool: "job_list",
+        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
+        isEmpty: (entries) => entries.length === 0,
+        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+        text: CARRIER_WORDING.stateList
+      }),
+      Object.freeze({
+        key: "todos",
+        tool: "todo_write",
+        normalize: todoItemsOf,
+        isEmpty: (items) => items.length === 0,
+        same: (a, b) => sameEntries(TODO_FIELDS, a, b),
+        text: (items) => JSON.stringify(items)
+      })
+    ]);
+  }
+});
+
 // lib/harness/dsh/transcript-observation.js
 function violation(event, field) {
   const at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
@@ -59211,11 +59376,17 @@ function reduceLoadMessage(event) {
   ]);
   return { observations, diagnostics: [] };
 }
+function reduceInnerSeal(event) {
+  const seqs = event.sourceEventSeqs;
+  if (!Array.isArray(seqs) || !seqs.every(isIndex)) return violation(event, "sourceEventSeqs");
+  return { observations: [], diagnostics: [], withdraws: seqs };
+}
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
   if (kind === "user") return reduceHumanMessage(event);
   if (kind === "compact-checkpoint") return reduceCheckpoint(event);
   if (kind === LOAD_MESSAGE_KIND) return reduceLoadMessage(event);
+  if (kind === INNER_SEAL_KIND) return reduceInnerSeal(event);
   return typeof kind === "string" ? nothing() : violation(event, "data.source.kind");
 }
 function reduceAssistantMessage(event) {
@@ -59320,6 +59491,7 @@ var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex, isId2, isSurfaceOp, nothing, t
 var init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     init_load_message();
+    init_inner_seal_message();
     SCOPE = "dsh-transcript-observation";
     MESSAGE_NAMESPACE = "dsh:message:";
     isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -59333,17 +59505,124 @@ var init_transcript_observation2 = __esm({
   }
 });
 
+// lib/harness/dsh/source-facts.js
+function initialSourceFacts() {
+  return { epoch: 0, headDone: false, points: [], carriers: [] };
+}
+function withCarrier(facts, event, reduced) {
+  const listed = new Set(reduced.withdraws);
+  return {
+    ...facts,
+    points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
+    carriers: [...facts.carriers, { seq: event.seq, epoch: facts.epoch, post: null }]
+  };
+}
+function withMainCall(facts, event, reduced) {
+  const usage = usageOf2(reduced);
+  const waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null);
+  const carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: event.seq, usage } } : carrier) : facts.carriers;
+  if (usage === null) return waiting ? { ...facts, carriers } : facts;
+  const role = facts.headDone ? waiting ? "post" : "current" : "head";
+  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: event.seq, role }], carriers };
+}
+function qualifiedCalls(facts) {
+  const pending = facts.points.findIndex((point) => point.role === "current");
+  return pending === -1 ? facts.points.length : pending;
+}
+function foldSourceFacts(facts, event, reduced = reduceDshEvent(event)) {
+  if (!isIndex2(event.seq)) return facts;
+  if (startsEpoch(reduced)) return { ...facts, epoch: facts.epoch + 1, headDone: false, points: [] };
+  if (isCarrier(reduced)) return withCarrier(facts, event, reduced);
+  if (isMainCall(event)) return withMainCall(facts, event, reduced);
+  return facts;
+}
+var isCarrier, usageOf2, stockOf, startsEpoch, isIndex2, isMainCall;
+var init_source_facts = __esm({
+  "lib/harness/dsh/source-facts.js"() {
+    init_transcript_observation2();
+    isCarrier = (reduced) => Array.isArray(reduced.withdraws);
+    usageOf2 = (reduced) => reduced.observations.find((observation) => observation.type === "usage")?.usage ?? null;
+    stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
+    startsEpoch = (reduced) => reduced.observations.some((observation) => observation.type === "epoch-boundary");
+    isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0;
+    isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
+  }
+});
+
+// lib/harness/dsh/source-fold.js
+function withdrawn(batch, selected) {
+  return batch.flatMap((observation) => {
+    if (observation.type === "tool-result") return [observation.effectsOnly ? observation : { ...observation, effectsOnly: true }];
+    if (observation.type === "usage") return selected ? [observation] : [];
+    return ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : [];
+  });
+}
+function createDshSourceFold() {
+  const kept = [];
+  let epochStart = 0;
+  let facts = initialSourceFacts();
+  function push(event) {
+    const reduced = reduceDshEvent(event);
+    const { observations, diagnostics, withdraws = [] } = reduced;
+    facts = foldSourceFacts(facts, event, reduced);
+    let rewound = false;
+    if (withdraws.length > 0) {
+      const listed = new Set(withdraws);
+      const selected = new Set(facts.points.map((point) => point.seq));
+      for (let index = epochStart; index < kept.length; index += 1) {
+        if (!listed.has(kept[index].seq)) continue;
+        const next = withdrawn(kept[index].batch, selected.has(kept[index].seq));
+        if (!changed(kept[index].batch, next)) continue;
+        kept[index].batch = next;
+        rewound = true;
+      }
+    }
+    const batch = isMainCall(event) ? [{ type: "main-call", sourceOrdinal: event.seq }, ...observations] : observations;
+    if (batch.length === 0) return { batch: null, rewound, diagnostics };
+    if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
+    kept.push({ seq: event.seq, batch });
+    return { batch, rewound, diagnostics };
+  }
+  function batches() {
+    return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
+  }
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+}
+var changed;
+var init_source_fold = __esm({
+  "lib/harness/dsh/source-fold.js"() {
+    init_transcript_observation2();
+    init_source_facts();
+    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+  }
+});
+
 // lib/harness/dsh/playback.js
 function indexDshLog(events) {
   return events.filter((event) => event.type === "assistant/message" && event.data?.usage !== void 0).map((event) => ({ limit: event.seq, ts: event.time }));
 }
 function createDshPlaybackDriver({ sessionId, events }) {
+  const fold = createDshSourceFold();
   let cursor = 0;
   let replaced = false;
   function advance({ captureMode = "replay", limit = Infinity } = {}) {
-    const start2 = cursor;
-    while (cursor < events.length && events[cursor].seq <= limit) cursor += 1;
-    const { batches } = reduceDshSnapshot(events.slice(start2, cursor));
+    const batches = [];
+    let rewound = false;
+    for (; cursor < events.length && events[cursor].seq <= limit; cursor += 1) {
+      const pushed = fold.push(events[cursor]);
+      rewound = rewound || pushed.rewound;
+      if (pushed.batch !== null) batches.push(pushed.batch);
+    }
+    if (rewound) {
+      replaced = true;
+      return {
+        transition: "replace",
+        sourceLocator: sessionId,
+        batches: fold.batches(),
+        sourceObserved: true,
+        captureMode: "replay"
+      };
+    }
     if (batches.length === 0) return null;
     if (replaced) return { transition: "append", batches, sourceObserved: true, captureMode };
     replaced = true;
@@ -59353,7 +59632,7 @@ function createDshPlaybackDriver({ sessionId, events }) {
 }
 var init_playback = __esm({
   "lib/harness/dsh/playback.js"() {
-    init_transcript_observation2();
+    init_source_fold();
   }
 });
 
@@ -59528,7 +59807,8 @@ var init_tool_evidence_profile2 = __esm({
 var composition_exports = {};
 __export(composition_exports, {
   DSH_TURN_NOTES_ROOT: () => DSH_TURN_NOTES_ROOT,
-  composeWatcher: () => composeWatcher
+  composeWatcher: () => composeWatcher,
+  nodeWorkingTree: () => nodeWorkingTree
 });
 import { tmpdir } from "node:os";
 import nodePath, { join as join10 } from "node:path";
@@ -59567,6 +59847,12 @@ function composeWatcher({
   const dialogueSource = createDshDialogueSource({ readSession });
   const dialogueProjection = createDshDialogueProjection();
   const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
+  const policyFor = (modelId) => {
+    const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
+    const saved = loadPricingOverride(modelId);
+    if (saved) policy.cRatio = saved.ratio;
+    return policy;
+  };
   const watcher = new SessionWatcher({
     sessionId,
     sourceLocator: sessionId,
@@ -59589,16 +59875,56 @@ function composeWatcher({
       completeToolResult
     }),
     resourceKeysOf,
-    modelPolicyFor: (modelId) => {
-      const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
-      const saved = loadPricingOverride(modelId);
-      if (saved) policy.cRatio = saved.ratio;
-      return policy;
-    }
+    modelPolicyFor: policyFor
   });
-  return { watcher, dialogueSource, dialogueProjection };
+  const heldView = heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult });
+  return { watcher, dialogueSource, dialogueProjection, heldView };
 }
-var DSH_TURN_NOTES_ROOT, sharedWorkingTree;
+function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult }) {
+  const recall = (toolUseId) => {
+    try {
+      return store.recallAttribution(sessionId, toolUseId);
+    } catch {
+      return null;
+    }
+  };
+  const frameCtx = sessionId ? { recall } : {};
+  return (events, range) => {
+    const inRange = new Set(range);
+    const touched = { paths: /* @__PURE__ */ new Set(), skills: /* @__PURE__ */ new Set() };
+    let completed = [];
+    const projection = createDshMeasurementProjection({
+      cwd,
+      projectRoot: cwd,
+      resolveModelPolicy: policyFor,
+      interpretToolUse,
+      completeToolResult: (pending, observation, context, options) => {
+        const answer = completeToolResult(pending, observation, context, options);
+        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
+        return answer;
+      }
+    });
+    const engine = createMeasurementEngine({ resolveModelPolicy: policyFor, resolveResourcePolicy: SELECTED });
+    let skills = /* @__PURE__ */ new Map();
+    for (const observation of reduceDshSnapshot(events).observations) {
+      completed = [];
+      const { records } = projection.project(observation, frameCtx);
+      engine.ingest(records.filter((record2) => record2.type === "effect" || record2.type === "epoch"));
+      if (records.some((record2) => record2.type === "epoch")) skills = /* @__PURE__ */ new Map();
+      for (const { effects, text, seq } of completed) {
+        for (const { resourceKey } of effects.flatMap((effect) => effect.impacts)) {
+          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
+          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
+          if (isSkill) skills.set(key, text);
+          if (inRange.has(seq)) touched[isSkill ? "skills" : "paths"].add(key);
+        }
+      }
+    }
+    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
+    return { paths, skills, touched };
+  };
+}
+var DSH_TURN_NOTES_ROOT, sharedWorkingTree, SELECTED;
 var init_composition = __esm({
   "dsh/src/composition.js"() {
     init_session_watcher();
@@ -59617,9 +59943,11 @@ var init_composition = __esm({
     init_dialogue_source2();
     init_history_turn_rules2();
     init_measurement_projection3();
+    init_transcript_observation2();
     init_tool_evidence_profile2();
     DSH_TURN_NOTES_ROOT = join10(tmpdir(), "session-watcher", "turn-notes");
     sharedWorkingTree = null;
+    SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
   }
 });
 
@@ -60296,7 +60624,7 @@ data: ${JSON.stringify({ type: "scan" })}
     const status = Number.isInteger(err2?.status) ? err2.status : 500;
     res.status(status).json({ error: status === 413 ? "payload_too_large" : status === 400 ? "bad_request" : "internal" });
   });
-  function afterApplication(changed) {
+  function afterApplication(changed2) {
     try {
       const { ledger } = advanceRateLampToCurrent(watcher, currentSessionId, { forcePoll: false });
       if (process.env.SW_DEBUG && ledger) console.error("[rate-lamp shadow]", JSON.stringify({ billProgress: ledger.billProgress, cycles: ledger.billCycleCount, paused: ledger.pausedReason, applied: ledger.lastAppliedFoldedCallSeq }));
@@ -60316,7 +60644,7 @@ data: ${JSON.stringify({ type: "scan" })}
           }
         }
       }
-      if (changed) for (const c of sseClients) {
+      if (changed2) for (const c of sseClients) {
         try {
           c.write(`data: ${JSON.stringify({ type: "scan" })}
 
@@ -60328,7 +60656,7 @@ data: ${JSON.stringify({ type: "scan" })}
     } catch (e) {
       if (process.env.SW_DEBUG) console.error("[sse]", e.message);
     }
-    if (changed) {
+    if (changed2) {
       const now = _nowMono();
       if (now - lastSnapshotMono >= SNAPSHOT_THROTTLE_MS) {
         lastSnapshotMono = now;

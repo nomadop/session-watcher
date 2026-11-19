@@ -16,6 +16,12 @@ mkdirSync(join(DIST, 'hooks'), { recursive: true });
 // `require` function exists.  We inject createRequire at the top of the bundle.
 const REQUIRE_SHIM = "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);";
 
+// The `//!` lines esbuild keeps as a legal comment: the license text at `path` verbatim, under a line naming the code of the bundle it covers.
+const noticeOf = (what, path) => [
+  `//! The code of ${what} bundled in this file is under this license:`,
+  ...readFileSync(path, 'utf8').trimEnd().split('\n').map(line => (line ? `//! ${line}` : '//!')),
+].join('\n');
+
 // Shared esbuild options: bundle all deps, keep Node built-ins external
 const shared = {
   bundle: true,
@@ -105,12 +111,25 @@ async function main() {
   // The DSH packages stay external: the profile's runtime resolution supplies them to a linked directory by peer name.
   const DSH_DIST = join(ROOT, 'dsh', 'dist');
   rmSync(DSH_DIST, { recursive: true, force: true });
+  // The host entry bundles the JSON recovery library (`ai-json-repair`) with the packages of its closure that the bundle holds; each license text goes with its code as the vendored adapter's does below.
+  const hostNotices = ['ai-json-repair', 'ajv', 'fast-deep-equal', 'fast-uri', 'json-schema-traverse']
+    .map(name => noticeOf(`the npm package ${name}`, join(ROOT, 'node_modules', name, 'LICENSE'))).join('\n');
   await build({
     ...shared,
     external: ['node:*', '@deepseek-ai/*'],
     entryPoints: [join(ROOT, 'dsh', 'src', 'index.js')],
     outfile: join(DSH_DIST, 'index.js'),
-    banner: { js: REQUIRE_SHIM },
+    banner: { js: `${hostNotices}\n${REQUIRE_SHIM}` },
+  });
+  // The dormant opt-in pi-ai adapter entry (`dsh/vendor/dsh-llm-pi-ai`): a separate artifact, so the host entry never loads it. Its pi-ai SDK imports stay external beside the DSH packages.
+  // The upstream MIT notice must accompany the bundled upstream code, and the vendor directory is outside the package's `files`: the artifact carries the vendored LICENSE verbatim, as `//!` legal-comment lines.
+  const piAiNotice = noticeOf('the DeepSeek Harness plugin @deepseek-ai/dsh-llm-pi-ai', join(ROOT, 'dsh', 'vendor', 'dsh-llm-pi-ai', 'LICENSE'));
+  await build({
+    ...shared,
+    external: ['node:*', '@deepseek-ai/*', '@earendil-works/*'],
+    entryPoints: [join(ROOT, 'dsh', 'src', 'pi-ai-index.js')],
+    outfile: join(DSH_DIST, 'pi-ai-index.js'),
+    banner: { js: `${piAiNotice}\n${REQUIRE_SHIM}` },
   });
   // lib/symbol-outline.js loads the WASM files relative to the bundle
   for (const [src, dest] of WASM_SOURCES)

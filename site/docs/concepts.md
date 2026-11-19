@@ -212,7 +212,7 @@ Quantities that drive the restart reminder and display indicators.
 
 **Units.** bill cycles (dimensionless)
 
-**Definition.** How much accumulated rent one reminder is worth, measured in rebuild-equivalent bill cycles: it is the bill a session would run up travelling from a fresh start to the amber premium. The reminder bar fills with the same per-call rent increment that drives the bill cycle, divided by this interval; the call whose increment fills the bar raises a reminder stamped with the lap count reached and wraps the bar, so a call large enough to fill it more than once is announced by that stamp rather than by a reminder per lap. The interval is set by the exchange fraction in force for the interval being converted: a higher fraction (more at stake) shortens it; a lower one lengthens it, so loading a large file slows the clock from then on without rewinding it. Because the unit is accumulated rent rather than wall time, the reminder arrives sooner in expensive sessions and later in cheap ones — and because the reminder reads accumulated rent alone, nothing about the measured position can retract a reminder already raised.
+**Definition.** How much accumulated rent one reminder is worth, measured in rebuild-equivalent bill cycles: it is half the bill a session would run up travelling from a fresh start to the amber premium, so on an idealized static cycle from a fresh start the second reminder lap lands at that premium. The reminder bar fills with the same per-call rent increment that drives the bill cycle, divided by this interval; the call whose increment fills the bar raises a reminder stamped with the lap count reached and wraps the bar, so a call large enough to fill it more than once is announced by that stamp rather than by a reminder per lap. The interval is set by the exchange fraction in force for the interval being converted: a higher fraction (more at stake) shortens it; a lower one lengthens it, so loading a large file slows the clock from then on without rewinding it. Because the unit is accumulated rent rather than wall time, the reminder arrives sooner in expensive sessions and later in cheap ones — and because the reminder reads accumulated rent alone, nothing about the measured position can retract a reminder already raised.
 
 **Validity.** A finite positive number of bill cycles while the current interval's exchange fraction is positive. The wire carries `null` whenever it is not — including before the segment has realized any growth — and while it does, the wallet clock holds where it stands and raises no reminder.
 
@@ -220,7 +220,7 @@ Quantities that drive the restart reminder and display indicators.
 
 **Constant.** `BR_AMBER` in `lib/bill-regret.js`
 
-**Definition.** The bill-premium threshold at which the session enters the warning zone. It also sets the reminder's scale: the reminder interval is the accumulated bill between a fresh start and this premium.
+**Definition.** The bill-premium threshold at which the session enters the warning zone. It also sets the reminder's scale: the reminder interval is half the accumulated bill between a fresh start and this premium.
 
 ### BR_RED
 

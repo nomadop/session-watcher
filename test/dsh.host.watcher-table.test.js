@@ -9,6 +9,7 @@ import { createWatcherTable } from '../dsh/src/watcher-table.js';
 import { createModelNames } from '../dsh/src/model-names.js';
 import { composeWatcher } from '../dsh/src/composition.js';
 import { createDshSourceDriver } from '../lib/harness/dsh/source-driver.js';
+import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
 import { initStore, getStore, closeStoreGlobal } from '../lib/store.js';
 import {
   getLiveLedger, isEnospcPaused, _resetRateLampManagerForTest,
@@ -973,4 +974,192 @@ test('a live load maps under a pair another session on the host resolved, withou
   const named = { ...load, data: { ...load.data, source: { ...load.data.source, route: { provider: LOAD_PROVIDER, model: LOAD_NAME } } } };
   assert.equal(bucketsOfEntry(table, 's-load-borrower'), await bucketsOf('s-load-borrower-reference', [named]));
   assert.deepEqual(names.calls, [[LOAD_PROVIDER, LOAD_ID]]);
+});
+
+// ── The source-fact index ───────────────────────────────────────────────────────────────────────────────────
+
+// The index `sourceFactOf` builds from a whole log, the one an entry's index must equal.
+const factsOf = log => new Map(log.map(event => [event.seq, sourceFactOf(event)]));
+
+test('a bootstrap snapshot makes the source index of its events, and a session the table lacks has none', async () => {
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable();
+  assert.equal(table.sourceFacts('s-none'), null);
+  table.ensure(sessionOf('s-index'));
+  assert.equal(table.sourceFacts('s-index'), null, 'unready until the snapshot has merged');
+
+  reader.settle('s-index', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+
+  assert.deepEqual(table.sourceFacts('s-index'), factsOf(log.slice(0, FIRST_STEP_END + 1)));
+  assert.ok([...table.sourceFacts('s-index').values()].some(fact => fact.step !== null), 'the facts of the snapshot are not all empty');
+});
+
+test('a live entry adds each fed event to the source index', async () => {
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable();
+  table.ensure(sessionOf('s-live-index'));
+  reader.settle('s-live-index', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+
+  for (const event of log.slice(FIRST_STEP_END + 1)) table.feed('s-live-index', event);
+
+  assert.equal(table.get('s-live-index').state, 'live');
+  assert.deepEqual(table.sourceFacts('s-live-index'), factsOf(log));
+});
+
+test('the index of a snapshot with the events fed before it arrived, overlapping it or not, equals the index of the whole log', async () => {
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable();
+  table.ensure(sessionOf('s-overlap'));
+  // The first event of a session is fed to the entry it ensures, after the snapshot read it started already holds it.
+  for (const event of log.slice(FIRST_STEP_END - 1)) table.feed('s-overlap', event);
+  assert.equal(table.sourceFacts('s-overlap'), null, 'fed events alone do not make the index ready');
+
+  reader.settle('s-overlap', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+
+  assert.equal(table.get('s-overlap').state, 'live');
+  assert.deepEqual(table.sourceFacts('s-overlap'), factsOf(log));
+});
+
+test('events fed after the measurement failed still reach the source index', async (t) => {
+  captureStderr(t);
+  const log = reusedCallIdAcrossSteps();
+  let throwNext = false;
+  const { table, reader } = buildTable({
+    adapt: composition => {
+      const { watcher } = composition;
+      const apply = watcher.applyHarnessFrame.bind(watcher);
+      watcher.applyHarnessFrame = (frame) => {
+        if (throwNext) { throwNext = false; throw new Error('frame broke'); }
+        return apply(frame);
+      };
+      return composition;
+    },
+  });
+  table.ensure(sessionOf('s-failed-index'));
+  reader.settle('s-failed-index', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+  table.feed('s-failed-index', log[FIRST_STEP_END + 1]);
+  throwNext = true;
+  table.feed('s-failed-index', log[FIRST_STEP_END + 2]);
+  assert.equal(table.get('s-failed-index').state, 'failed');
+
+  for (const event of log.slice(FIRST_STEP_END + 3)) table.feed('s-failed-index', event);
+
+  assert.deepEqual(table.sourceFacts('s-failed-index'), factsOf(log));
+});
+
+test('the snapshot merge makes the index ready before the model-name warm-up has settled', async () => {
+  const log = reusedCallIdAcrossSteps();
+  const warming = Promise.withResolvers();
+  const { table, reader } = buildTable({
+    modelNames: { warm: () => warming.promise, pairsOf: () => [], mapEvent: event => event },
+  });
+  table.ensure(sessionOf('s-warming'));
+
+  reader.settle('s-warming', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+
+  assert.deepEqual(table.get('s-warming'), { state: 'bootstrapping' }, 'the measurement is still waiting for the names');
+  assert.deepEqual(table.sourceFacts('s-warming'), factsOf(log.slice(0, FIRST_STEP_END + 1)));
+  warming.resolve([]);
+  await settled();
+  assert.equal(table.get('s-warming').state, 'live');
+});
+
+test('a snapshot whose measurement install fails leaves the index ready', async (t) => {
+  captureStderr(t);
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable({
+    adapt: composition => {
+      composition.watcher.applyHarnessFrame = () => { throw new Error('install broke'); };
+      return composition;
+    },
+  });
+  table.ensure(sessionOf('s-install-failed'));
+
+  reader.settle('s-install-failed', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+
+  assert.equal(table.get('s-install-failed').state, 'failed');
+  assert.deepEqual(table.sourceFacts('s-install-failed'), factsOf(log.slice(0, FIRST_STEP_END + 1)));
+  table.feed('s-install-failed', log[FIRST_STEP_END + 1]);
+  assert.deepEqual(table.sourceFacts('s-install-failed'), factsOf(log.slice(0, FIRST_STEP_END + 2)));
+});
+
+test('a rejected initial snapshot leaves the index unready and diagnosed, fed events do not make it ready and nothing retries, until an entry rebuilt from a read that succeeds', async (t) => {
+  const lines = captureStderr(t);
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable();
+  table.ensure(sessionOf('s-unavailable'));
+  reader.reject('s-unavailable', new Error('snapshot unavailable'));
+  await settled();
+
+  for (const event of log) table.feed('s-unavailable', event);
+  await settled();
+
+  assert.equal(table.get('s-unavailable').state, 'failed');
+  assert.equal(table.sourceFacts('s-unavailable'), null);
+  assert.deepEqual(linesFor(lines, 's-unavailable'), [{
+    sessionId: 's-unavailable', scope: 'dsh-host', code: 'read_session_rejected', message: 'snapshot unavailable',
+  }]);
+  assert.deepEqual(reader.calls, ['s-unavailable'], 'the failed read is not retried');
+
+  table.dispose('s-unavailable');
+  table.ensure(sessionOf('s-unavailable'));
+  reader.settle('s-unavailable', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+  assert.deepEqual(table.sourceFacts('s-unavailable'), factsOf(log.slice(0, FIRST_STEP_END + 1)), 'the rebuilt entry holds the facts of its own read alone');
+});
+
+test('a disposed entry drops its index, whether it was live or still bootstrapping', async () => {
+  const log = reusedCallIdAcrossSteps();
+  const { table, reader } = buildTable();
+  table.ensure(sessionOf('s-gone'));
+  reader.settle('s-gone', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+  assert.notEqual(table.sourceFacts('s-gone'), null);
+
+  table.dispose('s-gone');
+  assert.equal(table.sourceFacts('s-gone'), null);
+  table.ensure(sessionOf('s-gone'));
+  reader.settle('s-gone', []);
+  await settled();
+  assert.deepEqual(table.sourceFacts('s-gone'), new Map(), 'none of the disposed entry\'s facts come back');
+
+  table.ensure(sessionOf('s-gone-early'));
+  table.dispose('s-gone-early');
+  reader.settle('s-gone-early', log.slice(0, FIRST_STEP_END + 1));
+  await settled();
+  assert.equal(table.sourceFacts('s-gone-early'), null);
+});
+
+// ── The held view ───────────────────────────────────────────────────────────────────────────────────────────
+
+test('an entry answers its own composition\'s held view of a slice and a range whether its measurement is bootstrapping, live or failed, and a session the table lacks has none', async (t) => {
+  captureStderr(t);
+  const log = reusedCallIdAcrossSteps();
+  const calls = [];
+  const { table, reader } = buildTable({
+    adapt: (composition, sessionId) => ({
+      ...composition, heldView: (events, range) => { calls.push([sessionId, events, range]); return { sessionId }; },
+    }),
+  });
+  const range = [3, 4, 5];
+  assert.equal(table.heldView('s-none', log, range), null);
+  table.ensure(sessionOf('s-held'));
+  table.ensure(sessionOf('s-held-failed'));
+  assert.deepEqual(table.heldView('s-held', log, range), { sessionId: 's-held' }, 'bootstrapping');
+  reader.settle('s-held', log);
+  reader.reject('s-held-failed', new Error('read refused'));
+  await settled();
+  assert.equal(table.get('s-held').state, 'live');
+  assert.equal(table.get('s-held-failed').state, 'failed');
+  assert.deepEqual(table.heldView('s-held', log, range), { sessionId: 's-held' }, 'live');
+  assert.deepEqual(table.heldView('s-held-failed', log, range), { sessionId: 's-held-failed' }, 'failed');
+  assert.ok(calls.every(([, events, seqs]) => events === log && seqs === range), 'the slice and the range reach the view as they are');
+  table.dispose('s-held');
+  assert.equal(table.heldView('s-held', log, range), null, 'disposal drops it with the entry');
 });

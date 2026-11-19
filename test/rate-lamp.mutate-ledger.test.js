@@ -51,10 +51,10 @@ test('C1-1: mutateLedger does not alias arrays (push in fn must not pollute the 
   assert.equal(s.recentStopEvents.length, 0, 'prior ledger array untouched (structuredClone, no alias)');
 });
 
-test('C1-1: invariant — any op that makes memory content ≠ disk content strictly increases ledgerRevision (B5)', () => {
+test('C1-1: mutateLedger raises ledgerRevision by one for a content change and leaves it flat for a no-op', () => {
   const base = freshLedger(KEY);
   const changed = mutateLedger(base, 'test-content-change', (d) => { d.currentTurnSeq = base.currentTurnSeq + 1; });
-  assert.ok(changed.ledgerRevision > base.ledgerRevision, 'content changed ⟹ revision strictly increased');
+  assert.equal(changed.ledgerRevision, base.ledgerRevision + 1, 'content changed ⟹ revision raised by one');
   const noop = mutateLedger(base, 'test-noop', () => {});
   assert.equal(noop.ledgerRevision, base.ledgerRevision, 'no content change ⟹ revision flat');
 });

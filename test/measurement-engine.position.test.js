@@ -27,6 +27,8 @@ const whole = (resourceKey, tokens) => ({
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 
 const steps = (...reads) => reads.map((cacheRead, i) => step(`s${i + 1}`, cacheRead));
+// A step naming the main call it belongs to, as the Projection stamps it where the Source states its main calls.
+const stepAt = (id, cacheRead, mainCallOrdinal) => ({ ...step(id, cacheRead), mainCallOrdinal });
 
 // The frames the Engine records, rebuilt from the history: each frame after the first closes one interval
 // whose stock growth is the history's own increment. With input and cacheWrite at zero the stock is the
@@ -51,6 +53,66 @@ test('stamps equal the pure fold over the recorded growth, whose rate is the run
   assert.equal(history[0].pp, null);
   assert.equal(engine.getStatus().u, history.at(-1).u);
   assert.equal(engine.getStatus().pp, history.at(-1).pp);
+});
+
+test('steps naming their main calls price the interval between two frames over the calls it spans, from the rate its left end had realized', () => {
+  const engine = makeEngine();
+  // The stock is the cacheRead: 1000, 1300, 1400 and 1450, at main calls 1, 2, 6 and 8 (the calls between were withdrawn). No resource is held, so B stays at the dead 1000.
+  engine.ingest([stepAt('s1', 1000, 1), stepAt('s2', 1300, 2), stepAt('s3', 1400, 6), stepAt('s4', 1450, 8)]);
+  const [, p2, p3, p4] = engine.getHistory();
+  const phase = (calls, g) => calls * Math.sqrt(g / (2 * R * 1000));
+  // The rates in force at the left ends are 0, 300 (1 call) and 400 / 5 = 80; the intervals span 1, 4 and 2 calls.
+  assert.equal(p2.u, 0);
+  near(p3.u, phase(4, 300));
+  near(p4.u, phase(4, 300) + phase(2, 80));
+  assert.equal(engine.getStatus().u, p4.u);
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, 450 / 7);
+  const { samples } = engine.readRateLampFrame(0);
+  assert.deepEqual(samples.map(sample => sample.deltaW === null ? null : Number(sample.deltaW.toFixed(12))), [null, 0.015, 0.14, 0.085]);
+  near(samples[3].mf, Math.sqrt(2 * R * 1000 * 80) / (1000 + R * 80 + Math.sqrt(2 * R * 1000 * 80)));
+});
+
+test('a step whose main call does not follow the previous frame\'s is refused before any state moves', () => {
+  const engine = makeEngine();
+  engine.ingest([stepAt('s1', 1000, 3), stepAt('s2', 1500, 4)]);
+  for (const ordinal of [4, 2]) {
+    assert.throws(() => engine.ingest([stepAt('s3', 2000, ordinal)]), { message: /^measurement engine invariant: .*main call/ });
+  }
+  const control = makeEngine();
+  control.ingest([stepAt('s1', 1000, 3), stepAt('s2', 1500, 4)]);
+  for (const one of [engine, control]) one.ingest([stepAt('s3', 2000, 6), stepAt('s4', 2600, 7)]);
+  assert.deepEqual(engine.getHistory(), control.getHistory());
+  assert.deepEqual(engine.getStatus(), control.getStatus());
+  assert.deepEqual(engine.getBucketData(), control.getBucketData());
+  assert.deepEqual(engine.readRateLampFrame(0).samples, control.readRateLampFrame(0).samples);
+});
+
+test('a zero-stock step, a revision and a closed segment take no part in the spans: only the frames\' own ordinals are differenced', () => {
+  const engine = makeEngine();
+  engine.ingest([stepAt('s1', 1000, 1), stepAt('s2', 1300, 2)]);
+  // A zero-stock call records no frame and a revised one keeps its first acceptance's place, so the next interval runs from call 2 to call 6.
+  engine.ingest([stepAt('z', 0, 3), { ...stepAt('s2', 1300, 9), usage: { ...usage(1300), output: 99 } }, stepAt('s3', 1400, 6)]);
+  assert.equal(engine.getHistory().length, 4);
+  near(engine.getHistory().at(-1).u, 4 * Math.sqrt(300 / (2 * R * 1000)));
+  near(engine.readRateLampFrame(0).samples.at(-1).deltaW, 4 * 0.5 * (300 + 400) / (R * 1000));
+  // The next segment's first frame closes no interval, whatever ordinal the closed one stopped at, and its first interval spans the ordinals its own frames name.
+  engine.closeCurrentSegment();
+  engine.ingest([stepAt('n1', 1000, 40), stepAt('n2', 1500, 41)]);
+  const fresh = engine.readRateLampFrame(0).samples.filter(sample => sample.seq > 4);
+  assert.equal(fresh[0].deltaW, null);
+  near(fresh[1].deltaW, 1 * 0.5 * (0 + 500) / (R * 1000));
+});
+
+test('under sparse spans a scenario\'s rate is its ratio of sums, Preview reads what Apply then makes the default, and a resource it carries is netted out per interval', () => {
+  const engine = makeEngine();
+  // Intervals of 1, 2 and 2 main calls whose stock grows 500, 1100 and 500, 600 of the middle one landing on /r.js.
+  engine.ingest([stepAt('s1', 1000, 1), stepAt('s2', 1500, 2), whole('/r.js', 600), stepAt('s3', 2600, 4), stepAt('s4', 3100, 6)]);
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, (500 + 500 + 500) / 5);
+  const scenario = engine.readScenario({ '/r.js': 'exclude' });
+  assert.equal(scenario.gBar, (500 + 1100 + 500) / 5);
+  engine.replaceResourceOverrides({ '/r.js': 'exclude' });
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, scenario.gBar);
+  for (const key of ['u', 'pp', 'mf', 'br', 'bDefault']) assert.equal(engine.getStatus()[key], scenario[key], key);
 });
 
 test('a closed segment leaves no rate behind: the next segment prices its first interval at zero', () => {

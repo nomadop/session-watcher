@@ -1,6 +1,6 @@
 {
   "name": "@nomadop/session-watcher",
-  "version": "0.10.2",
+  "version": "0.11.0",
   "description": "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   "type": "module",
   "license": "MIT",
@@ -55,6 +55,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.45.0",
+    "ai-json-repair": "1.0.4",
     "chart.js": "^4.5.1",
     "esbuild": "^0.28.1",
     "github-slugger": "^2.0.0",

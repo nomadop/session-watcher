@@ -2,11 +2,12 @@
 // Observation batch in the shapes the Claude Code reducer emits, one case per reducer table row and contract.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
+import { callUsageOf, reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
 import {
   userMessage, assistantMessage, toolCall, toolResult, attempt, requestHeader, requestContext,
   turnStart, turnEnd, stepStart, stepEnd, compactionStart, compactionSummary, compactCheckpoint, compactionEnd,
   compactionPrune, prunedResult, unknownEvent, ignorableEvent, sessionLog, reusedCallIdAcrossSteps, loadMessage,
+  innerSealCarrier,
 } from './helpers/dsh-events.js';
 
 // The coordinates every Observation of one event shares.
@@ -67,6 +68,42 @@ test('any other user/message kind yields nothing and no diagnostic', () => {
   }
 });
 
+// --- Inner seals ---
+
+test('an inner-seal carrier yields no observation and withdraws the seqs it cites, whatever its surface op says', () => {
+  const carrier = innerSealCarrier({ sourceEventSeqs: [9, 3, 4, 5], startSeq: 3, endSeq: 5, text: 'C, then B.' });
+  assert.deepEqual(reduceDshEvent(carrier), { observations: [], diagnostics: [], withdraws: [9, 3, 4, 5] });
+  for (const surfaceOp of [undefined, 'append', { op: 'replace', endSeq: 4 }]) {
+    assert.deepEqual(reduceDshEvent({ ...carrier, surfaceOp }), { observations: [], diagnostics: [], withdraws: [9, 3, 4, 5] }, JSON.stringify(surfaceOp));
+  }
+});
+
+test('an inner-seal carrier with malformed seqs yields one shape-violation and withdraws nothing', () => {
+  const valid = innerSealCarrier({ sourceEventSeqs: [3, 4] });
+  for (const sourceEventSeqs of [undefined, 'all', [3, -1], [3, 1.5], [3, '4']]) {
+    const { withdraws, observations, diagnostics } = reduceDshEvent({ ...valid, sourceEventSeqs });
+    assert.deepEqual(observations, [], String(sourceEventSeqs));
+    assert.equal(withdraws, undefined, String(sourceEventSeqs));
+    assert.deepEqual(diagnostics.map(({ scope, code }) => [scope, code]),
+      [['dsh-transcript-observation', 'shape-violation']], String(sourceEventSeqs));
+    assert.match(diagnostics[0].message, new RegExp(`\\bseq ${valid.seq}\\b.*sourceEventSeqs`));
+  }
+});
+
+test('the Dialogue snapshot ignores a carrier: a log with one reduces as the log without it', () => {
+  const read = [{ id: 'call_read', name: 'read', arguments: '{"file_path":"src/a.js"}' }];
+  const events = [
+    turnStart(),
+    userMessage({ text: 'Where is parse defined?' }),
+    assistantMessage({ step: 1, toolCalls: read, usage: USAGE }),
+    toolResult({ step: 1, callId: 'call_read', text: 'export function parse() {}' }),
+  ];
+  const sealed = sessionLog([...events, innerSealCarrier({ sourceEventSeqs: events.slice(1).map(event => event.seq) })]);
+  const withoutCarrier = reduceDshSnapshot(sealed.slice(0, -1));
+  assert.deepEqual(reduceDshSnapshot(sealed), withoutCarrier);
+  assert.ok(withoutCarrier.observations.length > 0);
+});
+
 // --- Loads ---
 
 const LOAD_ROUTE = { provider: 'bedrock', model: 'us.anthropic.claude-opus-4-8' };
@@ -97,6 +134,23 @@ test('a load message yields one tool-use and one tool-result per call, keyed by 
     ],
     diagnostics: [],
   });
+});
+
+test('the payload message and the read message reduce, in order, to the observations of one message holding the same calls', () => {
+  const payloadEvent = loadMessage({ route: LOAD_ROUTE, calls: LOAD_CALLS.slice(0, 1) });
+  const readEvent = loadMessage({ route: LOAD_ROUTE, calls: LOAD_CALLS.slice(1) });
+  const single = reduceDshEvent(loadMessage({ route: LOAD_ROUTE, calls: LOAD_CALLS }));
+  const split = [payloadEvent, readEvent].map(reduceDshEvent);
+
+  assert.deepEqual(split.map(reduced => reduced.diagnostics), [[], []]);
+  assert.deepEqual(single.diagnostics, []);
+  // The coordinates differ by event; everything else is what the one message yields.
+  const withoutCoordinates = ({ messageId: _id, sourceOrdinal: _ordinal, sourceEntryId: _entry, timestamp: _time, ...rest }) => rest;
+  assert.deepEqual(split.flatMap(reduced => reduced.observations).map(withoutCoordinates), single.observations.map(withoutCoordinates));
+  for (const [event, reduced] of [[payloadEvent, split[0]], [readEvent, split[1]]]) {
+    assert.deepEqual(reduced.observations.map(observation => observation.sourceOrdinal), reduced.observations.map(() => event.seq));
+  }
+  assert.ok(!typesOf(split.flatMap(reduced => reduced.observations)).includes('turn-boundary'), 'neither message opens a turn');
 });
 
 test('two loads never share a toolUseId', () => {
@@ -241,6 +295,41 @@ test('an assistant message without text blocks yields no text observation', () =
   });
   event.data.message.content.unshift({ type: 'reasoning', text: 'Read the module first.' });
   assert.deepEqual(typesOf(reduceDshEvent(event).observations), ['tool-use', 'usage']);
+});
+
+// --- Display usage ---
+
+// What a settled call's usage can be: the reducer's own cases, and the ones it refuses.
+const USAGE_SAMPLES = [
+  ['a complete usage', USAGE],
+  ['an unread cache bucket', { inputTokens: 3, outputTokens: 48, totalTokens: 9_651, cacheWriteTokens: 9_600 }],
+  ['an unwritten cache bucket', { inputTokens: 2, outputTokens: 12, totalTokens: 9_614, cacheReadTokens: 9_600 }],
+  ['no cache bucket at all', { inputTokens: 7, outputTokens: 1 }],
+  ['no usage', undefined],
+  ['a null usage', null],
+  ['a count that is text', { inputTokens: '3', outputTokens: 20, totalTokens: 23 }],
+  ['a count that is null', { inputTokens: 3, outputTokens: null }],
+  ['a cache bucket that is not finite', { inputTokens: 3, outputTokens: 20, cacheReadTokens: Number.NaN }],
+];
+
+test('callUsageOf reads a usage as the reducer reads an assistant message\'s: the same four numbers where the reducer yields a usage observation, null where it yields none', () => {
+  for (const [why, usage] of USAGE_SAMPLES) {
+    const observed = reduceDshEvent(assistantMessage({ text: 'Done.', usage })).observations.find(observation => observation.type === 'usage');
+    assert.deepEqual(callUsageOf(usage), observed?.usage ?? null, why);
+  }
+  const [, unread] = USAGE_SAMPLES[1];
+  assert.deepEqual(callUsageOf(unread), { input: 3, output: 48, cacheRead: 0, cacheWrite: 9_600 }, 'an absent cache bucket is zero, not a missing field');
+  assert.equal(callUsageOf(USAGE_SAMPLES[4][1]), null, 'no usage is null, which differs from a usage of zeros');
+  assert.deepEqual(callUsageOf({ inputTokens: 0, outputTokens: 0 }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+});
+
+test('a plugin record whose stream holds a usage chunk, as an inner-call record does, yields no observation: callUsageOf serves the display and never the measurement', () => {
+  const record = ignorableEvent({
+    type: 'plugin:session-watcher/inner-call',
+    data: { v: 1, stream: [{ type: 'chunk', time: 1, chunk: { type: 'usage', usage: USAGE } }] },
+  });
+  assert.deepEqual(reduceDshEvent(record), NOTHING);
+  assert.deepEqual(reduceDshSnapshot([record]), { batches: [], observations: [], diagnostics: [] });
 });
 
 // --- Tool results ---

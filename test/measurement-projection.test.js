@@ -119,6 +119,33 @@ describe('shared Measurement Projection', () => {
     assert.deepEqual(projection.project(toolResult({ toolUseId: 't1' })).records, []);
   });
 
+  test('a main-call fact yields no record, and each usage step names the main call it belongs to, counted across epochs and segments', () => {
+    const projection = makeProjection();
+    const mainCall = { type: 'main-call', sourceOrdinal: 1 };
+    const usage = id => ({
+      type: 'usage', messageId: id, model: 'fake-model', timestamp: 1000, provenance: 'assistant', sourceOrdinal: 1,
+      usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+    });
+    const ordinalOf = id => projection.project(usage(id)).records[0].mainCallOrdinal;
+
+    assert.deepEqual(projection.project(mainCall), { records: [], diagnostics: [] });
+    assert.equal(ordinalOf('msg-a'), 1);
+    // The second main call reported no usage, as a withdrawn or a quiet one: it still counts.
+    projection.project(mainCall);
+    projection.project(mainCall);
+    assert.equal(ordinalOf('msg-b'), 3);
+    projection.project(epochBoundary());
+    projection.project(mainCall);
+    assert.equal(ordinalOf('msg-c'), 4, 'an epoch does not restart the count');
+    projection.finishSegment({ segment: 1, steps: [closedStep('msg-c', 1)] }, { captureMode: 'live' });
+    projection.project(mainCall);
+    assert.equal(ordinalOf('msg-d'), 5, 'finishing a segment does not either');
+
+    const other = makeProjection();
+    other.project(mainCall);
+    assert.equal(other.project(usage('msg-a')).records[0].mainCallOrdinal, 1, 'another Projection counts from its own start');
+  });
+
   test('task-notification is not a shared observation type', () => {
     const notification = {
       type: 'task-notification', text: '<task-notification><task-id>abc</task-id></task-notification>',
@@ -235,6 +262,34 @@ describe('shared Measurement Projection', () => {
       assert.deepEqual(recording.calls.map(call => [call.phase, call.run.frameCtx]),
         [['use', triggerFrame], ['result', triggerFrame]]);
       assert.equal(recording.calls[1].run.scratch, recording.calls[0].run.scratch);
+    });
+  });
+
+  describe('an effects-only result', () => {
+    // A completion that charges an effect and a residual, so what an effects-only result drops is visible.
+    const withResidual = pending => ({
+      ...completeToolResult(pending),
+      residuals: [{ groupKey: 'FakeRead', weight: 7, hadError: false, meta: { kind: 'tool', detail: null } }],
+    });
+    const typesOf = projected => projected.records.map(record => record.type);
+
+    test('emits the completion\'s effects and no residual', () => {
+      const projection = makeProjection({ completeToolResult: withResidual });
+      projection.project(toolUse({ toolUseId: 't1', messageId: 'msg-a', path: 'a.js' }));
+      assert.deepEqual(typesOf(projection.project(toolResult({ toolUseId: 't1' }))), ['effect', 'residual'],
+        'control: the same result charges both');
+
+      projection.project(toolUse({ toolUseId: 't2', messageId: 'msg-a', path: 'a.js' }));
+      const projected = projection.project({ ...toolResult({ toolUseId: 't2' }), effectsOnly: true });
+      assert.deepEqual(typesOf(projected), ['effect']);
+      assert.equal(projected.records[0].impacts[0].resourceKey, 'a.js');
+    });
+
+    test('held before its use, it still emits effects and no residual when the use releases it', () => {
+      const projection = makeProjection({ completeToolResult: withResidual });
+      assert.deepEqual(projection.project({ ...toolResult({ toolUseId: 't1' }), effectsOnly: true }).records, []);
+      assert.deepEqual(typesOf(projection.project(toolUse({ toolUseId: 't1', messageId: 'msg-a', path: 'a.js' }))),
+        ['effect']);
     });
   });
 });

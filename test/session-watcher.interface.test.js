@@ -30,6 +30,7 @@ function makeEngine(script = {}) {
     closeCalls: 0,
     overrideReplacements: [],
     refreshes: 0,
+    rateLampReads: [],
     bucket: script.bucket ?? { dead: 0, paths: [], residual: [], totalB: 0, totalL: 0, bDefault: 0, totalResidualRaw: 0, totalResidual: 0, currentTurnSeq: 0, segment: 0 },
     status: script.status ?? {},
     ingest(records) {
@@ -66,7 +67,8 @@ function makeEngine(script = {}) {
         paths: [],
       };
     },
-    readRateLampFrame(sinceFoldedSeq) {
+    readRateLampFrame(sinceFoldedSeq, qualifiedCalls) {
+      engine.rateLampReads.push([sinceFoldedSeq, qualifiedCalls]);
       return { status: { reliable: true }, progress: { segment: 3, measuredCalls: 2, sinceFoldedSeq }, samples: [], turnSeq: 9, foldedCallSeq: 4 };
     },
     replaceResourceOverrides(overrides) {
@@ -854,6 +856,26 @@ describe('named reads', () => {
     assert.equal(frame.progress.sinceFoldedSeq, 2);
     assert.equal(typeof frame.streamRevision, 'number');
     assert.equal(frame.turnSeq, 9);
+  });
+
+  test('readRateLampFrame reads the Engine under the qualified count of the last frame applied, none before any frame states one', () => {
+    const engines = [];
+    const watcher = build({ createEngine: () => { const e = makeEngine(); engines.push(e); return e; } });
+    watcher.readRateLampFrame(0);
+    watcher.applyHarnessFrame(appendFrame([], { qualifiedCalls: 3 }));
+    watcher.readRateLampFrame(1);
+    watcher.applyHarnessFrame(appendFrame([], { qualifiedCalls: 0 }));
+    watcher.readRateLampFrame(2);
+    assert.deepEqual(engines[0].rateLampReads, [[0, null], [1, 3], [2, 0]]);
+    watcher.applyHarnessFrame(replaceFrame('/t/a.jsonl', [], { qualifiedCalls: 1 }));
+    watcher.readRateLampFrame(0);
+    assert.deepEqual(engines[1].rateLampReads, [[0, 1]], 'the count reads the Engine a replace installed');
+  });
+
+  test('a frame whose qualified count is not a non-negative integer is an invariant failure', () => {
+    for (const qualifiedCalls of [-1, 1.5, '2', null, Infinity]) {
+      assert.throws(() => build().applyHarnessFrame(appendFrame([], { qualifiedCalls })), /session watcher invariant: qualifiedCalls/, String(qualifiedCalls));
+    }
   });
 
   test('setRatioOverride refreshes Engine reads without rebuilding state or moving streamRevision', () => {

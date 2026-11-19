@@ -96,6 +96,23 @@ const emitLog = (ctx, session, events) => {
   for (const event of events) ctx.emit('session/event', session, event);
 };
 
+// The chunks the events stream of a recorded route writes, collected as they arrive: `drain()` answers those written since its last call, after the macrotask the stream's delivery takes.
+async function collectingStream(route) {
+  const reader = (await route.fetch(new Request('http://localhost/api/session-watcher.events'))).body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  void (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      chunks.push(decoder.decode(value));
+    }
+  })();
+  return { drain: async () => { await settled(); return chunks.splice(0); } };
+}
+
+const signalOf = sessionId => `data: ${JSON.stringify({ sessionId })}\n\n`;
+
 test('loading ensures a watcher for every listed session and one created later', async () => {
   const reads = [];
   const listed = [fakeSession({ id: 's-listed-a' }), fakeSession({ id: 's-listed-b' })];
@@ -166,6 +183,55 @@ test('a session/created whose watcher composition throws writes a handler_failed
   });
   assert.doesNotThrow(() => ctx.emit('session/created', fakeSession({ id: 's-uncomposed', cwd: '/unreadable' })));
   await settled();
+  assert.deepEqual(hostLines(lines), ['s-uncomposed [dsh-host] handler_failed: ignore rules unreadable']);
+  assert.deepEqual(table.get('s-uncomposed'), { state: 'unobserved' });
+  ctx.dispose();
+});
+
+test('a session/created publishes the new session\'s id on the events route as it is announced, ahead of the entry\'s own signal when it turns live', async () => {
+  const { routes, connection } = fakeConnection();
+  let release;
+  const reading = new Promise((resolve) => { release = resolve; });
+  const { ctx } = mountHost({ connection, webServer, readSession: () => reading });
+  const stream = await collectingStream(routes[0]);
+  assert.deepEqual(await stream.drain(), [': open\n\n']);
+
+  ctx.emit('session/created', fakeSession({ id: 's-new' }));
+  assert.deepEqual(await stream.drain(), [signalOf('s-new')], 'the announcement signals while the entry is still bootstrapping');
+  release({ session: {}, inheritedEventCount: 0, events: [] });
+  assert.deepEqual(await stream.drain(), [signalOf('s-new')], 'and the entry turning live signals once more');
+  ctx.dispose();
+});
+
+test('a session/created for a session whose table entry already exists still publishes its id: an announcement is a signal of its own, whatever the table does with it', async () => {
+  const { routes, connection } = fakeConnection();
+  const session = fakeSession({ id: 's-known' });
+  const { ctx, table } = mountHost({ sessions: [session], connection, webServer });
+  await settled();
+  assert.equal(table.get(session.id).state, 'live', 'the entry exists and has settled, so ensuring it again signals nothing');
+  const stream = await collectingStream(routes[0]);
+  assert.deepEqual(await stream.drain(), [': open\n\n']);
+
+  ctx.emit('session/created', session);
+  assert.deepEqual(await stream.drain(), [signalOf('s-known')]);
+  ctx.dispose();
+});
+
+test('a session/created whose watcher composition throws still publishes its id, beside the handler_failed line it writes', async (t) => {
+  const lines = captureStderr(t);
+  const { routes, connection } = fakeConnection();
+  const { ctx, table } = mountHost({
+    connection, webServer,
+    loadIsIgnored: (cwd) => {
+      if (cwd === '/unreadable') throw new Error('ignore rules unreadable');
+      return null;
+    },
+  });
+  const stream = await collectingStream(routes[0]);
+  assert.deepEqual(await stream.drain(), [': open\n\n']);
+
+  assert.doesNotThrow(() => ctx.emit('session/created', fakeSession({ id: 's-uncomposed', cwd: '/unreadable' })));
+  assert.deepEqual(await stream.drain(), [signalOf('s-uncomposed')]);
   assert.deepEqual(hostLines(lines), ['s-uncomposed [dsh-host] handler_failed: ignore rules unreadable']);
   assert.deepEqual(table.get('s-uncomposed'), { state: 'unobserved' });
   ctx.dispose();

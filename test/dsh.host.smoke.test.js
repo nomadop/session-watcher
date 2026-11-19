@@ -10,6 +10,7 @@ import { applyHost, HOST_INJECT } from '../dsh/src/host.js';
 import { openStore, closeStore, closeStoreGlobal } from '../lib/store.js';
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
 import { reusedCallIdAcrossSteps, userMessage, requestHeader } from './helpers/dsh-events.js';
+import { runShippedScenario, shippedEntrySkip } from './helpers/dsh-shipped-entry.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 const CHECKOUT = process.env.SW_DSH_CHECKOUT;
@@ -251,4 +252,63 @@ test('the plugin loads on a real context, measures an appended session, serves i
   } finally {
     closeStore(store);
   }
+});
+
+// ── The shipped entry on a real Cordis context ───────────────────────────────
+
+const shippedSkip = skip || shippedEntrySkip(CHECKOUT);
+const runShipped = (t, scenario) => runShippedScenario(t, scenario, CHECKOUT);
+
+const SHIPPED = { skip: shippedSkip, timeout: 90_000 };
+
+test('the built entry\'s Config defaults leave a plain subagent off and its saved inheritance is read by the entry: the Config the entry exports resolves through the real fiber into the references the host reads', SHIPPED, (t) => {
+  runShipped(t, 'default-settings');
+});
+
+test('the built entry gives the host the official carrier cache bundle as its install target at the version of the bundle\'s own package, not the host package\'s: the status offers that version and a confirmed install asks the plugin manager for exactly that spec', SHIPPED, (t) => {
+  runShipped(t, 'carrier-install-target');
+});
+
+test('the built entry loads through the profile\'s runtime resolution, and a registration still pending exposes neither the mode reader, the inheritance listener nor the seal listener to the channel or to events, which a resolved registration then publishes, the seal listener prepended', SHIPPED, (t) => {
+  runShipped(t, 'pending');
+});
+
+test('a rejected registration fails the mode\'s child through Cordis and leaves neither the reader, the inheritance listener nor the seal listener published', SHIPPED, (t) => {
+  runShipped(t, 'rejected');
+});
+
+test('disposing the mode\'s child clears the reader and removes the listeners it owns, the seal listener among them', SHIPPED, (t) => {
+  runShipped(t, 'disposed');
+});
+
+test('publishing the mode reader and clearing it each emit every listed session\'s id on the events route, a session whose measurement failed among them, and turn/start emits its session\'s id without a measurement frame', SHIPPED, (t) => {
+  runShipped(t, 'frames');
+});
+
+test('on the real projection registry and sessions, blank selections emit their session frame and the reads show off, on, off, unlocked, while a locked, unavailable or malformed selection answers its failure with no record appended and no frame emitted', SHIPPED, (t) => {
+  runShipped(t, 'real-projection');
+});
+
+test('G3 through the built entry over the real loop: the mode chosen over the channel, a consumed summary stream that rejects outside its chunks ends the turn with the call record keeping the thrown error as JSON, and the next user message runs the pre-step again and seals', SHIPPED, (t) => {
+  runShipped(t, 'loop-g3');
+});
+
+test('the monitor\'s projection is registered after the mode\'s, its access published with the mode\'s in one signal per listed session and withdrawn with it, a read answers whatever the session\'s measurement says, and a monitor record emits its session\'s frame once', SHIPPED, (t) => {
+  runShipped(t, 'monitor-access');
+});
+
+test('a refused monitor registration costs its own access alone: one stderr line and no failed child, the mode read and selected, a new subagent given its parent\'s mode, the seal listener prepended and answering, the monitor unavailable, nothing retried', SHIPPED, (t) => {
+  runShipped(t, 'monitor-refused');
+});
+
+test('a session that already has its table entry is announced by its instance\'s appearance: the events stream carries its id, and the mode and the idle session\'s recorded attempt read after the mode answered unavailable and the monitor no attempts', SHIPPED, (t) => {
+  runShipped(t, 'created-recovery');
+});
+
+test('a finished session the real store has detached answers its mode and attempts from its stored log through the built entry on the real projection registry, with no watcher made for it', SHIPPED, (t) => {
+  runShipped(t, 'stored-read');
+});
+
+test('the monitor through the real loop and projection registry: a failed attempt with its call reads failed, an attempt in flight reads generating with the response so far and each chunk is one frame on the events stream with no event behind it, and the sealed attempt reads committed with the facts of the log', SHIPPED, (t) => {
+  runShipped(t, 'loop-monitor');
 });

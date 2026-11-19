@@ -1,14 +1,18 @@
-// The load into a session, over the recording session, a recording agent, a fake delivery and a fake `tools.execute` that answers batches of one `read` in the shapes of the real executor: the reads planned from the delivered keep list, how a read's outcome lands, the one message the model is handed, the failures and the hand-over. The same load over the real DSH loop is `test/dsh.load.integration.test.js`.
+// The load into a session, over the recording session, a recording agent, a fake delivery and a `readFile` that reads the files on disk through the shared tree read, as `readObserved` answers it: the reads planned from the delivered keep list, how a read's outcome lands, the payload and read messages the model is handed, the failures and the hand-over. The same load over the real DSH loop is `test/dsh.load.integration.test.js`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import nodePath, { dirname, join } from 'node:path';
 
 import { handOver, loadHandoffInto, loadedText } from '../dsh/src/load.js';
-import {
-  ToolBatchExecutionError, abortedBeforeDispatch, batchExecutor, recordingSession,
-} from './helpers/dsh-fake-context.js';
+import { ATTRIBUTION_LIMITS } from '../lib/constants.js';
+import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { LOAD_MESSAGE_KIND, isLoadPayload } from '../lib/harness/dsh/load-message.js';
+import { reduceDshEvent } from '../lib/harness/dsh/transcript-observation.js';
+import { createNodeWorkingTree } from '../lib/working-tree.js';
+import { readTreeWindows } from '../lib/working-tree-text.js';
+import { recordingSession } from './helpers/dsh-fake-context.js';
 
 const TOKEN = 'sw-handoff-token';
 const ROUTE = { provider: 'bedrock', model: 'us.anthropic.claude-opus-4-8' };
@@ -50,65 +54,42 @@ function fakeDelivery(outcome) {
   return { deliver, calls };
 }
 
-// `tools.execute` answering a batch of one `read` as the real executor does (`batchExecutor`) over the files on disk: one text block opening with the `<path>` line and the numbered lines, `meta` `{ path, offset, lines, totalLines }`, and the read's `additionalContexts`. `behaviour[file_path]` is `throw` (the batch rejects as the driver does on an internal failure), `aborted` (the skip result of a call the executor did not dispatch), `error` (an `isError` result), `{ lines: n }` (a byte cap that keeps the first n lines of the window) or `{ blank: true }` (a result with no text block); `contexts[file_path]` its additional contexts, which an `isError` result carries as well, as a failure result may. `calls` holds every input it received.
-function fakeTools({ behaviour = {}, contexts = {} } = {}) {
+// `readFile(agent, key, ranges, signal)` as `readObserved` bound by the host answers it, over the files on disk: the shared tree read under `fileBytes` and `displayPath` the path the read shows, the key unless `displayPaths[key]` says otherwise. `scripted[key]` replaces the read of that file with an answer. `calls` holds every call it received.
+function fakeReads({ fileBytes = ATTRIBUTION_LIMITS.fileBytes, displayPaths = {}, scripted = {} } = {}) {
+  const tree = createNodeWorkingTree({ path: nodePath, homeDir: null, cacheEntries: 16, cacheChars: 1_000_000 });
   const calls = [];
-  const answer = batchExecutor(async (_block, { file_path: path, offset, limit }) => {
-    const mode = behaviour[path];
-    if (mode === 'throw') throw new ToolBatchExecutionError(new Error(`read of ${path} threw`), { results: [], additionalContexts: [], concluded: false });
-    if (mode === 'aborted') return abortedBeforeDispatch();
-    if (mode === 'error') {
-      return {
-        isError: true, error: { message: `cannot read ${path}` }, content: [{ type: 'text', text: `Error: cannot read ${path}` }],
-        ...(contexts[path] ? { additionalContexts: contexts[path] } : {}),
-      };
-    }
-    const all = readFileSync(path, 'utf8').split('\n').slice(0, -1);
-    const kept = Math.min(limit, mode?.lines ?? limit);
-    const lines = all.slice(offset - 1, offset - 1 + kept).map((text, index) => ({ number: offset + index, text }));
-    const text = `<path>${path}</path>\n<type>file</type>\n<content>\n${lines.map(line => `${line.number}: ${line.text}`).join('\n')}\n</content>`;
-    return {
-      isError: false,
-      value: { path, offset, lines, totalLines: all.length },
-      content: mode?.blank ? [] : [{ type: 'text', text: text.slice(0, 20) }, { type: 'text', text: text.slice(20) }],
-      meta: { path, offset, lines, totalLines: all.length },
-      ...(contexts[path] ? { additionalContexts: contexts[path] } : {}),
-    };
-  });
-  const execute = (input) => {
-    calls.push(input);
-    return answer(input);
+  const readFile = async (agent, key, ranges, signal) => {
+    calls.push({ agent, key, ranges, signal });
+    return { read: scripted[key] ?? readTreeWindows(tree, key, ranges, { fileBytes }), displayPath: displayPaths[key] ?? key };
   };
-  return { tools: { execute }, calls };
+  return { readFile, calls };
 }
 
 const delivered = (paths, extra = {}) => ({
   found: true, handoff_id: 7, load_token: TOKEN, summary: 'The work so far.', paths_to_keep: paths, ...extra,
 });
 
-// A context message a read's hooks or policies attach to its result.
-const context = name => ({ id: `context-${name}`, role: 'user', content: [{ type: 'text', text: name }], source: { kind: 'tool-context' } });
-
-// One load over a fresh recording session and agent selecting `SELECTED` unless `selection` is given, undefined included, of `TOKEN` unless `token` is given, undefined included; `overrides` replaces any argument of the call.
+// One load over a fresh recording session and agent selecting `SELECTED` unless `selection` is given, undefined included, of `TOKEN` unless `token` is given, undefined included; `reading` configures the `readFile` (`fakeReads`), and `overrides` replaces any argument of the call.
 async function load(spec) {
-  const { payload, cwd, behaviour, contexts, selection: _selection, token: _token, signal = new AbortController().signal, ...overrides } = spec;
+  const { payload, cwd, reading, selection: _selection, token: _token, signal = new AbortController().signal, ...overrides } = spec;
   const token = 'token' in spec ? spec.token : TOKEN;
   const session = recordingSession({ cwd: overrides.headerCwd ?? cwd });
   const agent = recordingAgent(session, 'selection' in spec ? spec.selection : SELECTED);
   const delivery = fakeDelivery(payload);
-  const reads = fakeTools({ behaviour, contexts });
+  const reads = fakeReads(reading);
   const { headerCwd: _headerCwd, ...rest } = overrides;
   const outcome = await loadHandoffInto({
-    agent, session, tools: reads.tools, deliver: delivery.deliver, kit, signal, token, cwdOf: () => cwd, ...rest,
+    agent, session, readFile: reads.readFile, deliver: delivery.deliver, kit, signal, token, cwdOf: () => cwd, ...rest,
   });
   return { outcome, session, agent, delivery, reads, signal };
 }
 
-const readArgsOf = reads => reads.calls.map(input => JSON.parse(input.calls[0].arguments));
+// The window each `readFile` call of the load asked for, file by file in the order asked.
+const readArgsOf = reads => reads.calls.flatMap(({ key, ranges }) => ranges.map(({ offset, limit }) => ({ file_path: key, offset, limit })));
 
 // --- The read plan ---
 
-test('the plan reads each kept range, each ranged symbol, or the first 40 lines, at absolute paths', async (t) => {
+test('the plan reads each kept range whole, each ranged symbol, or the first 40 lines, at absolute paths', async (t) => {
   const cwd = directoryWith(t, {
     'ranges.js': 60, 'symbols.js': 60, 'stale-beside.js': 60, 'all-stale.js': 60, 'removed.js': 60, 'unparsed.js': 60,
     'plain.js': 60, 'named.js': 60, 'long.js': 2600,
@@ -140,7 +121,7 @@ test('the plan reads each kept range, each ranged symbol, or the first 40 lines,
     { file_path: at('unparsed.js'), offset: 1, limit: 40 },
     { file_path: at('plain.js'), offset: 1, limit: 40 },
     { file_path: at('named.js'), offset: 1, limit: 40 },
-    { file_path: at('long.js'), offset: 100, limit: 2000 },
+    { file_path: at('long.js'), offset: 100, limit: 2301 },
   ]);
   assert.deepEqual(outcome.loaded.toPlace, [{ path: at('named.js'), names: ['first', 'second'] }]);
 });
@@ -174,121 +155,261 @@ test('an empty keep list plans nothing and marks the load empty', async (t) => {
 
 // --- The reads ---
 
-test('a read whose batch rejects or whose result is an error is skipped with the message, a byte-capped read and a read cut at the line cap list their tails as unread', async (t) => {
-  const cwd = directoryWith(t, { 'thrown.js': 10, 'failed.js': 10, 'capped.js': 60, 'long.js': 2600, 'short.js': 10 });
+// The calls of the read message, and the text of the block a read contributed to it, by the file it read.
+const readCallsOf = loaded => loaded.messages[1].source.calls;
+const blockOf = (loaded, path) => {
+  const index = readCallsOf(loaded).findIndex(call => JSON.parse(call.arguments).file_path === path);
+  return loaded.messages[1].content[index].text;
+};
+
+test('a kept path the read finds unreadable is skipped with the reason it answers and joins no call of the read message', async (t) => {
+  const cwd = directoryWith(t, { 'big.js': 100, 'gone.js': 5, 'ok.js': 5 });
+  writeFileSync(join(cwd, 'blob.bin'), 'a\u0000b\n');
   const at = name => join(cwd, name);
   const { outcome } = await load({
     cwd,
-    behaviour: { [at('thrown.js')]: 'throw', [at('failed.js')]: 'error', [at('capped.js')]: { lines: 12 } },
-    payload: delivered([
-      { path: 'thrown.js' }, { path: 'failed.js' }, { path: 'capped.js', lines: [[5, 50]] },
-      { path: 'long.js', lines: [[100, 2400]] }, { path: 'short.js' },
-    ]),
+    reading: { fileBytes: 3000, scripted: { [at('gone.js')]: { status: 'unreadable', reason: 'missing' } } },
+    payload: delivered([{ path: 'big.js' }, { path: 'blob.bin' }, { path: 'gone.js' }, { path: 'ok.js' }]),
   });
   const { loaded } = outcome;
   assert.deepEqual(loaded.skipped, [
-    { path: at('thrown.js'), reason: 'Tool batch execution failed' },
-    { path: at('failed.js'), reason: `cannot read ${at('failed.js')}` },
+    { path: at('big.js'), reason: 'too-large' },
+    { path: at('blob.bin'), reason: 'binary' },
+    { path: at('gone.js'), reason: 'missing' },
   ]);
-  assert.deepEqual(loaded.unread, [
-    { path: at('capped.js'), range: [17, 50] },
-    { path: at('long.js'), range: [2100, 2400] },
-  ]);
-  const readCalls = loaded.message.source.calls.slice(1).map(call => JSON.parse(call.arguments).file_path);
-  assert.deepEqual(readCalls, [at('capped.js'), at('long.js'), at('short.js')]);
-  assert.deepEqual([loaded.reads, loaded.files], [3, 3]);
+  assert.deepEqual(readCallsOf(loaded).map(call => JSON.parse(call.arguments).file_path), [at('ok.js')]);
+  assert.deepEqual([loaded.reads, loaded.files, loaded.unread], [1, 1, []]);
 });
 
-test('a read that fails keeps its additional contexts, which reach the model in plan order beside the later reads\' contexts', async (t) => {
-  const cwd = directoryWith(t, { 'failed.js': 10, 'ok.js': 10 });
-  const at = name => join(cwd, name);
-  const { outcome, agent } = await load({
-    cwd,
-    behaviour: { [at('failed.js')]: 'error' },
-    contexts: { [at('failed.js')]: [context('failure')], [at('ok.js')]: [context('ok')] },
-    payload: delivered([{ path: 'failed.js' }, { path: 'ok.js' }]),
-  });
-  const { loaded } = outcome;
-  assert.deepEqual(loaded.skipped.map(entry => entry.path), [at('failed.js')]);
-  assert.deepEqual(loaded.message.source.calls.slice(1).map(call => JSON.parse(call.arguments).file_path), [at('ok.js')],
-    'the failed read stays out of the message');
-  assert.deepEqual(loaded.contexts, [context('failure'), context('ok')]);
-
-  handOver({ agent, loaded });
-  assert.deepEqual(agent.handed.slice(0, 3).map(([method, message]) => [method, message.id]), [
-    ['inject', loaded.message.id], ['inject', 'context-failure'], ['inject', 'context-ok'],
-  ]);
-});
-
-test('each context a read returns reaches the model once, in plan order, though the batch answer repeats it on the result', async (t) => {
-  const cwd = directoryWith(t, { 'a.js': 10, 'b.js': 10, 'c.js': 10 });
+test('a window wholly past the end of a file that has lines is skipped as past the end, and one partly past it reads what is there', async (t) => {
+  const cwd = directoryWith(t, { 'short.js': 10 });
   const at = name => join(cwd, name);
   const { outcome } = await load({
     cwd,
-    contexts: { [at('a.js')]: [context('a1'), context('a2')], [at('c.js')]: [context('c1')] },
-    payload: delivered([{ path: 'a.js' }, { path: 'b.js' }, { path: 'c.js' }]),
-  });
-  assert.deepEqual(outcome.loaded.skipped, []);
-  assert.deepEqual(outcome.loaded.contexts, [context('a1'), context('a2'), context('c1')]);
-});
-
-test('a read the executor skips for an aborted signal is skipped with the executor\'s reason and joins no context', async (t) => {
-  const cwd = directoryWith(t, { 'a.js': 10, 'b.js': 10 });
-  const at = name => join(cwd, name);
-  const reason = 'tool call aborted before dispatch';
-  const { outcome } = await load({
-    cwd,
-    behaviour: { [at('a.js')]: 'aborted', [at('b.js')]: 'aborted' },
-    payload: delivered([{ path: 'a.js' }, { path: 'b.js' }]),
+    payload: delivered([{ path: 'short.js', lines: [[20, 25], [8, 15]] }]),
   });
   const { loaded } = outcome;
-  assert.deepEqual(loaded.skipped, [{ path: at('a.js'), reason }, { path: at('b.js'), reason }]);
-  assert.deepEqual(loaded.contexts, []);
-  assert.deepEqual([loaded.reads, loaded.files, loaded.unread], [0, 0, []]);
-  assert.deepEqual(loaded.message.source.calls.map(call => call.name), ['load_handoff']);
+  assert.deepEqual(loaded.skipped, [{ path: at('short.js'), reason: 'past-end' }]);
+  assert.deepEqual(loaded.unread, [], 'the tail past the end of the file is no unread range');
+  assert.deepEqual(readCallsOf(loaded).map(call => call.arguments), [JSON.stringify({ file_path: at('short.js'), ranges: [{ offset: 8, limit: 8 }] })]);
+  assert.match(blockOf(loaded, at('short.js')), /^.* \(total lines: 10\)\n8: .* line 8\n9: .* line 9\n10: .* line 10\n$/);
+});
+
+test('an empty kept file is its header alone, and read anywhere but its first line it is past the end', async (t) => {
+  const cwd = directoryWith(t, { 'empty.js': 0, 'also-empty.js': 0 });
+  const at = name => join(cwd, name);
+  const { outcome } = await load({
+    cwd,
+    payload: delivered([{ path: 'empty.js' }, { path: 'also-empty.js', lines: [[3, 5]] }]),
+  });
+  const { loaded } = outcome;
+  assert.equal(blockOf(loaded, at('empty.js')), `${at('empty.js')} (total lines: 0)\n`);
+  assert.deepEqual(loaded.skipped, [{ path: at('also-empty.js'), reason: 'past-end' }]);
+  assert.deepEqual([loaded.reads, loaded.files, loaded.unread], [1, 1, []]);
+});
+
+test('a window whose rendering exceeds the side limit is rendered under it and its tail is unread', async (t) => {
+  const cwd = directoryWith(t, { 'long.js': 3000 });
+  const at = name => join(cwd, name);
+  const { outcome } = await load({ cwd, payload: delivered([{ path: 'long.js', lines: [[10, 2900]] }]) });
+  const { loaded } = outcome;
+  const block = blockOf(loaded, at('long.js'));
+  const shown = [...block.matchAll(/^(\d+): /gm)].map(match => Number(match[1]));
+  const last = shown.at(-1);
+  assert.equal(shown[0], 10);
+  assert.ok(last < 2900, 'the window was cut');
+  assert.ok(block.length <= ATTRIBUTION_LIMITS.sideChars, String(block.length));
+  assert.ok(block.length > ATTRIBUTION_LIMITS.sideChars - 300, 'cut at the limit, not under it');
+  assert.ok(block.endsWith(`(Output capped after line ${last}. Use offset=${last + 1} to continue.)\n`), block.slice(-120));
+  assert.deepEqual(loaded.unread, [{ path: at('long.js'), range: [last + 1, 2900] }]);
+  assert.deepEqual(loaded.skipped, []);
+});
+
+test('a window of which no line fits under the side limit is left out of its file\'s call and is unread whole', async (t) => {
+  const cwd = directoryWith(t);
+  const wide = join(cwd, 'wide.js');
+  writeFileSync(wide, `${'w'.repeat(ATTRIBUTION_LIMITS.sideChars + 1)}\nnarrow\n`);
+  const { outcome } = await load({ cwd, payload: delivered([{ path: 'wide.js', lines: [[1, 5], [2, 2]] }]) });
+  const { loaded } = outcome;
+  assert.deepEqual(loaded.unread, [{ path: wide, range: [1, 5] }]);
+  assert.deepEqual(loaded.skipped, []);
+  assert.deepEqual(readCallsOf(loaded).map(call => call.arguments), [JSON.stringify({ file_path: wide, ranges: [{ offset: 2, limit: 1 }] })],
+    'the window that fits is still read');
+  assert.deepEqual([loaded.reads, loaded.files], [1, 1]);
+});
+
+test('a file kept over several ranges, however the keep list interleaves its entries, is one read and one call: its path once, each range under its header, the arguments listing the ranges read', async (t) => {
+  const cwd = directoryWith(t, { 'multi.js': 30, 'other.js': 5, 'gone.js': 5 });
+  const at = name => join(cwd, name);
+  const row = (name, number) => `${number}: ${cwd}:${name} line ${number}`;
+  const { outcome, reads } = await load({
+    cwd,
+    reading: { scripted: { [at('gone.js')]: { status: 'unreadable', reason: 'missing' } } },
+    payload: delivered([
+      { path: 'multi.js', lines: [[2, 3]] }, { path: 'other.js', lines: [[1, 2]] }, { path: 'multi.js', lines: [[10, 12]] },
+      { path: 'gone.js', lines: [[1, 2], [4, 5]] },
+    ]),
+  });
+  const { loaded } = outcome;
+  assert.deepEqual(reads.calls.map(({ key, ranges }) => [key, ranges]), [
+    [at('multi.js'), [{ offset: 2, limit: 2 }, { offset: 10, limit: 3 }]],
+    [at('other.js'), [{ offset: 1, limit: 2 }]],
+    [at('gone.js'), [{ offset: 1, limit: 2 }, { offset: 4, limit: 2 }]],
+  ]);
+  assert.deepEqual(readCallsOf(loaded).map(call => call.arguments), [
+    JSON.stringify({ file_path: at('multi.js'), ranges: [{ offset: 2, limit: 2 }, { offset: 10, limit: 3 }] }),
+    JSON.stringify({ file_path: at('other.js'), ranges: [{ offset: 1, limit: 2 }] }),
+  ]);
+  assert.deepEqual(loaded.messages[1].content.map(block => block.text), [
+    `${at('multi.js')} (total lines: 30)\n${row('multi.js', 2)}\n${row('multi.js', 3)}\n--\n${row('multi.js', 10)}\n${row('multi.js', 11)}\n${row('multi.js', 12)}\n`,
+    `${at('other.js')} (total lines: 5)\n${row('other.js', 1)}\n${row('other.js', 2)}\n`,
+  ]);
+  assert.deepEqual(loaded.skipped, [{ path: at('gone.js'), reason: 'missing' }], 'an unreadable file is skipped once, not once per range');
+  assert.deepEqual([loaded.reads, loaded.files, loaded.unread], [3, 2, []], 'reads count the ranges read');
+});
+
+test('the rows of a file\'s call and its unread ranges together cover each requested range exactly, the cut falling inside a range or between ranges', async (t) => {
+  const cwd = directoryWith(t, { 'long.js': 3000 });
+  const requested = [[10, 2900], [2950, 2960], [5, 6]];
+  const { outcome } = await load({ cwd, payload: delivered([{ path: 'long.js', lines: requested }]) });
+  const { loaded } = outcome;
+  const block = loaded.messages[1].content[0].text;
+  assert.ok(block.length <= ATTRIBUTION_LIMITS.sideChars, String(block.length));
+  const shown = new Set([...block.matchAll(/^(\d+): /gm)].map(match => Number(match[1])));
+  const unread = new Set(loaded.unread.flatMap(({ range: [from, to] }) => Array.from({ length: to - from + 1 }, (_, at) => from + at)));
+  assert.ok(unread.size > 0, 'fixture: the file does not fit whole');
+  for (const [from, to] of requested) {
+    for (let line = from; line <= to; line += 1) assert.notEqual(shown.has(line), unread.has(line), `line ${line} is shown or unread, one of the two`);
+  }
 });
 
 // --- The message ---
 
-test('the message holds the delivery and each read as calls with their results, under the session\'s route', async (t) => {
+test('the payload message holds the delivery alone and the read message each surviving read, as calls with their results, both under the session\'s route', async (t) => {
   const cwd = directoryWith(t, { 'a.js': 10, 'b.js': 10 });
+  const at = name => join(cwd, name);
   const payload = delivered([{ path: 'a.js', lines: [[2, 3]] }, { path: 'b.js' }], {
     turn_page_error: 'page failed', recovery: 'Call turn_page to obtain the page.',
   });
   const { outcome, delivery, reads, agent, signal } = await load({
-    cwd, payload, selection: ROUTE, behaviour: { [join(cwd, 'b.js')]: { blank: true } },
+    cwd, payload, selection: ROUTE, reading: { displayPaths: { [at('b.js')]: '/execution/b.js' } },
   });
-  const { message } = outcome.loaded;
-  const { source } = message;
-  assert.ok(!['user', 'plugin', 'runtime-context'].includes(source.kind), source.kind);
-  assert.deepEqual(source.route, ROUTE);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(source)), source, 'lossless, no absent key');
+  const { messages } = outcome.loaded;
+  assert.equal(messages.length, 2);
+  const [payloadMessage, readMessage] = messages;
+  for (const { source } of messages) {
+    assert.ok(!['user', 'plugin', 'runtime-context'].includes(source.kind), source.kind);
+    assert.equal(source.kind, LOAD_MESSAGE_KIND);
+    assert.deepEqual(source.route, ROUTE);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(source)), source, 'lossless, no absent key');
+  }
 
   assert.deepEqual(delivery.calls.map(({ agent: caller, signal: callSignal, args }) => [caller, callSignal, args]), [[agent, signal, { load_token: TOKEN }]]);
-  assert.deepEqual(source.calls.map(call => call.name), ['load_handoff', 'read', 'read']);
-  assert.deepEqual(source.calls.map(call => call.arguments), [
-    JSON.stringify({ load_token: TOKEN }), ...readArgsOf(reads).map(args => JSON.stringify(args)),
+  assert.deepEqual(payloadMessage.source.calls.map(call => [call.name, call.arguments]), [['load_handoff', JSON.stringify({ load_token: TOKEN })]]);
+  assert.deepEqual(readMessage.source.calls.map(call => call.name), ['read', 'read']);
+  assert.deepEqual(readMessage.source.calls.map(call => call.arguments), [
+    JSON.stringify({ file_path: at('a.js'), ranges: [{ offset: 2, limit: 2 }] }),
+    JSON.stringify({ file_path: at('b.js'), ranges: [{ offset: 1, limit: 40 }] }),
   ]);
-  for (const { id } of source.calls) assert.match(id, /^sw-load-[0-9a-f]{8}-\d+$/);
-  assert.deepEqual(reads.calls, source.calls.slice(1).map(call => ({
-    calls: [{ type: 'tool-call', id: call.id, name: 'read', arguments: call.arguments }], signal, agent,
-  })), 'one batch of one call per read, owned by the agent and the signal, with no model-step log');
+  for (const { id } of messages.flatMap(message => message.source.calls)) assert.match(id, /^sw-load-[0-9a-f]{8}-\d+$/);
+  assert.notEqual(payloadMessage.id, readMessage.id);
+  assert.deepEqual(reads.calls, [
+    { agent, key: at('a.js'), ranges: [{ offset: 2, limit: 2 }], signal },
+    { agent, key: at('b.js'), ranges: [{ offset: 1, limit: 40 }], signal },
+  ], 'one read per file, for the agent and under the signal');
 
-  const answered = await Promise.all(reads.calls.map(input => fakeTools({ behaviour: { [join(cwd, 'b.js')]: { blank: true } } }).tools.execute(input)));
-  assert.deepEqual(message.content, [
-    { type: 'text', text: JSON.stringify(payload) },
-    { type: 'text', text: answered[0].results[0].result.content.map(block => block.text).join('') },
-    { type: 'text', text: '' },
-  ]);
+  const numbered = (name, from, to) => Array.from({ length: to - from + 1 }, (_, index) => `${from + index}: ${cwd}:${name} line ${from + index}`).join('\n');
+  assert.deepEqual(payloadMessage.content, [{ type: 'text', text: JSON.stringify(payload) }]);
+  assert.deepEqual(readMessage.content, [
+    { type: 'text', text: `${at('a.js')} (total lines: 10)\n${numbered('a.js', 2, 3)}\n` },
+    { type: 'text', text: `/execution/b.js (total lines: 10)\n${numbered('b.js', 1, 10)}\n` },
+  ], 'the key names the read, the displayed path heads its block, and each block ends its last row so that blocks joined with nothing between them stay apart');
   assert.equal(outcome.loaded.token, TOKEN);
   assert.deepEqual(agent.handed, [], 'nothing is handed over inside the load');
 });
 
-test('a load with no read holds the delivery alone, and an auto-match delivers with no token', async (t) => {
-  const { outcome, delivery } = await load({ cwd: directoryWith(t), payload: delivered([]), token: undefined });
+// The rows `N: text` a block shows, as `[number, text]`.
+const rowsOf = block => [...block.matchAll(/^(\d+): (.*)$/gm)].map(([, number, text]) => [Number(number), text]);
+
+test('the read message\'s source holds the lines its blocks show as canonical carried evidence under the Working Tree key, and the payload message none', async (t) => {
+  const cwd = directoryWith(t, { 'multi.js': 30, 'other.js': 5, 'empty.js': 0, 'gone.js': 5 });
+  const at = name => join(cwd, name);
+  const row = (name, number) => [number, `${cwd}:${name} line ${number}`];
+  const { outcome } = await load({
+    cwd,
+    reading: { displayPaths: { [at('other.js')]: '/execution/other.js' }, scripted: { [at('gone.js')]: { status: 'unreadable', reason: 'missing' } } },
+    payload: delivered([
+      { path: 'multi.js', lines: [[2, 3], [10, 11]] }, { path: 'other.js', lines: [[1, 2]] }, { path: 'empty.js' }, { path: 'gone.js' },
+    ]),
+  });
+  const [payloadMessage, readMessage] = outcome.loaded.messages;
+
+  assert.equal('paths' in payloadMessage.source, false, 'the delivery shows no file text');
+  assert.deepEqual(readMessage.source.paths, [
+    { path: at('multi.js'), displayPath: at('multi.js'), totalLines: 30, state: 'readable', write: [2, 3, 10, 11].map(number => row('multi.js', number)) },
+    { path: at('other.js'), displayPath: '/execution/other.js', totalLines: 5, state: 'readable', write: [1, 2].map(number => row('other.js', number)) },
+    { path: at('empty.js'), displayPath: at('empty.js'), state: 'empty' },
+  ], 'one entry for each block, none for the path that could not be read');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(readMessage.source)), readMessage.source, 'lossless, no absent key');
+  assert.deepEqual(readMessage.source.calls.map(call => JSON.parse(call.arguments).file_path), readMessage.source.paths.map(entry => entry.path),
+    'a call and its evidence name the same key, in the same order');
+});
+
+test('what a cut block shows is the evidence and what it leaves unread is not: the rows of each block and the written lines of its entry are one set, the requested ranges and the unread lines notwithstanding', async (t) => {
+  const cwd = directoryWith(t, { 'long.js': 3000, 'short.js': 20 });
+  const wide = join(cwd, 'wide.js');
+  writeFileSync(wide, `${'w'.repeat(ATTRIBUTION_LIMITS.sideChars + 1)}\nnarrow\n`);
+  const { outcome } = await load({
+    cwd,
+    payload: delivered([
+      { path: 'long.js', lines: [[10, 2900], [2950, 2960], [5, 6]] }, { path: 'wide.js', lines: [[1, 5], [2, 2]] }, { path: 'short.js', lines: [[3, 4]] },
+    ]),
+  });
+  const { loaded } = outcome;
+  const [, readMessage] = loaded.messages;
+  const entry = path => readMessage.source.paths.find(held => held.path === path);
+
+  const long = entry(join(cwd, 'long.js'));
+  const lastShown = rowsOf(blockOf(loaded, long.path)).at(-1)[0];
+  assert.ok(lastShown < 2900, 'fixture: the block was cut inside the first range');
+  assert.deepEqual(long.write, rowsOf(blockOf(loaded, long.path)), 'the evidence is the shown rows, in order');
+  assert.ok(long.write.every(([number]) => number <= lastShown), 'no unread row, none of the later ranges');
+  assert.deepEqual(entry(wide).write, [[2, 'narrow']], 'the window of which no line fits is no evidence, the one that fits is');
+  assert.deepEqual(entry(join(cwd, 'short.js')).write, rowsOf(blockOf(loaded, join(cwd, 'short.js'))));
+  assert.equal(entry(join(cwd, 'short.js')).totalLines, 20);
+});
+
+test('the evidence in the read message\'s source changes what the Source reads of it by nothing: the same observations and the same source facts as the message without it', async (t) => {
+  const cwd = directoryWith(t, { 'a.js': 10, 'empty.js': 0 });
+  const { outcome } = await load({ cwd, payload: delivered([{ path: 'a.js', lines: [[2, 3]] }, { path: 'empty.js' }]) });
+  const [, message] = outcome.loaded.messages;
+  const { paths, ...source } = message.source;
+  assert.ok(paths.length > 0, 'fixture: the message holds evidence');
+  const eventOf = data => ({ type: 'user/message', seq: 4, time: 1_000, data, surfaceOp: 'append' });
+
+  assert.deepEqual(reduceDshEvent(eventOf(message)), reduceDshEvent(eventOf({ ...message, source })));
+  assert.equal(reduceDshEvent(eventOf(message)).observations.length, 4, 'one use and one result for each of the two calls');
+  assert.deepEqual(sourceFactOf(eventOf(message)), sourceFactOf(eventOf({ ...message, source })));
+});
+
+test('isLoadPayload holds of the payload message\'s source alone, not of the read message\'s nor of another kind\'s', async (t) => {
+  const cwd = directoryWith(t, { 'a.js': 10 });
+  const { outcome } = await load({ cwd, payload: delivered([{ path: 'a.js' }]) });
+  const [payloadMessage, readMessage] = outcome.loaded.messages;
+  assert.equal(isLoadPayload(payloadMessage.source), true);
+  assert.equal(isLoadPayload(readMessage.source), false);
+  assert.equal(isLoadPayload({ kind: 'user' }), false);
+  assert.equal(isLoadPayload({ ...payloadMessage.source, kind: 'user' }), false);
+});
+
+test('a load none of whose reads survives hands over the payload message alone, and an auto-match delivers with no token', async (t) => {
+  const { outcome, delivery } = await load({ cwd: directoryWith(t), payload: delivered([{ path: 'absent.js' }]), token: undefined });
   assert.deepEqual(delivery.calls.map(call => call.args), [{}]);
-  assert.deepEqual(outcome.loaded.message.source.calls.map(call => [call.name, call.arguments]), [['load_handoff', '{}']]);
-  assert.equal(outcome.loaded.message.content.length, 1);
+  const { messages } = outcome.loaded;
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0].source.calls.map(call => [call.name, call.arguments]), [['load_handoff', '{}']]);
+  assert.equal(messages[0].content.length, 1);
+  assert.deepEqual(outcome.loaded.skipped.map(entry => entry.path), ['absent.js']);
 });
 
 test('call ids are unique across two loads into one session', async (t) => {
@@ -298,7 +419,7 @@ test('call ids are unique across two loads into one session', async (t) => {
   const ids = [];
   for (let run = 0; run < 2; run += 1) {
     const { outcome } = await load({ cwd, payload: delivered([{ path: 'a.js' }, { path: 'a.js', lines: [[2, 4]] }]), session, agent });
-    ids.push(...outcome.loaded.message.source.calls.map(call => call.id));
+    ids.push(...outcome.loaded.messages.flatMap(message => message.source.calls.map(call => call.id)));
   }
   assert.equal(new Set(ids).size, ids.length);
 });
@@ -307,7 +428,7 @@ test('the route is the provider and model of the agent\'s current selection, and
   const cwd = directoryWith(t, { 'a.js': 10 });
   const payload = delivered([{ path: 'a.js' }]);
   const { outcome } = await load({ cwd, payload, selection: { ...ROUTE, reasoningEffort: 'high' } });
-  assert.deepEqual(outcome.loaded.message.source.route, ROUTE);
+  assert.deepEqual(outcome.loaded.messages.map(message => message.source.route), [ROUTE, ROUTE]);
 
   const refused = await load({ cwd, payload, selection: undefined });
   assert.deepEqual(refused.outcome, { failed: { reason: 'No model route is known for this session yet.' } });
@@ -349,23 +470,30 @@ test('a throw while the message is built answers that the load did not finish an
 
 // --- The hand-over ---
 
-test('handOver injects the message, then each read\'s contexts, then queues the follow-up, in one synchronous stretch', async (t) => {
+test('handOver injects the payload message, then the read message, then queues the follow-up, in one synchronous stretch', async (t) => {
   const cwd = directoryWith(t, { 'a.js': 10, 'b.js': 10 });
-  const { outcome, agent } = await load({
-    cwd, payload: delivered([{ path: 'a.js' }, { path: 'b.js' }]),
-    contexts: { [join(cwd, 'a.js')]: [context('a1'), context('a2')], [join(cwd, 'b.js')]: [context('b1')] },
-  });
-  assert.deepEqual(outcome.loaded.contexts, [context('a1'), context('a2'), context('b1')]);
+  const { outcome, agent } = await load({ cwd, payload: delivered([{ path: 'a.js' }, { path: 'b.js' }]) });
 
   const returned = handOver({ agent, loaded: outcome.loaded });
   assert.equal(returned, undefined);
-  assert.deepEqual(agent.handed.map(([method, message]) => [method, message.id ?? null]), [
-    ['inject', outcome.loaded.message.id], ['inject', 'context-a1'], ['inject', 'context-a2'], ['inject', 'context-b1'], ['followup', agent.handed[4][1].id],
+  const [payloadMessage, readMessage] = outcome.loaded.messages;
+  assert.deepEqual(agent.handed.map(([method, message]) => [method, message.id]), [
+    ['inject', payloadMessage.id], ['inject', readMessage.id], ['followup', agent.handed[2][1].id],
   ]);
-  const [, followup] = agent.handed[4];
+  const [, followup] = agent.handed[2];
   assert.deepEqual(followup.source, { kind: 'user' });
   assert.equal(followup.role, 'user');
   assert.deepEqual(followup.content, [{ type: 'text', text: loadedText(outcome.loaded) }]);
+});
+
+test('handOver of a load none of whose reads survives injects the payload message alone before the follow-up', async (t) => {
+  const { outcome, agent } = await load({ cwd: directoryWith(t), payload: delivered([]) });
+
+  handOver({ agent, loaded: outcome.loaded, resume: true });
+  assert.deepEqual(agent.handed.map(([method, message]) => [method, message.id]), [
+    ['inject', outcome.loaded.messages[0].id], ['followup', agent.handed[1][1].id],
+  ]);
+  assert.deepEqual(agent.handed[1][1].content, [{ type: 'text', text: loadedText(outcome.loaded, { resume: true }) }]);
 });
 
 // --- The follow-up text ---
@@ -392,6 +520,19 @@ for (const [intent, options] of INTENTS) {
     const bare = loadedText({ token: 'sw-token', skills: [], empty: false, skipped: [], unread: [], toPlace: [] }, options);
     const empty = loadedText({ token: 'sw-token', skills: [], empty: true, skipped: [], unread: [], toPlace: [] }, options);
     assert.notEqual(empty, bare);
+  });
+}
+
+// The follow-up of a load whose reads survived (`reads` of them) or none did, with nothing else to report.
+const textOfReads = (reads, options) => loadedText({ token: 'sw-token', skills: [], empty: false, skipped: [], unread: [], toPlace: [], reads, ...options });
+
+for (const [intent, options] of INTENTS) {
+  test(`the ${intent} follow-up names the one message holding the delivery when no read survived, and the two messages when one did`, () => {
+    const alone = textOfReads(0, options);
+    const both = textOfReads(2, options);
+    assert.notEqual(alone, both);
+    assert.match(both, /two messages/);
+    assert.doesNotMatch(alone, /two messages/);
   });
 }
 

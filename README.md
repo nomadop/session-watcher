@@ -113,20 +113,7 @@ If you installed or updated in an already-running session, run `/reload-plugins`
 
 ## DSH plugin
 
-`@nomadop/session-watcher-dsh` runs Session Watcher inside DeepSeek Harness (DSH). It watches every running session of the host it loads into and shares `~/.session-watcher` with the Claude Code plugin.
-
-```bash
-dsh plugin --profile <name> add @nomadop/session-watcher-dsh
-```
-
-- **The Session Watcher tab** — a view in the conversation view strip that mounts the dashboard's elements for that session.
-- **The composer dock** — a pill below the composer showing the lamp, the bill premium and the alert clock, with the position and the context stock in its popover.
-- **Tools** — the [MCP tools](#mcp-tools), each answering for the calling agent's own session, except that `watcher_status` can name another.
-- **Skills** — `sw-handoff` and `sw-explain`, registered with the host.
-- **Commands** — `/sw-load [token]`, typed in the Web composer, loads a handoff, and `/sw-continue` clears the session and loads its newest handoff; each command delivers the handoff and reads its kept paths itself, then hands the model the result.
-- **Replay** — `npx -y @nomadop/session-watcher replay <path>` plays a DSH session log back on the dashboard.
-
-See the [DSH plugin docs](https://nomadop.github.io/session-watcher/docs/dsh/) for the profile to add it to, what the tab and the dock show, the surface they are supported on, and handoffs that cross between the two hosts.
+`@nomadop/session-watcher-dsh` runs Session Watcher inside DeepSeek Harness (DSH), with a tab, a composer dock, the [MCP tools](#mcp-tools), skills and handoff commands. Its [README](https://github.com/nomadop/session-watcher/blob/main/dsh/README.en.md) has the install command, screenshots and limits; the [DSH plugin docs](https://nomadop.github.io/session-watcher/docs/dsh/) cover the rest, including replay of a DSH session log.
 
 ## Statusline
 

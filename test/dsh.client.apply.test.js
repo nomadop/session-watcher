@@ -5,12 +5,14 @@ import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { applyClient } from '../dsh/src/client/plugin.js';
 import { SessionWatcherTab } from '../dsh/src/client/tab.js';
+import { ModeToggle, ModeMark } from '../dsh/src/client/mode.js';
 import { NS, en, zh } from '../dsh/src/client/locales.js';
 import { MIN_GAP_MS } from '../dsh/src/client/session-store.js';
+import { MONITOR_VIEW_ID } from '../dsh/src/client/monitor-register.js';
 import { TAB_CSS, OPTIONS, hookFakes, stubDocument, fakeCtx } from './helpers/dsh-client-context.js';
 
-/** The registrations of one slot, by the entry's `name`. */
-const entriesOf = (fake, name) => fake.registrations.filter(r => r.options.name === name);
+/** The registrations of one slot, by the entry's `name`, the monitor's `conversation.view` entry left to the tests of `monitor-register.js`. */
+const entriesOf = (fake, name) => fake.registrations.filter(r => r.options.name === name && r.options.id !== MONITOR_VIEW_ID);
 const viewEntry = fake => entriesOf(fake, 'conversation.view')[0];
 
 test('applyClient registers the locale namespace and one style tag carrying the handed text inside effects, injects into the view and dock slots, registers nothing while the slots are undeclared and throws nothing', (t) => {
@@ -30,7 +32,9 @@ test('applyClient registers the locale namespace and one style tag carrying the 
   assert.equal(tag.textContent, TAB_CSS);
   assert.deepEqual(tag.dataset, { plugin: '@nomadop/session-watcher-dsh', pluginCss: '@nomadop/session-watcher-dsh/tab.css' });
   assert.equal(tag.appendedInEffect, true);
-  assert.deepEqual(fake.injections.map(i => i.key), ['conversation.view', 'conversation.composer.dock']);
+  assert.deepEqual(fake.injections.map(i => i.key), [
+    'conversation.view', 'conversation.composer.dock', 'conversation.hero.options', 'conversation.session.header.actions', 'conversation.view',
+  ], 'the last is the monitor\'s, held by an injection child of its own');
   assert.deepEqual(fake.registrations, []);
 });
 
@@ -293,4 +297,204 @@ test('a page that turns visible again opens a stream whose state restarts from c
   assert.equal(signalState.getSnapshot(), 'connecting');
   page.sources[1].emit('open');
   assert.equal(signalState.getSnapshot(), 'live');
+});
+
+// ── The session mode entries ─────────────────────────────────────────────────
+
+const toggleEntry = fake => entriesOf(fake, 'conversation.hero.options')[0];
+const markEntry = fake => entriesOf(fake, 'conversation.session.header.actions')[0];
+
+const modeCalls = fake => rpcCalls(fake).filter(e => e.endpoint.startsWith('inner-mode'));
+const readsOf = fake => modeCalls(fake).filter(e => e.endpoint === 'inner-mode');
+
+const ready = (mode, locked) => ({ ok: true, value: { mode, locked } });
+const unavailableReply = { ok: false, error: { code: 'inner_mode_unavailable', message: 'The inner compaction mode is not available in this host.', details: {} } };
+
+test('declaring the slots registers the toggle under conversation.hero.options and the mark under conversation.session.header.actions, each with the plugin\'s locale, and undeclaring disposes them', (t) => {
+  stubDocument(t);
+  const fake = fakeCtx();
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  for (const [entry, component] of [[toggleEntry(fake), ModeToggle], [markEntry(fake), ModeMark]]) {
+    assert.equal(entry.component, component);
+    assert.equal(entry.options.id, 'session-watcher.inner-mode');
+    assert.equal(entry.options.locale, NS);
+  }
+  fake.undeclare();
+  assert.equal(toggleEntry(fake).disposed, 1);
+  assert.equal(markEntry(fake).disposed, 1);
+});
+
+test('each entry\'s inject binds its session into the mode RPCs and both entries of a session share one reader', async (t) => {
+  stubDocument(t);
+  const fake = fakeCtx({ rpcCall: (_channel, endpoint) => Promise.resolve(endpoint === 'inner-mode' ? ready('off', false) : { ok: true, value: {} }) });
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  const toggle = toggleEntry(fake).options.inject('s1');
+  const mark = markEntry(fake).options.inject('s1');
+  assert.deepEqual(Object.keys(toggle).sort(), ['reader', 'select', 'visibility']);
+  assert.deepEqual(Object.keys(mark).sort(), ['reader']);
+  assert.equal(toggle.reader, mark.reader, 'one reader per session');
+  assert.notEqual(toggleEntry(fake).options.inject('s2').reader, toggle.reader);
+  toggle.reader.subscribe(() => {});
+  await toggleEntry(fake).options.inject('s2').select(true);
+  await toggle.select(false);
+  await flush();
+  assert.deepEqual(modeCalls(fake).map(({ channel, endpoint, payload }) => ({ channel, endpoint, payload })), [
+    { channel: '/session-watcher', endpoint: 'inner-mode', payload: { sessionId: 's1' } },
+    { channel: '/session-watcher', endpoint: 'inner-mode/select', payload: { sessionId: 's2', enabled: true } },
+    { channel: '/session-watcher', endpoint: 'inner-mode/select', payload: { sessionId: 's1', enabled: false } },
+  ]);
+});
+
+test('a reader holds no result before its read, the mode and lock a successful read answers, and unavailable for any other answer, which a later read replaces', async (t) => {
+  const page = stubDocument(t);
+  const answers = [unavailableReply, ready('on', false), { ok: true, value: { state: 'bootstrapping' } }, new Error('transport'), ready('on', true)];
+  const fake = fakeCtx({ rpcCall: () => { const next = answers.shift(); return next instanceof Error ? Promise.reject(next) : Promise.resolve(next); } });
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  const { reader } = markEntry(fake).options.inject('s1');
+  const heard = [];
+  assert.equal(reader.result, null);
+  const unsubscribe = reader.subscribe(result => heard.push(result));
+  assert.deepEqual(heard, [], 'a new subscriber reads the result first');
+  await flush();
+  assert.deepEqual(reader.result, { kind: 'unavailable' });
+  for (const expected of [{ kind: 'ready', mode: 'on', locked: false }, { kind: 'unavailable' }, { kind: 'unavailable' }, { kind: 'ready', mode: 'on', locked: true }]) {
+    page.sources[0].emit('message', { data: JSON.stringify({ sessionId: 's1' }) });
+    await flush();
+    assert.deepEqual(reader.result, expected);
+  }
+  assert.deepEqual(heard, [
+    { kind: 'unavailable' }, { kind: 'ready', mode: 'on', locked: false }, { kind: 'unavailable' }, { kind: 'unavailable' }, { kind: 'ready', mode: 'on', locked: true },
+  ]);
+  unsubscribe();
+});
+
+test('after an unavailable reply a frame re-reads only that session\'s subscribed reader and an open re-reads every subscribed reader', async (t) => {
+  const page = stubDocument(t);
+  const fake = fakeCtx({ rpcCall: (_channel, endpoint) => Promise.resolve(endpoint === 'inner-mode' ? unavailableReply : { ok: true, value: { state: 'bootstrapping' } }) });
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  const { inject } = markEntry(fake).options;
+  inject('s1').reader.subscribe(() => {});
+  inject('s2').reader.subscribe(() => {});
+  inject('s3');
+  await flush();
+  assert.deepEqual(readsOf(fake).map(e => e.payload.sessionId), ['s1', 's2'], 'a subscription reads');
+  assert.deepEqual(inject('s1').reader.result, { kind: 'unavailable' });
+  const [source] = page.sources;
+  source.emit('message', { data: JSON.stringify({ sessionId: 's1' }) });
+  await flush();
+  assert.deepEqual(readsOf(fake).map(e => e.payload.sessionId).slice(2), ['s1'], 'a frame reads its own session\'s reader');
+  source.emit('message', { data: JSON.stringify({ sessionId: 's3' }) });
+  source.emit('message', { data: JSON.stringify({ sessionId: 's-unknown' }) });
+  await flush();
+  assert.equal(readsOf(fake).length, 3, 'a frame for an unsubscribed or unknown session reads nothing');
+  source.emit('open');
+  await flush();
+  assert.deepEqual(readsOf(fake).map(e => e.payload.sessionId).slice(3), ['s1', 's2'], 'an open reads every subscribed reader and no other');
+});
+
+test('a reader coalesces signals that arrive while its read is in flight into one more read', async (t) => {
+  const page = stubDocument(t);
+  const replies = [];
+  const fake = fakeCtx({
+    rpcCall: (_channel, endpoint) => (endpoint === 'inner-mode' ? new Promise(resolve => replies.push(resolve)) : Promise.resolve({ ok: true, value: { state: 'bootstrapping' } })),
+  });
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  const { reader } = markEntry(fake).options.inject('s1');
+  reader.subscribe(() => {});
+  const [source] = page.sources;
+  for (let frame = 0; frame < 3; frame += 1) source.emit('message', { data: JSON.stringify({ sessionId: 's1' }) });
+  await flush();
+  assert.equal(replies.length, 1, 'one read in flight');
+  replies.shift()(ready('off', false));
+  await flush();
+  assert.equal(replies.length, 1, 'the frames that arrived meanwhile cost one more read');
+  replies.shift()(ready('on', false));
+  await flush();
+  assert.deepEqual(reader.result, { kind: 'ready', mode: 'on', locked: false });
+  assert.equal(replies.length, 0);
+});
+
+test('the face\'s selection handler leaves the displayed mode as it was whatever the reply, and only the session\'s frame re-reads it; a rejected selection changes no reader value and re-reads nothing', async (t) => {
+  const page = stubDocument(t);
+  let mode = 'off';
+  let selectReply = { ok: true, value: {} };
+  const fake = fakeCtx({
+    rpcCall: (_channel, endpoint, payload) => {
+      if (endpoint === 'inner-mode/select') {
+        if (selectReply instanceof Error) return Promise.reject(selectReply);
+        if (selectReply.ok) mode = payload.enabled ? 'on' : 'off';
+        return Promise.resolve(selectReply);
+      }
+      return Promise.resolve(ready(mode, false));
+    },
+  });
+  applyClient(fake.ctx, OPTIONS);
+  fake.declare();
+  const { reader, select } = toggleEntry(fake).options.inject('s1');
+  reader.subscribe(() => {});
+  await flush();
+  assert.deepEqual(reader.result, { kind: 'ready', mode: 'off', locked: false });
+  const reads = () => readsOf(fake).length;
+  const before = reads();
+
+  assert.deepEqual(await select(true), { ok: true, value: {} });
+  await flush();
+  assert.deepEqual(reader.result, { kind: 'ready', mode: 'off', locked: false }, 'a successful reply sets no mode');
+  assert.equal(reads(), before, 'and re-reads nothing');
+  page.sources[0].emit('message', { data: JSON.stringify({ sessionId: 's1' }) });
+  await flush();
+  assert.deepEqual(reader.result, { kind: 'ready', mode: 'on', locked: false }, 'the session\'s frame carries the re-read');
+
+  for (const reply of [{ ok: false, error: { code: 'inner_mode_locked', message: 'locked', details: {} } }, unavailableReply, new Error('transport')]) {
+    selectReply = reply;
+    const settled = reply instanceof Error ? await select(false).then(() => 'resolved', () => 'rejected') : await select(false);
+    await flush();
+    assert.ok(settled === 'rejected' || settled.ok === false);
+    assert.deepEqual(reader.result, { kind: 'ready', mode: 'on', locked: false }, 'a rejected selection leaves the value');
+    assert.equal(reads(), before + 1, 'and re-reads nothing by itself');
+  }
+});
+
+// ── The mode components ──────────────────────────────────────────────────────
+
+const t = key => key;
+const readerOf = result => ({ result, subscribe: () => () => {} });
+const flagOf = flag => ({ getSnapshot: () => flag, subscribe: () => () => {} });
+const renderToggle = (result, shown = true) => renderToString(React.createElement(ModeToggle, { reader: readerOf(result), select: async () => ({ ok: true, value: {} }), visibility: flagOf(shown), t }));
+const renderMark = result => renderToString(React.createElement(ModeMark, { reader: readerOf(result), t }));
+
+test('the toggle renders while the mode is read and unlocked, its switch showing the mode, and nothing for an unread, unavailable, locked or invalid state', () => {
+  assert.equal(renderToggle(null), '');
+  assert.equal(renderToggle({ kind: 'unavailable' }), '');
+  assert.equal(renderToggle({ kind: 'ready', mode: 'off', locked: true }), '');
+  assert.equal(renderToggle({ kind: 'ready', mode: 'on', locked: true }), '');
+  assert.equal(renderToggle({ kind: 'ready', mode: 'invalid', locked: false }), '');
+  const off = renderToggle({ kind: 'ready', mode: 'off', locked: false });
+  assert.match(off, /role="switch"/);
+  assert.match(off, /aria-checked="false"/);
+  assert.ok(off.includes('mode.toggle'), off);
+  const on = renderToggle({ kind: 'ready', mode: 'on', locked: false });
+  assert.match(on, /aria-checked="true"/);
+});
+
+test('the toggle is shown only while the setting shows the option, whatever mode the session holds: hidden it renders nothing for an off, an on or any other read, and the mark of a started session does not follow it', () => {
+  for (const result of [{ kind: 'ready', mode: 'off', locked: false }, { kind: 'ready', mode: 'on', locked: false }]) assert.equal(renderToggle(result, false), '', JSON.stringify(result));
+  assert.match(renderToggle({ kind: 'ready', mode: 'on', locked: false }, true), /aria-checked="true"/, 'the mode a hidden option left chosen shows again once the option does');
+  assert.ok(renderMark({ kind: 'ready', mode: 'on', locked: true }).includes('mode.mark'));
+});
+
+test('the mark renders for an on mode that is locked and nothing for any other state', () => {
+  assert.equal(renderMark(null), '');
+  assert.equal(renderMark({ kind: 'unavailable' }), '');
+  assert.equal(renderMark({ kind: 'ready', mode: 'on', locked: false }), '');
+  assert.equal(renderMark({ kind: 'ready', mode: 'off', locked: true }), '');
+  assert.equal(renderMark({ kind: 'ready', mode: 'invalid', locked: true }), '');
+  const mark = renderMark({ kind: 'ready', mode: 'on', locked: true });
+  assert.ok(mark.includes('mode.mark'), mark);
+  assert.doesNotMatch(mark, /<button|role="switch"/);
 });

@@ -38,6 +38,29 @@ test('wallet clock: walletPhase advances by deltaW / walletIntervalFor(mf) and r
   near(s.walletPhase, 0.25); assert.equal(s.walletLapCount, 2);
 });
 
+// At mf 0.4 the amber right root is u = 2, so a wallet lap is 2 units of deltaW: u²/2.
+test('wallet clock: at mf 0.4 one unit of deltaW is half a lap, the fast clock settles it as one cycle, and an existing phase continues', () => {
+  let s = applyFoldedCallSample(freshLedger(KEY), rs(1, 1, 0.4));
+  near(s.walletPhase, 0.5, 1e-12); assert.equal(s.walletLapCount, 0);
+  assert.equal(s.billCycleCount, 1); assert.equal(s.billProgress, 0);
+  s = applyFoldedCallSample({ ...freshLedger(KEY), walletPhase: 0.75, walletLapCount: 2 }, rs(1, 0.5, 0.4));
+  assert.equal(s.walletLapCount, 3); near(s.walletPhase, 0, 1e-12);
+  assert.equal(s.billProgress, 0.5);
+});
+
+test('drainFrame at mf 0.4: 4.2 units of deltaW cross two laps in one event, and re-draining the frame changes nothing', () => {
+  const ledger = freshLedger(KEY);
+  const frame = { turnSeq: 1, samples: [rs(1, 4.2, 0.4)] };
+  drainFrame(ledger, frame);
+  assert.equal(ledger.walletLapCount, 2);
+  assert.ok(Math.abs(ledger.walletPhase - 0.1) < 1e-9);
+  assert.equal(ledger.lastStopEvent.billCount, 2);
+  assert.equal(ledger.recentStopEvents.length, 1);
+  const settled = structuredClone(ledger);
+  drainFrame(ledger, frame);
+  assert.deepEqual(ledger, settled);
+});
+
 test('the wallet clock does not advance when mf is not finite and positive; the fast clock still does', () => {
   let s = freshLedger(KEY);
   s = applyFoldedCallSample(s, rs(1, 0.4, null));

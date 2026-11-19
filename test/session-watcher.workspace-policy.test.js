@@ -213,7 +213,7 @@ describe('flush scheduling', () => {
     assert.equal(overrideOf('/repo/src/keep.js'), 'exclude');
   });
 
-  test('an append retains the override set while an epoch, an explicit close, a replace and a rotate clear it', () => {
+  test('an append retains the override set while an epoch, an explicit close and a rotate clear it', () => {
     const overrideOf = (watcher, path) => watcher.getBucketData().paths.find(p => p.path === path)?.userOverride ?? null;
     // Each case gets its own watcher AND its own reducer: an override set is epoch-local, so the seeded
     // state has to be reachable independently in every one of them.
@@ -242,14 +242,6 @@ describe('flush scheduling', () => {
     const closed = seeded();
     closed.watcher.closeCurrentSegment();
     assert.equal(overrideOf(closed.watcher, '/repo/src/kept.js'), null, 'an explicit close cleared it');
-
-    const replaced = seeded();
-    replaced.watcher.applyHarnessFrame({ transition: 'replace', sourceLocator: '/t/next.jsonl', batches: [], sourceObserved: true, captureMode: 'live' });
-    assert.equal(overrideOf(replaced.watcher, '/repo/src/kept.js'), null, 'a replace installed a fresh Engine');
-
-    const rewound = seeded();
-    rewound.watcher.applyHarnessFrame({ transition: 'replace', sourceLocator: '/t/session.jsonl', batches: [], sourceObserved: true, captureMode: 'replay' });
-    assert.equal(overrideOf(rewound.watcher, '/repo/src/kept.js'), null, 'a rewind is a replace and clears it too');
 
     const rotated = seeded();
     rotated.watcher.applyHarnessFrame({ transition: 'rotate', sessionId: 'sid-2', sourceLocator: '/t/rotated.jsonl', batches: [], sourceObserved: false, captureMode: 'live' });

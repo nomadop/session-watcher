@@ -1,11 +1,11 @@
 // test/dsh.playback.test.js — the DSH Playback index and driver: one index entry per usage-bearing assistant message,
-// and a driver whose frames, cut at any limits, concatenate to the batches the DSH source driver installs for the
-// same events.
+// and a driver whose frames, cut at any limits, end where the batches the DSH source driver installs for the same
+// events stand: appended in turn, and replaced whole where a carrier rewinds.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDshPlaybackDriver, indexDshLog } from '../lib/harness/dsh/playback.js';
 import { createDshSourceDriver } from '../lib/harness/dsh/source-driver.js';
-import { reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
+import { reduceDshEvent } from '../lib/harness/dsh/transcript-observation.js';
 import { hasDshFixture, readDshFixture } from './helpers/dsh-fixtures.js';
 import * as E from './helpers/dsh-events.js';
 
@@ -24,6 +24,13 @@ const installBatches = events => createDshSourceDriver({ sessionId: SESSION_ID, 
   .install(events).batches.flat();
 
 const USAGE = { inputTokens: 3, outputTokens: 20, totalTokens: 9623, cacheWriteTokens: 9600 };
+
+// The batches a played frame holds for `events`: each event's observations, an assistant message's led by its main-call fact.
+const measuredBatches = events => events.flatMap((event) => {
+  const { observations } = reduceDshEvent(event);
+  const batch = event.type === 'assistant/message' ? [{ type: 'main-call', sourceOrdinal: event.seq }, ...observations] : observations;
+  return batch.length > 0 ? [batch] : [];
+});
 
 test('the index holds one limit and ts per assistant message that carries usage, in log order', () => {
   const events = E.sessionLog([
@@ -53,15 +60,15 @@ test('the first returned frame replaces and every later one appends, under the c
   const driver = createDshPlaybackDriver({ sessionId: SESSION_ID, events });
 
   assert.deepEqual(driver.advance({ limit: 3 }), {
-    transition: 'replace', sourceLocator: SESSION_ID, batches: reduceDshSnapshot(events.slice(0, 4)).batches,
+    transition: 'replace', sourceLocator: SESSION_ID, batches: measuredBatches(events.slice(0, 4)),
     sourceObserved: true, captureMode: 'replay',
   });
   assert.deepEqual(driver.advance({ captureMode: 'live', limit: 5 }), {
-    transition: 'append', batches: reduceDshSnapshot(events.slice(4, 6)).batches, sourceObserved: true,
+    transition: 'append', batches: measuredBatches(events.slice(4, 6)), sourceObserved: true,
     captureMode: 'live',
   });
   assert.deepEqual(driver.advance({ captureMode: 'replay', limit: 9 }), {
-    transition: 'append', batches: reduceDshSnapshot(events.slice(6, 10)).batches, sourceObserved: true,
+    transition: 'append', batches: measuredBatches(events.slice(6, 10)), sourceObserved: true,
     captureMode: 'replay',
   });
 });
@@ -75,7 +82,7 @@ test('an advance whose events yield no Observation returns null and the next fra
   assert.equal(driver.advance({ limit: 0 }), null);
   const frame = driver.advance({ limit: 3 });
   assert.equal(frame.transition, 'replace');
-  assert.deepEqual(frame.batches, reduceDshSnapshot(events.slice(1, 4)).batches);
+  assert.deepEqual(frame.batches, measuredBatches(events.slice(1, 4)));
 });
 
 test('Infinity takes every event left and a later advance returns null', () => {
@@ -85,7 +92,7 @@ test('Infinity takes every event left and a later advance returns null', () => {
   driver.advance({ limit: 4 });
   const rest = driver.advance({ limit: Infinity });
   assert.equal(rest.transition, 'append');
-  assert.deepEqual(rest.batches, reduceDshSnapshot(events.slice(5)).batches);
+  assert.deepEqual(rest.batches, measuredBatches(events.slice(5)));
   assert.equal(driver.advance({}), null);
   assert.equal(driver.advance({ limit: Infinity }), null);
 });
@@ -123,5 +130,45 @@ test('each fixture log played through its index limits and a final unbounded adv
       }
       assert.deepEqual(played.flat(), installBatches(events));
     });
+  }
+});
+
+// The two-step read with a carrier after its first step that withdraws the question and that step.
+function sealedAfterFirstStep() {
+  const events = E.reusedCallIdAcrossSteps();
+  const carrier = E.innerSealCarrier({ sourceEventSeqs: events.slice(1, E.FIRST_STEP_END + 1).map(event => event.seq) });
+  return E.sessionLog([...events.slice(0, E.FIRST_STEP_END + 1), carrier, ...events.slice(E.FIRST_STEP_END + 1)]);
+}
+
+test('a chunk whose carrier rewinds is a replay replace of the folded batches, whatever captureMode the advance names', () => {
+  const events = sealedAfterFirstStep();
+  const carrierSeq = E.FIRST_STEP_END + 1;
+  const driver = createDshPlaybackDriver({ sessionId: SESSION_ID, events });
+  driver.advance({ limit: carrierSeq - 1 });
+  assert.deepEqual(driver.advance({ captureMode: 'live', limit: carrierSeq + 2 }), {
+    transition: 'replace', sourceLocator: SESSION_ID, batches: createDshSourceDriver({ sessionId: SESSION_ID, onDiagnostics: () => {} })
+      .install(events.slice(0, carrierSeq + 3)).batches,
+    sourceObserved: true, captureMode: 'replay',
+  });
+  assert.equal(driver.advance({ captureMode: 'live', limit: Infinity }).transition, 'append');
+});
+
+test('a log with a carrier played over any split ends each advance where the install of the events up to its limit stands', () => {
+  const events = sealedAfterFirstStep();
+  const splits = [
+    ...events.map(event => [event.seq, Infinity]),
+    [...indexDshLog(events).map(entry => entry.limit), Infinity],
+    [Infinity],
+  ];
+  for (const limits of splits) {
+    const driver = createDshPlaybackDriver({ sessionId: SESSION_ID, events });
+    let played = [];
+    for (const limit of limits) {
+      const frame = driver.advance({ limit });
+      if (frame?.transition === 'replace') played = [...frame.batches];
+      else if (frame !== null) played.push(...frame.batches);
+      assert.deepEqual(played.flat(), installBatches(events.filter(event => event.seq <= limit)),
+        `split at ${limits.join(', ')}, after limit ${limit}`);
+    }
   }
 });

@@ -88,6 +88,33 @@ export function systemMessage({ text = 'You are a coding agent.', turn = 1, step
 }
 
 /**
+ * A `system/message` that replaces the surface node `seq` in place, as the loop normalizes the head when the rendered prompt changes: the same `data` shape as {@link systemMessage}, the surface op `{ op: 'replace', startSeq: seq, endSeq: seq }`, `sourceEventSeqs: [seq]`.
+ */
+export function systemReplacement({ seq, text = 'You are a coding agent.', turn = 1, step = 1 } = {}) {
+  return { ...systemMessage({ text, turn, step }), surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] };
+}
+
+/**
+ * The appended `developer/message` of the `tool-registry` source the loop logs when the request header's tools differ from the baseline: one `tool-addition` block per name of `additions` and one `tool-removal` block per name of `removals`, and `headerSeq`, the changed header's own `seq`, exactly when there are additions.
+ */
+export function toolRegistryMessage({ additions = [], removals = [], headerSeq, turn = 1, step = 1 } = {}) {
+  const { seq, time } = stamp();
+  return {
+    type: 'developer/message', seq, time,
+    data: {
+      turn, step,
+      message: {
+        role: 'developer',
+        content: [...additions.map(toolName => ({ type: 'tool-addition', toolName })), ...removals.map(toolName => ({ type: 'tool-removal', toolName }))],
+        source: { kind: 'tool-registry' }, id: messageId(seq),
+      },
+      ...additions.length > 0 ? { headerSeq } : {},
+    },
+    surfaceOp: 'append',
+  };
+}
+
+/**
  * An appended `assistant/message` in step `step` of turn `turn`: `{ turn, step, message, usage?, stream: [],
  * interrupted? }`. The message's content is a text block when `text` is given, then one `tool-call` block per entry
  * of `toolCalls` (`arguments` the raw JSON string, `'{}'` unless given); its source is `{ kind: 'model', provider,
@@ -214,6 +241,131 @@ export function loadMessage({
   };
 }
 
+/**
+ * The payload message of a `/sw-load` or the load a `/sw-continue` makes: a load message holding the one `load_handoff` call, whose text is the delivery's JSON
+ * `{ found, handoff_id, load_token, created_at, summary, paths_to_keep, skills_to_keep?, lineage?, turn_page? }`. A `null` `handoffId` and an `undefined` `skills`, `lineage` or `turnPage` leave their field out; `text` replaces the whole JSON.
+ */
+export function loadPayload({
+  token = 'amber-falcon', handoffId = 7, createdAt = T0 - 3 * 3600_000, summary = 'The summary of the prepared handoff.', paths = [],
+  skills, lineage, turnPage, text,
+} = {}) {
+  const payload = {
+    found: true,
+    ...(handoffId === null ? {} : { handoff_id: handoffId }),
+    load_token: token, created_at: createdAt, summary, paths_to_keep: paths,
+    ...(skills === undefined ? {} : { skills_to_keep: skills }),
+    ...(lineage === undefined ? {} : { lineage }),
+    ...(turnPage === undefined ? {} : { turn_page: turnPage }),
+  };
+  return loadMessage({ calls: [{ id: 'sw-load-0000aaaa-0', name: 'load_handoff', arguments: JSON.stringify({ load_token: token }), text: text ?? JSON.stringify(payload) }] });
+}
+
+/** The read message of a load: one `read` call per entry of `files`, each `{ path, ranges, text }`, its arguments the logical `{ file_path, ranges }` and its text the rendering. */
+export function loadReads({ files = [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }], text: '/repo/src/a.js (total lines: 2)\n1: a\n2: b\n' }] } = {}) {
+  return loadMessage({
+    calls: files.map(({ path, ranges, text }, index) => ({
+      id: `sw-load-0000aaaa-${index + 1}`, name: 'read', arguments: JSON.stringify({ file_path: path, ranges }), text,
+    })),
+  });
+}
+
+/** The follow-up user message that wakes the model on a loaded handoff, opening with the sentence that names `token`. */
+export function loadFollowUp({ token = 'amber-falcon', rest = 'The harness placed two messages before this one.' } = {}) {
+  return userMessage({ text: `Handoff "${token}" is loaded. ${rest}` });
+}
+
+/** The compact-checkpoint of a `/sw-continue` clear, as the command writes it: the one text block naming `token`. */
+export function continueCheckpoint({ token = 'amber-falcon', startSeq = 0, endSeq = 0 } = {}) {
+  return compactCheckpoint({ startSeq, endSeq, text: `[Session Watcher] Context cleared by /sw-continue. Handoff token: ${token}` });
+}
+
+/**
+ * The inner-seal carrier `user/message`: the summary as one text block, source `{ kind: 'session-watcher-inner-seal' }`
+ * (given `slots`, the seal's own `{ kind, v: 1, slots, paths: [] }` with `changes`, the `paths`, `removed` and `skills`
+ * of B, laid over it), replacing the surface from `startSeq` through `endSeq`
+ * (the least and the greatest of `sourceEventSeqs` unless given) and citing `sourceEventSeqs`, the events it
+ * withdraws; the seal lists its call record first.
+ */
+export function innerSealCarrier({
+  sourceEventSeqs, startSeq = Math.min(...sourceEventSeqs), endSeq = Math.max(...sourceEventSeqs), text = 'sealed',
+  slots, changes = {},
+} = {}) {
+  const { seq, time } = stamp();
+  return {
+    type: 'user/message', seq, time,
+    data: {
+      content: [{ type: 'text', text }],
+      source: { kind: 'session-watcher-inner-seal', ...(slots === undefined ? {} : { v: 1, slots, paths: [], ...changes }) },
+      role: 'user',
+      id: messageId(seq),
+    },
+    surfaceOp: { op: 'replace', startSeq, endSeq },
+    sourceEventSeqs,
+  };
+}
+
+// The C tail the summary request ends with: one user message holding the instruction as one text block.
+const summaryTail = text => ({ role: 'user', content: textBlocks(text) });
+
+/*
+ * The three plugin records the inner monitor's attempt leaves, as `appendPluginRecord` leaves them: ignorable events
+ * whose data the monitor owns. Their seq-valued data (`attempt`, a range) names the final seq of an event, which
+ * `sessionLog` does not follow, so a log of them is built from the events as they are, or written with the addresses
+ * the renumbered log will have.
+ */
+
+/**
+ * The `inner-attempt` record, appended as an attempt's summary request is dispatched: `{ v: 1, range: { first, last,
+ * count }, request }` over `range`, the seqs the attempt summarizes, its request showing the C tail as one user
+ * message holding `tail`. `request` adds to the request display, a key it names replacing the key as shown here.
+ * `quote`, the `innerQuote` snapshot the seal triggered on, is kept when given; a record without one has the shape of
+ * one written before the quote.
+ */
+export function innerAttempt({ range = [3, 4, 5], tail = 'Write concise continuity notes.', request = {}, quote } = {}) {
+  return ignorableEvent({
+    type: 'plugin:session-watcher/inner-attempt',
+    data: {
+      v: 1,
+      ...(quote === undefined ? {} : { quote }),
+      range: { first: range[0], last: range.at(-1), count: range.length },
+      request: {
+        options: { provider: PROVIDER, model: MODEL, purpose: 'inner-compaction', sessionId: 'session-synthetic' },
+        messages: { count: 1, tail: summaryTail(tail) },
+        throughSeq: range.at(-1),
+        headerSeq: null,
+        ...request,
+      },
+    },
+  });
+}
+
+/**
+ * The `inner-call` record of an auxiliary call whose stream was consumed: `{ v: 1, purpose, selection, input, range,
+ * stream, endedAt?, thrown?, attempt? }`, `stream` its compact stream. `attempt`, the seq of the attempt's record, and
+ * `endedAt` are the fields an attempt with an attempt record adds; a call without them has the shape of one written
+ * before the monitor. `thrown` is the message of an error thrown while the stream was consumed or assembled.
+ * `carrierCache`, the evidence of the opt-in pi-ai entry's payload hook, is a field a call carries only where the hook reported.
+ */
+export function innerCall({ range = [3, 4, 5], tail = 'Write concise continuity notes.', stream = [], attempt: began, endedAt, thrown, carrierCache } = {}) {
+  return ignorableEvent({
+    type: 'plugin:session-watcher/inner-call',
+    data: {
+      v: 1, purpose: 'inner-compaction', selection: { provider: PROVIDER, model: MODEL },
+      input: { throughSeq: range.at(-1), headerSeq: null, tail: summaryTail(tail) },
+      range, stream,
+      ...(endedAt === undefined ? {} : { endedAt }),
+      ...(thrown === undefined ? {} : { thrown: { message: thrown } }),
+      ...(began === undefined ? {} : { attempt: began }),
+      ...(carrierCache === undefined ? {} : { carrierCache }),
+    },
+  });
+}
+
+/** The `inner-end` record of an attempt that failed or was cancelled: `{ v: 1, attempt, outcome, reason }`. */
+export function innerEnd({ attempt: began, outcome = 'failed', reason = 'the summary failed' } = {}) {
+  return ignorableEvent({ type: 'plugin:session-watcher/inner-end', data: { v: 1, attempt: began, outcome, reason } });
+}
+
 /** A `compaction/start` taking the compaction lock inside turn `turn`. */
 export function compactionStart({ compactionId = 'compaction-1', turn = 1 } = {}) {
   return { type: 'compaction/start', ...stamp(), data: { compactionId, turn } };
@@ -291,8 +443,8 @@ export function ignorableEvent({ type = 'plugin/note', data = {} } = {}) {
 
 /**
  * The events as one log, as new event objects: `seq` renumbered from zero in list order, and every seq reference
- * among them — a replacement's surface range and cited seqs, a compaction's shadowed seqs — following the event it
- * names. A reference to an event outside the list keeps its value.
+ * among them — a replacement's surface range and cited seqs, a compaction's shadowed seqs, a tool-registry message's
+ * header — following the event it names. A reference to an event outside the list keeps its value.
  */
 export function sessionLog(events) {
   const renumbered = new Map(events.map((event, index) => [event.seq, index]));
@@ -305,6 +457,7 @@ export function sessionLog(events) {
       };
     }
     if (Array.isArray(event.sourceEventSeqs)) next.sourceEventSeqs = event.sourceEventSeqs.map(follow);
+    if (Number.isInteger(event.data?.headerSeq)) next.data = { ...event.data, headerSeq: follow(event.data.headerSeq) };
     if (Array.isArray(event.data?.shadowedSeqs)) {
       const { shadowedRange, shadowedSeqs } = event.data;
       next.data = {

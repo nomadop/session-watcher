@@ -83,8 +83,365 @@ var en = {
   "dock.sweet": "Sweet spot",
   "dock.stock": "Context stock",
   "dock.baseline": "Rebuild baseline",
-  "dock.effective": "Effective context",
+  "dock.effective": "Working context",
   "dock.growth": "Growth per call",
+  "mode.toggle": "Enable compaction",
+  "mode.toggleHint": "Experimental: let Session Watcher seal accumulated work into a summary while this session runs. The choice is fixed once the first turn starts.",
+  "mode.mark": "Enable compaction",
+  "mode.markHint": "This session was started with compaction on.",
+  "settings.nav": "Session Watcher",
+  "settings.title": "Session Watcher",
+  "settings.loading": "Reading settings\u2026",
+  "settings.unavailable": "These settings are not available on this host.",
+  "settings.readOnly": "Settings are read-only here.",
+  "settings.group.experimental": "Experimental",
+  "settings.group.preferences": "Compaction preferences",
+  "settings.show.title": "Show compaction option",
+  "settings.show.description": "Shows the Enable compaction switch when you start a new session. Hiding it does not change sessions that already use compaction.",
+  "settings.policy.title": "Compaction policy",
+  "settings.policy.description": "How readily a session compacts. More aggressive policies compact earlier; more conservative ones wait longer.",
+  "settings.backup.title": "Backup summary model",
+  "settings.backup.description": "Used when the session's own model is blocked by a content filter while writing a summary. When none is set, no other model is used.",
+  "settings.backup.none": "None",
+  "settings.backup.unavailableTag": "unavailable",
+  "settings.backup.loading": "Loading models\u2026",
+  "settings.backup.loadFailed": "Couldn't load the model list.",
+  "settings.backup.retry": "Retry",
+  "settings.backup.partial": "Some providers couldn't be loaded: {providers}.",
+  "settings.backup.unavailable": "The saved model is not available now. Choose another one or set none.",
+  "settings.inherit.title": "Subagents follow compaction choice",
+  "settings.inherit.description": "A new subagent starts with the same compaction choice as the session that created it. Existing subagents are not changed.",
+  "settings.saveFailed": "Couldn't save. Your changes are still here.",
+  "settings.cancel": "Cancel",
+  "settings.save": "Save",
+  "settings.saving": "Saving\u2026",
+  "settings.integration.title": "pi-ai routing is not active",
+  "settings.integration.cause.source-missing": "The replacement pi-ai adapter cannot find the original llm-pi-ai row it reads its routes from.",
+  "settings.integration.cause.source-enabled": "The original llm-pi-ai row is still on, so the replacement pi-ai adapter serves no routes.",
+  "settings.integration.cause.source-invalid": "The configuration of the original llm-pi-ai row is not a usable provider list, so the replacement pi-ai adapter serves no routes.",
+  "settings.integration.consequence": "Routes of the replacement adapter may be unavailable. Where routing still works, turning on compaction can mean the earlier prompt cache is not reused after a compaction, which adds latency and cost; no session content is lost.",
+  "settings.integration.recovery": "Check the original llm-pi-ai configuration on the host and reload, or disable the replacement bundle to restore the original routing.",
+  "settings.group.cache": "Prompt cache",
+  "settings.carrier.title": "Carrier cache point",
+  "settings.carrier.description": "Adds one cache point at the end of the last inner-compaction carrier in each request, by switching model routing to Session Watcher's pi-ai adapter entry through its companion bundle: the local bundle @local/sw-carrier-cache-web where the profile has it, otherwise the official one, which is installed the first time after you confirm. Only the owner of this host can change it.",
+  "settings.carrier.caveat": "The change replaces the adapter that serves the routes while the host runs. Requests are not queued or moved, and one sent during the change may be interrupted.",
+  "settings.carrier.pending": "Not confirmed in effect: the saved selection and what is running differ. A selected bundle may be waiting for a restart, or its replacement failed to start; after a switch-off, the replacement keeps serving the routes until the host restarts.",
+  "settings.carrier.unavailable": "This host has no plugin manager, or the bundle is not installed and this host has nothing to install it from, so the switch cannot be used here.",
+  "settings.carrier.outcome.enabled": "Switched on: the replacement serves the routes.",
+  "settings.carrier.outcome.disabled-restored": "Switched off: the original adapter is serving its routes again.",
+  "settings.carrier.outcome.disabled-unconfirmed": "Switched off and the replacement is withdrawn, but the original adapter serving its routes again could not be confirmed.",
+  "settings.carrier.outcome.restart-required": "Switched off in the saved profile, but the replacement is still serving the routes: the original adapter returns after the host restarts.",
+  "settings.carrier.outcome.rolled-back": "Switching on did not take effect and the selection was withdrawn: the original adapter is confirmed serving its routes.",
+  "settings.carrier.outcome.withdrawn": "Switching on did not take effect and the selection was withdrawn, but the original adapter serving its routes could not be confirmed.",
+  "settings.carrier.outcome.rollback-failed": "Switching on did not take effect, and withdrawing the selection did not finish: the selection or the replacement may still be in place. Check the Plugins page.",
+  "settings.carrier.reason.restart-required": "The plugin manager reported that the change takes effect only after a restart. The switch does not leave an unchecked change for the next start, so it cannot turn this on here.",
+  "settings.carrier.responses.title": "OpenAI Responses breakpoint",
+  "settings.carrier.responses.description": "On routes that use the OpenAI Responses protocol, also marks the end of the last carrier with an explicit cache breakpoint and, on the requests that get it, sends the cache options that go with it, whether or not the route's model declares support for it. It applies while the carrier cache point above is on and confirmed. Azure and Codex routes are not affected.",
+  "settings.carrier.responses.warning": "The endpoint may reject requests that carry the breakpoint or its cache options. If requests on a Responses route start to fail, switch this off: it can be turned off on its own, and the carrier cache point above stays as it is.",
+  "settings.carrier.responses.held": "Held off while the carrier cache point above is not on and confirmed. Your choice is kept and applies again once it is.",
+  "settings.carrier.responses.failed": "The change was not saved.",
+  "settings.carrier.outcome.failed": "The change could not be made.",
+  "settings.carrier.outcome.busy": "Another change is still running.",
+  "settings.carrier.outcome.unavailable": "The switch is not available in this host.",
+  "settings.carrier.notInstalled": "The bundle {name} is not installed in this host's profile. Switching on installs version {version} of it through the plugin manager, after you confirm.",
+  "settings.carrier.install.confirm": "Install {name} {version} into this host's profile? The plugin manager installs it with pnpm for every session of the profile, then switches model routing to Session Watcher's pi-ai adapter entry. No package script is approved here. If switching on fails, the package stays installed and switched off.",
+  "settings.carrier.install.accept": "Install and switch on",
+  "settings.carrier.install.cancel": "Cancel",
+  "settings.carrier.install.running": "Installing. This can take a while.",
+  "settings.carrier.installedNote": "The bundle was installed and stays installed, switched off.",
+  "settings.carrier.unavailable.conflict": "Both the local bundle @local/sw-carrier-cache-web and the official bundle are installed, so the switch cannot tell which one to use and installs nothing. Remove one of them on the Plugins page.",
+  "settings.carrier.unavailable.damaged": "The bundle is in the profile but cannot be read, so the switch installs nothing over it. Repair or remove it on the Plugins page.",
+  "settings.carrier.unavailable.unreadable": "The plugin manager's bundle list could not be read, so the switch installs nothing. Check the Plugins page and reload.",
+  "settings.carrier.outcome.installed-enabled": "Installed and switched on: the replacement serves the routes.",
+  "settings.carrier.outcome.install-confirmation-required": "The install was not confirmed, so nothing was changed.",
+  "settings.carrier.outcome.install-failed": "The install did not complete and nothing was switched on. This page does not show why.",
+  "settings.carrier.outcome.install-unconfirmed": "The install ran, but the installed package is not the one expected, so it was not switched on. A package that was installed stays installed and switched off; check the Plugins page.",
+  "monitor.label": "SW Events",
+  "monitor.region": "Events",
+  "monitor.rows.loading": "Reading the events of this session\u2026",
+  "monitor.rows.unavailable": "The events of this session cannot be read right now. That does not mean it has none.",
+  "monitor.rows.unreachable": "The event monitor cannot be reached: {message}",
+  "monitor.rows.empty": "This session has no events yet.",
+  "monitor.object.attempt": "Segment #{epoch} Compaction #{ordinal}",
+  "monitor.object.call": "Call",
+  "monitor.object.turn": "turn {turn}",
+  "monitor.object.step": "step {step}",
+  "monitor.meta.time": "Elapsed time",
+  "monitor.status.generating": "Generating",
+  "monitor.status.validating": "Validating",
+  "monitor.status.committed": "Committed",
+  "monitor.status.paid": "Paid back",
+  "monitor.status.failed": "Failed",
+  "monitor.status.cancelled": "Cancelled",
+  "monitor.status.unknown": "Unknown",
+  "monitor.callState.generating": "Generating",
+  "monitor.callState.received": "Received",
+  "monitor.callState.error": "Error",
+  "monitor.callState.absent": "Not recorded",
+  "monitor.carrierCache.unobserved": "Not observed",
+  "monitor.carrierCache.added": "Carrier cache point added",
+  "monitor.carrierCache.native": "Native point at the same position reused",
+  "monitor.carrierCache.skipped": "Checked, none added ({reason})",
+  "monitor.carrierCache.omitted": "{count} more results not listed",
+  "monitor.carrierCache.reason.no-carrier": "the request holds no carrier",
+  "monitor.carrierCache.reason.no-native-point": "the route writes no cache point of its own",
+  "monitor.carrierCache.reason.points-full": "the route's cache point limit is met",
+  "monitor.carrierCache.reason.responses-off": "the Responses breakpoint switch is off",
+  "monitor.carrierCache.reason.unsupported": "the protocol or route is not supported",
+  "monitor.usage.cell": "{output} out",
+  "monitor.usage.title": "Output {output}, cache read {cacheRead}, cache write {cacheWrite}",
+  "monitor.meta.context": "Context change",
+  "monitor.meta.context.grew": "The context grew after compaction",
+  "monitor.meta.range": "Before {before} \xB7 After {after}",
+  "monitor.meta.range.title": "Tokens before and after compaction",
+  "monitor.change.increase": "Increased by {count}",
+  "monitor.change.decrease": "Decreased by {count}",
+  "monitor.change.same": "Unchanged",
+  "monitor.usage.context": "Context around the compaction",
+  "monitor.context.before": "Before compaction",
+  "monitor.context.after": "After compaction",
+  "monitor.context.change": "Context change",
+  "monitor.context.miss": "Cache rebuild",
+  "monitor.meta.step": "Steps {count}",
+  "monitor.meta.step.title": "Steps this compaction summarized",
+  "monitor.meta.estimate": "Deviation {q}",
+  "monitor.meta.estimate.title": "Deviation of the estimate from its reference",
+  "monitor.meta.estimate.kappa.title": "Deviation of the estimate from its reference; early-trigger tolerance {kappa}",
+  "monitor.meta.miss": "Cache rebuild {count}",
+  "monitor.meta.miss.title": "Tokens rebuilt in the cache by the first call after compaction",
+  "monitor.meta.miss.unexpected": "The cache rebuild exceeds the context growth: an unexpected cache miss occurred",
+  "monitor.drawer.label": "Details",
+  "monitor.drawer.call": "Call of segment #{epoch} compaction #{ordinal}",
+  "monitor.drawer.slot": "Events of segment #{epoch} compaction #{ordinal}",
+  "monitor.drawer.attemptId": "Compaction ID: {id}",
+  "monitor.drawer.slotKey": "First event ID: {id}",
+  "monitor.drawer.close": "Close details",
+  "monitor.drawer.resize": "Resize details",
+  "monitor.notRecorded": "Not recorded",
+  "monitor.detail.loading": "Reading the details\u2026",
+  "monitor.detail.unavailable": "The details of this item cannot be read right now.",
+  "monitor.detail.unreachable": "The details cannot be read: {message}",
+  "monitor.leaves.loading": "Reading {what}\u2026",
+  "monitor.leaves.failed": "Could not read {what}",
+  "monitor.leaves.empty": "No {what}",
+  "monitor.leaves.turns": "turns",
+  "monitor.leaves.summaries": "summaries",
+  "monitor.page.overview": "Overview",
+  "monitor.page.request": "Request",
+  "monitor.page.response": "Response",
+  "monitor.page.summaries": "Summaries",
+  "monitor.page.carried": "Evidence",
+  "monitor.page.quote": "Estimate",
+  "monitor.page.usage": "Usage",
+  "monitor.page.timing": "Timing",
+  "monitor.block.reasoning": "Reasoning",
+  "monitor.block.toolCall": "Tool call: {name}",
+  "monitor.block.toolResult": "Tool result for {id}",
+  "monitor.block.toolError": "Tool error for {id}",
+  "monitor.block.image": "Image reference",
+  "monitor.block.file": "File reference",
+  "monitor.block.unknown": "Block of another kind",
+  "monitor.request.partial": "Partial record: this compaction has no start record, so only the selection and the tail its call record kept are shown.",
+  "monitor.request.options": "Request options",
+  "monitor.request.tail": "Tail of the request",
+  "monitor.request.messages": "{count} earlier messages precede the tail.",
+  "monitor.request.sequence": "Sequence numbers",
+  "monitor.request.throughSeq": "History cutoff event ID",
+  "monitor.request.headerSeq": "Request header event ID",
+  "monitor.request.tools": "Tools sent: {count}",
+  "monitor.request.definitions": "Tool definitions",
+  "monitor.request.toolHistory": "Tool history updated",
+  "monitor.response.outcome": "Recorded outcome",
+  "monitor.response.finish": "Finish information",
+  "monitor.response.none": "No response was recorded for this compaction.",
+  "monitor.response.assembled": "Response content",
+  "monitor.response.assembleError": "The stream could not be assembled into blocks: {message}",
+  "monitor.response.noBlocks": "The stream holds no blocks.",
+  "monitor.response.rawTitle": "Raw stream",
+  "monitor.response.raw": "{count} records",
+  "monitor.summaries.heading": "#{number} \xB7 {title} \xB7 seq {seq}",
+  "monitor.summaries.pending": "The summaries exist once the compaction has committed.",
+  "monitor.carried.pending": "The evidence exists once the compaction has committed.",
+  "monitor.carried.none": "This compaction changed no evidence.",
+  "monitor.files.group.changed": "Changed files",
+  "monitor.files.group.bare": "Files with no text",
+  "monitor.files.group.gone": "Removed",
+  "monitor.files.group.skills": "Skills",
+  "monitor.files.group.read": "Files read",
+  "monitor.files.summary.written": "Lines added {count}",
+  "monitor.files.summary.withdrawn": "Lines removed {count}",
+  "monitor.files.summary.files": "Files {count}",
+  "monitor.files.sub.more": "Also: {parts}",
+  "monitor.files.sub.skills": "Skills {count}",
+  "monitor.files.sub.bare": "Files with no text {count}",
+  "monitor.files.sub.gone": "Removed {count}",
+  "monitor.files.sub.root": "Paths relative to {root}",
+  "monitor.files.lines": "Lines {count}",
+  "monitor.files.segments": "Segments {count}",
+  "monitor.files.chars": "Chars {count}",
+  "monitor.files.noWrites": "No lines added",
+  "monitor.files.noLines": "No lines carried",
+  "monitor.files.empty": "Empty file",
+  "monitor.files.removed": "Removed",
+  "monitor.files.unrecorded": "Recorded in an older format; cannot be shown",
+  "monitor.files.unreadable": "Unreadable: {reason}",
+  "monitor.files.reason.missing": "Missing",
+  "monitor.files.reason.not-file": "Not a file",
+  "monitor.files.reason.too-large": "Too large",
+  "monitor.files.reason.binary": "Binary",
+  "monitor.files.reason.unreadable": "Cannot be read",
+  "monitor.files.bar.written": "Lines added {spans}",
+  "monitor.files.bar.read": "Lines read {spans}",
+  "monitor.files.bar.withdrawn": "Lines removed {spans}",
+  "monitor.files.meta.total": "Total {count} lines",
+  "monitor.files.meta.lines": "Lines {spans}",
+  "monitor.files.row.gap": "\u22EF Lines {range} not loaded",
+  "monitor.files.row.withdrawn": "Removed lines {range} \xB7 {count} lines",
+  "monitor.files.controls": "Page controls",
+  "monitor.files.expandAll": "Expand all",
+  "monitor.files.collapseAll": "Collapse all",
+  "monitor.files.wrap": "Wrap lines",
+  "monitor.files.wrap.on": "Wrap lines: on",
+  "monitor.files.wrap.off": "Wrap lines: off",
+  "monitor.files.foot.note": "Note",
+  "monitor.files.foot.text": "Original text",
+  "monitor.quote.missing.estimate_failed": "The estimate could not be made.",
+  "monitor.quote.missing.ratio_unavailable": "The cache write-to-read price ratio is unavailable.",
+  "monitor.quote.missing.non_positive_savings": "No savings are expected.",
+  "monitor.quote.missing.undefined_result": "The result cannot be computed.",
+  "monitor.quote.none": "This compaction recorded no estimate.",
+  "monitor.quote.note": "An estimate taken before the summary was requested; the evidence actually committed is on the Evidence page.",
+  "monitor.quote.missingReason": "No result because",
+  "monitor.quote.n": "Steps",
+  "monitor.quote.lA": "Tokens to compact",
+  "monitor.quote.bEst": "Estimated evidence tokens",
+  "monitor.quote.cEst": "Estimated summary tokens",
+  "monitor.quote.sEst": "Estimated saved tokens",
+  "monitor.quote.cRatio": "Cache write-to-read price ratio",
+  "monitor.quote.fee": "Fixed overhead tokens",
+  "monitor.quote.preset": "Compaction policy",
+  "monitor.quote.preset.E2": "Most aggressive",
+  "monitor.quote.preset.W2": "Aggressive",
+  "monitor.quote.preset.M2": "Balanced",
+  "monitor.quote.preset.S3": "Conservative",
+  "monitor.quote.preset.X3": "Most conservative",
+  "monitor.quote.kappa": "Early-trigger tolerance",
+  "monitor.quote.q": "Deviation",
+  "monitor.quote.arm": "Side of the reference",
+  "monitor.quote.arm.left": "Left",
+  "monitor.quote.arm.right": "At or right",
+  "monitor.usage.folded": "Usage",
+  "monitor.usage.raw": "Raw usage",
+  "monitor.usage.input": "Input",
+  "monitor.usage.output": "Output",
+  "monitor.usage.cacheRead": "Cache read",
+  "monitor.usage.cacheWrite": "Cache write",
+  "monitor.timing.attemptStart": "Compaction start",
+  "monitor.timing.attemptEnd": "Compaction end",
+  "monitor.timing.attemptElapsed": "Compaction time",
+  "monitor.timing.callStart": "Call start",
+  "monitor.timing.callEnd": "Call end",
+  "monitor.timing.callElapsed": "Call time",
+  "monitor.timing.firstChunk": "First response arrived",
+  "monitor.source.user": "User input",
+  "monitor.source.injected": "Harness injection",
+  "monitor.source.system": "System message",
+  "monitor.source.developer": "Developer instruction",
+  "monitor.source.tool": "Tool result",
+  "monitor.source.assistant": "Assistant message",
+  "monitor.source.other": "Other content",
+  "monitor.slotPage.overview": "Overview",
+  "monitor.slotPage.summary": "Summary",
+  "monitor.slotPage.source": "Source text",
+  "monitor.slot.number": "Slot number",
+  "monitor.slot.seqs": "Source events",
+  "monitor.slot.source": "Source of the first event",
+  "monitor.slot.sourceType": "Type of the first event",
+  "monitor.slot.sourceKind": "Kind of the first event",
+  "monitor.slot.visibleCount": "Seen by the call",
+  "monitor.slot.visibleCountValue": "{visible} of {total} source events",
+  "monitor.slot.turn": "Turn",
+  "monitor.slot.step": "Step",
+  "monitor.slot.empty": "Empty",
+  "monitor.slot.sources": "Sources",
+  "monitor.slot.event": "seq {seq} \xB7 {type}",
+  "monitor.slot.surface": "Seen by the call",
+  "monitor.slot.earlier": "Earlier original source (not received by the call)",
+  "monitor.slot.noBlocks": "This event has no content blocks.",
+  "monitor.slot.raw": "Raw JSON",
+  "monitor.overview.status": "Status",
+  "monitor.overview.payback": "Payback progress",
+  "monitor.overview.callState": "Call",
+  "monitor.overview.carrierCache": "Carrier cache",
+  "monitor.overview.recordStart": "Compaction record",
+  "monitor.overview.recordCall": "Call record",
+  "monitor.overview.recordEnd": "End record",
+  "monitor.overview.recordCarrier": "Carrier",
+  "monitor.overview.seq": "seq {seq}",
+  "monitor.overview.provider": "Provider",
+  "monitor.overview.model": "Model",
+  "monitor.overview.effort": "Reasoning effort",
+  "monitor.overview.range": "Events summarized",
+  "monitor.overview.rangeValue": "seq {first}\u2013{last} ({count})",
+  "monitor.overview.finish": "Finish",
+  "monitor.overview.slots": "Slots committed",
+  "monitor.overview.endReason": "Recorded reason",
+  "monitor.overview.thrown": "Error thrown by the call",
+  "monitor.overview.legacy": "This compaction has no start record, so its start time and request are not recorded.",
+  "monitor.object.handoff": "Segment #{epoch} Handoff",
+  "monitor.object.handoffContent": "Handoff content",
+  "monitor.object.handoffTurn": "Turn {n}",
+  "monitor.object.settlement": "Segment #{epoch} Compaction settlement",
+  "monitor.handoff.type.load": "Load",
+  "monitor.handoff.type.continue": "Continue",
+  "monitor.handoff.meta.type.title": "Handoff type",
+  "monitor.handoff.meta.token.title": "Handoff code",
+  "monitor.handoff.meta.files": "Files {read}/{kept}",
+  "monitor.handoff.meta.files.title": "Files read / kept",
+  "monitor.handoff.meta.skills": "Skills {count}",
+  "monitor.handoff.meta.skills.title": "Skills kept",
+  "monitor.handoff.meta.lineage": "Lineage {count}",
+  "monitor.handoff.meta.lineage.title": "Lineage number",
+  "monitor.handoff.meta.range": "Before handoff {before} \xB7 After handoff {after}",
+  "monitor.handoff.meta.range.title": "Tokens before and after the handoff",
+  "monitor.drawer.handoff": "Handoff of segment #{epoch}",
+  "monitor.drawer.handoffTurn": "Turn of segment #{epoch} handoff",
+  "monitor.drawer.handoffId": "Handoff ID: {id}",
+  "monitor.drawer.settlement": "Compaction settlement of segment #{epoch}",
+  "monitor.settlement.count": "Compactions {count}",
+  "monitor.settlement.count.title": "Committed compactions of this segment",
+  "monitor.settlement.steps": "Steps {count}",
+  "monitor.settlement.steps.title": "Steps this segment ran",
+  "monitor.settlement.saved": "Saved {count}",
+  "monitor.settlement.saved.title": "Read-price tokens saved on every later step by the context each compaction cut, summed",
+  "monitor.settlement.cost": "Cost {count}",
+  "monitor.settlement.cost.title": "Summary calls and cache rebuilds of the compactions, converted to read-price tokens and summed",
+  "monitor.settlement.net": "Net {count}",
+  "monitor.settlement.net.title": "Saved minus cost, in read-price tokens",
+  "monitor.settlement.payback": "Payback {percent}",
+  "monitor.settlement.payback.title": "Saved as a share of cost",
+  "monitor.settlement.total": "Total",
+  "monitor.settlement.unit": "Unit: read-price tokens, converted at the cache write-to-read price ratio of this session; not a bill.",
+  "monitor.handoffPage.overview": "Overview",
+  "monitor.handoffPage.summary": "Summary",
+  "monitor.handoffPage.files": "Files",
+  "monitor.handoffPage.turns": "Turns",
+  "monitor.handoffPage.lineage": "Lineage",
+  "monitor.handoff.overview.type": "Type",
+  "monitor.handoff.overview.token": "Handoff code",
+  "monitor.handoff.overview.createdAt": "Prepared at",
+  "monitor.handoff.overview.deliveredAt": "Delivered at",
+  "monitor.handoff.overview.seq": "Payload message",
+  "monitor.handoff.overview.filesRead": "Files read",
+  "monitor.handoff.overview.filesKept": "Files kept",
+  "monitor.handoff.overview.skills": "Skills kept",
+  "monitor.handoff.overview.before": "Before handoff",
+  "monitor.handoff.overview.after": "After handoff",
+  "monitor.handoff.files.none": "No files were read.",
+  "monitor.handoff.lineage.omitted": "Omitted",
+  "monitor.handoff.turn.user": "User",
+  "monitor.handoff.turn.note": "Note",
+  "monitor.handoff.turn.noNote": "No note",
   "picker.search": "Search by token or task",
   "picker.empty": "No handoffs available for this project.",
   "picker.noResults": "No handoffs match.",
@@ -93,7 +450,7 @@ var en = {
   "picker.noSession": "This session is no longer open."
 };
 var zh = {
-  "view.label": "SW Meter",
+  "view.label": "SW\u4EEA\u8868",
   "state.unobserved": "Session Watcher \u672A\u5728\u89C2\u6D4B\u6B64\u4F1A\u8BDD\u3002",
   "state.bootstrapping": "Session Watcher \u6B63\u5728\u8BFB\u53D6\u6B64\u4F1A\u8BDD\u2026",
   "state.failed": "Session Watcher \u65E0\u6CD5\u6D4B\u91CF\u6B64\u4F1A\u8BDD\uFF1A{message}",
@@ -125,8 +482,365 @@ var zh = {
   "dock.sweet": "\u751C\u70B9",
   "dock.stock": "\u4E0A\u4E0B\u6587\u5B58\u91CF",
   "dock.baseline": "\u91CD\u5EFA\u57FA\u7EBF",
-  "dock.effective": "\u6709\u6548\u4E0A\u4E0B\u6587",
+  "dock.effective": "\u5DE5\u4F5C\u4E0A\u4E0B\u6587",
   "dock.growth": "\u6BCF\u6B21\u8C03\u7528\u589E\u957F",
+  "mode.toggle": "\u5F00\u542F\u538B\u7F29",
+  "mode.toggleHint": "\u5B9E\u9A8C\u529F\u80FD\uFF1A\u4F1A\u8BDD\u8FD0\u884C\u671F\u95F4\uFF0C\u7531 Session Watcher \u5C06\u7D2F\u79EF\u7684\u5DE5\u4F5C\u5C01\u5B58\u4E3A\u6458\u8981\u3002\u7B2C\u4E00\u8F6E\u5F00\u59CB\u540E\u4E0D\u80FD\u518D\u66F4\u6539\u3002",
+  "mode.mark": "\u5F00\u542F\u538B\u7F29",
+  "mode.markHint": "\u6B64\u4F1A\u8BDD\u5F00\u542F\u4E86\u538B\u7F29\u3002",
+  "settings.nav": "Session Watcher",
+  "settings.title": "Session Watcher",
+  "settings.loading": "\u6B63\u5728\u8BFB\u53D6\u8BBE\u7F6E\u2026",
+  "settings.unavailable": "\u5F53\u524D\u4E3B\u673A\u6CA1\u6709\u8FD9\u4E9B\u8BBE\u7F6E\u3002",
+  "settings.readOnly": "\u8FD9\u91CC\u7684\u8BBE\u7F6E\u4E3A\u53EA\u8BFB\u3002",
+  "settings.group.experimental": "\u5B9E\u9A8C\u529F\u80FD",
+  "settings.group.preferences": "\u538B\u7F29\u504F\u597D",
+  "settings.show.title": "\u663E\u793A\u538B\u7F29\u9009\u9879",
+  "settings.show.description": "\u65B0\u5EFA\u4F1A\u8BDD\u65F6\u663E\u793A\u201C\u5F00\u542F\u538B\u7F29\u201D\u5F00\u5173\u3002\u9690\u85CF\u5B83\u4E0D\u4F1A\u6539\u53D8\u5DF2\u7ECF\u5F00\u542F\u538B\u7F29\u7684\u4F1A\u8BDD\u3002",
+  "settings.policy.title": "\u538B\u7F29\u7B56\u7565",
+  "settings.policy.description": "\u51B3\u5B9A\u4F1A\u8BDD\u591A\u5BB9\u6613\u8FDB\u884C\u538B\u7F29\uFF1A\u8D8A\u6FC0\u8FDB\u8D8A\u65E9\u538B\u7F29\uFF0C\u8D8A\u4FDD\u5B88\u7B49\u5F85\u8D8A\u4E45\u3002",
+  "settings.backup.title": "\u5907\u7528\u6458\u8981\u6A21\u578B",
+  "settings.backup.description": "\u4F1A\u8BDD\u81EA\u8EAB\u7684\u6A21\u578B\u5728\u5199\u6458\u8981\u65F6\u88AB\u5185\u5BB9\u8FC7\u6EE4\u62E6\u622A\u540E\uFF0C\u6539\u7528\u8FD9\u91CC\u7684\u6A21\u578B\u91CD\u8BD5\u3002\u672A\u8BBE\u7F6E\u65F6\u4E0D\u4F1A\u6362\u7528\u5176\u4ED6\u6A21\u578B\u3002",
+  "settings.backup.none": "\u672A\u8BBE\u7F6E",
+  "settings.backup.unavailableTag": "\u4E0D\u53EF\u7528",
+  "settings.backup.loading": "\u6B63\u5728\u52A0\u8F7D\u6A21\u578B\u2026",
+  "settings.backup.loadFailed": "\u65E0\u6CD5\u52A0\u8F7D\u6A21\u578B\u5217\u8868\u3002",
+  "settings.backup.retry": "\u91CD\u8BD5",
+  "settings.backup.partial": "\u90E8\u5206\u63D0\u4F9B\u65B9\u672A\u80FD\u52A0\u8F7D\uFF1A{providers}\u3002",
+  "settings.backup.unavailable": "\u5DF2\u4FDD\u5B58\u7684\u6A21\u578B\u5F53\u524D\u4E0D\u53EF\u7528\u3002\u8BF7\u9009\u62E9\u5176\u4ED6\u6A21\u578B\uFF0C\u6216\u8BBE\u4E3A\u672A\u8BBE\u7F6E\u3002",
+  "settings.inherit.title": "\u5B50\u4EE3\u7406\u6CBF\u7528\u538B\u7F29\u9009\u62E9",
+  "settings.inherit.description": "\u65B0\u5EFA\u7684\u5B50\u4EE3\u7406\u6CBF\u7528\u521B\u5EFA\u5B83\u7684\u4F1A\u8BDD\u7684\u538B\u7F29\u9009\u62E9\uFF1B\u5DF2\u6709\u7684\u5B50\u4EE3\u7406\u4E0D\u53D7\u5F71\u54CD\u3002",
+  "settings.saveFailed": "\u4FDD\u5B58\u5931\u8D25\uFF0C\u4F60\u7684\u4FEE\u6539\u4ECD\u4FDD\u7559\u5728\u8FD9\u91CC\u3002",
+  "settings.cancel": "\u53D6\u6D88",
+  "settings.save": "\u4FDD\u5B58",
+  "settings.saving": "\u6B63\u5728\u4FDD\u5B58\u2026",
+  "settings.integration.title": "pi-ai \u8DEF\u7531\u672A\u751F\u6548",
+  "settings.integration.cause.source-missing": "\u66FF\u6362\u7528\u7684 pi-ai \u9002\u914D\u5668\u627E\u4E0D\u5230\u5B83\u8BFB\u53D6\u8DEF\u7531\u6240\u4F9D\u636E\u7684\u539F llm-pi-ai \u914D\u7F6E\u884C\u3002",
+  "settings.integration.cause.source-enabled": "\u539F llm-pi-ai \u914D\u7F6E\u884C\u4ECD\u5904\u4E8E\u542F\u7528\u72B6\u6001\uFF0C\u66FF\u6362\u7684 pi-ai \u9002\u914D\u5668\u4E0D\u63D0\u4F9B\u4EFB\u4F55\u8DEF\u7531\u3002",
+  "settings.integration.cause.source-invalid": "\u539F llm-pi-ai \u914D\u7F6E\u884C\u7684\u5185\u5BB9\u4E0D\u662F\u53EF\u7528\u7684\u63D0\u4F9B\u65B9\u5217\u8868\uFF0C\u66FF\u6362\u7684 pi-ai \u9002\u914D\u5668\u4E0D\u63D0\u4F9B\u4EFB\u4F55\u8DEF\u7531\u3002",
+  "settings.integration.consequence": "\u66FF\u6362\u9002\u914D\u5668\u7684\u8DEF\u7531\u53EF\u80FD\u4E0D\u53EF\u7528\u3002\u4ECD\u53EF\u7528\u7684\u8DEF\u7531\u4E0A\u5F00\u542F\u538B\u7F29\u65F6\uFF0C\u538B\u7F29\u4E4B\u540E\u53EF\u80FD\u65E0\u6CD5\u590D\u7528\u4E4B\u524D\u7684\u63D0\u793A\u7F13\u5B58\uFF0C\u5EF6\u8FDF\u548C\u6210\u672C\u4F1A\u589E\u52A0\uFF1B\u4E0D\u4F1A\u4E22\u5931\u4F1A\u8BDD\u5185\u5BB9\u3002",
+  "settings.integration.recovery": "\u8BF7\u68C0\u67E5\u4E3B\u673A\u4E2D\u539F llm-pi-ai \u7684\u914D\u7F6E\u5E76\u91CD\u65B0\u52A0\u8F7D\uFF0C\u6216\u7981\u7528\u66FF\u6362 bundle \u4EE5\u6062\u590D\u539F\u6765\u7684\u8DEF\u7531\u3002",
+  "settings.group.cache": "\u63D0\u793A\u7F13\u5B58",
+  "settings.carrier.title": "\u538B\u7F29\u70B9\u7F13\u5B58",
+  "settings.carrier.description": "\u901A\u8FC7\u914D\u5957\u63D2\u4EF6\u5305\u628A\u6A21\u578B\u8DEF\u7531\u5207\u6362\u5230 Session Watcher \u7684 pi-ai \u9002\u914D\u5668\u5165\u53E3\uFF0C\u5728\u6BCF\u4E2A\u8BF7\u6C42\u6700\u540E\u4E00\u4E2A\u5185\u5C42\u538B\u7F29\u8F7D\u4F53\u7684\u672B\u5C3E\u591A\u52A0\u4E00\u4E2A\u7F13\u5B58\u70B9\uFF1Aprofile \u4E2D\u6709\u672C\u5730\u63D2\u4EF6\u5305 @local/sw-carrier-cache-web \u65F6\u7528\u5B83\uFF0C\u5426\u5219\u7528\u6B63\u5F0F\u63D2\u4EF6\u5305\uFF0C\u9996\u6B21\u4F7F\u7528\u65F6\u5728\u4F60\u786E\u8BA4\u540E\u5B89\u88C5\u3002\u53EA\u6709\u672C\u673A\u7684\u6240\u6709\u8005\u53EF\u4EE5\u66F4\u6539\u3002",
+  "settings.carrier.caveat": "\u66F4\u6539\u4F1A\u5728\u5BBF\u4E3B\u8FD0\u884C\u4E2D\u66FF\u6362\u670D\u52A1\u8FD9\u4E9B\u8DEF\u7531\u7684\u9002\u914D\u5668\uFF1B\u8BF7\u6C42\u4E0D\u4F1A\u6392\u961F\u6216\u8FC1\u79FB\uFF0C\u66F4\u6539\u671F\u95F4\u53D1\u51FA\u7684\u8BF7\u6C42\u53EF\u80FD\u88AB\u4E2D\u65AD\u3002",
+  "settings.carrier.pending": "\u5C1A\u672A\u786E\u8BA4\u751F\u6548\uFF1A\u5DF2\u4FDD\u5B58\u7684\u9009\u62E9\u4E0E\u8FD0\u884C\u4E2D\u7684\u72B6\u6001\u4E0D\u4E00\u81F4\u3002\u5DF2\u9009\u4E2D\u7684\u63D2\u4EF6\u5305\u53EF\u80FD\u5728\u7B49\u5F85\u91CD\u542F\uFF0C\u6216\u5176\u66FF\u6362\u9002\u914D\u5668\u542F\u52A8\u5931\u8D25\uFF1B\u5173\u95ED\u4E4B\u540E\uFF0C\u66FF\u6362\u9002\u914D\u5668\u4F1A\u7EE7\u7EED\u670D\u52A1\u8FD9\u4E9B\u8DEF\u7531\uFF0C\u76F4\u5230\u5BBF\u4E3B\u91CD\u542F\u3002",
+  "settings.carrier.unavailable": "\u672C\u5BBF\u4E3B\u6CA1\u6709\u63D2\u4EF6\u7BA1\u7406\u5668\uFF0C\u6216\u8BE5\u63D2\u4EF6\u5305\u672A\u5B89\u88C5\u4E14\u672C\u5BBF\u4E3B\u6CA1\u6709\u53EF\u4F9B\u5B89\u88C5\u7684\u6765\u6E90\uFF0C\u56E0\u6B64\u65E0\u6CD5\u5728\u6B64\u4F7F\u7528\u8BE5\u5F00\u5173\u3002",
+  "settings.carrier.outcome.enabled": "\u5DF2\u5F00\u542F\uFF1A\u66FF\u6362\u9002\u914D\u5668\u5DF2\u63A5\u7BA1\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.disabled-restored": "\u5DF2\u5173\u95ED\uFF1A\u539F\u9002\u914D\u5668\u5DF2\u6062\u590D\u670D\u52A1\u5176\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.disabled-unconfirmed": "\u5DF2\u5173\u95ED\uFF0C\u66FF\u6362\u9002\u914D\u5668\u5DF2\u64A4\u4E0B\uFF0C\u4F46\u65E0\u6CD5\u786E\u8BA4\u539F\u9002\u914D\u5668\u5DF2\u6062\u590D\u670D\u52A1\u5176\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.restart-required": "\u5DF2\u5728\u5DF2\u4FDD\u5B58\u7684\u914D\u7F6E\u4E2D\u5173\u95ED\uFF0C\u4F46\u66FF\u6362\u9002\u914D\u5668\u4ECD\u5728\u670D\u52A1\u8FD9\u4E9B\u8DEF\u7531\uFF1A\u91CD\u542F\u5BBF\u4E3B\u540E\u6062\u590D\u539F\u9002\u914D\u5668\u3002",
+  "settings.carrier.outcome.rolled-back": "\u5F00\u542F\u672A\u751F\u6548\uFF0C\u5DF2\u64A4\u56DE\u6240\u9009\u7684\u63D2\u4EF6\u5305\uFF1A\u5DF2\u786E\u8BA4\u539F\u9002\u914D\u5668\u6B63\u5728\u670D\u52A1\u5176\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.withdrawn": "\u5F00\u542F\u672A\u751F\u6548\uFF0C\u5DF2\u64A4\u56DE\u6240\u9009\u7684\u63D2\u4EF6\u5305\uFF0C\u4F46\u65E0\u6CD5\u786E\u8BA4\u539F\u9002\u914D\u5668\u6B63\u5728\u670D\u52A1\u5176\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.rollback-failed": "\u5F00\u542F\u672A\u751F\u6548\uFF0C\u4E14\u64A4\u56DE\u6240\u9009\u63D2\u4EF6\u5305\u672A\u80FD\u5B8C\u6210\uFF1A\u6240\u9009\u63D2\u4EF6\u5305\u6216\u66FF\u6362\u9002\u914D\u5668\u53EF\u80FD\u4ECD\u7136\u5728\u4F4D\u3002\u8BF7\u5230\u63D2\u4EF6\u9875\u68C0\u67E5\u3002",
+  "settings.carrier.reason.restart-required": "\u63D2\u4EF6\u7BA1\u7406\u5668\u62A5\u544A\u8BE5\u66F4\u6539\u8981\u91CD\u542F\u540E\u624D\u751F\u6548\u3002\u5F00\u5173\u4E0D\u4F1A\u628A\u672A\u9A8C\u8BC1\u7684\u66F4\u6539\u7559\u5230\u4E0B\u6B21\u542F\u52A8\uFF0C\u56E0\u6B64\u65E0\u6CD5\u5728\u6B64\u5F00\u542F\u3002",
+  "settings.carrier.responses.title": "OpenAI Responses \u7F13\u5B58\u65AD\u70B9",
+  "settings.carrier.responses.description": "\u5728\u4F7F\u7528 OpenAI Responses \u534F\u8BAE\u7684\u8DEF\u7531\u4E0A\uFF0C\u53E6\u5728\u6700\u540E\u4E00\u4E2A\u8F7D\u4F53\u7684\u672B\u5C3E\u52A0\u4E00\u4E2A\u663E\u5F0F\u7F13\u5B58\u65AD\u70B9\uFF0C\u5E76\u5728\u52A0\u4E86\u65AD\u70B9\u7684\u8BF7\u6C42\u91CC\u53D1\u9001\u4E0E\u4E4B\u914D\u5957\u7684\u7F13\u5B58\u9009\u9879\uFF0C\u4E0D\u8BBA\u8BE5\u8DEF\u7531\u7684\u6A21\u578B\u662F\u5426\u58F0\u660E\u652F\u6301\u3002\u5B83\u5728\u4E0A\u65B9\u7684\u538B\u7F29\u70B9\u7F13\u5B58\u5F00\u542F\u5E76\u5DF2\u786E\u8BA4\u65F6\u751F\u6548\u3002Azure \u4E0E Codex \u8DEF\u7531\u4E0D\u53D7\u5F71\u54CD\u3002",
+  "settings.carrier.responses.warning": "\u7AEF\u70B9\u53EF\u80FD\u62D2\u7EDD\u5E26\u6709\u8BE5\u65AD\u70B9\u6216\u5176\u7F13\u5B58\u9009\u9879\u7684\u8BF7\u6C42\u3002\u82E5\u67D0\u6761 Responses \u8DEF\u7531\u7684\u8BF7\u6C42\u5F00\u59CB\u5931\u8D25\uFF0C\u8BF7\u5173\u95ED\u6B64\u9879\uFF1A\u5B83\u53EF\u4EE5\u5355\u72EC\u5173\u95ED\uFF0C\u4E0A\u65B9\u7684\u538B\u7F29\u70B9\u7F13\u5B58\u4FDD\u6301\u4E0D\u53D8\u3002",
+  "settings.carrier.responses.held": "\u4E0A\u65B9\u7684\u538B\u7F29\u70B9\u7F13\u5B58\u672A\u5F00\u542F\u6216\u672A\u786E\u8BA4\u65F6\uFF0C\u6B64\u9879\u88AB\u505C\u7528\u3002\u4F60\u7684\u9009\u62E9\u4F1A\u4FDD\u7559\uFF0C\u5F85\u5176\u5F00\u542F\u5E76\u786E\u8BA4\u540E\u91CD\u65B0\u751F\u6548\u3002",
+  "settings.carrier.responses.failed": "\u66F4\u6539\u672A\u80FD\u4FDD\u5B58\u3002",
+  "settings.carrier.outcome.failed": "\u65E0\u6CD5\u5B8C\u6210\u8BE5\u66F4\u6539\u3002",
+  "settings.carrier.outcome.busy": "\u53E6\u4E00\u9879\u66F4\u6539\u4ECD\u5728\u8FDB\u884C\u3002",
+  "settings.carrier.outcome.unavailable": "\u672C\u5BBF\u4E3B\u4E0D\u63D0\u4F9B\u8BE5\u5F00\u5173\u3002",
+  "settings.carrier.notInstalled": "\u63D2\u4EF6\u5305 {name} \u5C1A\u672A\u5B89\u88C5\u5728\u672C\u5BBF\u4E3B\u7684 profile \u4E2D\u3002\u5F00\u542F\u5C06\u5728\u4F60\u786E\u8BA4\u540E\uFF0C\u901A\u8FC7\u63D2\u4EF6\u7BA1\u7406\u5668\u5B89\u88C5\u5176 {version} \u7248\u3002",
+  "settings.carrier.install.confirm": "\u628A {name} {version} \u5B89\u88C5\u5230\u672C\u5BBF\u4E3B\u7684 profile \u5417\uFF1F\u63D2\u4EF6\u7BA1\u7406\u5668\u4F1A\u7528 pnpm \u4E3A\u8BE5 profile \u7684\u6240\u6709\u4F1A\u8BDD\u5B89\u88C5\u5B83\uFF0C\u7136\u540E\u628A\u6A21\u578B\u8DEF\u7531\u5207\u6362\u5230 Session Watcher \u7684 pi-ai \u9002\u914D\u5668\u5165\u53E3\u3002\u8FD9\u91CC\u4E0D\u4F1A\u6279\u51C6\u4EFB\u4F55\u8F6F\u4EF6\u5305\u811A\u672C\u3002\u82E5\u5F00\u542F\u5931\u8D25\uFF0C\u63D2\u4EF6\u5305\u4F1A\u4FDD\u6301\u5DF2\u5B89\u88C5\u3001\u672A\u5F00\u542F\u3002",
+  "settings.carrier.install.accept": "\u5B89\u88C5\u5E76\u5F00\u542F",
+  "settings.carrier.install.cancel": "\u53D6\u6D88",
+  "settings.carrier.install.running": "\u6B63\u5728\u5B89\u88C5\uFF0C\u53EF\u80FD\u9700\u8981\u4E00\u4E9B\u65F6\u95F4\u3002",
+  "settings.carrier.installedNote": "\u8BE5\u63D2\u4EF6\u5305\u5DF2\u5B89\u88C5\uFF0C\u5E76\u4FDD\u6301\u5DF2\u5B89\u88C5\u3001\u672A\u5F00\u542F\u3002",
+  "settings.carrier.unavailable.conflict": "\u672C\u5730\u63D2\u4EF6\u5305 @local/sw-carrier-cache-web \u4E0E\u6B63\u5F0F\u63D2\u4EF6\u5305\u540C\u65F6\u5DF2\u5B89\u88C5\uFF0C\u5F00\u5173\u65E0\u6CD5\u5224\u65AD\u7528\u54EA\u4E00\u4E2A\uFF0C\u4E5F\u4E0D\u4F1A\u5B89\u88C5\u4EFB\u4F55\u4E1C\u897F\u3002\u8BF7\u5230\u63D2\u4EF6\u9875\u79FB\u9664\u5176\u4E2D\u4E00\u4E2A\u3002",
+  "settings.carrier.unavailable.damaged": "\u8BE5\u63D2\u4EF6\u5305\u5728 profile \u4E2D\uFF0C\u4F46\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u56E0\u6B64\u5F00\u5173\u4E0D\u4F1A\u5728\u5176\u4E0A\u5B89\u88C5\u4EFB\u4F55\u4E1C\u897F\u3002\u8BF7\u5230\u63D2\u4EF6\u9875\u4FEE\u590D\u6216\u79FB\u9664\u3002",
+  "settings.carrier.unavailable.unreadable": "\u65E0\u6CD5\u8BFB\u53D6\u63D2\u4EF6\u7BA1\u7406\u5668\u7684\u63D2\u4EF6\u5305\u5217\u8868\uFF0C\u56E0\u6B64\u5F00\u5173\u4E0D\u4F1A\u5B89\u88C5\u4EFB\u4F55\u4E1C\u897F\u3002\u8BF7\u68C0\u67E5\u63D2\u4EF6\u9875\u5E76\u91CD\u65B0\u52A0\u8F7D\u3002",
+  "settings.carrier.outcome.installed-enabled": "\u5DF2\u5B89\u88C5\u5E76\u5F00\u542F\uFF1A\u66FF\u6362\u9002\u914D\u5668\u5DF2\u63A5\u7BA1\u8DEF\u7531\u3002",
+  "settings.carrier.outcome.install-confirmation-required": "\u5B89\u88C5\u672A\u83B7\u786E\u8BA4\uFF0C\u6CA1\u6709\u505A\u4EFB\u4F55\u66F4\u6539\u3002",
+  "settings.carrier.outcome.install-failed": "\u5B89\u88C5\u672A\u5B8C\u6210\uFF0C\u4E5F\u6CA1\u6709\u5F00\u542F\u4EFB\u4F55\u4E1C\u897F\u3002\u672C\u9875\u4E0D\u663E\u793A\u539F\u56E0\u3002",
+  "settings.carrier.outcome.install-unconfirmed": "\u5B89\u88C5\u5DF2\u6267\u884C\uFF0C\u4F46\u88C5\u5165\u7684\u8F6F\u4EF6\u5305\u4E0D\u662F\u9884\u671F\u7684\u90A3\u4E2A\uFF0C\u56E0\u6B64\u6CA1\u6709\u5F00\u542F\u3002\u5DF2\u5B89\u88C5\u7684\u8F6F\u4EF6\u5305\u4FDD\u6301\u5DF2\u5B89\u88C5\u3001\u672A\u5F00\u542F\uFF1B\u8BF7\u68C0\u67E5\u63D2\u4EF6\u9875\u3002",
+  "monitor.label": "SW\u4E8B\u4EF6",
+  "monitor.region": "\u4E8B\u4EF6",
+  "monitor.rows.loading": "\u6B63\u5728\u8BFB\u53D6\u6B64\u4F1A\u8BDD\u7684\u4E8B\u4EF6\u2026",
+  "monitor.rows.unavailable": "\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\u6B64\u4F1A\u8BDD\u7684\u4E8B\u4EF6\uFF0C\u8FD9\u5E76\u4E0D\u8868\u793A\u5B83\u6CA1\u6709\u4E8B\u4EF6\u3002",
+  "monitor.rows.unreachable": "\u65E0\u6CD5\u8FDE\u63A5\u4E8B\u4EF6\u76D1\u89C6\uFF1A{message}",
+  "monitor.rows.empty": "\u6B64\u4F1A\u8BDD\u8FD8\u6CA1\u6709\u4E8B\u4EF6\u3002",
+  "monitor.object.attempt": "\u5206\u6BB5 #{epoch} \u538B\u7F29 #{ordinal}",
+  "monitor.object.call": "\u8C03\u7528",
+  "monitor.object.turn": "\u7B2C {turn} \u8F6E",
+  "monitor.object.step": "\u7B2C {step} \u6B65",
+  "monitor.meta.time": "\u8017\u65F6",
+  "monitor.status.generating": "\u751F\u6210\u4E2D",
+  "monitor.status.validating": "\u6821\u9A8C\u4E2D",
+  "monitor.status.committed": "\u5DF2\u63D0\u4EA4",
+  "monitor.status.paid": "\u5DF2\u56DE\u672C",
+  "monitor.status.failed": "\u5931\u8D25",
+  "monitor.status.cancelled": "\u5DF2\u53D6\u6D88",
+  "monitor.status.unknown": "\u672A\u77E5",
+  "monitor.callState.generating": "\u751F\u6210\u4E2D",
+  "monitor.callState.received": "\u5DF2\u6536\u5230",
+  "monitor.callState.error": "\u51FA\u9519",
+  "monitor.callState.absent": "\u672A\u8BB0\u5F55",
+  "monitor.carrierCache.unobserved": "\u672A\u89C2\u6D4B",
+  "monitor.carrierCache.added": "\u5DF2\u6DFB\u52A0\u538B\u7F29\u70B9\u7F13\u5B58",
+  "monitor.carrierCache.native": "\u6CBF\u7528\u540C\u4F4D\u7F6E\u539F\u751F\u70B9",
+  "monitor.carrierCache.skipped": "\u5DF2\u68C0\u67E5\u4F46\u672A\u6DFB\u52A0\uFF08{reason}\uFF09",
+  "monitor.carrierCache.omitted": "\u53E6\u6709 {count} \u6B21\u7ED3\u679C\u672A\u5217\u51FA",
+  "monitor.carrierCache.reason.no-carrier": "\u8BF7\u6C42\u4E2D\u6CA1\u6709\u538B\u7F29\u70B9",
+  "monitor.carrierCache.reason.no-native-point": "\u8BE5\u8DEF\u7531\u672A\u5199\u5165\u81EA\u5DF1\u7684\u7F13\u5B58\u70B9",
+  "monitor.carrierCache.reason.points-full": "\u8BE5\u8DEF\u7531\u7684\u7F13\u5B58\u70B9\u6570\u91CF\u5DF2\u8FBE\u4E0A\u9650",
+  "monitor.carrierCache.reason.responses-off": "Responses \u7F13\u5B58\u65AD\u70B9\u5F00\u5173\u672A\u5F00\u542F",
+  "monitor.carrierCache.reason.unsupported": "\u534F\u8BAE\u6216\u8DEF\u7531\u4E0D\u53D7\u652F\u6301",
+  "monitor.usage.cell": "\u8F93\u51FA {output}",
+  "monitor.usage.title": "\u8F93\u51FA {output}\uFF0C\u7F13\u5B58\u8BFB {cacheRead}\uFF0C\u7F13\u5B58\u5199 {cacheWrite}",
+  "monitor.meta.context": "\u4E0A\u4E0B\u6587\u53D8\u5316",
+  "monitor.meta.context.grew": "\u538B\u7F29\u540E\u4E0A\u4E0B\u6587\u589E\u52A0",
+  "monitor.meta.range": "\u538B\u7F29\u524D {before} \xB7 \u538B\u7F29\u540E {after}",
+  "monitor.meta.range.title": "\u538B\u7F29\u524D\u540E\u7684 token",
+  "monitor.change.increase": "\u589E\u52A0 {count}",
+  "monitor.change.decrease": "\u51CF\u5C11 {count}",
+  "monitor.change.same": "\u4E0D\u53D8",
+  "monitor.usage.context": "\u538B\u7F29\u524D\u540E\u7684\u4E0A\u4E0B\u6587",
+  "monitor.context.before": "\u538B\u7F29\u524D",
+  "monitor.context.after": "\u538B\u7F29\u540E",
+  "monitor.context.change": "\u4E0A\u4E0B\u6587\u53D8\u5316",
+  "monitor.context.miss": "\u7F13\u5B58\u91CD\u5EFA",
+  "monitor.meta.step": "\u6B65\u6570 {count}",
+  "monitor.meta.step.title": "\u8FD9\u6B21\u538B\u7F29\u6C47\u603B\u7684\u6B65\u6570",
+  "monitor.meta.estimate": "\u504F\u79BB\u5EA6 {q}",
+  "monitor.meta.estimate.title": "\u4F30\u7B97\u76F8\u5BF9\u53C2\u8003\u7684\u504F\u79BB\u5EA6",
+  "monitor.meta.estimate.kappa.title": "\u4F30\u7B97\u76F8\u5BF9\u53C2\u8003\u7684\u504F\u79BB\u5EA6\uFF1B\u63D0\u524D\u89E6\u53D1\u5BB9\u5DEE {kappa}",
+  "monitor.meta.miss": "\u7F13\u5B58\u91CD\u5EFA {count}",
+  "monitor.meta.miss.title": "\u538B\u7F29\u540E\u7B2C\u4E00\u6B21\u8C03\u7528\u91CD\u5EFA\u7F13\u5B58\u7684 token",
+  "monitor.meta.miss.unexpected": "\u7F13\u5B58\u91CD\u5EFA\u91CF\u8D85\u51FA\u4E0A\u4E0B\u6587\u589E\u957F\uFF1A\u53D1\u751F\u4E86\u975E\u9884\u671F\u7684\u7F13\u5B58\u672A\u547D\u4E2D",
+  "monitor.drawer.label": "\u8BE6\u60C5",
+  "monitor.drawer.call": "\u5206\u6BB5#{epoch}\u538B\u7F29#{ordinal}\u7684\u8C03\u7528",
+  "monitor.drawer.slot": "\u5206\u6BB5#{epoch}\u538B\u7F29#{ordinal}\u7684\u4E8B\u4EF6",
+  "monitor.drawer.attemptId": "\u538B\u7F29ID\uFF1A{id}",
+  "monitor.drawer.slotKey": "\u9996\u4E8B\u4EF6ID\uFF1A{id}",
+  "monitor.drawer.close": "\u5173\u95ED\u8BE6\u60C5",
+  "monitor.drawer.resize": "\u8C03\u6574\u8BE6\u60C5\u5BBD\u5EA6",
+  "monitor.notRecorded": "\u672A\u8BB0\u5F55",
+  "monitor.detail.loading": "\u6B63\u5728\u8BFB\u53D6\u8BE6\u60C5\u2026",
+  "monitor.detail.unavailable": "\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\u6B64\u9879\u7684\u8BE6\u60C5\u3002",
+  "monitor.detail.unreachable": "\u65E0\u6CD5\u8BFB\u53D6\u8BE6\u60C5\uFF1A{message}",
+  "monitor.leaves.loading": "\u6B63\u5728\u8BFB\u53D6{what}\u2026",
+  "monitor.leaves.failed": "{what}\u8BFB\u53D6\u5931\u8D25",
+  "monitor.leaves.empty": "\u6CA1\u6709{what}",
+  "monitor.leaves.turns": "\u56DE\u5408",
+  "monitor.leaves.summaries": "\u6458\u8981",
+  "monitor.page.overview": "\u6982\u89C8",
+  "monitor.page.request": "\u8BF7\u6C42",
+  "monitor.page.response": "\u54CD\u5E94",
+  "monitor.page.summaries": "\u6458\u8981",
+  "monitor.page.carried": "\u8BC1\u636E",
+  "monitor.page.quote": "\u4F30\u7B97",
+  "monitor.page.usage": "\u7528\u91CF",
+  "monitor.page.timing": "\u65F6\u95F4",
+  "monitor.block.reasoning": "\u63A8\u7406",
+  "monitor.block.toolCall": "\u5DE5\u5177\u8C03\u7528\uFF1A{name}",
+  "monitor.block.toolResult": "{id} \u7684\u5DE5\u5177\u7ED3\u679C",
+  "monitor.block.toolError": "{id} \u7684\u5DE5\u5177\u9519\u8BEF",
+  "monitor.block.image": "\u56FE\u7247\u5F15\u7528",
+  "monitor.block.file": "\u6587\u4EF6\u5F15\u7528",
+  "monitor.block.unknown": "\u5176\u4ED6\u7C7B\u578B\u7684\u5757",
+  "monitor.request.partial": "\u90E8\u5206\u8BB0\u5F55\uFF1A\u6B64\u538B\u7F29\u6CA1\u6709\u5F00\u59CB\u8BB0\u5F55\uFF0C\u4EC5\u663E\u793A\u5176\u8C03\u7528\u8BB0\u5F55\u4FDD\u7559\u7684\u9009\u62E9\u4E0E\u5C3E\u90E8\u3002",
+  "monitor.request.options": "\u8BF7\u6C42\u9009\u9879",
+  "monitor.request.tail": "\u8BF7\u6C42\u5C3E\u90E8",
+  "monitor.request.messages": "\u5C3E\u90E8\u4E4B\u524D\u6709 {count} \u6761\u5386\u53F2\u6D88\u606F\u3002",
+  "monitor.request.sequence": "\u5E8F\u53F7",
+  "monitor.request.throughSeq": "\u5386\u53F2\u622A\u6B62\u4E8B\u4EF6ID",
+  "monitor.request.headerSeq": "\u8BF7\u6C42\u5934\u4E8B\u4EF6ID",
+  "monitor.request.tools": "\u53D1\u9001\u7684\u5DE5\u5177\uFF1A{count}",
+  "monitor.request.definitions": "\u5DE5\u5177\u5B9A\u4E49",
+  "monitor.request.toolHistory": "\u5DE5\u5177\u5386\u53F2\u66F4\u65B0",
+  "monitor.response.outcome": "\u8BB0\u5F55\u7684\u7ED3\u679C",
+  "monitor.response.finish": "\u7ED3\u675F\u4FE1\u606F",
+  "monitor.response.none": "\u6B64\u538B\u7F29\u6CA1\u6709\u8BB0\u5F55\u54CD\u5E94\u3002",
+  "monitor.response.assembled": "\u54CD\u5E94\u5185\u5BB9",
+  "monitor.response.assembleError": "\u6D41\u65E0\u6CD5\u7EC4\u88C5\u6210\u5757\uFF1A{message}",
+  "monitor.response.noBlocks": "\u6D41\u4E2D\u6CA1\u6709\u5757\u3002",
+  "monitor.response.rawTitle": "\u539F\u59CB\u6D41",
+  "monitor.response.raw": "\u5171 {count} \u6761",
+  "monitor.summaries.heading": "#{number} \xB7 {title} \xB7 seq {seq}",
+  "monitor.summaries.pending": "\u63D0\u4EA4\u540E\u624D\u6709\u6458\u8981\u3002",
+  "monitor.carried.pending": "\u63D0\u4EA4\u540E\u624D\u6709\u8BC1\u636E\u3002",
+  "monitor.carried.none": "\u8FD9\u6B21\u8BC1\u636E\u6CA1\u6709\u53D8\u5316\u3002",
+  "monitor.files.group.changed": "\u53D8\u66F4\u7684\u6587\u4EF6",
+  "monitor.files.group.bare": "\u65E0\u6587\u672C\u7684\u6587\u4EF6",
+  "monitor.files.group.gone": "\u5DF2\u79FB\u9664",
+  "monitor.files.group.skills": "\u6280\u80FD",
+  "monitor.files.group.read": "\u8BFB\u53D6\u7684\u6587\u4EF6",
+  "monitor.files.summary.written": "{count} \u884C\u589E\u52A0",
+  "monitor.files.summary.withdrawn": "{count} \u884C\u51CF\u5C11",
+  "monitor.files.summary.files": "{count} \u4E2A\u6587\u4EF6",
+  "monitor.files.sub.more": "\u53E6\u6709 {parts}",
+  "monitor.files.sub.skills": "{count} \u4E2A\u6280\u80FD",
+  "monitor.files.sub.bare": "{count} \u4E2A\u6587\u4EF6\u65E0\u6587\u672C",
+  "monitor.files.sub.gone": "{count} \u9879\u5DF2\u79FB\u9664",
+  "monitor.files.sub.root": "\u8DEF\u5F84\u76F8\u5BF9\u4E8E {root}",
+  "monitor.files.lines": "{count} \u884C",
+  "monitor.files.segments": "{count} \u6BB5",
+  "monitor.files.chars": "{count} \u5B57\u7B26",
+  "monitor.files.noWrites": "\u65E0\u589E\u52A0\u884C",
+  "monitor.files.noLines": "\u65E0\u643A\u5E26\u884C",
+  "monitor.files.empty": "\u7A7A\u6587\u4EF6",
+  "monitor.files.removed": "\u5DF2\u79FB\u9664",
+  "monitor.files.unrecorded": "\u65E7\u683C\u5F0F\u8BB0\u5F55\uFF0C\u65E0\u6CD5\u663E\u793A",
+  "monitor.files.unreadable": "\u4E0D\u53EF\u8BFB\uFF1A{reason}",
+  "monitor.files.reason.missing": "\u4E0D\u5B58\u5728",
+  "monitor.files.reason.not-file": "\u4E0D\u662F\u6587\u4EF6",
+  "monitor.files.reason.too-large": "\u8FC7\u5927",
+  "monitor.files.reason.binary": "\u4E8C\u8FDB\u5236",
+  "monitor.files.reason.unreadable": "\u65E0\u6CD5\u8BFB\u53D6",
+  "monitor.files.bar.written": "\u589E\u52A0\u884C {spans}",
+  "monitor.files.bar.read": "\u8BFB\u53D6\u884C {spans}",
+  "monitor.files.bar.withdrawn": "\u51CF\u5C11\u884C {spans}",
+  "monitor.files.meta.total": "\u5171 {count} \u884C",
+  "monitor.files.meta.lines": "\u884C {spans}",
+  "monitor.files.row.gap": "\u22EF \u7B2C {range} \u884C\u672A\u8F7D\u5165",
+  "monitor.files.row.withdrawn": "\u51CF\u5C11\u7B2C {range} \u884C \xB7 {count} \u884C",
+  "monitor.files.controls": "\u9875\u9762\u63A7\u4EF6",
+  "monitor.files.expandAll": "\u5168\u90E8\u5C55\u5F00",
+  "monitor.files.collapseAll": "\u5168\u90E8\u6298\u53E0",
+  "monitor.files.wrap": "\u81EA\u52A8\u6362\u884C",
+  "monitor.files.wrap.on": "\u81EA\u52A8\u6362\u884C\uFF1A\u5F00",
+  "monitor.files.wrap.off": "\u81EA\u52A8\u6362\u884C\uFF1A\u5173",
+  "monitor.files.foot.note": "\u8BF4\u660E",
+  "monitor.files.foot.text": "\u539F\u6587",
+  "monitor.quote.missing.estimate_failed": "\u4F30\u7B97\u5931\u8D25\u3002",
+  "monitor.quote.missing.ratio_unavailable": "\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4\u4E0D\u53EF\u7528\u3002",
+  "monitor.quote.missing.non_positive_savings": "\u9884\u8BA1\u6CA1\u6709\u8282\u7701\u3002",
+  "monitor.quote.missing.undefined_result": "\u7ED3\u679C\u65E0\u6CD5\u8BA1\u7B97\u3002",
+  "monitor.quote.none": "\u6B64\u538B\u7F29\u6CA1\u6709\u8BB0\u5F55\u4F30\u7B97\u3002",
+  "monitor.quote.note": "\u8BF7\u6C42\u6458\u8981\u524D\u7684\u4F30\u7B97\uFF1B\u5B9E\u9645\u63D0\u4EA4\u7684\u8BC1\u636E\u89C1\u300C\u8BC1\u636E\u300D\u9875\u3002",
+  "monitor.quote.missingReason": "\u65E0\u7ED3\u679C\u539F\u56E0",
+  "monitor.quote.n": "\u6B65\u6570",
+  "monitor.quote.lA": "\u5F85\u538B\u7F29 token",
+  "monitor.quote.bEst": "\u4F30\u7B97\u8BC1\u636E token",
+  "monitor.quote.cEst": "\u4F30\u7B97\u6458\u8981 token",
+  "monitor.quote.sEst": "\u4F30\u7B97\u8282\u7701 token",
+  "monitor.quote.cRatio": "\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4",
+  "monitor.quote.fee": "\u56FA\u5B9A\u5F00\u9500 token",
+  "monitor.quote.preset": "\u538B\u7F29\u7B56\u7565",
+  "monitor.quote.preset.E2": "\u6781\u6FC0\u8FDB",
+  "monitor.quote.preset.W2": "\u6FC0\u8FDB",
+  "monitor.quote.preset.M2": "\u5747\u8861",
+  "monitor.quote.preset.S3": "\u4FDD\u5B88",
+  "monitor.quote.preset.X3": "\u6781\u4FDD\u5B88",
+  "monitor.quote.kappa": "\u63D0\u524D\u89E6\u53D1\u5BB9\u5DEE",
+  "monitor.quote.q": "\u504F\u79BB\u5EA6",
+  "monitor.quote.arm": "\u76F8\u5BF9\u53C2\u8003\u7684\u4E00\u4FA7",
+  "monitor.quote.arm.left": "\u5DE6\u4FA7",
+  "monitor.quote.arm.right": "\u5904\u4E8E\u6216\u53F3\u4FA7",
+  "monitor.usage.folded": "\u7528\u91CF",
+  "monitor.usage.raw": "\u539F\u59CB\u7528\u91CF",
+  "monitor.usage.input": "\u8F93\u5165",
+  "monitor.usage.output": "\u8F93\u51FA",
+  "monitor.usage.cacheRead": "\u7F13\u5B58\u8BFB",
+  "monitor.usage.cacheWrite": "\u7F13\u5B58\u5199",
+  "monitor.timing.attemptStart": "\u538B\u7F29\u5F00\u59CB",
+  "monitor.timing.attemptEnd": "\u538B\u7F29\u7ED3\u675F",
+  "monitor.timing.attemptElapsed": "\u538B\u7F29\u8017\u65F6",
+  "monitor.timing.callStart": "\u8C03\u7528\u5F00\u59CB",
+  "monitor.timing.callEnd": "\u8C03\u7528\u7ED3\u675F",
+  "monitor.timing.callElapsed": "\u8C03\u7528\u8017\u65F6",
+  "monitor.timing.firstChunk": "\u9996\u4E2A\u54CD\u5E94\u5230\u8FBE",
+  "monitor.source.user": "\u7528\u6237\u8F93\u5165",
+  "monitor.source.injected": "Harness \u6CE8\u5165",
+  "monitor.source.system": "\u7CFB\u7EDF\u6D88\u606F",
+  "monitor.source.developer": "\u5F00\u53D1\u8005\u6307\u4EE4",
+  "monitor.source.tool": "\u5DE5\u5177\u7ED3\u679C",
+  "monitor.source.assistant": "\u52A9\u624B\u6D88\u606F",
+  "monitor.source.other": "\u5176\u4ED6\u5185\u5BB9",
+  "monitor.slotPage.overview": "\u6982\u89C8",
+  "monitor.slotPage.summary": "\u6458\u8981",
+  "monitor.slotPage.source": "\u539F\u6587",
+  "monitor.slot.number": "\u69FD\u7F16\u53F7",
+  "monitor.slot.seqs": "\u6E90\u4E8B\u4EF6",
+  "monitor.slot.source": "\u8D77\u59CB\u4E8B\u4EF6\u6765\u6E90",
+  "monitor.slot.sourceType": "\u8D77\u59CB\u4E8B\u4EF6\u7C7B\u578B",
+  "monitor.slot.sourceKind": "\u8D77\u59CB\u4E8B\u4EF6\u79CD\u7C7B",
+  "monitor.slot.visibleCount": "\u8C03\u7528\u6240\u89C1",
+  "monitor.slot.visibleCountValue": "{total} \u4E2A\u6E90\u4E8B\u4EF6\u4E2D\u7684 {visible} \u4E2A",
+  "monitor.slot.turn": "\u8F6E",
+  "monitor.slot.step": "\u6B65",
+  "monitor.slot.empty": "\u7A7A",
+  "monitor.slot.sources": "\u6765\u6E90",
+  "monitor.slot.event": "seq {seq} \xB7 {type}",
+  "monitor.slot.surface": "\u8C03\u7528\u6240\u89C1",
+  "monitor.slot.earlier": "\u66F4\u65E9\u7684\u539F\u59CB\u6765\u6E90\uFF08\u8C03\u7528\u672A\u6536\u5230\uFF09",
+  "monitor.slot.noBlocks": "\u6B64\u4E8B\u4EF6\u6CA1\u6709\u5185\u5BB9\u5757\u3002",
+  "monitor.slot.raw": "\u539F\u59CB JSON",
+  "monitor.overview.status": "\u72B6\u6001",
+  "monitor.overview.payback": "\u56DE\u672C\u8FDB\u5EA6",
+  "monitor.overview.callState": "\u8C03\u7528",
+  "monitor.overview.carrierCache": "\u538B\u7F29\u70B9\u7F13\u5B58",
+  "monitor.overview.recordStart": "\u538B\u7F29\u8BB0\u5F55",
+  "monitor.overview.recordCall": "\u8C03\u7528\u8BB0\u5F55",
+  "monitor.overview.recordEnd": "\u7EC8\u6001\u8BB0\u5F55",
+  "monitor.overview.recordCarrier": "\u8F7D\u4F53",
+  "monitor.overview.seq": "seq {seq}",
+  "monitor.overview.provider": "\u63D0\u4F9B\u65B9",
+  "monitor.overview.model": "\u6A21\u578B",
+  "monitor.overview.effort": "\u63A8\u7406\u5F3A\u5EA6",
+  "monitor.overview.range": "\u6C47\u603B\u7684\u4E8B\u4EF6",
+  "monitor.overview.rangeValue": "seq {first}\u2013{last}\uFF08{count} \u6761\uFF09",
+  "monitor.overview.finish": "\u7ED3\u675F\u539F\u56E0",
+  "monitor.overview.slots": "\u5DF2\u63D0\u4EA4\u7684\u69FD\u4F4D\u6570",
+  "monitor.overview.endReason": "\u8BB0\u5F55\u7684\u539F\u56E0",
+  "monitor.overview.thrown": "\u8C03\u7528\u629B\u51FA\u7684\u9519\u8BEF",
+  "monitor.overview.legacy": "\u6B64\u538B\u7F29\u6CA1\u6709\u5F00\u59CB\u8BB0\u5F55\uFF0C\u5176\u5F00\u59CB\u65F6\u95F4\u548C\u8BF7\u6C42\u5747\u672A\u8BB0\u5F55\u3002",
+  "monitor.object.handoff": "\u5206\u6BB5 #{epoch} \u4EA4\u63A5",
+  "monitor.object.handoffContent": "\u4EA4\u63A5\u5185\u5BB9",
+  "monitor.object.handoffTurn": "\u56DE\u5408 {n}",
+  "monitor.object.settlement": "\u5206\u6BB5 #{epoch} \u538B\u7F29\u7ED3\u7B97",
+  "monitor.handoff.type.load": "\u52A0\u8F7D",
+  "monitor.handoff.type.continue": "\u7EE7\u7EED",
+  "monitor.handoff.meta.type.title": "\u4EA4\u63A5\u7C7B\u578B",
+  "monitor.handoff.meta.token.title": "\u4EA4\u63A5\u7801",
+  "monitor.handoff.meta.files": "\u6587\u4EF6 {read}/{kept}",
+  "monitor.handoff.meta.files.title": "\u5DF2\u8BFB\u6587\u4EF6\u6570 / \u4FDD\u7559\u6587\u4EF6\u6570",
+  "monitor.handoff.meta.skills": "\u6280\u80FD {count}",
+  "monitor.handoff.meta.skills.title": "\u4FDD\u7559\u7684\u6280\u80FD",
+  "monitor.handoff.meta.lineage": "\u8C31\u7CFB {count}",
+  "monitor.handoff.meta.lineage.title": "\u8C31\u7CFB\u53F7",
+  "monitor.handoff.meta.range": "\u4EA4\u63A5\u524D {before} \xB7 \u4EA4\u63A5\u540E {after}",
+  "monitor.handoff.meta.range.title": "\u4EA4\u63A5\u524D\u540E\u7684 token",
+  "monitor.drawer.handoff": "\u5206\u6BB5#{epoch}\u4EA4\u63A5",
+  "monitor.drawer.handoffTurn": "\u5206\u6BB5#{epoch}\u4EA4\u63A5\u7684\u56DE\u5408",
+  "monitor.drawer.handoffId": "\u4EA4\u63A5ID\uFF1A{id}",
+  "monitor.drawer.settlement": "\u5206\u6BB5#{epoch}\u538B\u7F29\u7ED3\u7B97",
+  "monitor.settlement.count": "\u538B\u7F29 {count} \u6B21",
+  "monitor.settlement.count.title": "\u8BE5\u6BB5\u5DF2\u63D0\u4EA4\u7684\u538B\u7F29\u6B21\u6570",
+  "monitor.settlement.steps": "\u6B65\u6570 {count}",
+  "monitor.settlement.steps.title": "\u8BE5\u6BB5\u8FD0\u884C\u7684\u603B\u6B65\u6570",
+  "monitor.settlement.saved": "\u8282\u7701 {count}",
+  "monitor.settlement.saved.title": "\u5404\u6B21\u538B\u7F29\u524A\u51CF\u7684\u4E0A\u4E0B\u6587\uFF0C\u5728\u5176\u540E\u6BCF\u4E00\u6B65\u5C11\u4ED8\u7684\u8BFB\u4EF7 token \u4E4B\u548C",
+  "monitor.settlement.cost": "\u6210\u672C {count}",
+  "monitor.settlement.cost.title": "\u5404\u6B21\u538B\u7F29\u7684\u6458\u8981\u8C03\u7528\u4E0E\u538B\u7F29\u540E\u7F13\u5B58\u91CD\u5EFA\uFF0C\u6298\u6210\u8BFB\u4EF7 token \u4E4B\u548C",
+  "monitor.settlement.net": "\u76C8\u4E8F {count}",
+  "monitor.settlement.net.title": "\u8282\u7701\u51CF\u6210\u672C\uFF0C\u8BFB\u4EF7 token",
+  "monitor.settlement.payback": "\u56DE\u672C {percent}",
+  "monitor.settlement.payback.title": "\u8282\u7701\u5360\u6210\u672C\u7684\u6BD4\u4F8B",
+  "monitor.settlement.total": "\u5408\u8BA1",
+  "monitor.settlement.unit": "\u5355\u4F4D\uFF1A\u8BFB\u4EF7 token\uFF0C\u6309\u672C\u4F1A\u8BDD\u7684\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4\u6298\u7B97\uFF0C\u4E0D\u662F\u8D26\u5355\u3002",
+  "monitor.handoffPage.overview": "\u6982\u89C8",
+  "monitor.handoffPage.summary": "\u6458\u8981",
+  "monitor.handoffPage.files": "\u6587\u4EF6",
+  "monitor.handoffPage.turns": "\u56DE\u5408",
+  "monitor.handoffPage.lineage": "\u8C31\u7CFB",
+  "monitor.handoff.overview.type": "\u7C7B\u578B",
+  "monitor.handoff.overview.token": "\u4EA4\u63A5\u7801",
+  "monitor.handoff.overview.createdAt": "\u51C6\u5907\u65F6\u95F4",
+  "monitor.handoff.overview.deliveredAt": "\u9001\u8FBE\u65F6\u95F4",
+  "monitor.handoff.overview.seq": "\u8F7D\u8377\u6D88\u606F",
+  "monitor.handoff.overview.filesRead": "\u5DF2\u8BFB\u6587\u4EF6",
+  "monitor.handoff.overview.filesKept": "\u4FDD\u7559\u6587\u4EF6",
+  "monitor.handoff.overview.skills": "\u4FDD\u7559\u6280\u80FD",
+  "monitor.handoff.overview.before": "\u4EA4\u63A5\u524D",
+  "monitor.handoff.overview.after": "\u4EA4\u63A5\u540E",
+  "monitor.handoff.files.none": "\u6CA1\u6709\u5DF2\u8BFB\u6587\u4EF6\u3002",
+  "monitor.handoff.lineage.omitted": "\u5DF2\u7701\u7565",
+  "monitor.handoff.turn.user": "\u7528\u6237",
+  "monitor.handoff.turn.note": "\u7B14\u8BB0",
+  "monitor.handoff.turn.noNote": "\u65E0\u7B14\u8BB0",
   "picker.search": "\u6309 token \u6216\u4EFB\u52A1\u641C\u7D22",
   "picker.empty": "\u5F53\u524D\u9879\u76EE\u6CA1\u6709\u53EF\u7528\u7684 handoff\u3002",
   "picker.noResults": "\u6CA1\u6709\u5339\u914D\u7684 handoff\u3002",
@@ -519,7 +1233,7 @@ function mount(root, ctx) {
 function round(v) {
   return v + 0.5 | 0;
 }
-var lim = (v, l, h4) => Math.max(Math.min(v, h4), l);
+var lim = (v, l, h10) => Math.max(Math.min(v, h10), l);
 function p2b(v) {
   return lim(round(v * 2.55), 0, 255);
 }
@@ -566,17 +1280,17 @@ function hexString(v) {
   return v ? "#" + f(v.r) + f(v.g) + f(v.b) + alpha(v.a, f) : void 0;
 }
 var HUE_RE = /^(hsla?|hwb|hsv)\(\s*([-+.e\d]+)(?:deg)?[\s,]+([-+.e\d]+)%[\s,]+([-+.e\d]+)%(?:[\s,]+([-+.e\d]+)(%)?)?\s*\)$/;
-function hsl2rgbn(h4, s, l) {
+function hsl2rgbn(h10, s, l) {
   const a = s * Math.min(l, 1 - l);
-  const f = (n, k = (n + h4 / 30) % 12) => l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  const f = (n, k = (n + h10 / 30) % 12) => l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
   return [f(0), f(8), f(4)];
 }
-function hsv2rgbn(h4, s, v) {
-  const f = (n, k = (n + h4 / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
+function hsv2rgbn(h10, s, v) {
+  const f = (n, k = (n + h10 / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
   return [f(5), f(3), f(1)];
 }
-function hwb2rgbn(h4, w, b) {
-  const rgb = hsl2rgbn(h4, 1, 0.5);
+function hwb2rgbn(h10, w, b) {
+  const rgb = hsl2rgbn(h10, 1, 0.5);
   let i;
   if (w + b > 1) {
     i = 1 / (w + b);
@@ -606,29 +1320,29 @@ function rgb2hsl(v) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
-  let h4, s, d;
+  let h10, s, d;
   if (max !== min) {
     d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    h4 = hueValue(r, g, b, d, max);
-    h4 = h4 * 60 + 0.5;
+    h10 = hueValue(r, g, b, d, max);
+    h10 = h10 * 60 + 0.5;
   }
-  return [h4 | 0, s || 0, l];
+  return [h10 | 0, s || 0, l];
 }
 function calln(f, a, b, c) {
   return (Array.isArray(a) ? f(a[0], a[1], a[2]) : f(a, b, c)).map(n2b);
 }
-function hsl2rgb(h4, s, l) {
-  return calln(hsl2rgbn, h4, s, l);
+function hsl2rgb(h10, s, l) {
+  return calln(hsl2rgbn, h10, s, l);
 }
-function hwb2rgb(h4, w, b) {
-  return calln(hwb2rgbn, h4, w, b);
+function hwb2rgb(h10, w, b) {
+  return calln(hwb2rgbn, h10, w, b);
 }
-function hsv2rgb(h4, s, v) {
-  return calln(hsv2rgbn, h4, s, v);
+function hsv2rgb(h10, s, v) {
+  return calln(hsv2rgbn, h10, s, v);
 }
-function hue(h4) {
-  return (h4 % 360 + 360) % 360;
+function hue(h10) {
+  return (h10 % 360 + 360) % 360;
 }
 function hueParse(str) {
   const m = HUE_RE.exec(str);
@@ -640,15 +1354,15 @@ function hueParse(str) {
   if (m[5] !== v) {
     a = m[6] ? p2b(+m[5]) : n2b(+m[5]);
   }
-  const h4 = hue(+m[2]);
+  const h10 = hue(+m[2]);
   const p1 = +m[3] / 100;
   const p2 = +m[4] / 100;
   if (m[1] === "hwb") {
-    v = hwb2rgb(h4, p1, p2);
+    v = hwb2rgb(h10, p1, p2);
   } else if (m[1] === "hsv") {
-    v = hsv2rgb(h4, p1, p2);
+    v = hsv2rgb(h10, p1, p2);
   } else {
-    v = hsl2rgb(h4, p1, p2);
+    v = hsl2rgb(h10, p1, p2);
   }
   return {
     r: v[0],
@@ -658,22 +1372,22 @@ function hueParse(str) {
   };
 }
 function rotate(v, deg) {
-  var h4 = rgb2hsl(v);
-  h4[0] = hue(h4[0] + deg);
-  h4 = hsl2rgb(h4);
-  v.r = h4[0];
-  v.g = h4[1];
-  v.b = h4[2];
+  var h10 = rgb2hsl(v);
+  h10[0] = hue(h10[0] + deg);
+  h10 = hsl2rgb(h10);
+  v.r = h10[0];
+  v.g = h10[1];
+  v.b = h10[2];
 }
 function hslString(v) {
   if (!v) {
     return;
   }
   const a = rgb2hsl(v);
-  const h4 = a[0];
+  const h10 = a[0];
   const s = n2p(a[1]);
   const l = n2p(a[2]);
-  return v.a < 255 ? `hsla(${h4}, ${s}%, ${l}%, ${b2n(v.a)})` : `hsl(${h4}, ${s}%, ${l}%)`;
+  return v.a < 255 ? `hsla(${h10}, ${s}%, ${l}%, ${b2n(v.a)})` : `hsl(${h10}, ${s}%, ${l}%)`;
 }
 var map = {
   x: "dark",
@@ -2318,12 +3032,12 @@ function renderText(ctx, text, x, y, font, opts = {}) {
   ctx.restore();
 }
 function addRoundedRectPath(ctx, rect) {
-  const { x, y, w, h: h4, radius } = rect;
+  const { x, y, w, h: h10, radius } = rect;
   ctx.arc(x + radius.topLeft, y + radius.topLeft, radius.topLeft, 1.5 * PI, PI, true);
-  ctx.lineTo(x, y + h4 - radius.bottomLeft);
-  ctx.arc(x + radius.bottomLeft, y + h4 - radius.bottomLeft, radius.bottomLeft, PI, HALF_PI, true);
-  ctx.lineTo(x + w - radius.bottomRight, y + h4);
-  ctx.arc(x + w - radius.bottomRight, y + h4 - radius.bottomRight, radius.bottomRight, HALF_PI, 0, true);
+  ctx.lineTo(x, y + h10 - radius.bottomLeft);
+  ctx.arc(x + radius.bottomLeft, y + h10 - radius.bottomLeft, radius.bottomLeft, PI, HALF_PI, true);
+  ctx.lineTo(x + w - radius.bottomRight, y + h10);
+  ctx.arc(x + w - radius.bottomRight, y + h10 - radius.bottomRight, radius.bottomRight, HALF_PI, 0, true);
   ctx.lineTo(x + w, y + radius.topRight);
   ctx.arc(x + w - radius.topRight, y + radius.topRight, radius.topRight, 0, -HALF_PI, true);
   ctx.lineTo(x + radius.topLeft, y);
@@ -6513,8 +7227,8 @@ function fitBoxes(boxes, chartArea, params, stacks) {
     layout = boxes[i];
     box = layout.box;
     box.update(layout.width || chartArea.w, layout.height || chartArea.h, getMargins(layout.horizontal, chartArea));
-    const { same, other } = updateDims(chartArea, params, layout, stacks);
-    refit |= same && refitBoxes.length;
+    const { same: same2, other } = updateDims(chartArea, params, layout, stacks);
+    refit |= same2 && refitBoxes.length;
     changed = changed || other;
     if (!box.fullSize) {
       refitBoxes.push(layout);
@@ -7769,8 +8483,8 @@ var Scale = class _Scale extends Element {
     const labelSizes = this._getLabelSizes();
     const padding = optionTicks.autoSkipPadding || 0;
     const w = labelSizes ? labelSizes.widest.width + padding : 0;
-    const h4 = labelSizes ? labelSizes.highest.height + padding : 0;
-    return this.isHorizontal() ? h4 * cos > w * sin ? w / cos : h4 / sin : h4 * sin < w * cos ? h4 / cos : w / sin;
+    const h10 = labelSizes ? labelSizes.highest.height + padding : 0;
+    return this.isHorizontal() ? h10 * cos > w * sin ? w / cos : h10 / sin : h10 * sin < w * cos ? h10 / cos : w / sin;
   }
   _isVisible() {
     const display = this.options.display;
@@ -10679,12 +11393,12 @@ function inflateRect(rect, amount, refRect = {}) {
   const x = rect.x !== refRect.x ? -amount : 0;
   const y = rect.y !== refRect.y ? -amount : 0;
   const w = (rect.x + rect.w !== refRect.x + refRect.w ? amount : 0) - x;
-  const h4 = (rect.y + rect.h !== refRect.y + refRect.h ? amount : 0) - y;
+  const h10 = (rect.y + rect.h !== refRect.y + refRect.h ? amount : 0) - y;
   return {
     x: rect.x + x,
     y: rect.y + y,
     w: rect.w + w,
-    h: rect.h + h4,
+    h: rect.h + h10,
     radius: rect.radius
   };
 }
@@ -14108,11 +14822,11 @@ function leftForTextAlign(x, w, align) {
   }
   return x;
 }
-function yForAngle(y, h4, angle) {
+function yForAngle(y, h10, angle) {
   if (angle === 90 || angle === 270) {
-    y -= h4 / 2;
+    y -= h10 / 2;
   } else if (angle > 270 || angle < 90) {
-    y -= h4;
+    y -= h10;
   }
   return y;
 }
@@ -14253,10 +14967,10 @@ var RadialLinearScale = class extends LinearScaleBase {
   setDimensions() {
     const padding = this._padding = toPadding(getTickBackdropHeight(this.options) / 2);
     const w = this.width = this.maxWidth - padding.width;
-    const h4 = this.height = this.maxHeight - padding.height;
+    const h10 = this.height = this.maxHeight - padding.height;
     this.xCenter = Math.floor(this.left + w / 2 + padding.left);
-    this.yCenter = Math.floor(this.top + h4 / 2 + padding.top);
-    this.drawingArea = Math.floor(Math.min(w, h4) / 2);
+    this.yCenter = Math.floor(this.top + h10 / 2 + padding.top);
+    this.drawingArea = Math.floor(Math.min(w, h10) / 2);
   }
   determineDataLimits() {
     const { min, max } = this.getMinMax(false);
@@ -16489,7 +17203,7 @@ var HISTORY_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h1
 var SEARCH_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
 var BROWSE_URL = "/api/turn/browse";
 function mount6(root, ctx) {
-  let isOpen = false;
+  let isOpen2 = false;
   let sections = [];
   let unavailable = false;
   let snapshotGeneration = 0;
@@ -16703,8 +17417,8 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     if (next) sections = next;
   }
   async function openDrawer() {
-    if (isOpen) return;
-    isOpen = true;
+    if (isOpen2) return;
+    isOpen2 = true;
     drawer.classList.add("sw-history-drawer-open");
     scrim.classList.add("sw-history-scrim-visible");
     scrim.setAttribute("aria-hidden", "false");
@@ -16713,7 +17427,7 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     await loadSnapshot();
     if (destroyed) return;
     paintCount();
-    if (!isOpen) return;
+    if (!isOpen2) return;
     const savedScrollTop = listEl.scrollTop;
     renderList();
     requestAnimationFrame(() => {
@@ -16721,8 +17435,8 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     });
   }
   function closeDrawer() {
-    if (!isOpen) return;
-    isOpen = false;
+    if (!isOpen2) return;
+    isOpen2 = false;
     drawer.classList.remove("sw-history-drawer-open");
     scrim.classList.remove("sw-history-scrim-visible");
     scrim.setAttribute("aria-hidden", "true");
@@ -16738,7 +17452,7 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     renderList();
   });
   function onKeydown(event) {
-    if (event.key !== "Escape" || !isOpen) return;
+    if (event.key !== "Escape" || !isOpen2) return;
     event.preventDefault();
     closeDrawer();
   }
@@ -18391,6 +19105,307 @@ function createSessionStores({
   };
 }
 
+// dsh/src/client/mode-reader.js
+var MODES = ["off", "on", "invalid"];
+var UNAVAILABLE = Object.freeze({ kind: "unavailable" });
+function fold2(reply) {
+  if (reply.ok !== true) return UNAVAILABLE;
+  const { mode, locked } = reply.value ?? {};
+  return MODES.includes(mode) && typeof locked === "boolean" ? { kind: "ready", mode, locked } : UNAVAILABLE;
+}
+function createModeReaders({ call }) {
+  const readers = /* @__PURE__ */ new Map();
+  function createReader(sessionId) {
+    const listeners = /* @__PURE__ */ new Set();
+    let result = null;
+    let inflight = false;
+    let dirty = false;
+    async function read() {
+      inflight = true;
+      try {
+        do {
+          dirty = false;
+          try {
+            result = fold2(await call("inner-mode", { sessionId }));
+          } catch {
+            result = UNAVAILABLE;
+          }
+          for (const listener of [...listeners]) listener(result);
+        } while (dirty && listeners.size > 0);
+      } finally {
+        inflight = false;
+      }
+    }
+    function signal() {
+      if (listeners.size === 0) return;
+      if (inflight) {
+        dirty = true;
+        return;
+      }
+      void read();
+    }
+    return {
+      get result() {
+        return result;
+      },
+      signal,
+      subscribe(listener) {
+        listeners.add(listener);
+        signal();
+        return () => {
+          listeners.delete(listener);
+        };
+      }
+    };
+  }
+  return {
+    for(sessionId) {
+      let reader = readers.get(sessionId);
+      if (!reader) {
+        reader = createReader(sessionId);
+        readers.set(sessionId, reader);
+      }
+      return reader;
+    },
+    signal(sessionId) {
+      readers.get(sessionId)?.signal();
+    },
+    openAll() {
+      for (const reader of readers.values()) reader.signal();
+    }
+  };
+}
+
+// dsh/src/client/monitor-store.js
+var ACTIVE_STATUSES = ["generating", "validating"];
+var ROWS_ENDPOINT = "inner-monitor";
+var UNAVAILABLE_CODE = "inner_monitor_unavailable";
+var UNAVAILABLE2 = Object.freeze({ kind: "unavailable" });
+var messageOf2 = (error) => String(error?.message ?? error);
+var sameFacts = (a, b) => a === b || a !== null && b !== null && a.status === b.status && a.revision === b.revision;
+function fold3(reply, ready) {
+  if (reply.ok === true) return ready(reply.value);
+  return reply.error?.code === UNAVAILABLE_CODE ? UNAVAILABLE2 : { kind: "unreachable", message: messageOf2(reply.error) };
+}
+function foldRows(reply) {
+  return fold3(reply, (value) => {
+    if (!Array.isArray(value?.attempts)) throw new Error("the inner monitor answered no attempts");
+    return { kind: "ready", attempts: value.attempts, handoffs: value.handoffs ?? [] };
+  });
+}
+var foldResource = (reply) => fold3(reply, (value) => ({ kind: "ready", value }));
+async function settle(send, foldReply) {
+  try {
+    return foldReply(await send());
+  } catch (error) {
+    return { kind: "unreachable", message: messageOf2(error) };
+  }
+}
+function createReadLoop({ pull, apply: apply2, repeat }) {
+  let epoch = 0;
+  let inflight = false;
+  let dirty = false;
+  async function run() {
+    const mine = epoch;
+    inflight = true;
+    try {
+      do {
+        dirty = false;
+        const result = await pull();
+        if (mine !== epoch) return;
+        apply2(result);
+      } while (dirty && repeat());
+    } finally {
+      if (mine === epoch) inflight = false;
+    }
+  }
+  return {
+    get inflight() {
+      return inflight;
+    },
+    request() {
+      if (inflight) dirty = true;
+      else void run();
+    },
+    reset() {
+      epoch += 1;
+      inflight = false;
+      dirty = false;
+    }
+  };
+}
+function createMonitorStores({ call }) {
+  const stores = /* @__PURE__ */ new Map();
+  function createStore(sessionId) {
+    const rowListeners = /* @__PURE__ */ new Set();
+    const resources = /* @__PURE__ */ new Map();
+    let rowsResult = null;
+    let baseline = null;
+    const subscribed = () => rowListeners.size > 0 || [...resources.values()].some((entry) => entry.listeners.size > 0);
+    const isActive = (entry) => ACTIVE_STATUSES.includes(entry.facts.status);
+    const wanted = (entry) => entry.listeners.size > 0 && entry.facts !== null && (isActive(entry) || !entry.obtained);
+    const refresh = (entry) => {
+      if (wanted(entry)) entry.reader.request();
+    };
+    function applyRows(result) {
+      rowsResult = result;
+      const cleared = [];
+      if (result.kind === "ready") {
+        baseline = new Map([...result.attempts, ...result.handoffs].map((row2) => [row2.id, { status: row2.status, revision: row2.revision }]));
+        for (const entry of resources.values()) {
+          const facts = baseline.get(entry.owner) ?? null;
+          if (sameFacts(facts, entry.facts)) continue;
+          entry.facts = facts;
+          entry.obtained = false;
+          entry.reader.reset();
+          if (entry.result === null) continue;
+          entry.result = null;
+          cleared.push(entry);
+        }
+      }
+      for (const listener of [...rowListeners]) listener(result);
+      for (const entry of cleared) for (const listener of [...entry.listeners]) listener(null);
+      for (const entry of resources.values()) refresh(entry);
+    }
+    const rowsReader = createReadLoop({
+      pull: () => settle(() => call(ROWS_ENDPOINT, { sessionId }), foldRows),
+      apply: applyRows,
+      repeat: subscribed
+    });
+    function signal() {
+      if (!subscribed()) return;
+      rowsReader.request();
+    }
+    function createEntry({ endpoint, attempt, handoff, slot }) {
+      const owner = attempt ?? handoff;
+      const payload = handoff !== void 0 ? { sessionId, handoff } : slot === void 0 ? { sessionId, attempt } : { sessionId, attempt, slot };
+      const entry = { owner, facts: baseline?.get(owner) ?? null, result: null, obtained: false, listeners: /* @__PURE__ */ new Set() };
+      entry.reader = createReadLoop({
+        pull: () => settle(() => call(endpoint, payload), foldResource),
+        apply(result) {
+          entry.result = result;
+          if (result.kind === "ready") entry.obtained = true;
+          for (const listener of [...entry.listeners]) listener(result);
+        },
+        repeat: () => wanted(entry) && isActive(entry)
+      });
+      entry.handle = {
+        get result() {
+          return entry.result;
+        },
+        subscribe(listener) {
+          entry.listeners.add(listener);
+          if (baseline === null) {
+            if (!rowsReader.inflight) rowsReader.request();
+          } else {
+            refresh(entry);
+          }
+          return () => {
+            entry.listeners.delete(listener);
+          };
+        }
+      };
+      return entry;
+    }
+    return {
+      signal,
+      handles: {
+        rows: {
+          get result() {
+            return rowsResult;
+          },
+          subscribe(listener) {
+            rowListeners.add(listener);
+            signal();
+            return () => {
+              rowListeners.delete(listener);
+            };
+          }
+        },
+        resource({ endpoint, attempt, handoff, slot }) {
+          const identity = JSON.stringify([endpoint, attempt ?? handoff, slot ?? null]);
+          let entry = resources.get(identity);
+          if (!entry) {
+            entry = createEntry({ endpoint, attempt, handoff, slot });
+            resources.set(identity, entry);
+          }
+          return entry.handle;
+        }
+      }
+    };
+  }
+  return {
+    for(sessionId) {
+      let store = stores.get(sessionId);
+      if (!store) {
+        store = createStore(sessionId);
+        stores.set(sessionId, store);
+      }
+      return store.handles;
+    },
+    signal(sessionId) {
+      stores.get(sessionId)?.signal();
+    },
+    openAll() {
+      for (const store of stores.values()) store.signal();
+    }
+  };
+}
+
+// dsh/src/client/mode.js
+var import_react2 = __toESM(require("react"), 1);
+var h3 = import_react2.default.createElement;
+function useReaderResult(reader) {
+  const [result, setResult] = import_react2.default.useState(() => reader.result);
+  import_react2.default.useEffect(() => reader.subscribe(setResult), [reader]);
+  return result;
+}
+function useFlag(store) {
+  const [flag, setFlag] = import_react2.default.useState(() => store.getSnapshot());
+  import_react2.default.useEffect(() => {
+    setFlag(store.getSnapshot());
+    return store.subscribe(() => {
+      setFlag(store.getSnapshot());
+    });
+  }, [store]);
+  return flag;
+}
+function ModeToggle({ reader, select, visibility, t }) {
+  const result = useReaderResult(reader);
+  const shown = useFlag(visibility);
+  const [pending, setPending] = import_react2.default.useState(false);
+  if (!shown || result?.kind !== "ready" || result.locked || result.mode === "invalid") return null;
+  const on = result.mode === "on";
+  const onClick = async () => {
+    setPending(true);
+    try {
+      await select(!on);
+    } catch {
+    } finally {
+      setPending(false);
+    }
+  };
+  return h3(
+    "button",
+    {
+      type: "button",
+      role: "switch",
+      "aria-checked": on,
+      "data-sw-mode-toggle": "",
+      disabled: pending,
+      title: t("mode.toggleHint"),
+      onClick
+    },
+    h3("span", { className: "sw-mode-track", "aria-hidden": "true" }, h3("i")),
+    h3("span", null, t("mode.toggle"))
+  );
+}
+function ModeMark({ reader, t }) {
+  const result = useReaderResult(reader);
+  if (result?.kind !== "ready" || result.mode !== "on" || !result.locked) return null;
+  return h3("span", { "data-sw-mode-mark": "", title: t("mode.markHint") }, t("mode.mark"));
+}
+
 // dsh/src/client/signal.js
 var REOPEN_DELAYS_MS = [1e3, 2e3, 5e3, 1e4];
 function openSignalStream({ url, EventSource, onFrame, onOpen, onState, setTimeout: setTimeout2, clearTimeout: clearTimeout2 }) {
@@ -18446,7 +19461,7 @@ function openSignalStream({ url, EventSource, onFrame, onOpen, onState, setTimeo
 }
 
 // dsh/src/client/dock.js
-var import_react2 = __toESM(require("react"), 1);
+var import_react3 = __toESM(require("react"), 1);
 
 // public/lib/format.js
 var PLACEHOLDER = "\u2014";
@@ -18475,7 +19490,7 @@ function formatPhase(phase) {
 }
 
 // dsh/src/client/dock.js
-var h3 = import_react2.default.createElement;
+var h4 = import_react3.default.createElement;
 var PANEL_MARGIN = 12;
 var PANEL_GAP = 8;
 var MEASURE_STYLE = { visibility: "hidden", left: 0, top: 0 };
@@ -18484,19 +19499,19 @@ var BADGE_CAP = 99;
 var TRACK_SPAN = 1.25;
 var ARROWS = { left: "M1.5 4.5 5.5 8.5 8 6 13.5 11.5M10 11.5h3.5V8", right: "M1.5 11.5 5.5 7.5 8 10 13.5 4.5M10 4.5h3.5V8" };
 function ring(zone, arc, idle) {
-  return h3(
+  return h4(
     "svg",
     { className: "sw-lamp", "data-zone": zone, "data-idle": idle ? "" : void 0, width: 14, height: 14, viewBox: "0 0 14 14", "aria-hidden": "true" },
-    h3("circle", { className: "trk", cx: 7, cy: 7, r: 5.5, pathLength: 100 }),
-    arc > 0 ? h3("circle", { className: "arc", cx: 7, cy: 7, r: 5.5, pathLength: 100, transform: "rotate(-90 7 7)", strokeDasharray: `${arc} 100` }) : null,
-    h3("circle", { className: "core", cx: 7, cy: 7, r: 2 })
+    h4("circle", { className: "trk", cx: 7, cy: 7, r: 5.5, pathLength: 100 }),
+    arc > 0 ? h4("circle", { className: "arc", cx: 7, cy: 7, r: 5.5, pathLength: 100, transform: "rotate(-90 7 7)", strokeDasharray: `${arc} 100` }) : null,
+    h4("circle", { className: "core", cx: 7, cy: 7, r: 2 })
   );
 }
-var row = (label, value, swatch) => h3(
-  import_react2.default.Fragment,
+var row = (label, value, swatch) => h4(
+  import_react3.default.Fragment,
   { key: label },
-  h3("dt", null, swatch === void 0 ? null : h3("i", { className: "sw-sw", "data-k": swatch }), label),
-  h3("dd", null, value)
+  h4("dt", null, swatch === void 0 ? null : h4("i", { className: "sw-sw", "data-k": swatch }), label),
+  h4("dd", null, value)
 );
 function track(rateLamp, t) {
   const { reference, xSweet, xBrAmberL, xBrAmberR, xBrRedR } = rateLamp;
@@ -18512,32 +19527,32 @@ function track(rateLamp, t) {
     wallP: xBrRedR,
     x
   });
-  const bands = [["white", 0, brAmberLPct], ["green", brAmberLPct, brAmberRPct], ["amber", brAmberRPct, brRedRPct], ["red", brRedRPct, 100]].map(([zone, from2, to2]) => h3("i", { key: zone, "data-zone": zone, style: { flex: (to2 - from2).toFixed(2) } }));
+  const bands = [["white", 0, brAmberLPct], ["green", brAmberLPct, brAmberRPct], ["amber", brAmberRPct, brRedRPct], ["red", brRedRPct, 100]].map(([zone, from2, to2]) => h4("i", { key: zone, "data-zone": zone, style: { flex: (to2 - from2).toFixed(2) } }));
   const sweetLeft = `${sweetPct.toFixed(2)}%`;
-  return h3(
-    import_react2.default.Fragment,
+  return h4(
+    import_react3.default.Fragment,
     null,
-    h3(
+    h4(
       "div",
       { className: "sw-track", "aria-hidden": "true" },
       bands,
-      h3("div", { className: "sw-lit", style: { clipPath: `inset(0 ${(100 - markerPct).toFixed(2)}% 0 0)` } }, bands),
-      h3("s", { style: { left: sweetLeft } }),
-      h3("b", { style: { left: `${markerPct.toFixed(2)}%` } })
+      h4("div", { className: "sw-lit", style: { clipPath: `inset(0 ${(100 - markerPct).toFixed(2)}% 0 0)` } }, bands),
+      h4("s", { style: { left: sweetLeft } }),
+      h4("b", { style: { left: `${markerPct.toFixed(2)}%` } })
     ),
-    h3("div", { className: "sw-scale" }, h3("span", { style: { left: sweetLeft } }, t("dock.sweet")))
+    h4("div", { className: "sw-scale" }, h4("span", { style: { left: sweetLeft } }, t("dock.sweet")))
   );
 }
 function contextStock(status, rateLamp, t) {
   const baseline = status.bDefault ?? status.B;
   const effective = Math.max(0, status.L - baseline);
-  return h3(
+  return h4(
     "div",
     { className: "sw-sec" },
-    h3("div", { className: "sw-ctx-h" }, h3("span", null, t("dock.stock")), h3("span", null, formatTokens(status.L))),
-    h3("div", { className: "sw-stock", "aria-hidden": "true" }, h3("i", { "data-k": "base", style: { flex: baseline } }), h3("i", { "data-k": "eff", style: { flex: effective } })),
-    h3("dl", null, row(t("dock.baseline"), formatTokens(baseline), "base"), row(t("dock.effective"), formatTokens(effective), "eff")),
-    h3("dl", { className: "sw-rows" }, row(t("dock.growth"), formatDelta(rateLamp.gEma)))
+    h4("div", { className: "sw-ctx-h" }, h4("span", null, t("dock.stock")), h4("span", null, formatTokens(status.L))),
+    h4("div", { className: "sw-stock", "aria-hidden": "true" }, h4("i", { "data-k": "base", style: { flex: baseline } }), h4("i", { "data-k": "eff", style: { flex: effective } })),
+    h4("dl", null, row(t("dock.baseline"), formatTokens(baseline), "base"), row(t("dock.effective"), formatTokens(effective), "eff")),
+    h4("dl", { className: "sw-rows" }, row(t("dock.growth"), formatDelta(rateLamp.gEma)))
   );
 }
 function latestAlert(previous, result) {
@@ -18546,11 +19561,11 @@ function latestAlert(previous, result) {
 }
 function createDock({ useAnchoredPosition: useAnchoredPosition2, useDismissOnOutsidePointer: useDismissOnOutsidePointer2, createPortal: createPortal2 }) {
   function DockView({ result, alert, t, open, onOpenChange }) {
-    const rootRef = import_react2.default.useRef(null);
-    const panelRef = import_react2.default.useRef(null);
+    const rootRef = import_react3.default.useRef(null);
+    const panelRef = import_react3.default.useRef(null);
     const position = useAnchoredPosition2({ open, anchorRef: rootRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN });
     useDismissOnOutsidePointer2(rootRef, open, onOpenChange, panelRef);
-    import_react2.default.useEffect(() => {
+    import_react3.default.useEffect(() => {
       if (!open) return void 0;
       const onKeyDown = (event) => {
         if (event.key === "Escape") onOpenChange(false);
@@ -18576,7 +19591,7 @@ function createDock({ useAnchoredPosition: useAnchoredPosition2, useDismissOnOut
     ].join(t("dock.separator"));
     const name = t("dock.pill", { summary });
     const lamp = ring(rateLamp === null ? "white" : status.lamp, clockActive ? phasePercent(meter.depthProgress) : 0, rateLamp !== null && !clockActive);
-    const pill = h3(
+    const pill = h4(
       "button",
       {
         type: "button",
@@ -18589,58 +19604,58 @@ function createDock({ useAnchoredPosition: useAnchoredPosition2, useDismissOnOut
         onClick: () => onOpenChange(!open)
       },
       lamp,
-      h3("span", null, rateLamp === null ? word : `${t("dock.br")} ${formatBr(Math.min(rateLamp.br, PILL_BR_CAP))}`),
-      rateLamp === null ? null : h3("svg", { className: "sw-arm", "data-arm": arm, viewBox: "0 0 16 16", "aria-hidden": "true" }, h3("path", { d: ARROWS[arm] })),
-      laps > 0 ? h3("span", { className: "sw-count", "data-hot": meter.depthHot ? "" : void 0, role: "img", "aria-label": t("dock.laps", { count: laps }) }, laps > BADGE_CAP ? `${BADGE_CAP}+` : laps) : null
+      h4("span", null, rateLamp === null ? word : `${t("dock.br")} ${formatBr(Math.min(rateLamp.br, PILL_BR_CAP))}`),
+      rateLamp === null ? null : h4("svg", { className: "sw-arm", "data-arm": arm, viewBox: "0 0 16 16", "aria-hidden": "true" }, h4("path", { d: ARROWS[arm] })),
+      laps > 0 ? h4("span", { className: "sw-count", "data-hot": meter.depthHot ? "" : void 0, role: "img", "aria-label": t("dock.laps", { count: laps }) }, laps > BADGE_CAP ? `${BADGE_CAP}+` : laps) : null
     );
     if (!open) return pill;
     const failing = status === null && ["failed", "unreachable"].includes(resultSignalState(result));
     const header = [
-      h3(
+      h4(
         "div",
         { key: "title", className: "sw-title" },
-        h3("span", { className: "sw-title-label" }, lamp, t("dock.title")),
-        h3("span", { className: "sw-title-value", "data-tone": failing ? "error" : void 0 }, rateLamp === null ? word : t(`dock.zone.${status.lamp}`))
+        h4("span", { className: "sw-title-label" }, lamp, t("dock.title")),
+        h4("span", { className: "sw-title-value", "data-tone": failing ? "error" : void 0 }, rateLamp === null ? word : t(`dock.zone.${status.lamp}`))
       ),
-      h3("div", { key: "rule", className: "sw-title-rule" })
+      h4("div", { key: "rule", className: "sw-title-rule" })
     ];
-    const body = rateLamp === null ? h3("p", null, status === null ? stateText(result, t) : t("dock.insufficientData")) : h3(
-      import_react2.default.Fragment,
+    const body = rateLamp === null ? h4("p", null, status === null ? stateText(result, t) : t("dock.insufficientData")) : h4(
+      import_react3.default.Fragment,
       null,
-      h3(
+      h4(
         "div",
         { className: "sw-hero" },
-        h3("div", null, h3("div", { className: "sw-hero-fig" }, formatBr(rateLamp.br)), h3("div", { className: "sw-hero-cap" }, t("dock.br"))),
-        h3("div", { className: "sw-hero-pos" }, h3("span", { className: "sw-hero-fig" }, formatU(rateLamp.u)), h3("small", null, t("dock.u")))
+        h4("div", null, h4("div", { className: "sw-hero-fig" }, formatBr(rateLamp.br)), h4("div", { className: "sw-hero-cap" }, t("dock.br"))),
+        h4("div", { className: "sw-hero-pos" }, h4("span", { className: "sw-hero-fig" }, formatU(rateLamp.u)), h4("small", null, t("dock.u")))
       ),
       track(rateLamp, t),
       contextStock(status, rateLamp, t),
-      h3(
+      h4(
         "div",
         { className: "sw-sec" },
-        h3("div", { className: "sw-ctx-h" }, h3("span", null, t("dock.clock")), h3("span", null, clockValue)),
-        clockActive ? h3("div", { className: "sw-bar", "data-zone": status.lamp, "aria-hidden": "true" }, h3("i", { style: { width: `${phasePercent(meter.depthProgress)}%` } })) : null,
-        alert && laps >= alert.billCount ? h3("div", { className: "sw-alert", "data-zone": status.lamp }, h3("p", null, alert.message)) : null
+        h4("div", { className: "sw-ctx-h" }, h4("span", null, t("dock.clock")), h4("span", null, clockValue)),
+        clockActive ? h4("div", { className: "sw-bar", "data-zone": status.lamp, "aria-hidden": "true" }, h4("i", { style: { width: `${phasePercent(meter.depthProgress)}%` } })) : null,
+        alert && laps >= alert.billCount ? h4("div", { className: "sw-alert", "data-zone": status.lamp }, h4("p", null, alert.message)) : null
       )
     );
-    const panel = h3("div", {
+    const panel = h4("div", {
       ref: panelRef,
       "data-sw-dock": "",
       role: "dialog",
       "aria-label": t("dock.label"),
       style: position ?? MEASURE_STYLE
     }, header, body);
-    return h3(import_react2.default.Fragment, null, pill, createPortal2(panel, document.body));
+    return h4(import_react3.default.Fragment, null, pill, createPortal2(panel, document.body));
   }
   function Dock({ store, t }) {
-    const [result, setResult] = import_react2.default.useState(() => store.result);
-    const [alert, setAlert] = import_react2.default.useState(() => latestAlert(null, store.result));
-    const [open, setOpen] = import_react2.default.useState(false);
-    import_react2.default.useEffect(() => store.subscribe((next) => {
+    const [result, setResult] = import_react3.default.useState(() => store.result);
+    const [alert, setAlert] = import_react3.default.useState(() => latestAlert(null, store.result));
+    const [open, setOpen] = import_react3.default.useState(false);
+    import_react3.default.useEffect(() => store.subscribe((next) => {
       setResult(next);
       setAlert((previous) => latestAlert(previous, next));
     }), [store]);
-    return h3(DockView, { result, alert, t, open, onOpenChange: setOpen });
+    return h4(DockView, { result, alert, t, open, onOpenChange: setOpen });
   }
   return { Dock, DockView };
 }
@@ -18686,6 +19701,2059 @@ function registerHandoffPicker(child, { call, t }) {
   }, "session-watcher: /sw-load popup dismissal");
 }
 
+// dsh/src/client/monitor-view.js
+var import_react6 = __toESM(require("react"), 1);
+
+// dsh/src/client/monitor-drawer.js
+var import_react5 = __toESM(require("react"), 1);
+
+// dsh/src/client/monitor-state.js
+var DRAWER_DEFAULT_WIDTH = 420;
+var DRAWER_MIN_WIDTH = 320;
+var DRAWER_MAX_WIDTH = 720;
+var LIST_MIN_WIDTH = 280;
+var DRAWER_KEY_STEP = 16;
+var PREVIEW_CHARS = 160;
+var NOT_AVAILABLE = "\u2014";
+var FAILED_STATUSES = ["failed", "cancelled"];
+var MS_PER_SECOND = 1e3;
+var MS_PER_MINUTE = 60 * MS_PER_SECOND;
+function createViewState() {
+  return { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH };
+}
+var segmentOf = ({ epoch }) => epoch ?? 0;
+var countOf = (value) => Number.isFinite(value) ? value : 0;
+function ordinalsOf(attempts) {
+  const counts = /* @__PURE__ */ new Map();
+  return Object.fromEntries(attempts.map((attempt) => {
+    const { id } = attempt;
+    const segment = segmentOf(attempt) + 1;
+    const ordinal = (counts.get(segment) ?? 0) + 1;
+    counts.set(segment, ordinal);
+    return [id, { epoch: segment, ordinal }];
+  }));
+}
+var PAID_BACK_PERCENT = 100;
+var PERCENT = 100;
+var paybackPercent = (saved, cost) => Math.floor(saved * PERCENT / cost);
+function clearingsOf(handoffs) {
+  const seen = /* @__PURE__ */ new Set();
+  return [...handoffs].sort((a, b) => a.id - b.id).flatMap(({ id, type, epoch, tailSteps }) => {
+    const segment = epoch - 1;
+    if (type !== "continue" || seen.has(segment)) return [];
+    seen.add(segment);
+    return [{ id, epoch, segment, tailSteps: countOf(tailSteps) }];
+  });
+}
+function economicsOf(attempts, handoffs) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const tails = new Map(clearingsOf(handoffs).map(({ segment, tailSteps }) => [segment, tailSteps]));
+  return new Map(committed.map((attempt, at) => {
+    const { delta, miss } = attempt.contextChange ?? {};
+    const { input, cacheRead, cacheWrite } = attempt.call.usage ?? {};
+    const { cRatio } = attempt;
+    if (![delta, miss, cRatio, input, cacheRead, cacheWrite].every(Number.isFinite)) return [attempt.id, null];
+    const cost = cacheRead + cRatio * (input + cacheWrite) + (cRatio - 1) * miss;
+    if (!(cost > 0)) return [attempt.id, null];
+    const segment = segmentOf(attempt);
+    const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
+    return [attempt.id, { saved: Math.max(0, (later + (tails.get(segment) ?? 0)) * -delta), cost }];
+  }));
+}
+function paybackOf(attempts, handoffs = []) {
+  return new Map([...economicsOf(attempts, handoffs)].map(([id, figures]) => [id, figures === null ? null : paybackPercent(figures.saved, figures.cost)]));
+}
+function settlementsOf(attempts, handoffs) {
+  const economics = economicsOf(attempts, handoffs);
+  const ordinals = ordinalsOf(attempts);
+  const settlements = /* @__PURE__ */ new Map();
+  for (const { id, epoch, segment, tailSteps } of clearingsOf(handoffs)) {
+    const compactions = attempts.filter((attempt) => attempt.status === "committed" && segmentOf(attempt) === segment).sort((a, b) => a.id - b.id);
+    const rows = compactions.map((attempt) => {
+      const figures = economics.get(attempt.id);
+      return { id: attempt.id, ordinal: ordinals[attempt.id].ordinal, saved: figures?.saved ?? null, cost: figures?.cost ?? null };
+    });
+    const known = rows.filter(({ saved }) => saved !== null);
+    if (known.length === 0) continue;
+    const steps2 = compactions.reduce((sum, { stepN }) => sum + countOf(stepN), tailSteps);
+    settlements.set(id, { epoch, count: rows.length, steps: steps2, saved: known.reduce((sum, row2) => sum + row2.saved, 0), cost: known.reduce((sum, row2) => sum + row2.cost, 0), rows });
+  }
+  return settlements;
+}
+var UNEXPECTED_MISS_PERCENT = 30;
+function unexpectedMissOf(attempts) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const previousAfter = /* @__PURE__ */ new Map();
+  const unexpected = /* @__PURE__ */ new Set();
+  for (const attempt of committed) {
+    const { id, contextChange } = attempt;
+    const segment = segmentOf(attempt);
+    const { after, miss } = contextChange ?? {};
+    const previous = previousAfter.get(segment);
+    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
+    previousAfter.set(segment, Number.isFinite(after) ? after : null);
+  }
+  return unexpected;
+}
+var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
+function isOpen(state, id) {
+  return state.overrides[id] ?? false;
+}
+var handoffSegmentOf = ({ epoch }) => epoch + 1;
+function rowIdentity({ kind, attemptId, slotKey, handoffId, turn }) {
+  switch (kind) {
+    case "slot":
+      return `slot:${attemptId}:${slotKey}`;
+    case "handoff":
+    case "settlement":
+    case "content":
+      return `${kind}:${handoffId}`;
+    case "turn":
+      return `turn:${handoffId}:${turn}`;
+    default:
+      return `${kind}:${attemptId}`;
+  }
+}
+function reduceView(state, action) {
+  switch (action.type) {
+    case "toggle":
+      return { ...state, overrides: { ...state.overrides, [action.handoffId ?? action.attemptId]: !action.open } };
+    case "select": {
+      const identity = rowIdentity(action);
+      if (state.selected?.identity === identity) return state;
+      if (action.handoffId !== void 0) return { ...state, selected: { identity, kind: action.kind, handoffId: action.handoffId, turn: action.kind === "turn" ? action.turn : null } };
+      const slotKey = action.kind === "slot" ? action.slotKey : null;
+      return { ...state, selected: { identity, kind: action.kind, attemptId: action.attemptId, slotKey } };
+    }
+    case "clear":
+      return state.selected === null ? state : { ...state, selected: null };
+    case "resize":
+      return { ...state, drawerWidth: clampDrawerWidth(action.width, action.containerWidth) };
+    default:
+      return state;
+  }
+}
+var TOKEN_UNIT = "token";
+function contextChangeText(change, t, unit) {
+  const delta = change?.delta;
+  if (!Number.isFinite(delta)) return NOT_AVAILABLE;
+  if (delta === 0) return t("monitor.change.same");
+  const count = unit === void 0 ? Math.abs(delta) : `${Math.abs(delta)} ${unit}`;
+  return t(delta > 0 ? "monitor.change.increase" : "monitor.change.decrease", { count });
+}
+function contextMissText(change, t) {
+  return Number.isFinite(change?.miss) ? t("monitor.meta.miss", { count: change.miss }) : NOT_AVAILABLE;
+}
+var numberOrDash = (value) => Number.isFinite(value) ? value : NOT_AVAILABLE;
+var tokensOf = (value) => Number.isFinite(value) ? `${value} ${TOKEN_UNIT}` : NOT_AVAILABLE;
+function contextRangeText(change, t, key = "monitor.meta.range") {
+  if (change === null || change === void 0) return NOT_AVAILABLE;
+  return t(key, { before: numberOrDash(change.before), after: numberOrDash(change.after) });
+}
+var foldedOf = (text) => text.replace(/\s+/g, " ").trim();
+function previewOf(text) {
+  const compact = foldedOf(text);
+  return compact.length > PREVIEW_CHARS ? `${compact.slice(0, PREVIEW_CHARS).trimEnd()}\u2026` : compact;
+}
+var displayOf = (display, raw) => display === void 0 ? raw : display;
+function wholePreview(text) {
+  const output = text === null ? "" : foldedOf(text);
+  return { output: output === "" ? null : output };
+}
+function callPreview({ status, reason, call }) {
+  return wholePreview(FAILED_STATUSES.includes(status) && reason !== null ? reason : displayOf(call.outputDisplay, call.output));
+}
+var SOURCE_CATEGORIES = { "system/message": "system", "developer/message": "developer", "tool/result": "tool", "assistant/message": "assistant" };
+var HUMAN_SOURCE_KIND = "user";
+function sourceCategoryOf(source) {
+  if (source?.type === "user/message") {
+    if (typeof source.kind !== "string") return "other";
+    return source.kind === HUMAN_SOURCE_KIND ? "user" : "injected";
+  }
+  return SOURCE_CATEGORIES[source?.type] ?? "other";
+}
+var PART_SEPARATOR = " \xB7 ";
+function slotTitleOf({ turn, step, source }, t) {
+  const parts = [turn === null ? null : t("monitor.object.turn", { turn }), step === null ? null : t("monitor.object.step", { step })].filter((part) => part !== null);
+  return parts.length === 0 ? t(`monitor.source.${sourceCategoryOf(source)}`) : parts.join(PART_SEPARATOR);
+}
+var LEAVES_LOADING = "loading";
+var LEAVES_FAILED = "failed";
+var placeholderRow = (id, owner, state) => ({ identity: rowIdentity({ kind: "placeholder", attemptId: id }), kind: "placeholder", ...owner, state });
+function leafRows(id, owner, list, leafOf) {
+  if (list === void 0) return [];
+  if (list === LEAVES_LOADING || list === LEAVES_FAILED) return [placeholderRow(id, owner, list)];
+  return list.length === 0 ? [placeholderRow(id, owner, "empty")] : list.map(leafOf);
+}
+function flattenRows(attempts, slotsByAttempt, state, handoffs = [], turnsByHandoff = {}) {
+  const ordinals = ordinalsOf(attempts);
+  const payback = paybackOf(attempts, handoffs);
+  const settlements = settlementsOf(attempts, handoffs);
+  const unexpectedMiss = unexpectedMissOf(attempts);
+  const groups = [...attempts.map((attempt) => ({ id: attempt.id, attempt })), ...handoffs.map((handoff) => ({ id: handoff.id, handoff }))].sort((a, b) => a.id - b.id);
+  const rows = [];
+  for (const { id, attempt, handoff } of groups) {
+    const open = isOpen(state, id);
+    if (handoff !== void 0) {
+      const settlement = settlements.get(id);
+      if (settlement !== void 0) rows.push({ identity: rowIdentity({ kind: "settlement", handoffId: id }), kind: "settlement", handoff, settlement });
+      const preview2 = wholePreview(handoff.nextTask);
+      rows.push({ identity: rowIdentity({ kind: "handoff", handoffId: id }), kind: "handoff", handoff, open, preview: preview2 });
+      if (!open) continue;
+      rows.push({ identity: rowIdentity({ kind: "content", handoffId: id }), kind: "content", handoff, preview: preview2 });
+      rows.push(...leafRows(id, { handoff }, turnsByHandoff[id], (turn, at) => ({
+        identity: rowIdentity({ kind: "turn", handoffId: id, turn: at }),
+        kind: "turn",
+        handoff,
+        at,
+        turn,
+        preview: { input: previewOf(turn.user), output: previewOf(turn.note ?? "") }
+      })));
+      continue;
+    }
+    const preview = callPreview(attempt);
+    rows.push({ identity: rowIdentity({ kind: "attempt", attemptId: id }), kind: "attempt", attempt, ...ordinals[id], shownStatus: shownStatusOf(attempt, payback), missWarned: unexpectedMiss.has(id), open, preview });
+    if (!open) continue;
+    rows.push({ identity: rowIdentity({ kind: "call", attemptId: id }), kind: "call", attempt, preview });
+    const slots = attempt.status === "committed" ? slotsByAttempt[id] : void 0;
+    rows.push(...leafRows(id, { attempt }, slots, (slot) => ({
+      identity: rowIdentity({ kind: "slot", attemptId: id, slotKey: slot.key }),
+      kind: "slot",
+      attempt,
+      slot,
+      preview: { input: previewOf(displayOf(slot.inputDisplay, slot.input)), output: previewOf(slot.output) }
+    })));
+  }
+  return rows;
+}
+function elapsedOf(attempt, part, now) {
+  const { startedAt } = attempt;
+  if (startedAt === null) return null;
+  const endedAt = part === "call" ? attempt.call.endedAt : attempt.endedAt;
+  if (endedAt !== null) return endedAt - startedAt;
+  const running = part === "call" ? attempt.call.state === "generating" : ACTIVE_STATUSES.includes(attempt.status);
+  return running ? Math.max(0, now - startedAt) : null;
+}
+function formatElapsed(ms) {
+  if (ms < MS_PER_SECOND) return `${ms} ms`;
+  if (ms < MS_PER_MINUTE) return `${(ms / MS_PER_SECOND).toFixed(1)} s`;
+  return `${Math.floor(ms / MS_PER_MINUTE)} m ${Math.floor(ms % MS_PER_MINUTE / MS_PER_SECOND)} s`;
+}
+function clampDrawerWidth(width, containerWidth) {
+  const max = Math.max(DRAWER_MIN_WIDTH, Math.min(DRAWER_MAX_WIDTH, containerWidth - LIST_MIN_WIDTH));
+  return Math.round(Math.min(Math.max(width, DRAWER_MIN_WIDTH), max));
+}
+
+// dsh/src/client/monitor-files-model.js
+var PERCENT2 = 100;
+var SPAN_SEPARATOR = ", ";
+var LINES_PER_KILO = 1e3;
+function compactCount(count) {
+  if (count < LINES_PER_KILO) return String(count);
+  const tenthsOfKilo = Math.round(count / (LINES_PER_KILO / 10));
+  if (tenthsOfKilo < LINES_PER_KILO * 10) return `${Math.floor(tenthsOfKilo / 10)}.${tenthsOfKilo % 10}k`;
+  const tenthsOfMega = Math.round(count / (LINES_PER_KILO * 100));
+  return `${Math.floor(tenthsOfMega / 10)}.${tenthsOfMega % 10}m`;
+}
+function commonRoot(paths) {
+  const directories = paths.map((path) => path.split("/").slice(0, -1));
+  const [first = [], ...rest] = directories;
+  let shared = first.length;
+  for (const directory of rest) {
+    for (let at = 0; at < shared; at += 1) {
+      if (directory[at] !== first[at]) {
+        shared = at;
+        break;
+      }
+    }
+  }
+  const root = first.slice(0, shared).join("/");
+  return root === "" ? "" : `${root}/`;
+}
+var DIR_COLUMNS = 30;
+var BASE_COLUMNS = 34;
+var HEAD_SHARE = 0.55;
+var TAIL_SHARE = 0.35;
+var WIDE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+var columnsOf = (text) => [...text].reduce((sum, char) => sum + (WIDE.test(char) ? 2 : 1), 0);
+function fitting(chars, room) {
+  const taken = [];
+  let used = 0;
+  for (const char of chars) {
+    used += columnsOf(char);
+    if (used > room) break;
+    taken.push(char);
+  }
+  return taken;
+}
+function cutMiddle(text, max) {
+  if (columnsOf(text) <= max) return text;
+  const chars = [...text];
+  const head = fitting(chars, Math.floor(max * HEAD_SHARE));
+  const tail = fitting(chars.reverse(), Math.floor(max * TAIL_SHARE)).reverse();
+  return `${head.join("")}\u2026${tail.join("")}`;
+}
+function compactDirectory(directory) {
+  if (columnsOf(directory) <= DIR_COLUMNS) return directory;
+  const lead = directory.startsWith("/") ? "/" : "";
+  const segments = directory.split("/").filter((segment) => segment !== "");
+  const tail = [];
+  for (let at = segments.length - 1; at > 0; at -= 1) {
+    if (columnsOf(`${lead}${segments[0]}/\u2026/${[segments[at], ...tail].join("/")}/`) > DIR_COLUMNS) break;
+    tail.unshift(segments[at]);
+  }
+  return tail.length === 0 ? cutMiddle(directory, DIR_COLUMNS) : `${lead}${segments[0]}/\u2026/${tail.join("/")}/`;
+}
+function compactPath(path) {
+  const slash = path.lastIndexOf("/");
+  const dir = path.slice(0, slash + 1);
+  const base = path.slice(slash + 1);
+  const shownDir = compactDirectory(dir);
+  const shownBase = cutMiddle(base, BASE_COLUMNS);
+  return { dir: shownDir, base: shownBase, cut: shownDir !== dir || shownBase !== base };
+}
+var SHORT_REASON_COLUMNS = 16;
+var REASONS = Object.freeze(["missing", "not-file", "too-large", "binary", "unreadable"]);
+var spanText = ([first, last]) => first === last ? String(first) : `${first}\u2013${last}`;
+var spansText = (spans) => spans.map(spanText).join(SPAN_SEPARATOR);
+var runSpan = (run) => [run.offset, run.offset + run.lines.length - 1];
+var runLines = (runs) => runs.reduce((sum, run) => sum + run.lines.length, 0);
+var runChars = (runs) => runs.reduce((sum, run) => sum + run.lines.reduce((chars, line) => chars + line.text.length, 0), 0);
+function linesOf(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+var withdrawnLines = (spans) => spans.reduce((sum, { first, last }) => sum + last - first + 1, 0);
+var plainItem = (id, path, why, tone, removed) => ({
+  id,
+  kind: "plain",
+  path,
+  name: compactPath(path),
+  why,
+  tone,
+  removed,
+  long: columnsOf(why) > SHORT_REASON_COLUMNS
+});
+function stateNoteOf({ state, reason }, t) {
+  if (state === "unreadable") {
+    const word = REASONS.includes(reason) ? t(`monitor.files.reason.${reason}`) : reason ?? NOT_AVAILABLE;
+    return { text: t("monitor.files.unreadable", { reason: word }), tone: "err" };
+  }
+  return state === "empty" ? { text: t("monitor.files.empty"), tone: null } : null;
+}
+function barOf({ total, runs, withdrawn, verb }, t) {
+  if (!(total > 0)) return null;
+  const mark = (first, count, isWithdrawn) => {
+    const left = Math.min(PERCENT2, (first - 1) * PERCENT2 / total);
+    return { left, width: Math.min(PERCENT2 - left, count * PERCENT2 / total), withdrawn: isWithdrawn };
+  };
+  const titles = [];
+  if (runs.length > 0) titles.push(t(`monitor.files.bar.${verb}`, { spans: spansText(runs.map(runSpan)) }));
+  if (withdrawn.length > 0) titles.push(t("monitor.files.bar.withdrawn", { spans: spansText(withdrawn.map(({ first, last }) => [first, last])) }));
+  return {
+    title: titles.join(PART_SEPARATOR),
+    marks: [...runs.map((run) => mark(run.offset, run.lines.length, false)), ...withdrawn.map(({ first, last }) => mark(first, last - first + 1, true))]
+  };
+}
+function fileItem({ id, path, total, runs, withdrawn, verb, note }, t) {
+  const written = runLines(runs);
+  const withdrawnCount = withdrawnLines(withdrawn);
+  const count = verb === "written" ? [...written > 0 ? [{ text: `+${written}`, tone: "ok" }] : [], ...withdrawnCount > 0 ? [{ text: `\u2212${withdrawnCount}`, tone: "warn" }] : []] : [{ text: t("monitor.files.lines", { count: written }), tone: null }];
+  const stated = runs.length === 0 ? note ?? { text: t("monitor.files.noWrites"), tone: null } : null;
+  const meta = note !== null ? note.text : [Number.isFinite(total) ? t("monitor.files.meta.total", { count: total }) : null, runs.length > 0 ? t("monitor.files.meta.lines", { spans: spansText(runs.map(runSpan)) }) : null].filter((part) => part !== null).join(PART_SEPARATOR);
+  return {
+    id,
+    kind: "file",
+    skill: false,
+    path,
+    name: compactPath(path),
+    total,
+    runs,
+    withdrawn,
+    text: null,
+    count,
+    stat: runs.length > 0 ? { segments: t("monitor.files.segments", { count: runs.length }), chars: t("monitor.files.chars", { count: compactCount(runChars(runs)) }), empty: null } : { segments: null, chars: null, empty: stated },
+    bar: barOf({ total, runs, withdrawn, verb }, t),
+    meta
+  };
+}
+function skillItem(id, { name, text }, t) {
+  return {
+    id,
+    kind: "file",
+    skill: true,
+    path: name,
+    name: compactPath(name),
+    total: null,
+    runs: [],
+    withdrawn: [],
+    text,
+    count: [{ text: t("monitor.files.lines", { count: linesOf(text).length }), tone: null }],
+    stat: { segments: null, chars: t("monitor.files.chars", { count: compactCount(text.length) }), empty: null },
+    bar: null,
+    meta: ""
+  };
+}
+var groupOf = (id, t, items) => ({ id, label: t(`monitor.files.group.${id}`), items });
+var rootNoteOf = (root, t) => root === "" ? null : t("monitor.files.sub.root", { root: root.slice(0, -1) });
+function carriedFilesOf({ files, removed, skills, note, text }, t) {
+  const root = commonRoot([...files.map((file) => file.path), ...removed]);
+  const relative = (path) => path.slice(root.length);
+  const changed = files.filter((file) => file.runs.length > 0 || file.withdrawn.length > 0);
+  const bare = files.filter((file) => !(file.runs.length > 0 || file.withdrawn.length > 0));
+  const withText = skills.filter((skill) => skill.removed !== true);
+  const gone = [...removed.map(relative), ...skills.filter((skill) => skill.removed === true).map((skill) => skill.name)];
+  const groups = [
+    groupOf("changed", t, changed.map((file, at) => fileItem({ id: `changed:${at}`, path: relative(file.path), total: file.total, runs: file.runs, withdrawn: file.withdrawn, verb: "written", note: stateNoteOf(file, t) }, t))),
+    groupOf("bare", t, bare.map((file, at) => {
+      const note2 = stateNoteOf(file, t) ?? { text: t("monitor.files.noLines"), tone: null };
+      return plainItem(`bare:${at}`, relative(file.path), note2.text, note2.tone, false);
+    })),
+    groupOf("gone", t, gone.map((path, at) => plainItem(`gone:${at}`, path, t("monitor.files.removed"), null, true))),
+    groupOf("skills", t, withText.map((skill, at) => skillItem(`skills:${at}`, skill, t)))
+  ].filter((group) => group.items.length > 0);
+  const withdrawnCount = changed.reduce((sum, file) => sum + withdrawnLines(file.withdrawn), 0);
+  const more = [
+    withText.length > 0 ? t("monitor.files.sub.skills", { count: withText.length }) : null,
+    bare.length > 0 ? t("monitor.files.sub.bare", { count: bare.length }) : null,
+    gone.length > 0 ? t("monitor.files.sub.gone", { count: gone.length }) : null
+  ].filter((part) => part !== null);
+  const moreNote = more.length === 0 ? null : t("monitor.files.sub.more", { parts: more.join(PART_SEPARATOR) });
+  return {
+    mode: "carried",
+    groups,
+    summary: [
+      { text: t("monitor.files.summary.written", { count: changed.reduce((sum, file) => sum + runLines(file.runs), 0) }), tone: "ok" },
+      ...withdrawnCount > 0 ? [{ text: t("monitor.files.summary.withdrawn", { count: withdrawnCount }), tone: "warn" }] : [],
+      { text: t("monitor.files.summary.files", { count: changed.length }), tone: null }
+    ],
+    sub: [rootNoteOf(root, t), moreNote].filter((part) => part !== null).join(PART_SEPARATOR) || null,
+    foot: [
+      { key: "note", label: t("monitor.files.foot.note"), text: note, pre: false },
+      { key: "text", label: t("monitor.files.foot.text"), text, pre: true }
+    ]
+  };
+}
+function readNoteOf({ total }, t) {
+  if (total === null) return t("monitor.files.unrecorded");
+  return t(total === 0 ? "monitor.files.empty" : "monitor.files.noLines");
+}
+function readFilesOf(files, t) {
+  const root = commonRoot(files.map((file) => file.path));
+  const items = files.map((file, at) => {
+    const path = file.path.slice(root.length);
+    return file.runs.length === 0 ? plainItem(`read:${at}`, path, readNoteOf(file, t), null, false) : fileItem({ id: `read:${at}`, path, total: file.total, runs: file.runs, withdrawn: [], verb: "read", note: null }, t);
+  });
+  return {
+    mode: "read",
+    groups: items.length === 0 ? [] : [groupOf("read", t, items)],
+    summary: [
+      { text: t("monitor.files.summary.files", { count: files.length }), tone: null },
+      { text: t("monitor.files.lines", { count: files.reduce((sum, file) => sum + runLines(file.runs), 0) }), tone: null },
+      { text: t("monitor.files.segments", { count: files.reduce((sum, file) => sum + file.runs.length, 0) }), tone: null }
+    ],
+    sub: rootNoteOf(root, t),
+    foot: []
+  };
+}
+function bodyRowsOf({ skill, text, total, runs, withdrawn }) {
+  if (skill) return linesOf(text).map((line) => ({ type: "line", number: null, text: line }));
+  const spans = [
+    ...runs.map((run) => ({ type: "run", run, first: run.offset, last: run.offset + run.lines.length - 1 })),
+    ...withdrawn.map(({ first, last }) => ({ type: "withdrawn", first, last }))
+  ].sort((a, b) => a.first - b.first);
+  const known = Number.isFinite(total);
+  const rows = [];
+  let next = 1;
+  const gap = (first, last) => {
+    const end = known ? Math.min(last, total) : last;
+    if (first <= end) rows.push({ type: "gap", first, last: end });
+  };
+  for (const span of spans) {
+    gap(next, span.first - 1);
+    if (span.type === "run") rows.push(...span.run.lines.map((line) => ({ type: "line", number: line.number, text: line.text })));
+    else rows.push({ type: "withdrawn", first: span.first, last: span.last });
+    next = Math.max(next, span.last + 1);
+  }
+  if (known) gap(next, total);
+  return rows;
+}
+function createFilesState() {
+  return { files: {}, groups: {}, foot: {}, wrap: true };
+}
+var isFileOpen = (state, id) => state.files[id] ?? false;
+var isGroupOpen = (state, id) => state.groups[id] ?? true;
+var isFootOpen = (state, key) => state.foot[key] ?? false;
+function reduceFiles(state, action) {
+  switch (action.type) {
+    case "toggle":
+      return { ...state, files: { ...state.files, [action.id]: !isFileOpen(state, action.id) } };
+    case "group":
+      return { ...state, groups: { ...state.groups, [action.id]: !isGroupOpen(state, action.id) } };
+    case "fold":
+      return { ...state, foot: { ...state.foot, [action.key]: !isFootOpen(state, action.key) } };
+    case "wrap":
+      return { ...state, wrap: !state.wrap };
+    case "expand":
+      return { ...state, files: { ...state.files, ...Object.fromEntries(action.ids.map((id) => [id, true])) }, groups: {} };
+    case "collapse":
+      return { ...state, files: {} };
+    default:
+      return state;
+  }
+}
+function controlsOf(state, ids) {
+  return { expandDisabled: ids.every((id) => isFileOpen(state, id)), collapseDisabled: !ids.some((id) => isFileOpen(state, id)) };
+}
+
+// dsh/src/client/monitor-model.js
+var jsonText = (value) => JSON.stringify(value, null, 2) ?? String(value);
+var stringOf = (value) => typeof value === "string" ? value : jsonText(value);
+var stepPart = (attempt, t) => ({ part: "step", text: Number.isFinite(attempt.stepN) ? t("monitor.meta.step", { count: attempt.stepN }) : NOT_AVAILABLE, title: t("monitor.meta.step.title") });
+var DECIMALS = 2;
+function estimatePart({ trigger }, t) {
+  const q = trigger?.q;
+  const kappa = trigger?.kappa;
+  return {
+    part: "estimate",
+    text: Number.isFinite(q) ? t("monitor.meta.estimate", { q: q.toFixed(DECIMALS) }) : NOT_AVAILABLE,
+    title: Number.isFinite(kappa) ? t("monitor.meta.estimate.kappa.title", { kappa: kappa.toFixed(DECIMALS) }) : t("monitor.meta.estimate.title")
+  };
+}
+function parentMetaParts(attempt, now, t, missWarned = false) {
+  const elapsed = elapsedOf(attempt, "attempt", now);
+  const { usage } = attempt.call;
+  const grew = attempt.contextChange?.delta > 0;
+  return [
+    { part: "time", text: elapsed === null ? NOT_AVAILABLE : formatElapsed(elapsed), title: t("monitor.meta.time") },
+    stepPart(attempt, t),
+    estimatePart(attempt, t),
+    usage === null ? { part: "usage", text: NOT_AVAILABLE } : {
+      part: "usage",
+      text: t("monitor.usage.cell", { output: usage.output }),
+      title: t("monitor.usage.title", { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite })
+    },
+    { part: "range", text: contextRangeText(attempt.contextChange, t), title: t("monitor.meta.range.title") },
+    grew ? { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context.grew"), attention: true } : { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context") },
+    missWarned ? { part: "miss", text: contextMissText(attempt.contextChange, t), title: t("monitor.meta.miss.unexpected"), attention: true } : { part: "miss", text: contextMissText(attempt.contextChange, t), title: t("monitor.meta.miss.title") },
+    { part: "seq", text: t("monitor.overview.seq", { seq: attempt.id }) }
+  ];
+}
+var handoffTitle = (handoff, t) => t("monitor.object.handoff", { epoch: handoffSegmentOf(handoff) });
+function handoffMetaParts(handoff, t) {
+  const { type, token, read, kept, skills, lineage, contextChange } = handoff;
+  const known = (...values) => values.every(Number.isFinite);
+  return [
+    { part: "type", text: t(`monitor.handoff.type.${type}`), title: t("monitor.handoff.meta.type.title"), type },
+    { part: "token", text: token, title: t("monitor.handoff.meta.token.title") },
+    { part: "files", text: known(read, kept) ? t("monitor.handoff.meta.files", { read, kept }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.files.title") },
+    { part: "skills", text: t("monitor.handoff.meta.skills", { count: skills }), title: t("monitor.handoff.meta.skills.title") },
+    { part: "lineage", text: known(lineage) ? t("monitor.handoff.meta.lineage", { count: lineage }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.lineage.title") },
+    { part: "range", text: contextRangeText(contextChange, t, "monitor.handoff.meta.range"), title: t("monitor.handoff.meta.range.title") },
+    { part: "context", text: contextChangeText(contextChange, t), title: t("monitor.meta.context") },
+    { part: "seq", text: t("monitor.overview.seq", { seq: handoff.id }) }
+  ];
+}
+var MINUS = "\u2212";
+function settlementFigures(saved, cost, format) {
+  const net = Math.round(saved) - Math.round(cost);
+  return {
+    saved: format(Math.round(saved)),
+    cost: format(Math.round(cost)),
+    net: `${net > 0 ? "+" : net < 0 ? MINUS : ""}${format(Math.abs(net))}`,
+    payback: `${paybackPercent(saved, cost)}%`
+  };
+}
+function settlementMetaParts(settlement, t) {
+  const figures = settlementFigures(settlement.saved, settlement.cost, compactCount);
+  return [
+    { part: "count", text: t("monitor.settlement.count", { count: settlement.count }), title: t("monitor.settlement.count.title") },
+    { part: "steps", text: t("monitor.settlement.steps", { count: settlement.steps }), title: t("monitor.settlement.steps.title") },
+    { part: "saved", text: t("monitor.settlement.saved", { count: figures.saved }), title: t("monitor.settlement.saved.title") },
+    { part: "cost", text: t("monitor.settlement.cost", { count: figures.cost }), title: t("monitor.settlement.cost.title") },
+    { part: "net", text: t("monitor.settlement.net", { count: figures.net }), title: t("monitor.settlement.net.title") },
+    { part: "payback", text: t("monitor.settlement.payback", { percent: figures.payback }), title: t("monitor.settlement.payback.title") }
+  ];
+}
+var figureTexts = (figures, t) => [
+  t("monitor.settlement.saved", { count: figures.saved }),
+  t("monitor.settlement.cost", { count: figures.cost }),
+  t("monitor.settlement.net", { count: figures.net }),
+  t("monitor.settlement.payback", { percent: figures.payback })
+];
+var NO_FIGURES = { saved: NOT_AVAILABLE, cost: NOT_AVAILABLE, net: NOT_AVAILABLE, payback: NOT_AVAILABLE };
+function settlementTextOf(settlement, t) {
+  const { epoch, count, steps: steps2, saved, cost, rows } = settlement;
+  return [
+    ...rows.map((row2) => [
+      t("monitor.object.attempt", { epoch, ordinal: row2.ordinal }),
+      ...figureTexts(row2.saved === null ? NO_FIGURES : settlementFigures(row2.saved, row2.cost, String), t)
+    ].join(PART_SEPARATOR)),
+    [t("monitor.settlement.total"), t("monitor.settlement.count", { count }), t("monitor.settlement.steps", { count: steps2 }), ...figureTexts(settlementFigures(saved, cost, String), t)].join(PART_SEPARATOR),
+    t("monitor.settlement.unit")
+  ].join("\n");
+}
+var quantityText = (value) => value === null || value === void 0 ? null : Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
+var QUANTITIES_BEFORE_PRESET = ["n", "lA", "bEst", "cEst", "sEst", "cRatio", "fee"];
+var QUANTITIES_AFTER_PRESET = ["kappa", "q"];
+var KAPPA_PRESET_IDS = Object.freeze(["E2", "W2", "M2", "S3", "X3"]);
+function quoteFactsOf(quote, t) {
+  const quantity = (key) => [t(`monitor.quote.${key}`), quantityText(quote[key])];
+  return [
+    ...quote.missing === null ? [] : [[t("monitor.quote.missingReason"), t(`monitor.quote.missing.${quote.missing}`)]],
+    ...QUANTITIES_BEFORE_PRESET.map(quantity),
+    [t("monitor.quote.preset"), KAPPA_PRESET_IDS.includes(quote.preset) ? t(`monitor.quote.preset.${quote.preset}`) : null],
+    ...QUANTITIES_AFTER_PRESET.map(quantity),
+    [t("monitor.quote.arm"), quote.arm === null ? null : t(`monitor.quote.arm.${quote.arm}`)]
+  ];
+}
+function blockParts(block, t) {
+  switch (block?.type) {
+    case "text":
+      return { kind: "text", text: stringOf(block.text) };
+    case "reasoning":
+      return { kind: "reasoning", label: t("monitor.block.reasoning"), text: stringOf(block.text) };
+    case "tool-call":
+      return { kind: "tool-call", label: t("monitor.block.toolCall", { name: block.name }), text: stringOf(block.arguments) };
+    case "tool-result":
+      return {
+        kind: "tool-result",
+        label: t(block.isError === true ? "monitor.block.toolError" : "monitor.block.toolResult", { id: stringOf(block.callId ?? "") }),
+        ...block.isError === true ? { error: true } : {},
+        children: blockListParts(block.blocks, t)
+      };
+    case "image":
+    case "file":
+      return { kind: block.type, label: t(`monitor.block.${block.type}`), json: jsonText(block.attachment) };
+    case "unknown":
+      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block.raw) };
+    default:
+      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block) };
+  }
+}
+function blockListParts(blocks, t) {
+  return (Array.isArray(blocks) ? blocks : []).map((block) => blockParts(block, t));
+}
+function slotFactsOf(detail, t) {
+  const { number, seqs, turn, step, source, events } = detail;
+  return [
+    [t("monitor.slot.number"), number],
+    [t("monitor.slot.seqs"), seqs.join(", ")],
+    ...turn === null ? [] : [[t("monitor.slot.turn"), turn]],
+    ...step === null ? [] : [[t("monitor.slot.step"), step]],
+    [t("monitor.slot.source"), t(`monitor.source.${sourceCategoryOf(source)}`)],
+    [t("monitor.slot.sourceType"), source?.type ?? null],
+    [t("monitor.slot.sourceKind"), source?.kind ?? null],
+    [t("monitor.slot.visibleCount"), t("monitor.slot.visibleCountValue", { visible: events.filter((event) => event.visible).length, total: events.length })]
+  ];
+}
+
+// dsh/src/client/monitor-files.js
+var import_react4 = __toESM(require("react"), 1);
+var h5 = import_react4.default.createElement;
+var ICONS = {
+  expand: ["M4 6.5 8 3l4 3.5", "M4 9.5 8 13l4-3.5"],
+  collapse: ["M4 3 8 6.5 12 3", "M4 13 8 9.5 12 13"],
+  wrap: ["M2 3.5h12", "M2 7.5h9.5a2.25 2.25 0 0 1 0 4.5H7.5", "M9.3 10.2 7.3 12l2 1.8", "M2 12h3"]
+};
+var Icon = ({ name }) => h5("svg", { viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" }, ICONS[name].map((d) => h5("path", { key: d, d })));
+var Chevron = () => h5("i", { className: "sw-fl-chev", "aria-hidden": "true" });
+var toneOf = (tone) => tone ?? void 0;
+function Controls({ state, ids, dispatch, t }) {
+  const { expandDisabled, collapseDisabled } = controlsOf(state, ids);
+  const button = (name, label, { disabled = false, pressed, title = label, action }) => h5("button", {
+    type: "button",
+    className: "sw-fl-btn",
+    "data-act": name,
+    title,
+    "aria-label": label,
+    "aria-disabled": disabled ? "true" : void 0,
+    "aria-pressed": pressed,
+    onClick: () => {
+      if (!disabled) dispatch(action);
+    }
+  }, h5(Icon, { name }));
+  return h5(
+    "span",
+    { className: "sw-fl-ctl", role: "group", "aria-label": t("monitor.files.controls") },
+    button("expand", t("monitor.files.expandAll"), { disabled: expandDisabled, action: { type: "expand", ids } }),
+    button("collapse", t("monitor.files.collapseAll"), { disabled: collapseDisabled, action: { type: "collapse" } }),
+    button("wrap", t("monitor.files.wrap"), { pressed: state.wrap, title: t(state.wrap ? "monitor.files.wrap.on" : "monitor.files.wrap.off"), action: { type: "wrap" } })
+  );
+}
+function Path({ item }) {
+  const { dir, base } = item.name;
+  return h5(
+    "span",
+    { className: "sw-fl-path", title: item.path },
+    dir === "" ? null : h5("span", { className: "sw-fl-dir" }, dir),
+    h5("span", { className: "sw-fl-base" }, base)
+  );
+}
+function Preview({ item: { bar, stat } }) {
+  return h5(
+    "span",
+    { className: "sw-fl-pv", "data-nobar": bar === null ? "" : void 0 },
+    bar === null ? null : h5(
+      "span",
+      { className: "sw-fl-bar", title: bar.title, "aria-hidden": "true" },
+      bar.marks.map((mark, at) => h5("i", { key: at, "data-x": mark.withdrawn ? "" : void 0, style: { left: `${mark.left}%`, width: `${mark.width}%` } }))
+    ),
+    h5(
+      "span",
+      { className: "sw-fl-stat", "data-tone": toneOf(stat.empty?.tone) },
+      stat.empty === null ? [stat.segments === null ? null : h5("span", { key: "segments", className: "sw-fl-sg" }, `${stat.segments}${PART_SEPARATOR}`), stat.chars] : stat.empty.text
+    )
+  );
+}
+function Row({ row: row2, t }) {
+  const range = spanText([row2.first, row2.last]);
+  switch (row2.type) {
+    case "gap":
+      return h5("div", { className: "sw-fl-sep" }, h5("span", null, t("monitor.files.row.gap", { range })));
+    case "withdrawn":
+      return h5("div", { className: "sw-fl-wd" }, h5("span", null, h5("b", { "aria-hidden": "true" }, "\u2212"), t("monitor.files.row.withdrawn", { range, count: row2.last - row2.first + 1 })));
+    default:
+      return h5("div", { className: "sw-fl-row" }, h5("div", { className: "sw-fl-n" }, row2.number), h5("div", { className: "sw-fl-t" }, row2.text));
+  }
+}
+function FileBody({ item, id, t }) {
+  const rows = import_react4.default.useMemo(() => bodyRowsOf(item), [item]);
+  return h5(
+    "div",
+    { id },
+    item.name.cut || item.meta !== "" ? h5("div", { className: "sw-fl-meta" }, item.name.cut ? h5("div", { className: "sw-fl-full" }, item.path) : null, item.meta) : null,
+    h5("div", { className: "sw-fl-scroll" }, h5("div", { className: "sw-fl-rows" }, rows.map((row2, at) => h5(Row, { key: at, row: row2, t }))))
+  );
+}
+function FileItem({ item, open, bodyId, dispatch, t }) {
+  return h5(
+    "div",
+    { className: "sw-fl-item", "data-kind": "file", "data-open": open ? "" : void 0, "data-skill": item.skill ? "" : void 0 },
+    h5(
+      "h4",
+      { className: "sw-fl-fh" },
+      h5(
+        "button",
+        { type: "button", className: "sw-fl-fbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "toggle", id: item.id }) },
+        h5(Chevron),
+        h5(Path, { item }),
+        h5("span", { className: "sw-fl-cnt" }, item.count.map(({ text, tone }) => h5("span", { key: text, "data-tone": toneOf(tone) }, text))),
+        h5(Preview, { item })
+      )
+    ),
+    open ? h5(FileBody, { item, id: bodyId, t }) : null
+  );
+}
+function PlainItem({ item }) {
+  return h5(
+    "div",
+    { className: "sw-fl-item", "data-kind": "plain", "data-removed": item.removed ? "" : void 0 },
+    h5(
+      "div",
+      { className: "sw-fl-plain" },
+      h5(Path, { item }),
+      h5("span", { className: "sw-fl-why", "data-tone": toneOf(item.tone), "data-long": item.long ? "" : void 0 }, item.why)
+    )
+  );
+}
+function Group({ group, state, baseId, dispatch, t }) {
+  const open = isGroupOpen(state, group.id);
+  const bodyId = `${baseId}-group-${group.id}`;
+  return h5(
+    "section",
+    { className: "sw-fl-group", "data-group": group.id },
+    h5(
+      "h3",
+      { className: "sw-fl-gh" },
+      h5(
+        "button",
+        { type: "button", className: "sw-fl-gbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "group", id: group.id }) },
+        h5(Chevron),
+        h5("span", { className: "sw-fl-lbl" }, group.label),
+        h5("span", { className: "sw-fl-gcnt" }, group.items.length)
+      )
+    ),
+    open ? h5("div", { id: bodyId }, group.items.map((item) => item.kind === "file" ? h5(FileItem, { key: item.id, item, open: isFileOpen(state, item.id), bodyId: `${baseId}-file-${item.id}`, dispatch, t }) : h5(PlainItem, { key: item.id, item }))) : null
+  );
+}
+function Foot({ foot, state, baseId, dispatch }) {
+  return h5("div", { className: "sw-fl-foot" }, foot.map(({ key, label, text, pre }) => {
+    const open = isFootOpen(state, key);
+    const id = `${baseId}-foot-${key}`;
+    return h5(
+      "div",
+      { key, className: "sw-fl-fold" },
+      h5("button", { type: "button", className: "sw-fl-foldbtn", "aria-expanded": open, "aria-controls": open ? id : void 0, onClick: () => dispatch({ type: "fold", key }) }, h5(Chevron), label),
+      open ? h5("div", { id, className: "sw-fl-foldbody" }, pre ? h5("pre", { className: "sw-mon-pre" }, text) : h5("p", null, text)) : null
+    );
+  }));
+}
+function FilesView({ model, state, dispatch, baseId = "sw-files", t }) {
+  const ids = model.groups.flatMap((group) => group.items).filter((item) => item.kind === "file").map((item) => item.id);
+  return h5(
+    "div",
+    { className: "sw-fl", "data-sw-files": model.mode },
+    h5(
+      "div",
+      { className: "sw-fl-head" },
+      h5("p", { className: "sw-fl-sum" }, model.summary.flatMap(({ text, tone }, at) => [at > 0 ? PART_SEPARATOR : null, h5("span", { key: at, "data-tone": toneOf(tone) }, text)])),
+      h5(Controls, { state, ids, dispatch, t }),
+      model.sub === null ? null : h5("p", { className: "sw-fl-sub" }, model.sub)
+    ),
+    h5("div", { className: "sw-fl-list", "data-wrap": state.wrap ? "on" : "off" }, model.groups.map((group) => h5(Group, { key: group.id, group, state, baseId, dispatch, t }))),
+    model.foot.length === 0 ? null : h5(Foot, { foot: model.foot, state, baseId, dispatch })
+  );
+}
+function CarriedFiles({ carried, t }) {
+  const model = import_react4.default.useMemo(() => carriedFilesOf(carried, t), [carried, t]);
+  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
+  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
+}
+function ReadFiles({ files, t }) {
+  const model = import_react4.default.useMemo(() => readFilesOf(files, t), [files, t]);
+  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
+  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
+}
+
+// dsh/src/client/monitor-drawer.js
+var h6 = import_react5.default.createElement;
+function useResult(handle) {
+  return import_react5.default.useSyncExternalStore(handle.subscribe, () => handle.result, () => handle.result);
+}
+var SLOTS_ENDPOINT = "inner-monitor/slots";
+function Notice({ state, children }) {
+  return h6("p", { className: "sw-mon-notice", "data-sw-monitor-notice": state, role: "status" }, children);
+}
+function Missing({ t }) {
+  return h6("span", { className: "sw-mon-missing" }, t("monitor.notRecorded"));
+}
+function Facts({ entries }) {
+  return h6("dl", { className: "sw-mon-facts" }, entries.map(([term, description], at) => h6(import_react5.default.Fragment, { key: at }, h6("dt", null, term), h6("dd", null, description))));
+}
+var Pre = ({ children }) => h6("pre", { className: "sw-mon-pre" }, children);
+var Json = ({ value }) => h6(Pre, null, jsonText(value));
+var Section = ({ name, title, children, ...attributes }) => h6("section", { className: "sw-mon-section", "data-sw-section": name, ...attributes }, title === void 0 ? null : h6("h3", { className: "sw-mon-heading" }, title), children);
+var WholeText = ({ text, t }) => text === "" ? h6("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.slot.empty")) : h6(Pre, null, text);
+function Block({ part: { kind, label, text, json, error, children } }) {
+  return h6(
+    "div",
+    { className: "sw-mon-block", "data-block": kind, "data-error": error === true ? "" : void 0 },
+    label === void 0 ? null : h6("span", { className: "sw-mon-label" }, label),
+    text === void 0 ? null : h6(Pre, null, text),
+    json === void 0 ? null : h6(Pre, null, json),
+    children === void 0 ? null : children.map((child, at) => h6(Block, { key: at, part: child }))
+  );
+}
+function Blocks({ blocks, t }) {
+  return h6(import_react5.default.Fragment, null, blockListParts(blocks, t).map((part, at) => h6(Block, { key: at, part })));
+}
+function Message({ message, t }) {
+  return h6("div", { className: "sw-mon-message" }, h6("span", { className: "sw-mon-label" }, message?.role ?? t("monitor.notRecorded")), Array.isArray(message?.content) ? h6(Blocks, { blocks: message.content, t }) : h6(Json, { value: message }));
+}
+function CarrierCache({ evidence, t }) {
+  if (evidence === void 0 || evidence === null) return t("monitor.carrierCache.unobserved");
+  return h6(
+    "ol",
+    { className: "sw-mon-cache", "data-sw-carrier-cache": "" },
+    evidence.results.map(({ result, reason }, at) => h6(
+      "li",
+      { key: at, "data-result": result },
+      result === "skipped" ? t("monitor.carrierCache.skipped", { reason: t(`monitor.carrierCache.reason.${reason}`) }) : t(`monitor.carrierCache.${result}`)
+    )),
+    evidence.omitted > 0 ? h6("li", { key: "omitted", className: "sw-mon-note", "data-result": "omitted" }, t("monitor.carrierCache.omitted", { count: evidence.omitted })) : null
+  );
+}
+var seqText = (seq, t) => seq === null || seq === void 0 ? h6(Missing, { t }) : t("monitor.overview.seq", { seq });
+function selectionOf(request) {
+  return (request.recorded === "partial" ? request.selection : request.options) ?? {};
+}
+function OverviewPage({ detail, payback = /* @__PURE__ */ new Map(), t }) {
+  const { row: row2, ids, request } = detail;
+  const status = shownStatusOf(row2, payback);
+  const progress = payback.get(row2.id);
+  const { provider, model, reasoningEffort } = selectionOf(request);
+  const present = (value) => value === void 0 || value === null ? h6(Missing, { t }) : value;
+  const entries = [
+    [t("monitor.overview.status"), h6("span", { className: "sw-mon-status", "data-status": status }, t(`monitor.status.${status}`))],
+    ...row2.status === "committed" ? [[t("monitor.overview.payback"), Number.isFinite(progress) ? `${progress}%` : NOT_AVAILABLE]] : [],
+    [t("monitor.overview.callState"), t(`monitor.callState.${row2.call.state}`)],
+    [t("monitor.overview.carrierCache"), h6(CarrierCache, { evidence: row2.call.carrierCache, t })],
+    [t("monitor.overview.recordStart"), seqText(ids.start, t)],
+    [t("monitor.overview.recordCall"), seqText(ids.call, t)],
+    [t("monitor.overview.recordEnd"), seqText(ids.end, t)],
+    [t("monitor.overview.recordCarrier"), seqText(ids.carrier, t)],
+    ...row2.slots === null ? [] : [[t("monitor.overview.slots"), row2.slots]],
+    [t("monitor.overview.provider"), present(provider)],
+    [t("monitor.overview.model"), present(model)],
+    ...reasoningEffort === void 0 || reasoningEffort === null ? [] : [[t("monitor.overview.effort"), reasoningEffort]],
+    [t("monitor.overview.range"), t("monitor.overview.rangeValue", { first: row2.range.first, last: row2.range.last, count: row2.range.count })],
+    [t("monitor.overview.finish"), present(row2.call.finish)],
+    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h6(Pre, null, row2.reason)]],
+    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h6(Pre, null, row2.call.thrown)]]
+  ];
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    h6(Facts, { entries }),
+    row2.legacy ? h6("p", { className: "sw-mon-note" }, t("monitor.overview.legacy")) : null
+  );
+}
+function ToolsSection({ tools, t }) {
+  return h6(
+    Section,
+    { name: "tools", title: t("monitor.request.tools", { count: tools.count }) },
+    Array.isArray(tools.definitions) ? h6("details", { className: "sw-mon-fold" }, h6("summary", null, t("monitor.request.definitions")), h6(Json, { value: tools.definitions })) : h6("p", { className: "sw-mon-note" }, tools.reason)
+  );
+}
+function RequestPage({ detail, t }) {
+  const { request } = detail;
+  const partial = request.recorded === "partial";
+  const options = Object.entries(selectionOf(request)).map(([name, value]) => [name, stringOf(value)]);
+  const updates = request.toolHistory?.updates;
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    partial ? h6("p", { className: "sw-mon-note" }, t("monitor.request.partial")) : null,
+    h6(Section, { name: "options", title: t("monitor.request.options") }, h6(Facts, { entries: options })),
+    h6(
+      Section,
+      { name: "messages", title: t("monitor.request.tail") },
+      partial ? null : h6("p", { className: "sw-mon-note" }, t("monitor.request.messages", { count: request.messages.count })),
+      h6(Message, { message: partial ? request.tail : request.messages.tail, t })
+    ),
+    h6(Section, { name: "sequence", title: t("monitor.request.sequence") }, h6(Facts, { entries: [[t("monitor.request.throughSeq"), request.throughSeq ?? h6(Missing, { t })], [t("monitor.request.headerSeq"), request.headerSeq ?? h6(Missing, { t })]] })),
+    request.tools === void 0 ? null : h6(ToolsSection, { tools: request.tools, t }),
+    updates === void 0 ? null : h6(
+      Section,
+      { name: "toolHistory", title: t("monitor.request.toolHistory") },
+      h6(Facts, { entries: updates.map(({ messageId, additions }) => [messageId, additions.join(", ")]) })
+    )
+  );
+}
+function ResponsePage({ detail, t }) {
+  const { row: row2, response: response2 } = detail;
+  const outcome = [
+    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h6(Pre, null, row2.reason)]],
+    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h6(Pre, null, row2.call.thrown)]]
+  ];
+  const outcomeSection = outcome.length === 0 ? null : h6(Section, { name: "outcome", title: t("monitor.response.outcome") }, h6(Facts, { entries: outcome }));
+  const body = response2 === null ? h6("p", { className: "sw-mon-note" }, t("monitor.response.none")) : h6(
+    import_react5.default.Fragment,
+    null,
+    h6(
+      Section,
+      { name: "assembled", title: t("monitor.response.assembled") },
+      response2.blocks === null ? h6("p", { className: "sw-mon-note" }, t("monitor.response.assembleError", { message: response2.error })) : response2.blocks.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.response.noBlocks")) : h6(Blocks, { blocks: response2.blocks, t })
+    ),
+    h6(Section, { name: "finish", title: t("monitor.response.finish") }, response2.finish === null ? h6(Missing, { t }) : h6(Json, { value: response2.finish })),
+    h6(
+      Section,
+      { name: "raw", title: t("monitor.response.rawTitle") },
+      h6("details", { className: "sw-mon-fold" }, h6("summary", null, t("monitor.response.raw", { count: response2.stream.length })), h6(Json, { value: response2.stream }))
+    )
+  );
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    outcomeSection,
+    body
+  );
+}
+function UsagePage({ detail, t }) {
+  const usage = detail.usage;
+  const { folded, raw } = usage ?? {};
+  const change = detail.row?.contextChange;
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    h6(Section, { name: "folded", title: t("monitor.usage.folded") }, folded === void 0 || folded === null ? h6(Missing, { t }) : h6(Facts, { entries: [
+      [t("monitor.usage.input"), tokensOf(folded.input)],
+      [t("monitor.usage.output"), tokensOf(folded.output)],
+      [t("monitor.usage.cacheRead"), tokensOf(folded.cacheRead)],
+      [t("monitor.usage.cacheWrite"), tokensOf(folded.cacheWrite)]
+    ] })),
+    h6(Section, { name: "context", title: t("monitor.usage.context") }, h6(Facts, { entries: [
+      [t("monitor.context.before"), tokensOf(change?.before)],
+      [t("monitor.context.after"), tokensOf(change?.after)],
+      [t("monitor.context.change"), contextChangeText(change, t, TOKEN_UNIT)],
+      [t("monitor.context.miss"), tokensOf(change?.miss)]
+    ] })),
+    h6(Section, { name: "raw", title: t("monitor.usage.raw") }, raw === void 0 || raw === null ? h6(Missing, { t }) : h6(Json, { value: raw }))
+  );
+}
+function timeText(ms, t) {
+  if (ms === null || ms === void 0) return h6(Missing, { t });
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? String(ms) : date.toISOString();
+}
+function TimingPage({ detail, now, t }) {
+  const { row: row2, timing, response: response2 } = detail;
+  const span = (part) => {
+    const ms = elapsedOf(row2, part, now);
+    return ms === null ? h6(Missing, { t }) : formatElapsed(ms);
+  };
+  return h6(Facts, { entries: [
+    [t("monitor.timing.attemptStart"), timeText(timing.attempt.startedAt, t)],
+    [t("monitor.timing.attemptEnd"), timeText(timing.attempt.endedAt, t)],
+    [t("monitor.timing.attemptElapsed"), span("attempt")],
+    [t("monitor.timing.callStart"), timeText(timing.call.startedAt, t)],
+    [t("monitor.timing.callEnd"), timeText(timing.call.endedAt, t)],
+    [t("monitor.timing.callElapsed"), span("call")],
+    [t("monitor.timing.firstChunk"), timeText(response2?.firstAt, t)]
+  ] });
+}
+function SlotSummary({ slot, number, t }) {
+  return h6(
+    Section,
+    { title: t("monitor.summaries.heading", { number, title: slotTitleOf(slot, t), seq: slot.key }), "data-sw-slot-summary": slot.key },
+    h6(WholeText, { text: slot.output, t })
+  );
+}
+function SlotSummaries({ monitor, attemptId, t }) {
+  const result = useResult(monitor.resource({ endpoint: SLOTS_ENDPOINT, attempt: attemptId }));
+  return h6(DetailBody, { result, t, render: ({ slots }) => h6(import_react5.default.Fragment, null, slots.map((slot, at) => h6(SlotSummary, { key: slot.key, slot, number: at + 1, t }))) });
+}
+function SummariesPage({ detail, monitor, attemptId, t }) {
+  if (detail.row.status !== "committed") return h6(Notice, { state: "summaries-pending" }, t("monitor.summaries.pending"));
+  return h6(SlotSummaries, { monitor, attemptId, t });
+}
+function CarriedPage({ detail, t }) {
+  if (detail.row.status !== "committed") return h6(Notice, { state: "carried-pending" }, t("monitor.carried.pending"));
+  if (detail.carried === null) return h6(Notice, { state: "carried-none" }, t("monitor.carried.none"));
+  return h6(CarriedFiles, { carried: detail.carried, t });
+}
+function QuotePage({ detail, t }) {
+  if (detail.quote === null || detail.quote === void 0) return h6(Notice, { state: "quote-none" }, t("monitor.quote.none"));
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    h6("p", { className: "sw-mon-note" }, t("monitor.quote.note")),
+    h6(Facts, { entries: quoteFactsOf(detail.quote, t).map(([term, value]) => [term, value ?? h6(Missing, { t })]) })
+  );
+}
+function SourceEvent({ event, t }) {
+  const { seq, type, visible, blocks, raw } = event;
+  return h6(
+    "details",
+    { className: "sw-mon-event", "data-sw-event": "", "data-seq": seq, "data-visible": String(visible), open: visible },
+    h6(
+      "summary",
+      null,
+      t("monitor.slot.event", { seq, type }),
+      h6("span", { className: "sw-mon-tag", "data-tag": visible ? "surface" : "earlier" }, t(visible ? "monitor.slot.surface" : "monitor.slot.earlier"))
+    ),
+    blocks.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.slot.noBlocks")) : h6(Blocks, { blocks, t }),
+    h6(
+      "details",
+      { className: "sw-mon-fold", "data-sw-raw": "" },
+      h6("summary", null, t("monitor.slot.raw")),
+      h6(Json, { value: raw })
+    )
+  );
+}
+function SlotOverviewPage({ detail, t }) {
+  return h6(Facts, { entries: slotFactsOf(detail, t).map(([term, value]) => [term, value ?? h6(Missing, { t })]) });
+}
+function SlotSummaryPage({ detail, t }) {
+  return h6(Section, { name: "c" }, h6(WholeText, { text: detail.c, t }));
+}
+function SlotSourcePage({ detail, t }) {
+  return h6(
+    Section,
+    { name: "sources", title: t("monitor.slot.sources") },
+    detail.events.map((event) => h6(SourceEvent, { key: event.seq, event, t }))
+  );
+}
+function HandoffOverviewPage({ detail, t }) {
+  const { row: row2 } = detail;
+  const present = (value) => value === void 0 || value === null ? h6(Missing, { t }) : value;
+  return h6(Facts, { entries: [
+    [t("monitor.handoff.overview.type"), h6("span", { "data-type": row2.type }, t(`monitor.handoff.type.${row2.type}`))],
+    [t("monitor.handoff.overview.token"), row2.token],
+    [t("monitor.handoff.overview.createdAt"), timeText(row2.createdAt, t)],
+    [t("monitor.handoff.overview.deliveredAt"), timeText(row2.time, t)],
+    [t("monitor.handoff.overview.seq"), seqText(row2.id, t)],
+    [t("monitor.handoff.overview.filesRead"), present(row2.read)],
+    [t("monitor.handoff.overview.filesKept"), present(row2.kept)],
+    [t("monitor.handoff.overview.skills"), row2.skills],
+    [t("monitor.handoff.overview.before"), tokensOf(row2.contextChange?.before)],
+    [t("monitor.handoff.overview.after"), tokensOf(row2.contextChange?.after)]
+  ] });
+}
+function HandoffSummaryPage({ detail, t }) {
+  return h6(Section, { name: "summary" }, h6(WholeText, { text: detail.summary, t }));
+}
+function HandoffFilesPage({ detail, t }) {
+  return detail.files.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.handoff.files.none")) : h6(ReadFiles, { files: detail.files, t });
+}
+function HandoffTurnsPage({ detail, t }) {
+  return h6(Section, { name: "turns" }, detail.turnPage === null ? h6(Missing, { t }) : h6(Pre, null, detail.turnPage));
+}
+function HandoffLineagePage({ detail, t }) {
+  if (detail.lineage === null) return h6(Missing, { t });
+  return h6(Facts, { entries: detail.lineage.map((member) => [member.label, member.omitted === true ? t("monitor.handoff.lineage.omitted") : member.headline]) });
+}
+function TurnDetail({ turn, t }) {
+  const { user, note } = turn;
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    h6(Section, { name: "user", title: t("monitor.handoff.turn.user") }, h6(WholeText, { text: user, t })),
+    h6(
+      Section,
+      { name: "note", title: t("monitor.handoff.turn.note") },
+      note === null ? h6("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.handoff.turn.noNote")) : h6(WholeText, { text: note, t })
+    )
+  );
+}
+function SettlementDetail({ settlement, t }) {
+  return settlement === void 0 ? null : h6(Pre, null, settlementTextOf(settlement, t));
+}
+var CALL_PAGES = { overview: OverviewPage, request: RequestPage, response: ResponsePage, summaries: SummariesPage, carried: CarriedPage, quote: QuotePage, usage: UsagePage, timing: TimingPage };
+var SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, source: SlotSourcePage };
+var HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
+function PagedDetail({ pages, first, labels, detail, monitor, attemptId, payback, now, t }) {
+  const [page, setPage] = import_react5.default.useState(first);
+  const Page = pages[page];
+  return h6(
+    import_react5.default.Fragment,
+    null,
+    h6("div", { className: "sw-mon-tabs", role: "tablist" }, Object.keys(pages).map((name) => h6("button", {
+      key: name,
+      type: "button",
+      role: "tab",
+      className: "sw-mon-tab",
+      "data-page": name,
+      "aria-selected": name === page,
+      onClick: () => {
+        setPage(name);
+      }
+    }, t(`${labels}.${name}`)))),
+    h6("div", { className: "sw-mon-page", role: "tabpanel", "data-page": page }, h6(Page, { detail, monitor, attemptId, payback, now, t }))
+  );
+}
+function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
+  return h6(PagedDetail, { pages: CALL_PAGES, first: "overview", labels: "monitor.page", detail, monitor, attemptId, payback, now, t });
+}
+function SlotDetail({ detail, t }) {
+  return h6(PagedDetail, { pages: SLOT_PAGES, first: "summary", labels: "monitor.slotPage", detail, t });
+}
+function HandoffDetail({ detail, t }) {
+  const pages = detail.row.type === "load" ? HANDOFF_PAGES : Object.fromEntries(Object.entries(HANDOFF_PAGES).filter(([name]) => name !== "lineage"));
+  return h6(PagedDetail, { pages, first: "overview", labels: "monitor.handoffPage", detail, t });
+}
+function DetailBody({ result, t, render }) {
+  if (result === null) return h6(Notice, { state: "detail-loading" }, t("monitor.detail.loading"));
+  if (result.kind === "unavailable") return h6(Notice, { state: "detail-unavailable" }, t("monitor.detail.unavailable"));
+  if (result.kind === "unreachable") return h6(Notice, { state: "detail-unreachable" }, t("monitor.detail.unreachable", { message: result.message }));
+  return render(result.value);
+}
+
+// dsh/src/client/monitor-view.js
+var h7 = import_react6.default.createElement;
+var CLOCK_TICK_MS = 1e3;
+var ROW_LEVELS = { attempt: 1, call: 2, slot: 2, handoff: 1, settlement: 1, content: 2, turn: 2, placeholder: 2 };
+function titleOf(row2, t) {
+  switch (row2.kind) {
+    case "attempt":
+      return t("monitor.object.attempt", { epoch: row2.epoch, ordinal: row2.ordinal });
+    case "call":
+      return t("monitor.object.call");
+    case "handoff":
+      return handoffTitle(row2.handoff, t);
+    case "settlement":
+      return t("monitor.object.settlement", { epoch: row2.settlement.epoch });
+    case "content":
+      return t("monitor.object.handoffContent");
+    case "turn":
+      return t("monitor.object.handoffTurn", { n: row2.at + 1 });
+    default:
+      return slotTitleOf(row2.slot, t);
+  }
+}
+function emptyMarkerOf(row2, t) {
+  if (row2.kind === "slot" && row2.slot.output === "") return t("monitor.slot.empty");
+  if (row2.kind === "turn" && row2.turn.note === null) return t("monitor.handoff.turn.noNote");
+  if (row2.kind === "turn" && row2.turn.note === "") return t("monitor.slot.empty");
+  return null;
+}
+function Preview2({ preview: { input, output }, empty }) {
+  const shown = empty ?? output;
+  if (input === void 0 && shown === null) return null;
+  const paired = input !== void 0;
+  return h7(
+    "div",
+    { className: "sw-mon-preview", title: paired ? shown === null ? input : `${input} \u2192 ${shown}` : shown },
+    paired ? h7("span", { className: "sw-mon-in" }, input) : null,
+    paired && shown !== null ? h7("span", { className: "sw-mon-arrow", "aria-hidden": "true" }, "\u2192") : null,
+    shown === null ? null : h7("span", empty === null ? { className: "sw-mon-out" } : { className: "sw-mon-out sw-mon-empty", "data-sw-empty": "" }, shown)
+  );
+}
+function Meta({ parts }) {
+  return h7(
+    "span",
+    { className: "sw-mon-meta" },
+    parts.map(({ part, text, title, attention, type }) => h7("span", { key: part, className: "sw-mon-meta-item", "data-part": part, "data-sw-attention": attention ? "" : void 0, "data-type": type, title }, text))
+  );
+}
+function MonitorRow({ row: row2, selected, now, dispatch, t }) {
+  const { kind, attempt, handoff } = row2;
+  const props = { className: "sw-mon-row", role: "treeitem", "data-sw-row": kind, "data-identity": row2.identity, "aria-level": ROW_LEVELS[kind] };
+  if (kind === "placeholder") {
+    const what = t(handoff === void 0 ? "monitor.leaves.summaries" : "monitor.leaves.turns");
+    return h7(
+      "div",
+      { ...props, "data-sw-placeholder": row2.state },
+      h7(
+        "div",
+        { className: "sw-mon-head" },
+        row2.state === "loading" ? h7("span", { className: "sw-mon-spinner", "aria-hidden": "true" }) : null,
+        h7("span", { "data-part": "text" }, t(`monitor.leaves.${row2.state}`, { what }))
+      )
+    );
+  }
+  const title = h7("span", { className: "sw-mon-title", "data-part": "title" }, titleOf(row2, t));
+  const preview = h7(Preview2, { preview: row2.preview, empty: emptyMarkerOf(row2, t) });
+  const toggle = h7("button", { type: "button", className: "sw-mon-toggle", "aria-expanded": row2.open }, h7("span", { className: "sw-mon-chevron", "aria-hidden": "true" }), title);
+  if (kind === "attempt") {
+    props["aria-expanded"] = row2.open;
+    props.onClick = () => dispatch({ type: "toggle", attemptId: attempt.id, open: row2.open });
+    const parts = parentMetaParts(attempt, now, t, row2.missWarned);
+    if (parts.some(({ attention }) => attention)) props["data-sw-attention"] = "";
+    return h7(
+      "div",
+      props,
+      h7(
+        "div",
+        { className: "sw-mon-head" },
+        toggle,
+        h7("span", { className: "sw-mon-status", "data-part": "status", "data-status": row2.shownStatus }, t(`monitor.status.${row2.shownStatus}`)),
+        h7(Meta, { parts })
+      ),
+      row2.open ? null : preview
+    );
+  }
+  if (kind === "handoff") {
+    props["aria-expanded"] = row2.open;
+    props.onClick = () => dispatch({ type: "toggle", handoffId: handoff.id, open: row2.open });
+    return h7("div", props, h7("div", { className: "sw-mon-head" }, toggle, h7(Meta, { parts: handoffMetaParts(handoff, t) })), row2.open ? null : preview);
+  }
+  const select = () => dispatch(handoff === void 0 ? { type: "select", kind, attemptId: attempt.id, slotKey: row2.slot?.key } : { type: "select", kind, handoffId: handoff.id, turn: row2.at });
+  props["aria-selected"] = selected;
+  props.tabIndex = 0;
+  props.onClick = select;
+  props.onKeyDown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    select();
+  };
+  if (kind === "settlement") return h7("div", props, h7("div", { className: "sw-mon-head" }, title, h7(Meta, { parts: settlementMetaParts(row2.settlement, t) })));
+  return h7("div", props, h7("div", { className: "sw-mon-head" }, title), preview);
+}
+function MonitorList({ rows, selected, now, dispatch, t }) {
+  return h7(
+    "div",
+    { className: "sw-mon-list", role: "tree" },
+    rows.map((row2) => h7(MonitorRow, { key: row2.identity, row: row2, selected: row2.identity === selected, now, dispatch, t }))
+  );
+}
+function ResizeHandle({ width, dispatch, t }) {
+  const drag = import_react6.default.useRef(null);
+  return h7("div", {
+    className: "sw-mon-handle",
+    role: "separator",
+    "aria-orientation": "vertical",
+    "aria-label": t("monitor.drawer.resize"),
+    "aria-valuenow": width,
+    "aria-valuemin": DRAWER_MIN_WIDTH,
+    "aria-valuemax": DRAWER_MAX_WIDTH,
+    tabIndex: 0,
+    onPointerDown(event) {
+      if (event.button !== 0) return;
+      const handle = event.currentTarget;
+      drag.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: handle.parentElement.getBoundingClientRect().width,
+        containerWidth: handle.closest("[data-sw-monitor-split]").getBoundingClientRect().width
+      };
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    onPointerMove(event) {
+      const current = drag.current;
+      if (current === null || current.pointerId !== event.pointerId) return;
+      dispatch({ type: "resize", width: current.startWidth + current.startX - event.clientX, containerWidth: current.containerWidth });
+    },
+    onPointerUp(event) {
+      if (drag.current?.pointerId !== event.pointerId) return;
+      drag.current = null;
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    },
+    onPointerCancel() {
+      drag.current = null;
+    },
+    onKeyDown(event) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const containerWidth = event.currentTarget.closest("[data-sw-monitor-split]").getBoundingClientRect().width;
+      dispatch({ type: "resize", width: width + (event.key === "ArrowLeft" ? DRAWER_KEY_STEP : -DRAWER_KEY_STEP), containerWidth });
+    }
+  });
+}
+var CALL_ENDPOINT = "inner-monitor/call";
+var SLOT_ENDPOINT = "inner-monitor/slot";
+var HANDOFF_ENDPOINT = "inner-monitor/handoff";
+function CallDrawerBody({ monitor, attemptId, payback, now, t }) {
+  const result = useResult(monitor.resource({ endpoint: CALL_ENDPOINT, attempt: attemptId }));
+  return h7(DetailBody, { result, t, render: (detail) => h7(CallDetail, { detail, monitor, attemptId, payback, now, t }) });
+}
+function SlotDrawerBody({ monitor, attemptId, slotKey, t }) {
+  const result = useResult(monitor.resource({ endpoint: SLOT_ENDPOINT, attempt: attemptId, slot: slotKey }));
+  return h7(DetailBody, { result, t, render: (value) => h7(SlotDetail, { detail: value, t }) });
+}
+function HandoffDrawerBody({ monitor, handoffId, t }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  return h7(DetailBody, { result, t, render: (detail) => h7(HandoffDetail, { detail, t }) });
+}
+function TurnDrawerBody({ monitor, handoffId, turn, t }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  return h7(DetailBody, { result, t, render: (detail) => h7(TurnDetail, { turn: detail.turns[turn], t }) });
+}
+function TurnSubtitle({ monitor, handoffId, turn }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  const address = result?.kind === "ready" ? result.value.turns[turn].address : null;
+  return address === null ? null : h7("p", { className: "sw-mon-drawer-sub" }, address);
+}
+function MonitorDrawer({ state, monitor, ordinals, payback, handoffs = [], settlements, now, dispatch, t }) {
+  const { selected, drawerWidth } = state;
+  if (selected === null) return null;
+  const { kind, identity, attemptId, slotKey, handoffId, turn } = selected;
+  let title;
+  let subtitle;
+  let body;
+  if (kind === "settlement") {
+    const settlement = settlements.get(handoffId);
+    title = t("monitor.drawer.settlement", { epoch: settlement === void 0 ? NOT_AVAILABLE : settlement.epoch });
+    subtitle = h7("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
+    body = h7(SettlementDetail, { settlement, t });
+  } else if (kind === "content" || kind === "turn") {
+    const listed = handoffs.find((handoff) => handoff.id === handoffId);
+    title = t(kind === "turn" ? "monitor.drawer.handoffTurn" : "monitor.drawer.handoff", { epoch: listed === void 0 ? NOT_AVAILABLE : handoffSegmentOf(listed) });
+    subtitle = kind === "turn" ? h7(TurnSubtitle, { key: identity, monitor, handoffId, turn }) : h7("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
+    body = kind === "turn" ? h7(TurnDrawerBody, { key: identity, monitor, handoffId, turn, t }) : h7(HandoffDrawerBody, { key: identity, monitor, handoffId, t });
+  } else {
+    const call = kind === "call";
+    const { epoch, ordinal } = ordinals[attemptId] ?? { epoch: NOT_AVAILABLE, ordinal: NOT_AVAILABLE };
+    title = t(call ? "monitor.drawer.call" : "monitor.drawer.slot", { epoch, ordinal });
+    subtitle = h7("p", { className: "sw-mon-drawer-sub" }, call ? t("monitor.drawer.attemptId", { id: attemptId }) : t("monitor.drawer.slotKey", { id: slotKey }));
+    body = call ? h7(CallDrawerBody, { key: identity, monitor, attemptId, payback, now, t }) : h7(SlotDrawerBody, { key: identity, monitor, attemptId, slotKey, t });
+  }
+  return h7(
+    "aside",
+    { className: "sw-mon-drawer", "data-sw-monitor-drawer": "", "data-kind": kind, "aria-label": t("monitor.drawer.label"), style: { width: drawerWidth } },
+    h7(ResizeHandle, { width: drawerWidth, dispatch, t }),
+    h7(
+      "div",
+      { className: "sw-mon-drawer-head" },
+      h7("h2", { className: "sw-mon-drawer-title" }, title),
+      subtitle,
+      h7("button", { type: "button", className: "sw-mon-close", "aria-label": t("monitor.drawer.close"), onClick: () => dispatch({ type: "clear" }) }, "\xD7")
+    ),
+    h7("div", { className: "sw-mon-drawer-body" }, body)
+  );
+}
+var leavesOf = (result, list) => result === null ? LEAVES_LOADING : result.kind === "ready" ? result.value[list] : LEAVES_FAILED;
+function listFeed(monitor, { endpoint, address, list }, ids) {
+  const handles = ids.map((id) => [id, monitor.resource({ endpoint, [address]: id })]);
+  let seen = null;
+  let lists = null;
+  return {
+    subscribe(listener) {
+      const unsubscribes = handles.map(([, handle]) => handle.subscribe(listener));
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe();
+      };
+    },
+    snapshot() {
+      const results = handles.map(([, handle]) => handle.result);
+      if (seen !== null && results.every((result, at) => result === seen[at])) return lists;
+      seen = results;
+      lists = Object.fromEntries(handles.map(([id], at) => [id, leavesOf(results[at], list)]));
+      return lists;
+    }
+  };
+}
+var SLOT_LISTS = { endpoint: SLOTS_ENDPOINT, address: "attempt", list: "slots" };
+var TURN_LISTS = { endpoint: HANDOFF_ENDPOINT, address: "handoff", list: "turns" };
+function useLists(monitor, source, ids) {
+  const feed = import_react6.default.useMemo(() => listFeed(monitor, source, ids), [monitor, source, ids.join()]);
+  return import_react6.default.useSyncExternalStore(feed.subscribe, feed.snapshot, feed.snapshot);
+}
+function MonitorSplit({ attempts, handoffs, monitor, state, dispatch, t }) {
+  const paneRef = import_react6.default.useRef(null);
+  const [now, setNow] = import_react6.default.useState(() => Date.now());
+  const running = attempts.some((attempt) => ACTIVE_STATUSES.includes(attempt.status));
+  import_react6.default.useEffect(() => {
+    if (!running) return void 0;
+    setNow(Date.now());
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, CLOCK_TICK_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [running]);
+  import_react6.default.useLayoutEffect(() => {
+    const pane = paneRef.current;
+    pane.scrollTop = pane.scrollHeight;
+  }, []);
+  const expanded = attempts.filter((attempt) => attempt.status === "committed" && isOpen(state, attempt.id)).map((attempt) => attempt.id);
+  const expandedHandoffs = handoffs.filter((handoff) => isOpen(state, handoff.id)).map((handoff) => handoff.id);
+  const rows = flattenRows(attempts, useLists(monitor, SLOT_LISTS, expanded), state, handoffs, useLists(monitor, TURN_LISTS, expandedHandoffs));
+  return h7(
+    "div",
+    { className: "sw-mon-split", "data-sw-monitor-split": "" },
+    h7("div", {
+      className: "sw-mon-pane",
+      ref: paneRef,
+      role: "region",
+      "aria-label": t("monitor.region"),
+      tabIndex: 0,
+      onClick(event) {
+        if (event.target === event.currentTarget) dispatch({ type: "clear" });
+      }
+    }, h7(MonitorList, { rows, selected: state.selected?.identity ?? null, now, dispatch, t })),
+    h7(MonitorDrawer, { state, monitor, ordinals: ordinalsOf(attempts), payback: paybackOf(attempts, handoffs), handoffs, settlements: settlementsOf(attempts, handoffs), now, dispatch, t })
+  );
+}
+function MonitorContent({ monitor, state, dispatch, t }) {
+  const rows = useResult(monitor.rows);
+  if (rows === null) return h7(Notice, { state: "rows-loading" }, t("monitor.rows.loading"));
+  if (rows.kind === "unavailable") return h7(Notice, { state: "rows-unavailable" }, t("monitor.rows.unavailable"));
+  if (rows.kind === "unreachable") return h7(Notice, { state: "rows-unreachable" }, t("monitor.rows.unreachable", { message: rows.message }));
+  if (rows.attempts.length === 0 && rows.handoffs.length === 0) return h7(Notice, { state: "rows-empty" }, t("monitor.rows.empty"));
+  return h7(MonitorSplit, { attempts: rows.attempts, handoffs: rows.handoffs, monitor, state, dispatch, t });
+}
+function InnerCompactionView({ monitor, t }) {
+  const [state, dispatch] = import_react6.default.useReducer(reduceView, void 0, createViewState);
+  return h7(
+    "div",
+    { className: "sw-mon", "data-sw-monitor": "", "data-conversation-composer-overlay": "" },
+    h7(MonitorContent, { monitor, state, dispatch, t })
+  );
+}
+
+// dsh/src/client/monitor-register.js
+var MONITOR_VIEW_ID = "session-watcher.inner-compaction";
+var MONITOR_VIEW_ORDER = 30;
+function registerMonitorView(child, { monitors, t }) {
+  child.slots.inject("conversation.view", () => child.slots.register({
+    name: "conversation.view",
+    id: MONITOR_VIEW_ID,
+    order: MONITOR_VIEW_ORDER,
+    locale: NS,
+    label: () => t("monitor.label"),
+    inject: (sessionId) => ({ monitor: monitors.for(sessionId) })
+  }, InnerCompactionView));
+}
+
+// dsh/src/client/settings.js
+var import_react8 = __toESM(require("react"), 1);
+
+// public/lib/compactionSettings.js
+var PRESET_IDS = Object.freeze(["E2", "W2", "M2", "S3", "X3"]);
+var isRoute = (value) => value !== null && typeof value === "object" && ["provider", "model"].every((key) => typeof value[key] === "string" && value[key] !== "");
+var VALID = {
+  showCompactionOption: (value) => typeof value === "boolean",
+  compactionPreset: (value) => PRESET_IDS.includes(value),
+  summaryFallbackModel: (value) => value === null || isRoute(value),
+  subagentsInheritCompaction: (value) => typeof value === "boolean"
+};
+var FIELDS = Object.keys(VALID);
+var routeKey = (route) => JSON.stringify([route.provider, route.model]);
+var same = (a, b) => a === b || isRoute(a) && isRoute(b) && a.provider === b.provider && a.model === b.model;
+var normalized = (values) => ({ ...values, summaryFallbackModel: values.summaryFallbackModel ?? null });
+function createSettingsDraft({ settings, models }) {
+  const listeners = /* @__PURE__ */ new Set();
+  let draft = {};
+  let draftRevision;
+  let saving = false;
+  let failed = false;
+  let catalog = { status: "idle", groups: [], partial: [] };
+  let request = 0;
+  const changed = () => {
+    for (const listener of [...listeners]) listener();
+  };
+  const unsubscribe = settings.subscribe(changed);
+  function choicesOf(route) {
+    const groups = catalog.groups.map(({ id, name, models: listed2 }) => ({
+      id,
+      name,
+      models: listed2.map((model) => ({ key: routeKey({ provider: id, model: model.id }), provider: id, model: model.id, name: model.name }))
+    }));
+    const listed = route !== null && groups.some((group) => group.models.some((model) => model.provider === route.provider && model.model === route.model));
+    const saved = route === null || listed ? null : { key: routeKey(route), provider: route.provider, model: route.model, unavailable: catalog.status === "ready" };
+    return { groups, saved };
+  }
+  function snapshot() {
+    const state = settings.read();
+    const shown = { status: catalog.status, partial: catalog.partial };
+    if (state.status !== "ready") return { status: state.status, writable: false, values: null, dirty: false, saving, failed, catalog: shown, choices: choicesOf(null) };
+    const accepted = normalized(state.values);
+    const values = { ...accepted, ...draft };
+    return {
+      status: "ready",
+      writable: state.writable,
+      values,
+      dirty: FIELDS.some((field) => !same(values[field], accepted[field])),
+      saving,
+      failed,
+      catalog: shown,
+      choices: choicesOf(values.summaryFallbackModel)
+    };
+  }
+  const clear = () => {
+    draft = {};
+    draftRevision = void 0;
+    failed = false;
+  };
+  return {
+    getSnapshot: snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(field, value) {
+      const state = settings.read();
+      if (state.status !== "ready" || !state.writable || saving || !Object.hasOwn(VALID, field) || !VALID[field](value)) return false;
+      if (Object.keys(draft).length === 0) draftRevision = state.revision;
+      if (same(normalized(state.values)[field], value)) delete draft[field];
+      else draft = { ...draft, [field]: value };
+      failed = false;
+      changed();
+      return true;
+    },
+    /** Writes the staged changes alone, fenced by the revision the draft began at; resolves whether the host's mirror shows them afterwards. */
+    async save() {
+      const { dirty, writable, status, values } = snapshot();
+      if (saving || status !== "ready" || !writable || !dirty) return false;
+      const stored = normalized(settings.read().values);
+      const changes = Object.fromEntries(FIELDS.filter((field) => !same(values[field], stored[field])).map((field) => [field, values[field]]));
+      saving = true;
+      failed = false;
+      changed();
+      let landed = false;
+      try {
+        await settings.write(changes, draftRevision);
+        const now = settings.read();
+        landed = now.status === "ready" && FIELDS.every((field) => !(field in changes) || same(normalized(now.values)[field], changes[field]));
+      } catch {
+        landed = false;
+      }
+      saving = false;
+      if (landed) clear();
+      else failed = Object.keys(draft).length > 0;
+      changed();
+      return landed;
+    },
+    cancel() {
+      clear();
+      changed();
+    },
+    /** Reads the catalog, superseding a read in flight; a failed read leaves an error state a later call replaces. */
+    async loadModels() {
+      const mine = ++request;
+      catalog = { ...catalog, status: "loading" };
+      changed();
+      let next;
+      try {
+        const { groups, failures } = await models.list();
+        next = { status: "ready", groups, partial: failures.map((failure) => failure.name) };
+      } catch {
+        next = { status: "error", groups: [], partial: [] };
+      }
+      if (mine !== request) return;
+      catalog = next;
+      changed();
+    },
+    /** A model input changed: a catalog that was asked for is read again, one never asked for stays unread. */
+    invalidateModels() {
+      if (catalog.status !== "idle") void this.loadModels();
+    },
+    /** The connection began again: the draft was staged against a host that may no longer be there. */
+    reset() {
+      if (!saving) clear();
+      this.invalidateModels();
+      changed();
+    },
+    dispose() {
+      unsubscribe();
+    }
+  };
+}
+
+// dsh/src/client/switch.js
+var import_react7 = __toESM(require("react"), 1);
+var h8 = import_react7.default.createElement;
+function Switch({ checked, onChange, label, disabled = false }) {
+  return h8("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": checked,
+    "aria-label": label,
+    disabled,
+    className: "sw-set-switch",
+    onClick: () => {
+      onChange(!checked);
+    }
+  }, h8("span", { className: "sw-set-switch-thumb" }));
+}
+
+// dsh/src/client/settings.js
+var h9 = import_react8.default.createElement;
+var SETTINGS_ENTRY = "session-watcher";
+function bindSettingsForm(child) {
+  const entry = child.configForms.get(SETTINGS_ENTRY);
+  const settings = {
+    read() {
+      const { status, value, revision, writable } = entry.getSnapshot();
+      return { status, values: value, revision, writable };
+    },
+    subscribe: (listener) => entry.subscribe(listener),
+    write: (changes, revision) => entry.mutate(Object.entries(changes).map(([field, value]) => ({ op: "set", path: [field], value })), revision)
+  };
+  const models = {
+    async list() {
+      const reply = await child.remote.session.modelCatalog();
+      if (!reply.ok) throw new Error("the model catalog could not be read");
+      return { groups: reply.value.groups, failures: reply.value.failures };
+    }
+  };
+  const form = createSettingsDraft({ settings, models });
+  child.effect(() => child.remote.$on("llm/adapters-updated", () => {
+    form.invalidateModels();
+  }));
+  child.effect(() => child.remote.$on("settings/document-updated", () => {
+    form.invalidateModels();
+  }));
+  child.effect(() => child.on("connection/reset", () => {
+    form.reset();
+  }));
+  child.effect(() => () => {
+    form.dispose();
+  });
+  return form;
+}
+function createOptionVisibility() {
+  let shown = false;
+  const listeners = /* @__PURE__ */ new Set();
+  const publish = (next) => {
+    if (next === shown) return;
+    shown = next;
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    getSnapshot: () => shown,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bind(child) {
+      const entry = child.configForms.get(SETTINGS_ENTRY);
+      const follow = () => {
+        const { status, value } = entry.getSnapshot();
+        publish(status === "ready" && value?.showCompactionOption === true);
+      };
+      follow();
+      child.effect(() => {
+        const stop = entry.subscribe(follow);
+        return () => {
+          stop();
+          publish(false);
+        };
+      });
+    }
+  };
+}
+function createIntegrationStatus({ call }) {
+  let snapshot = { failure: null };
+  const listeners = /* @__PURE__ */ new Set();
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    async load() {
+      let reply;
+      try {
+        reply = await call("pi-ai/status", {});
+      } catch {
+        return;
+      }
+      if (reply?.ok !== true) return;
+      const failure = reply.value?.failure ?? null;
+      if (failure?.cause === snapshot.failure?.cause) return;
+      snapshot = { failure };
+      for (const listener of [...listeners]) listener();
+    }
+  };
+}
+function createCarrierCacheStore({ call }) {
+  let snapshot = { state: "loading", busy: false, outcome: null };
+  const listeners = /* @__PURE__ */ new Set();
+  const publish = (next) => {
+    if (JSON.stringify(next) === JSON.stringify(snapshot)) return;
+    snapshot = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const ask = async (endpoint, payload) => {
+    try {
+      return await call(endpoint, payload);
+    } catch {
+      return void 0;
+    }
+  };
+  const forbidden = (reply) => reply?.ok === false && reply.error?.code === "forbidden";
+  async function load() {
+    const reply = await ask("carrier-cache/status", {});
+    if (forbidden(reply)) {
+      publish({ state: "hidden", busy: false, outcome: null });
+    } else if (reply?.ok === true) {
+      const { state, cause, reason, install } = reply.value;
+      publish({
+        state,
+        ...cause === void 0 ? {} : { cause },
+        ...reason === void 0 ? {} : { reason },
+        ...install === void 0 ? {} : { install },
+        ...state === "not-installed" && snapshot.confirming === true ? { confirming: true } : {},
+        busy: snapshot.busy,
+        outcome: snapshot.outcome
+      });
+    }
+  }
+  async function change(body) {
+    publish({ ...snapshot, busy: true, outcome: null });
+    const reply = await ask("carrier-cache/set", body);
+    if (forbidden(reply)) {
+      publish({ state: "hidden", busy: false, outcome: null });
+      return;
+    }
+    const outcome = reply?.ok === true ? reply.value : { outcome: "failed" };
+    await load();
+    const { confirming, ...settled } = snapshot;
+    publish({ ...settled, busy: false, outcome });
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    load,
+    async set(enabled) {
+      if (snapshot.busy) return;
+      if (enabled && snapshot.state === "not-installed") {
+        publish({ ...snapshot, confirming: true, outcome: null });
+        return;
+      }
+      await change({ enabled });
+    },
+    cancelInstall() {
+      if (snapshot.busy || snapshot.confirming !== true) return;
+      const { confirming, ...closed } = snapshot;
+      publish(closed);
+    },
+    async confirmInstall() {
+      if (snapshot.busy || snapshot.confirming !== true) return;
+      await change({ enabled: true, confirmInstall: true });
+    }
+  };
+}
+var RESPONSES_FIELD = "carrierResponsesBreakpoint";
+function createResponsesBreakpointStore({ entry }) {
+  let saving = false;
+  let failed = false;
+  const listeners = /* @__PURE__ */ new Set();
+  let snapshot = null;
+  const read = () => {
+    const { status, value, writable } = entry.getSnapshot();
+    return { status, on: value?.[RESPONSES_FIELD] === true, writable, saving, failed };
+  };
+  const changed = () => {
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    // The same object while nothing it shows has changed.
+    getSnapshot() {
+      const next = read();
+      if (snapshot === null || JSON.stringify(next) !== JSON.stringify(snapshot)) snapshot = next;
+      return snapshot;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      const stop = entry.subscribe(listener);
+      return () => {
+        listeners.delete(listener);
+        stop();
+      };
+    },
+    async set(on) {
+      const { status, writable } = entry.getSnapshot();
+      if (saving || status !== "ready" || !writable) return;
+      saving = true;
+      failed = false;
+      changed();
+      try {
+        failed = await entry.set(RESPONSES_FIELD, on) !== true;
+      } catch {
+        failed = true;
+      }
+      saving = false;
+      changed();
+    }
+  };
+}
+function useSnapshot(form) {
+  const [snapshot, setSnapshot] = import_react8.default.useState(() => form.getSnapshot());
+  import_react8.default.useEffect(() => {
+    setSnapshot(form.getSnapshot());
+    return form.subscribe(() => {
+      setSnapshot(form.getSnapshot());
+    });
+  }, [form]);
+  return snapshot;
+}
+function IntegrationFailure({ failure, t }) {
+  if (failure === null) return null;
+  return h9(
+    "div",
+    { className: "sw-set-note sw-set-error sw-set-integration", role: "alert", "data-sw-integration": "" },
+    h9("strong", null, t("settings.integration.title")),
+    h9("p", null, t(`settings.integration.cause.${failure.cause}`)),
+    h9("p", null, t("settings.integration.consequence")),
+    h9("p", null, t("settings.integration.recovery"))
+  );
+}
+var outcomeKey = ({ outcome, native, installed }) => {
+  if (outcome === "disabled") return `disabled-${native}`;
+  return outcome === "enabled" && installed === true ? "installed-enabled" : outcome;
+};
+function CarrierCacheRow({ carrier, responses, id, t }) {
+  const { state, cause, reason, install, confirming, busy, outcome } = useSnapshot(carrier);
+  const breakpoint = useSnapshot(responses);
+  import_react8.default.useEffect(() => {
+    void carrier.load();
+  }, [carrier]);
+  if (state === "loading" || state === "hidden") return null;
+  const notes = [
+    state === "unavailable" ? h9("p", { key: "unavailable", className: "sw-set-note", role: "status" }, t(reason === void 0 ? "settings.carrier.unavailable" : `settings.carrier.unavailable.${reason}`)) : null,
+    state === "not-installed" ? h9("p", { key: "not-installed", className: "sw-set-note", role: "status" }, t("settings.carrier.notInstalled", install)) : null,
+    state === "not-installed" && confirming === true ? h9(
+      "div",
+      { key: "install", className: "sw-set-note sw-set-integration", role: "alertdialog", "aria-label": t("settings.carrier.install.accept"), "data-sw-carrier-install": "" },
+      h9("p", null, t("settings.carrier.install.confirm", install)),
+      busy ? h9("p", { role: "status" }, t("settings.carrier.install.running")) : null,
+      h9("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-accept": "", onClick: () => {
+        void carrier.confirmInstall();
+      } }, t("settings.carrier.install.accept")),
+      h9("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-cancel": "", onClick: () => {
+        carrier.cancelInstall();
+      } }, t("settings.carrier.install.cancel"))
+    ) : null,
+    state === "pending" ? h9("p", { key: "pending", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.pending"), cause === void 0 ? null : ` ${t(`settings.integration.cause.${cause}`)}`) : null,
+    h9("p", { key: "caveat", className: "sw-set-note" }, t("settings.carrier.caveat")),
+    outcome === null ? null : h9(
+      "p",
+      { key: "outcome", className: "sw-set-note", role: "status", "data-sw-carrier-outcome": outcome.outcome },
+      t(`settings.carrier.outcome.${outcomeKey(outcome)}`),
+      outcome.reason === "restart-required" ? ` ${t("settings.carrier.reason.restart-required")}` : null,
+      outcome.cause === void 0 ? null : ` ${t(`settings.integration.cause.${outcome.cause}`)}`,
+      outcome.installed === true && outcome.outcome !== "enabled" ? ` ${t("settings.carrier.installedNote")}` : null
+    )
+  ];
+  return h9(
+    "div",
+    { "data-sw-carrier": "" },
+    h9("h3", { className: "sw-set-group" }, t("settings.group.cache")),
+    h9(
+      Row2,
+      { id: `${id}-carrier`, title: t("settings.carrier.title"), description: t("settings.carrier.description"), notes },
+      h9(Switch, { checked: state === "on", label: t("settings.carrier.title"), disabled: busy || state === "unavailable", onChange: (next) => {
+        void carrier.set(next);
+      } })
+    ),
+    h9(
+      Row2,
+      {
+        id: `${id}-carrier-responses`,
+        title: t("settings.carrier.responses.title"),
+        description: t("settings.carrier.responses.description"),
+        notes: [
+          h9("p", { key: "warning", className: "sw-set-note" }, t("settings.carrier.responses.warning")),
+          state === "on" ? null : h9("p", { key: "held", className: "sw-set-note", role: "status" }, t("settings.carrier.responses.held")),
+          breakpoint.failed ? h9("p", { key: "failed", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.responses.failed")) : null
+        ]
+      },
+      h9(Switch, {
+        checked: breakpoint.on,
+        label: t("settings.carrier.responses.title"),
+        disabled: state !== "on" || busy || breakpoint.status !== "ready" || !breakpoint.writable || breakpoint.saving,
+        onChange: (next) => {
+          void responses.set(next);
+        }
+      })
+    )
+  );
+}
+var NOTICE_TEXT = { loading: "settings.loading", unavailable: "settings.unavailable" };
+function Row2({ id, title, description, notes, children }) {
+  return h9(
+    "div",
+    { className: "sw-set-row", role: "group", "aria-labelledby": `${id}-title`, "aria-describedby": `${id}-text` },
+    h9(
+      "div",
+      { className: "sw-set-text" },
+      h9("div", { className: "sw-set-title", id: `${id}-title` }, title),
+      h9("div", { className: "sw-set-desc", id: `${id}-text` }, description),
+      ...notes
+    ),
+    h9("div", { className: "sw-set-control" }, children)
+  );
+}
+function BackupModelSelect({ id, labelledBy, snapshot, form, t }) {
+  const { choices, values } = snapshot;
+  const selected = values.summaryFallbackModel;
+  const byKey = new Map([...choices.groups.flatMap((group) => group.models), ...choices.saved === null ? [] : [choices.saved]].map((choice) => [choice.key, choice]));
+  const value = selected === null ? "" : [...byKey.values()].find((choice) => choice.provider === selected.provider && choice.model === selected.model)?.key ?? "";
+  const onChange = (event) => {
+    const choice = byKey.get(event.target.value);
+    form.set("summaryFallbackModel", choice === void 0 ? null : { provider: choice.provider, model: choice.model });
+  };
+  return h9(
+    "select",
+    { id, className: "sw-set-select", value, disabled: !snapshot.writable || snapshot.saving, onChange, "aria-labelledby": labelledBy, "data-sw-backup-model": "" },
+    h9("option", { value: "" }, t("settings.backup.none")),
+    ...choices.groups.map((group) => h9(
+      "optgroup",
+      { key: group.id, label: group.name },
+      ...group.models.map((model) => h9("option", { key: model.key, value: model.key }, model.name))
+    )),
+    choices.saved === null ? null : h9(
+      "option",
+      { key: choices.saved.key, value: choices.saved.key },
+      `${choices.saved.model} \xB7 ${choices.saved.provider}${choices.saved.unavailable ? ` (${t("settings.backup.unavailableTag")})` : ""}`
+    )
+  );
+}
+function CompactionSettings({ form, integration, carrier, responses, t }) {
+  const snapshot = useSnapshot(form);
+  const { failure } = useSnapshot(integration);
+  const id = import_react8.default.useId();
+  import_react8.default.useEffect(() => {
+    void form.loadModels();
+    return () => {
+      form.cancel();
+    };
+  }, [form]);
+  import_react8.default.useEffect(() => {
+    void integration.load();
+  }, [integration]);
+  const heading = h9("h2", { className: "sw-set-heading" }, t("settings.title"));
+  if (snapshot.status !== "ready") {
+    return h9("section", { className: "sw-set" }, heading, h9(IntegrationFailure, { failure, t }), h9("p", { className: "sw-set-note", role: "status" }, t(NOTICE_TEXT[snapshot.status])), h9(CarrierCacheRow, { carrier, responses, id, t }));
+  }
+  const { values, catalog, choices } = snapshot;
+  const locked = !snapshot.writable || snapshot.saving;
+  const toggle = (field, title) => h9(Switch, { checked: values[field], label: title, disabled: locked, onChange: (next) => {
+    form.set(field, next);
+  } });
+  const modelNotes = [
+    catalog.status === "loading" ? h9("p", { key: "loading", className: "sw-set-note", role: "status" }, t("settings.backup.loading")) : null,
+    catalog.status === "error" ? h9(
+      "p",
+      { key: "error", className: "sw-set-note sw-set-error", role: "alert" },
+      t("settings.backup.loadFailed"),
+      h9("button", { type: "button", className: "sw-set-link", disabled: snapshot.saving, onClick: () => {
+        void form.loadModels();
+      } }, t("settings.backup.retry"))
+    ) : null,
+    catalog.partial.length > 0 ? h9("p", { key: "partial", className: "sw-set-note", role: "status" }, t("settings.backup.partial", { providers: catalog.partial.join(", ") })) : null,
+    choices.saved?.unavailable ? h9("p", { key: "gone", className: "sw-set-note sw-set-error", role: "status" }, t("settings.backup.unavailable")) : null
+  ];
+  return h9(
+    "section",
+    { className: "sw-set", "data-sw-settings": "" },
+    heading,
+    h9(IntegrationFailure, { failure, t }),
+    snapshot.writable ? null : h9("p", { className: "sw-set-note", role: "status" }, t("settings.readOnly")),
+    h9("h3", { className: "sw-set-group" }, t("settings.group.experimental")),
+    h9(Row2, { id: `${id}-show`, title: t("settings.show.title"), description: t("settings.show.description"), notes: [] }, toggle("showCompactionOption", t("settings.show.title"))),
+    h9("h3", { className: "sw-set-group" }, t("settings.group.preferences")),
+    h9(
+      Row2,
+      { id: `${id}-policy`, title: t("settings.policy.title"), description: t("settings.policy.description"), notes: [] },
+      h9("select", {
+        className: "sw-set-select",
+        value: values.compactionPreset,
+        disabled: locked,
+        "aria-labelledby": `${id}-policy-title`,
+        onChange: (event) => {
+          form.set("compactionPreset", event.target.value);
+        }
+      }, ...PRESET_IDS.map((preset) => h9("option", { key: preset, value: preset }, t(`monitor.quote.preset.${preset}`))))
+    ),
+    h9(
+      Row2,
+      { id: `${id}-backup`, title: t("settings.backup.title"), description: t("settings.backup.description"), notes: modelNotes },
+      h9(BackupModelSelect, { id: `${id}-backup-select`, labelledBy: `${id}-backup-title`, snapshot, form, t })
+    ),
+    h9(Row2, { id: `${id}-inherit`, title: t("settings.inherit.title"), description: t("settings.inherit.description"), notes: [] }, toggle("subagentsInheritCompaction", t("settings.inherit.title"))),
+    h9(CarrierCacheRow, { carrier, responses, id, t }),
+    h9(
+      "div",
+      { className: "sw-set-footer" },
+      snapshot.failed ? h9("p", { className: "sw-set-failed", role: "status" }, t("settings.saveFailed")) : null,
+      h9("button", { type: "button", className: "sw-set-button", disabled: !snapshot.dirty || snapshot.saving, onClick: () => {
+        form.cancel();
+      } }, t("settings.cancel")),
+      h9(
+        "button",
+        { type: "button", className: "sw-set-button sw-set-save", disabled: !snapshot.dirty || snapshot.saving || !snapshot.writable, onClick: () => {
+          void form.save();
+        } },
+        t(snapshot.saving ? "settings.saving" : "settings.save")
+      )
+    )
+  );
+}
+var SETTINGS_SECTION_ORDER = 30;
+function registerSettingsSection(child, { t, call }) {
+  const form = bindSettingsForm(child);
+  const integration = createIntegrationStatus({ call });
+  const carrier = createCarrierCacheStore({ call });
+  const responses = createResponsesBreakpointStore({ entry: child.configForms.get(SETTINGS_ENTRY) });
+  child.slots.inject("settings.section", () => child.slots.register({
+    name: "settings.section",
+    id: "session-watcher",
+    order: SETTINGS_SECTION_ORDER,
+    locale: NS,
+    label: () => t("settings.nav"),
+    inject: () => ({ form, integration, carrier, responses })
+  }, CompactionSettings));
+}
+
 // dsh/src/client/plugin.js
 var PLUGIN_ID = "@nomadop/session-watcher-dsh";
 var CHANNEL = "/session-watcher";
@@ -18704,6 +21772,9 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
   }, "session-watcher: tab stylesheet");
   const call = (endpoint, payload, signal) => ctx.connection.rpc.call(CHANNEL, endpoint, payload, signal);
   const sessions = createSessionStores({ call });
+  const modes = createModeReaders({ call });
+  const monitors = createMonitorStores({ call });
+  const optionVisibility = createOptionVisibility();
   let signalState = "connecting";
   const signalListeners = /* @__PURE__ */ new Set();
   const signalStore = {
@@ -18728,9 +21799,17 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
       stream = openSignalStream({
         url: EVENTS_URL,
         EventSource: globalThis.EventSource,
-        onFrame: sessions.signal,
-        onOpen: sessions.openAll,
         onState: setSignalState,
+        onFrame: (sessionId) => {
+          sessions.signal(sessionId);
+          modes.signal(sessionId);
+          monitors.signal(sessionId);
+        },
+        onOpen: () => {
+          sessions.openAll();
+          modes.openAll();
+          monitors.openAll();
+        },
         setTimeout: globalThis.setTimeout,
         clearTimeout: globalThis.clearTimeout
       });
@@ -18786,7 +21865,23 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
     locale: NS,
     inject: (sessionId) => ({ store: sessions.for(sessionId) })
   }, Dock));
+  const selectIn = (sessionId) => (enabled) => call("inner-mode/select", { sessionId, enabled });
+  ctx.slots.inject("conversation.hero.options", () => ctx.slots.register({
+    name: "conversation.hero.options",
+    id: "session-watcher.inner-mode",
+    locale: NS,
+    inject: (sessionId) => ({ reader: modes.for(sessionId), select: selectIn(sessionId), visibility: optionVisibility })
+  }, ModeToggle));
+  ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
+    name: "conversation.session.header.actions",
+    id: "session-watcher.inner-mode",
+    locale: NS,
+    inject: (sessionId) => ({ reader: modes.for(sessionId) })
+  }, ModeMark));
   ctx.inject(["commandUi", "sessions", "conversation"], (child) => registerHandoffPicker(child, { call, t }));
+  ctx.inject(["slots"], (child) => registerMonitorView(child, { monitors, t }));
+  ctx.inject(["configForms"], (child) => optionVisibility.bind(child));
+  ctx.inject(["slots", "configForms", "remote", "remote.session"], (child) => registerSettingsSection(child, { t, call }));
 }
 
 // public/themes/base.css
@@ -20799,13 +23894,1146 @@ div[data-sw-dock] .sw-alert p {
   color: var(--dsw-alias-label-secondary);
 }
 `;
+var MODE_CSS = `button[data-sw-mode-toggle] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 999px;
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  white-space: nowrap;
+}
+button[data-sw-mode-toggle]:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+button[data-sw-mode-toggle]:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+[data-sw-mode-toggle] .sw-mode-track {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 12px;
+  border-radius: 999px;
+  corner-shape: round;
+  background: currentColor;
+  opacity: 0.45;
+}
+[data-sw-mode-toggle] .sw-mode-track i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-label-primary);
+}
+[data-sw-mode-toggle][aria-checked="true"] {
+  color: var(--dsw-alias-state-success-primary);
+}
+[data-sw-mode-toggle][aria-checked="true"] .sw-mode-track i {
+  left: 10px;
+}
+span[data-sw-mode-mark] {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-fill-tsp-secondary);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+@container (max-width: 540px) {
+  span[data-sw-mode-mark] {
+    display: none;
+  }
+}
+`;
+var SETTINGS_CSS = `.sw-set {
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  color: var(--dsw-alias-label-primary);
+}
+.sw-set-heading {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.sw-set-group {
+  margin: 20px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+.sw-set-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 16px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+.sw-set-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.sw-set-title {
+  font-size: 14px;
+  line-height: 20px;
+}
+.sw-set-desc {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.sw-set-control {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.sw-set-switch {
+  box-sizing: border-box;
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-border-l3);
+  cursor: pointer;
+}
+.sw-set-switch[aria-checked='true'] {
+  background: var(--dsw-alias-brand-primary);
+}
+.sw-set-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.sw-set-switch:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+.sw-set-switch-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-primary-foreground);
+  transition: transform 120ms ease;
+}
+.sw-set-switch[aria-checked='false'] .sw-set-switch-thumb {
+  background: var(--dsw-alias-switch-thumb);
+}
+.sw-set-switch[aria-checked='true'] .sw-set-switch-thumb {
+  transform: translateX(16px);
+}
+.sw-set-select {
+  box-sizing: border-box;
+  width: 260px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 32px 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  background-color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+}
+.sw-set-select:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+}
+.sw-set-select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.sw-set-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.sw-set-error {
+  color: var(--dsw-alias-state-error-primary);
+}
+.sw-set-integration {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.sw-set-integration p {
+  margin: 0;
+}
+.sw-set-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.sw-set-link:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.sw-set-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 16px;
+}
+.sw-set-failed {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-state-error-primary);
+}
+.sw-set-button {
+  appearance: none;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+.sw-set-save {
+  border-color: transparent;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+.sw-set-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.sw-set-button:focus-visible,
+.sw-set-link:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+`;
+var DRAWER_OVERLAY_BELOW_PX = LIST_MIN_WIDTH + DRAWER_MIN_WIDTH;
+var MONITOR_CSS = `[data-sw-monitor] {
+  --sw-mon-chevron-width: 5px;
+  --sw-mon-chevron-gap: 6px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding-bottom: calc(var(--dsh-composer-height, 152px) + 8px);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: tabular-nums;
+}
+[data-sw-monitor] .sw-mon-notice {
+  margin: 0;
+  padding: 24px 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] > .sw-mon-notice {
+  text-align: center;
+}
+[data-sw-monitor] .sw-mon-split {
+  container: sw-monitor / inline-size;
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+[data-sw-monitor] .sw-mon-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+[data-sw-monitor] .sw-mon-row {
+  position: relative;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  cursor: pointer;
+  outline: none;
+}
+[data-sw-monitor] .sw-mon-row[data-sw-row="attempt"],
+[data-sw-monitor] .sw-mon-row[data-sw-row="handoff"],
+[data-sw-monitor] .sw-mon-row[data-sw-row="settlement"] {
+  border-bottom-color: var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-mon-row[aria-level="2"] {
+  padding-left: 32px;
+}
+[data-sw-monitor] .sw-mon-row[aria-level="2"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: -0.5px;
+  left: 14px;
+  width: 2px;
+  background: var(--dsw-alias-border-l2);
+  pointer-events: none;
+}
+[data-sw-monitor] .sw-mon-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 10px;
+  min-width: 0;
+}
+[data-sw-monitor] .sw-mon-title {
+  min-width: 0;
+}
+[data-sw-monitor] .sw-mon-row[data-sw-row="attempt"] .sw-mon-title,
+[data-sw-monitor] .sw-mon-row[data-sw-row="handoff"] .sw-mon-title,
+[data-sw-monitor] .sw-mon-row[data-sw-row="settlement"] .sw-mon-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+[data-sw-monitor] .sw-mon-row[data-sw-row="settlement"] .sw-mon-title {
+  padding-left: calc(var(--sw-mon-chevron-width) + var(--sw-mon-chevron-gap));
+}
+[data-sw-monitor] .sw-mon-row[aria-level="2"] .sw-mon-title {
+  margin-bottom: 2px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-mon-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-mon-row:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+[data-sw-monitor] .sw-mon-row[data-sw-row="placeholder"] {
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
+}
+[data-sw-monitor] .sw-mon-spinner {
+  flex: none;
+  align-self: center;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-label-secondary);
+  border-radius: 50%;
+  animation: sw-mon-spin 0.9s linear infinite;
+}
+@keyframes sw-mon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-sw-monitor] .sw-mon-spinner {
+    animation: none;
+  }
+}
+[data-sw-monitor] .sw-mon-row[aria-selected="true"] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+[data-sw-monitor] .sw-mon-row[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: -0.5px;
+  left: 0;
+  width: 2px;
+  background: var(--dsw-alias-state-business-primary);
+  pointer-events: none;
+}
+[data-sw-monitor] .sw-mon-row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sw-mon-chevron-gap);
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+[data-sw-monitor] .sw-mon-chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 3.5px 0 3.5px var(--sw-mon-chevron-width);
+  border-color: transparent transparent transparent currentColor;
+  transition: transform 120ms ease-in-out;
+}
+[data-sw-monitor] .sw-mon-toggle[aria-expanded="true"] .sw-mon-chevron {
+  transform: rotate(90deg);
+}
+[data-sw-monitor] .sw-mon-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+[data-sw-monitor] .sw-mon-in,
+[data-sw-monitor] .sw-mon-out {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-mon-in {
+  flex: 38.2 1 0;
+}
+[data-sw-monitor] .sw-mon-out {
+  flex: 61.8 1 0;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-mon-row[data-sw-row="attempt"] .sw-mon-out,
+[data-sw-monitor] .sw-mon-row[data-sw-row="handoff"] .sw-mon-out,
+[data-sw-monitor] .sw-mon-row[data-sw-row="call"] .sw-mon-out,
+[data-sw-monitor] .sw-mon-row[data-sw-row="content"] .sw-mon-out {
+  color: inherit;
+}
+[data-sw-monitor] .sw-mon-arrow {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-status {
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="committed"],
+[data-sw-monitor] .sw-mon-status[data-status="received"] {
+  color: var(--dsw-alias-state-success-primary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="paid"] {
+  color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="failed"],
+[data-sw-monitor] .sw-mon-status[data-status="error"] {
+  color: var(--dsw-alias-state-error-primary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="cancelled"] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="generating"],
+[data-sw-monitor] .sw-mon-status[data-status="validating"] {
+  color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-status[data-status="unknown"],
+[data-sw-monitor] .sw-mon-status[data-status="absent"] {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] [data-type="load"] {
+  color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] [data-type="continue"] {
+  color: var(--dsw-alias-state-success-primary);
+}
+[data-sw-monitor] .sw-mon-row[data-sw-attention] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-mon-meta-item[data-sw-attention] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-mon-drawer {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-width: calc(100% - ${LIST_MIN_WIDTH}px);
+  min-width: 0;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+[data-sw-monitor] .sw-mon-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  outline: none;
+  touch-action: none;
+}
+[data-sw-monitor] .sw-mon-handle:hover,
+[data-sw-monitor] .sw-mon-handle:focus-visible,
+[data-sw-monitor] .sw-mon-handle:active {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent);
+}
+[data-sw-monitor] .sw-mon-drawer-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 42px;
+  padding: 0 8px 0 14px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-mon-drawer-title,
+[data-sw-monitor] .sw-mon-drawer-sub {
+  margin: 0;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-mon-drawer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
+  font-variant-numeric: inherit;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+[data-sw-monitor] .sw-mon-drawer-sub {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-mon-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 18px;
+  line-height: 18px;
+}
+[data-sw-monitor] .sw-mon-close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-mon-close:focus-visible,
+[data-sw-monitor] .sw-mon-tab:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+[data-sw-monitor] .sw-mon-drawer-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+[data-sw-monitor] .sw-mon-facts {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  margin: 0;
+}
+[data-sw-monitor] .sw-mon-facts dt {
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-mon-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-mon-note {
+  margin: 12px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-cache {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] .sw-mon-cache .sw-mon-note {
+  margin: 0;
+}
+[data-sw-monitor] .sw-mon-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin: -12px -14px 12px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-mon-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 9px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font: var(--dsw-font-xs-13);
+  font-variant-numeric: inherit;
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-mon-tab:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+[data-sw-monitor] .sw-mon-tab[aria-selected="true"] {
+  color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 9px;
+  bottom: 0;
+  left: 9px;
+  height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-section {
+  margin: 0 0 16px;
+}
+[data-sw-monitor] .sw-mon-heading {
+  margin: 0 0 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+[data-sw-monitor] .sw-mon-pre {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 2;
+}
+[data-sw-monitor] .sw-mon-block,
+[data-sw-monitor] .sw-mon-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+[data-sw-monitor] .sw-mon-block[data-error] {
+  color: var(--dsw-alias-state-error-primary);
+}
+[data-sw-monitor] .sw-mon-label {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-tag {
+  margin-left: 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-mon-tag[data-tag="earlier"] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-mon-fold,
+[data-sw-monitor] .sw-mon-event {
+  margin: 0 0 8px;
+}
+[data-sw-monitor] .sw-mon-event {
+  padding: 6px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  corner-shape: round;
+}
+[data-sw-monitor] .sw-mon-fold > summary,
+[data-sw-monitor] .sw-mon-event > summary {
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-mon-missing,
+[data-sw-monitor] .sw-mon-empty {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-empty {
+  margin: 0;
+}
+[data-sw-monitor] .sw-fl {
+  container: sw-fl / inline-size;
+  margin: 0 -14px;
+}
+[data-sw-monitor] .sw-fl button:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+[data-sw-monitor] .sw-fl [data-tone="ok"] {
+  color: var(--dsw-alias-state-success-primary);
+}
+[data-sw-monitor] .sw-fl [data-tone="warn"] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-fl [data-tone="err"] {
+  color: var(--dsw-alias-state-error-primary);
+}
+[data-sw-monitor] .sw-fl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 2px 10px;
+  padding: 4px 14px 8px;
+}
+[data-sw-monitor] .sw-fl-sum {
+  flex: 1 1 0;
+  min-width: 8em;
+  margin: 0;
+}
+[data-sw-monitor] .sw-fl-sum > span {
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-fl-sub {
+  flex: 1 0 100%;
+  order: 3;
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-ctl {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin: -2px 0;
+}
+[data-sw-monitor] .sw-fl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-fl-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+[data-sw-monitor] .sw-fl-btn[aria-pressed="true"] {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-fl-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+[data-sw-monitor] .sw-fl-list {
+  --sw-fl-stat: 8.5em;
+  --sw-fl-head: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 97%, var(--dsw-alias-label-primary));
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-fl-group {
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-fl-gh,
+[data-sw-monitor] .sw-fl-fh {
+  margin: 0;
+  font: inherit;
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-fl-gbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 14px;
+  border: 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 94%, var(--dsw-alias-label-primary));
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+[data-sw-monitor] .sw-fl-lbl {
+  flex: 1;
+  min-width: 0;
+}
+[data-sw-monitor] .sw-fl-gcnt {
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}
+[data-sw-monitor] .sw-fl-item {
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+[data-sw-monitor] .sw-fl-item:last-child {
+  border-bottom: 0;
+}
+[data-sw-monitor] .sw-fl-fh {
+  position: sticky;
+  z-index: 2;
+  top: -12px;
+  background: var(--sw-fl-head);
+}
+[data-sw-monitor] .sw-fl-item[data-open] > .sw-fl-fh {
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-fl-fbtn {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1px 8px;
+  width: 100%;
+  padding: 4px 14px 5px;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-align: left;
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-fl-gbtn:hover,
+  [data-sw-monitor] .sw-fl-fbtn:hover,
+  [data-sw-monitor] .sw-fl-foldbtn:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+  [data-sw-monitor] .sw-fl-btn:not([aria-disabled="true"]):hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    color: var(--dsw-alias-label-primary);
+  }
+  [data-sw-monitor] .sw-fl-row:hover > .sw-fl-t {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+[data-sw-monitor] .sw-fl-chev {
+  flex: none;
+  align-self: start;
+  width: 0;
+  height: 0;
+  margin: 6px 0 0;
+  border-style: solid;
+  border-width: 3.5px 0 3.5px 5px;
+  border-color: transparent transparent transparent currentColor;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease-in-out;
+}
+[data-sw-monitor] .sw-fl-gbtn .sw-fl-chev,
+[data-sw-monitor] .sw-fl-foldbtn .sw-fl-chev {
+  align-self: center;
+  margin: 0;
+}
+[data-sw-monitor] [aria-expanded="true"] > .sw-fl-chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-sw-monitor] .sw-fl-chev {
+    transition: none;
+  }
+}
+[data-sw-monitor] .sw-fl-path {
+  min-width: 0;
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-dir {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-fl-base {
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-fl-cnt {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-fl-pv {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--sw-fl-stat);
+  align-items: center;
+  gap: 0 8px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-fl-pv[data-nobar] {
+  grid-template-columns: minmax(0, 1fr);
+}
+[data-sw-monitor] .sw-fl-bar {
+  position: relative;
+  min-width: 96px;
+  height: 4px;
+  border-radius: 1px;
+  corner-shape: round;
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow: hidden;
+}
+[data-sw-monitor] .sw-fl-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-fl-bar i[data-x] {
+  background: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-fl-stat {
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-fl-pv[data-nobar] .sw-fl-stat {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-plain {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0 8px;
+  padding: 4px 14px;
+}
+[data-sw-monitor] .sw-fl-plain > .sw-fl-path {
+  grid-column: 2;
+}
+[data-sw-monitor] .sw-fl-why {
+  grid-column: 3;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-fl-why[data-long] {
+  grid-column: 2 / -1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-item[data-removed] .sw-fl-path,
+[data-sw-monitor] .sw-fl-item[data-removed] .sw-fl-dir,
+[data-sw-monitor] .sw-fl-item[data-removed] .sw-fl-base {
+  color: var(--dsw-alias-label-tertiary);
+  text-decoration: line-through;
+}
+[data-sw-monitor] .sw-fl-meta {
+  padding: 5px 14px 6px 31px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--sw-fl-head);
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-fl-full {
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-scroll {
+  background: var(--dsw-alias-bg-layer-1);
+  overflow-x: auto;
+}
+[data-sw-monitor] .sw-fl-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 2;
+}
+[data-sw-monitor] .sw-fl-list[data-wrap="off"] .sw-fl-rows {
+  width: max-content;
+  min-width: 100%;
+}
+[data-sw-monitor] .sw-fl-row {
+  display: contents;
+}
+[data-sw-monitor] .sw-fl-n {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  min-height: 18px;
+  padding: 0 6px 0 14px;
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, var(--dsw-alias-label-primary));
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+  user-select: none;
+}
+[data-sw-monitor] .sw-fl-t {
+  min-width: 0;
+  min-height: 18px;
+  padding: 0 14px 0 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+[data-sw-monitor] .sw-fl-list[data-wrap="off"] .sw-fl-t {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+[data-sw-monitor] .sw-fl-sep {
+  grid-column: 1 / -1;
+  border-top: 0.5px dashed var(--dsw-alias-border-l2);
+  border-bottom: 0.5px dashed var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-fl-sep > span,
+[data-sw-monitor] .sw-fl-wd > span {
+  position: sticky;
+  left: 0;
+  width: max-content;
+  max-width: 100cqw;
+  padding: 0 14px;
+}
+[data-sw-monitor] .sw-fl-sep > span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-fl-wd {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 11%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  font-family: var(--ds-font-family-code);
+}
+[data-sw-monitor] .sw-fl-wd > span {
+  display: flex;
+  gap: 8px;
+}
+[data-sw-monitor] .sw-fl-wd b {
+  flex: none;
+  width: 1ch;
+  font-weight: 600;
+}
+[data-sw-monitor] .sw-fl-foot {
+  margin: 12px 0 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-fl-foldbtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 14px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-align: left;
+}
+[data-sw-monitor] .sw-fl-fold + .sw-fl-fold {
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+[data-sw-monitor] .sw-fl-foldbody {
+  padding: 2px 14px 10px 31px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-fl-foldbody p {
+  margin: 0;
+}
+[data-sw-monitor] .sw-fl-foldbody .sw-mon-pre {
+  color: var(--dsw-alias-label-primary);
+}
+@container sw-fl (width < 360px) {
+  [data-sw-monitor] .sw-fl-list {
+    --sw-fl-stat: 6.5em;
+  }
+  [data-sw-monitor] .sw-fl-sg {
+    display: none;
+  }
+}
+@container sw-monitor (width < ${DRAWER_OVERLAY_BELOW_PX}px) {
+  [data-sw-monitor] .sw-mon-drawer {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    max-width: 100%;
+    box-shadow: -12px 0 24px -12px var(--dsw-alias-bg-mask-1);
+  }
+}
+`;
 
 // dsh/src/client/styles.js
-var TAB_CSS = scopeStylesheet(base_default) + scopeStylesheet(h_default) + BRIDGE_CSS + CHROME_CSS + LIGHT_CSS + DOCK_CSS;
+var TAB_CSS = scopeStylesheet(base_default) + scopeStylesheet(h_default) + BRIDGE_CSS + CHROME_CSS + LIGHT_CSS + DOCK_CSS + MODE_CSS + SETTINGS_CSS + MONITOR_CSS;
 
 // dsh/src/client/index.js
 var inject = ["slots", "locale", "theme", "connection"];
 function apply(ctx) {
+  ctx.slots.inject("settings.section.icon", () => ctx.slots.register({
+    name: "settings.section.icon",
+    id: SETTINGS_ENTRY
+  }, import_dsh_client_ui_primitives.IconGaugeOutlineMedium));
   applyClient(ctx, { tabCss: TAB_CSS, useAnchoredPosition: import_dsh_client_ui_primitives.useAnchoredPosition, useDismissOnOutsidePointer: import_dsh_client_ui_primitives.useDismissOnOutsidePointer, createPortal: import_react_dom.createPortal });
 }
 /*! Bundled license information:

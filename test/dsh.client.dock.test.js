@@ -255,14 +255,14 @@ test('an open popover with a reading lists the bill premium, the position, the c
     'Session Watcher', 'Deepening',
     '12%', 'Bill premium', '1.5', 'Normalized position',
     'Sweet spot',
-    'Context stock', '120,000 tok', 'Rebuild baseline', '100,000 tok', 'Effective context', '20,000 tok', 'Growth per call', '450 tok',
+    'Context stock', '120,000 tok', 'Rebuild baseline', '100,000 tok', 'Working context', '20,000 tok', 'Growth per call', '450 tok',
     'Alert clock', '37%',
   ]);
   assert.deepEqual(texts(panelOf(open(DockView, { result: liveResult(), t: tZh }))), [
     'Session Watcher', '渐深',
     '12%', '账单溢价', '1.5', '归一化位置',
     '甜点',
-    '上下文存量', '120,000 tok', '重建基线', '100,000 tok', '有效上下文', '20,000 tok', '每次调用增长', '450 tok',
+    '上下文存量', '120,000 tok', '重建基线', '100,000 tok', '工作上下文', '20,000 tok', '每次调用增长', '450 tok',
     '提醒时钟', '37%',
   ]);
 });
@@ -360,7 +360,7 @@ test('the context stock prints its counts whole and grouped by thousands, where 
   stubDocument(t_);
   const { DockView } = fakes();
   const lines = texts(panelOf(open(DockView, { result: liveResult({ L: 1234567, bDefault: 100000 }) })));
-  assert.deepEqual(lines.slice(7, 13), ['Context stock', '1,234,567 tok', 'Rebuild baseline', '100,000 tok', 'Effective context', '1,134,567 tok']);
+  assert.deepEqual(lines.slice(7, 13), ['Context stock', '1,234,567 tok', 'Rebuild baseline', '100,000 tok', 'Working context', '1,134,567 tok']);
 });
 
 test('the context bar and its rows cap a negative effective context at zero and do not fail at a zero stock', (t_) => {
@@ -369,10 +369,10 @@ test('the context bar and its rows cap a negative effective context at zero and 
   const panel = result => panelOf(open(DockView, { result }));
   const below = panel(liveResult({ L: 60000 }));
   assert.deepEqual(stockOf(below), [['base', 100000], ['eff', 0]]);
-  assert.deepEqual(texts(below).slice(7, 13), ['Context stock', '60,000 tok', 'Rebuild baseline', '100,000 tok', 'Effective context', '0 tok']);
+  assert.deepEqual(texts(below).slice(7, 13), ['Context stock', '60,000 tok', 'Rebuild baseline', '100,000 tok', 'Working context', '0 tok']);
   const empty = panel(liveResult({ L: 0 }));
   assert.deepEqual(stockOf(empty), [['base', 100000], ['eff', 0]]);
-  assert.deepEqual(texts(empty).slice(7, 13), ['Context stock', '0 tok', 'Rebuild baseline', '100,000 tok', 'Effective context', '0 tok']);
+  assert.deepEqual(texts(empty).slice(7, 13), ['Context stock', '0 tok', 'Rebuild baseline', '100,000 tok', 'Working context', '0 tok']);
   for (const html of [below, empty]) assert.ok(!html.includes('NaN'), html);
 });
 

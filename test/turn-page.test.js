@@ -11,7 +11,7 @@ import { openStore, closeStore } from '../lib/store.js';
 import { charsToTokens } from '../lib/token-estimate.js';
 import { DEFAULT_CTP } from '../lib/constants.js';
 import { HISTORY_TOKEN_BUDGET } from '../lib/turn-history-budget.js';
-import { buildTurnPage } from '../lib/turn-page.js';
+import { buildTurnPage, parseTurnPage } from '../lib/turn-page.js';
 import { createClaudeCodeDialogueSource } from '../lib/harness/claude-code/dialogue-source.js';
 import { createClaudeCodeDialogueProjection } from '../lib/harness/claude-code/history-turn-rules.js';
 import { TURN_NOTICE } from '../lib/harness/claude-code/turn-recovery.js';
@@ -332,6 +332,17 @@ test('多行 U/note 的每个物理行都保留角色前缀，且 renderer 统�
     '      | A: a-second',
   ].join('\n')));
   assert.ok(!turnPage.includes('\r'));
+});
+
+test('parseTurnPage reads back the records of a page buildTurnPage built over the real Source: the address, the lines of U and A joined, and the notice and the session header skipped', async () => {
+  const { turnPage } = await buildTurnPage({ store, lineage: [multilineSession], ...HISTORY });
+  assert.deepEqual(parseTurnPage(turnPage), [{ address: 'S1:13', user: 'u-first\nu-second\n\nu-fourth', note: 'a-first\na-second' }]);
+
+  const wide = (await buildTurnPage({ store, lineage: [wideOrdinalSession], ...HISTORY })).turnPage;
+  assert.deepEqual(parseTurnPage(wide), [
+    { address: 'S1:13', user: 'u-wide-narrow', note: 'wide-note-narrow' },
+    { address: 'S1:1719', user: 'u-wide-broad', note: 'wide-note-broad' },
+  ]);
 });
 
 test('预算：按实际完整 wire 实算，不超 HISTORY_TOKEN_BUDGET', async () => {

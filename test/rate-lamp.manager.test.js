@@ -305,6 +305,18 @@ test('mergeLedgerIntoStatus maps the ledger onto the wire and builds rentMeter f
   assert.equal(rl.wallP, 11);
 });
 
+test('mergeLedgerIntoStatus shows the calibrated interval and leaves the ledger untouched', () => {
+  const status = { rateLamp: { reliable: true, C_RATIO: 10, B_default: 250000, mfLocal: 0.4 } };
+  const ledger = { ...freshLedger(KEY), walletPhase: 0.5, walletLapCount: DEPTH_HOT_LAP_COUNT - 1 };
+  const before = structuredClone(ledger);
+  mergeLedgerIntoStatus(status, ledger, KEY);
+  assert.ok(Math.abs(status.rateLamp.rentMeter.backstopInterval - 2) < 1e-12);   // mf 0.4 → amber right root u = 2, interval u²/2
+  assert.equal(status.rateLamp.rentMeter.depthHot, false);
+  mergeLedgerIntoStatus(status, { ...ledger, walletLapCount: DEPTH_HOT_LAP_COUNT }, KEY);
+  assert.equal(status.rateLamp.rentMeter.depthHot, true);
+  assert.deepEqual(ledger, before);
+});
+
 test('enrichStatusLandmarks fills only wallP and computes no landmark', () => {
   const status = { rateLamp: { reliable: true, C_RATIO: 10, L_read: 300000, B_post: 250000, B_default: 240000, gEma: 940 } };
   enrichStatusLandmarks(status);

@@ -14,6 +14,8 @@ const frame = (seq, L, g, tokens = {}, grown = {}) => ({
   growth: g === null ? null : { stock: g, resources: new Map(Object.entries(grown)) },
   resourceTokens: new Map(Object.entries(tokens)),
 });
+// A frame stamped with the ordinal of the main call its step belongs to; a frame with none spans one call.
+const at = (f, mainCallOrdinal) => ({ ...f, mainCallOrdinal });
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
 const fold = (frames, selector = all) => integratePath(frames, { dead: DEAD, R, selector }).points;
 
@@ -169,6 +171,78 @@ test('an interval whose selected growth exceeds the stock growth counts as zero,
   assert.equal(stepwise.rate(), 150);
   stepwise.push(frame(4, DEAD + 400, null));
   assert.equal(stepwise.rate(), 150);
+});
+
+test('the rate is the ratio of the excess growth to the main calls the intervals span, not a mean of per-interval slopes', () => {
+  const stepwise = createPathFold({ dead: DEAD, R, selector: all });
+  stepwise.push(at(frame(1, DEAD, null), 1));
+  stepwise.push(at(frame(2, DEAD + 300, 300), 2));
+  assert.equal(stepwise.rate(), 300);
+  // 100 of growth over 4 main calls: (300 + 100) / (1 + 4), where the slopes 300 and 25 average to 162.5.
+  stepwise.push(at(frame(3, DEAD + 400, 100), 6));
+  assert.equal(stepwise.rate(), 80);
+});
+
+test('a closed interval integrates its left endpoint\'s state over the main calls it spans; its own exchange fraction is the unweighted one', () => {
+  // B stays at DEAD. The rate in force after each frame is the ratio of sums so far: 0, then 300 over 1 call, then 400 over 5.
+  const frames = [
+    at(frame(1, DEAD, null), 1), at(frame(2, DEAD + 300, 300), 2), at(frame(3, DEAD + 400, 100), 6), at(frame(4, DEAD + 450, 50), 8),
+  ];
+  const [, p2, p3, p4] = fold(frames);
+  const phase = (calls, g) => calls * Math.sqrt(g / (2 * R * DEAD));
+  const arm = g => Math.sqrt(2 * R * DEAD * g);
+  const fixed = (calls, g) => calls * (DEAD + R * g);
+  // The intervals ending at frames 2, 3 and 4 span 1, 4 and 2 main calls, priced at the rates 0, 300 and 80 that stood at their left ends.
+  assert.equal(p2.u, 0);
+  near(p3.u, phase(1, 0) + phase(4, 300));
+  near(p4.u, phase(1, 0) + phase(4, 300) + phase(2, 80));
+  const lambda = 4 * arm(300) + 2 * arm(80);
+  near(p4.mf, lambda / (fixed(1, 0) + fixed(4, 300) + fixed(2, 80) + lambda));
+  near(p4.pp, (p4.u - 1) ** 2 / (2 * p4.u));
+  near(p4.br, p4.mf * p4.pp);
+  near(p3.mfLocal, arm(300) / (DEAD + R * 300 + arm(300)));
+  near(p4.mfLocal, arm(80) / (DEAD + R * 80 + arm(80)));
+});
+
+test('deltaW is the left-priced trapezoid of the interval\'s two rent rates times the main calls it spans', () => {
+  const frames = [
+    at(frame(1, DEAD, null), 1), at(frame(2, DEAD + 300, 300), 2), at(frame(3, DEAD + 400, 100), 6), at(frame(4, DEAD + 450, 50), 8),
+  ];
+  const [p1, p2, p3, p4] = fold(frames);
+  const rebuild = R * DEAD;
+  assert.equal(p1.deltaW, null);
+  // Stock above the baseline at each end: 0 and 300, 300 and 400, 400 and 450.
+  near(p2.deltaW, 1 * 0.5 * (0 / rebuild + 300 / rebuild));
+  near(p3.deltaW, 4 * 0.5 * (300 / rebuild + 400 / rebuild));
+  near(p4.deltaW, 2 * 0.5 * (400 / rebuild + 450 / rebuild));
+  // A resource arriving at the interval's right end lifts the baseline there to 1500, and both ends still pay the rebuild at the left end's 1000.
+  const arrived = fold([frames[0], frames[1], at(frame(3, DEAD + 900, 600, { r: 500 }), 6)]);
+  near(arrived[2].deltaW, 4 * 0.5 * (300 / rebuild + (DEAD + 900 - (DEAD + 500)) / rebuild));
+});
+
+test('over sparse frames the excess is clamped per interval before the ratio: a selected resource\'s oversized growth cannot net against another interval\'s', () => {
+  // Intervals of 2, 1 and 5 main calls whose stock grows 300, 100 and 600 while r gains 200, 500 and 100.
+  const frames = [
+    at(frame(1, DEAD, null, { r: 1000 }), 1),
+    at(frame(2, DEAD + 300, 300, { r: 1200 }, { r: 200 }), 3),
+    at(frame(3, DEAD + 400, 100, { r: 1700 }, { r: 500 }), 4),
+    at(frame(4, DEAD + 1000, 600, { r: 1800 }, { r: 100 }), 9),
+  ];
+  // Carried: 100 + 0 + 500 excess over 8 calls; netted over the whole path it would be 200 over 8.
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 75);
+  // Left behind, every interval's growth is excess: 300 + 100 + 600.
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: key => key !== 'r' }).gBar, 125);
+});
+
+test('frames that state no main call span one each, bit for bit the fold of frames one ordinal apart', () => {
+  const plain = [frame(1, DEAD, null, { r: 700 }), frame(2, DEAD + 333, 333), frame(3, DEAD + 901, 568, { r: 900 }, { r: 200 }), frame(4, DEAD + 1130, 229)];
+  const counted = plain.map((f, i) => at(f, 10 + i));
+  const points = fold(plain);
+  assert.deepEqual(fold(counted), points);
+  // The trapezoid's rates are averaged before the span applies, and the fold's gBar is the plain mean.
+  const rate = (L, B) => computeFullCarryBurnRate({ L_read: L, B_post: B, B_rebuild: DEAD + 700, cRatio: R });
+  assert.equal(points[1].deltaW, 0.5 * (rate(DEAD, DEAD + 700) + rate(DEAD + 333, DEAD + 700)));
+  assert.equal(integratePath(plain, { dead: DEAD, R, selector: all }).gBar, (333 + 368 + 229) / 3);
 });
 
 test('fitAffine is OLS of x on u over points after the first frame, not anchored through the last', () => {

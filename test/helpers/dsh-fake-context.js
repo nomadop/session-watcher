@@ -1,8 +1,6 @@
 // test/helpers/dsh-fake-context.js — the Cordis context `applyHost` is handed, faked for `node:test`.
-// It exposes what the host calls: the session store's `list` and `flush`, the persisted listing, the snapshot read, event subscription, effects, optional injection, `get`, and the tool, skill, llm, RPC, settings, session-title, token-meter, commands and working-directory services.
+// It exposes what the host calls: the session store's `list` and `flush`, the persisted listing, the snapshot read, event subscription, effects, optional injection, `get`, and the tool, skill, llm, RPC, settings, session-title, token-meter, commands, working-directory and fs services.
 // A test drives it with `emit`, `dispose` and `unprovide`.
-import { readFileSync } from 'node:fs';
-
 /** A live session as the store lists it, its header carrying `origin` and `parentSession` when given; its `append` throws, so a host that appends fails loudly. */
 export function fakeSession({ id, cwd = '/repo', origin, parentSession }) {
   return {
@@ -78,14 +76,14 @@ export function recordingSession({
 const DEFAULT_PRICE = { tokens: 10, heuristicTokens: 10 };
 
 /**
- * A token meter whose `measure(session)` answers `{ nodes }`, one `{ seq, tokens, heuristicTokens }` per node of the session's surface in surface order, priced by `prices[seq]` and at `DEFAULT_PRICE` where a seq has none.
+ * A token meter whose `measure(session)` answers `{ nodes }`, one `{ seq, tokens, heuristicTokens }` per node of the session's surface in surface order, priced by `prices[seq]` and at `fallback` (`DEFAULT_PRICE` unless given) where a seq has none.
  * Like the real method, `measure` works only when called on the meter.
  */
-export function fakeTokenMeter({ prices = {} } = {}) {
+export function fakeTokenMeter({ prices = {}, fallback = DEFAULT_PRICE } = {}) {
   const meter = {
     measure(session) {
       if (this !== meter) throw new TypeError('measure called without its service');
-      return { nodes: session.surface.nodes.map(seq => ({ seq, ...(prices[seq] ?? DEFAULT_PRICE) })) };
+      return { nodes: session.surface.nodes.map(seq => ({ seq, ...(prices[seq] ?? fallback) })) };
     },
   };
   return meter;
@@ -110,54 +108,30 @@ export function fakeCommands() {
   return commands;
 }
 
-/** The skip result the executor answers a call it did not dispatch because the signal had aborted: an error that carries no context. */
-export const abortedBeforeDispatch = () => ({
-  content: [{ type: 'text', text: 'Error: tool call aborted before dispatch' }],
-  isError: true,
-  error: { message: 'tool call aborted before dispatch', info: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' } },
-});
-
-/** The rejection of a batch that failed internally, as the real driver raises it: the generic message, the failure as `cause` and the outcomes committed before it as `partial`. */
-export class ToolBatchExecutionError extends Error {
-  constructor(cause, partial) {
-    super('Tool batch execution failed', { cause });
-    this.name = 'ToolBatchExecutionError';
-    this.partial = partial;
-  }
-}
-
 /**
- * A `tools.execute` body answering a batch as the real executor does, over `answer(block, args)`, the result of one call, `args` its parsed `arguments`.
- * The one consumer, the handoff load, runs each read as a batch of one `tool-call` block with string `arguments`, its `signal` and `agent`, and no `log`, since its calls belong to no model step; any other input throws, one without `calls` included.
- * The answer is `{ results: [{ callId, result }], additionalContexts, concluded: false }`, the result's `additionalContexts` repeated on the batch as the real batch repeats them, so a consumer that reads both injects each context twice. `answer` throwing rejects the batch.
+ * An `fs` service whose paths are the host's own: `processPathFromHostPath` maps an absolute path to itself and any other to `undefined`, `resolve` makes a target keyed and displayed by the path it is given, `stat` states `version` for it, and `processPath` answers its key.
+ * Like the real methods, each works only when called on the service.
  */
-export function batchExecutor(answer) {
-  return async (input) => {
-    if (!Array.isArray(input.calls)) throw new TypeError('input.calls.map is not a function');
-    const [block, ...rest] = input.calls;
-    if (block === undefined || rest.length > 0) throw new TypeError(`the load runs one call per batch, got ${input.calls.length}`);
-    if (block.type !== 'tool-call' || typeof block.arguments !== 'string') throw new TypeError('the call is not a tool-call block with string arguments');
-    if (!(input.signal instanceof AbortSignal) || input.agent === undefined) throw new TypeError('the batch needs its signal and agent');
-    if (input.log !== undefined) throw new TypeError('a load batch carries no model-step log');
-    const result = await answer(block, JSON.parse(block.arguments));
-    return { results: [{ callId: block.id, result }], additionalContexts: result.additionalContexts ?? [], concluded: false };
+export function fakeFs({ version = 'fs-version-1' } = {}) {
+  const fs = {
+    processPathFromHostPath(hostPath) {
+      if (this !== fs) throw new TypeError('processPathFromHostPath called without its service');
+      return hostPath.startsWith('/') ? hostPath : undefined;
+    },
+    async resolve(path) {
+      if (this !== fs) throw new TypeError('resolve called without its service');
+      return { targetKey: path, displayPath: path };
+    },
+    async stat() {
+      if (this !== fs) throw new TypeError('stat called without its service');
+      return { version, type: 'file', size: 0 };
+    },
+    processPath(target) {
+      if (this !== fs) throw new TypeError('processPath called without its service');
+      return String(target.targetKey);
+    },
   };
-}
-
-/**
- * A `tools.execute` body (`batchExecutor`) answering `read` as the registry answers the real tool's success over the file on disk: one text block opening with the `<path>` line and the numbered lines of the window, `value` and `meta` `{ path, offset, lines, totalLines }`, and `additionalContexts` from `contexts[file_path]` when given.
- */
-export function readsFromDisk({ contexts = {} } = {}) {
-  return batchExecutor(async (_block, { file_path: path, offset, limit }) => {
-    const all = readFileSync(path, 'utf8').split('\n').slice(0, -1);
-    const lines = all.slice(offset - 1, offset - 1 + limit).map((text, index) => ({ number: offset + index, text }));
-    const text = `<path>${path}</path>\n<type>file</type>\n<content>\n${lines.map(line => `${line.number}: ${line.text}`).join('\n')}\n</content>`;
-    const meta = { path, offset, lines, totalLines: all.length };
-    return {
-      isError: false, value: meta, content: [{ type: 'text', text }], meta,
-      ...(contexts[path] ? { additionalContexts: contexts[path] } : {}),
-    };
-  });
+  return fs;
 }
 
 // The `commands` an `inject` child reads: a registration made through it is an effect of that child, as in Cordis, so the child's unloading runs its disposer.
@@ -176,26 +150,29 @@ function noAdapterLlm() {
       throw Object.assign(new Error(`no adapter registered for provider "${provider}"`), { code: 'NO_ADAPTER' });
     },
     listConfigurableProviders: () => [],
+    listProviders: () => [],
   };
 }
 
 /**
  * A fake context.
- * `sessions` are the sessions `sessions.list()` answers. `readSession` backs `sessionQuery.readSession` and `listSessions` backs `sessionQuery.listSessions`, which answers `[]` without it and forwards its `signal` argument; like the real methods, each works only when called on its service.
+ * `sessions` are the sessions `sessions.list()` answers and `sessions.get(id)` looks up. `readSession` backs `sessionQuery.readSession` and `listSessions` backs `sessionQuery.listSessions`, which answers `[]` without it and forwards its `signal` argument; like the real methods, each works only when called on its service.
  * `llm` is a top-level service, on the context itself; without one given it is a service whose `resolveModelInfo` rejects with the llm service's `NO_ADAPTER` Error and whose `listConfigurableProviders` answers `[]`.
  * `connection` and `settings` are the optional services, present when given and reachable only on an `inject` child: reading one on the context itself throws, as Cordis does for a service the plugin does not inject.
- * `webServer`, `sessionTitle`, `tokenMeter`, `commands` and `workingDirectory` are such services too. `get(name)` answers any present service on the context itself and undefined for an absent one, as Cordis's does without the inject requirement.
- * `inject(deps, callback)` calls back at once when every named service is present, with a child `{ ...services, effect, extend }` whose `commands` registers as an effect of the child and whose `extend(props)` answers a context that inherits the child and whose own `props` shadow its services, as Cordis's `extend` does; `unprovide(name)` runs the disposers of every child that injects `name` and drops the service.
+ * `webServer`, `sessionTitle`, `tokenMeter`, `commands`, `workingDirectory`, `fs`, `agents`, `attachments`, `sessionProjections` and `jobs` are such services too. `get(name)` answers any present service on the context itself and undefined for an absent one, as Cordis's does without the inject requirement.
+ * `inject(deps, callback)` calls back at once when every named service is present, with a child `{ ...services, effect, extend, on }` whose `commands` registers as an effect of the child, whose `on(name, handler)` is a listener `emit` runs until the child is disposed and whose `extend(props)` answers a context that inherits the child and whose own `props` shadow its services, as Cordis's `extend` does; what the callback returns, or resolves to, is collected as the child's disposer, and one that resolves after the child was disposed runs at once; `unprovide(name)` runs the disposers of every child that injects `name` and drops the service.
  * `sessions.flush(session)` records the session in `sessions.flushed` and resolves `true`, or rejects with `flushError` when given; like the real method it works only when called on `sessions`.
- * `tools.execute(input)` records the batch `input` in `tools.executed` and answers `executeTool(input)`, by default `readsFromDisk()`'s.
  * `skills.register` records each registration in `skills.registered` and returns a disposer, as the real method does.
- * `emit(name, ...args)` runs each listener `on` recorded for `name` in order, and lets a listener's throw propagate; `dispose()` runs every disposer `effect` collected.
+ * `sibling` is a real context whose `get(name)` answers the services this context holds none of, a service another plugin provides in the context the host shares with it.
+ * `emit(name, ...args)` runs each listener `on` recorded for `name` in order, lets a listener's throw propagate and answers a promise of their results, which a test that drives a serial event awaits; `dispose()` runs every disposer `effect` collected.
  */
 export function createFakeContext({
   sessions = [], readSession, listSessions = () => [], connection, webServer, llm = noAdapterLlm(), settings, sessionTitle, tokenMeter,
-  commands, workingDirectory, flushError, executeTool = readsFromDisk(),
+  commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, flushError, sibling, pluginManager, loader,
 } = {}) {
-  const services = new Map(Object.entries({ connection, webServer, settings, sessionTitle, tokenMeter, commands, workingDirectory }).filter(([, value]) => value !== undefined));
+  const services = new Map(Object.entries({
+    connection, webServer, settings, sessionTitle, tokenMeter, commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, pluginManager, loader,
+  }).filter(([, value]) => value !== undefined));
   const listeners = [];
   const disposers = [];
   const children = [];
@@ -213,6 +190,7 @@ export function createFakeContext({
 
   const sessionStore = {
     list: () => [...sessions],
+    get: id => sessions.find(session => session.id === id),
     flushed: [],
     flush(session) {
       if (this !== sessionStore) return Promise.reject(new TypeError('flush called without its service'));
@@ -225,14 +203,10 @@ export function createFakeContext({
     sessions: sessionStore,
     sessionQuery,
     llm,
-    get: name => services.get(name),
+    get: name => (services.has(name) ? services.get(name) : sibling?.get(name)),
+    provide(name, value) { services.set(name, value); },
     tools: {
       register() {},
-      executed: [],
-      execute(input) {
-        this.executed.push(input);
-        return executeTool(input);
-      },
     },
     skills: {
       registered: [],
@@ -240,7 +214,7 @@ export function createFakeContext({
     },
     on(name, handler, options) { listeners.push({ name, handler, options }); },
     emit(name, ...args) {
-      for (const listener of listeners.filter(each => each.name === name)) listener.handler(...args);
+      return Promise.all(listeners.filter(each => each.name === name).map(listener => listener.handler(...args)));
     },
     effect(execute) { disposers.push(execute()); },
     dispose() {
@@ -248,23 +222,34 @@ export function createFakeContext({
     },
     inject(deps, callback) {
       if (!deps.every(name => services.has(name))) return;
-      const child = { deps, disposers: [] };
+      const child = { deps, disposers: [], disposed: false };
       children.push(child);
       const context = {
         ...Object.fromEntries(deps.map(name => [name, name === 'commands' ? commandsOwnedBy(child, services.get(name)) : services.get(name)])),
         effect(execute) { child.disposers.push(execute()); },
+        on(name, handler, options) {
+          const listener = { name, handler, options };
+          listeners.push(listener);
+          child.disposers.push(() => { listeners.splice(listeners.indexOf(listener), 1); });
+        },
         extend: props => Object.assign(Object.create(context), props),
       };
-      callback(context);
+      const settle = (dispose) => {
+        if (typeof dispose !== 'function') return;
+        if (child.disposed) dispose();
+        else child.disposers.push(dispose);
+      };
+      Promise.resolve(callback(context)).then(settle);
     },
     unprovide(name) {
       for (const child of children.filter(each => each.deps.includes(name))) {
+        child.disposed = true;
         for (const dispose of child.disposers.splice(0)) dispose();
       }
       services.delete(name);
     },
   };
-  for (const name of ['connection', 'webServer', 'settings', 'sessionTitle', 'tokenMeter', 'commands', 'workingDirectory']) {
+  for (const name of ['connection', 'webServer', 'settings', 'sessionTitle', 'tokenMeter', 'commands', 'workingDirectory', 'fs', 'agents', 'attachments', 'sessionProjections', 'jobs']) {
     Object.defineProperty(ctx, name, { get() { throw new Error(`cannot get property "${name}" without inject`); } });
   }
   return ctx;

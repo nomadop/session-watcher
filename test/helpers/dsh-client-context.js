@@ -77,11 +77,12 @@ export function stubDocument(t, { inEffect = () => false, visibilityState = 'vis
 /**
  * A fake client ctx recording each service call the plugin makes.
  * `slots.inject` holds its callback; `declare()` runs every held callback and keeps its disposer, `undeclare()` calls them.
- * `slots.register` throws while the slot is undeclared, as DSH's does, and otherwise records and returns a recording disposer.
+ * `slots.register` throws while the slot is undeclared, as DSH's does, and otherwise records and returns a recording disposer that counts one disposal however often it is called.
  * `setGeneration(snapshot)` replaces the connection generation and calls its listeners, as the checkout's `publishGeneration` does.
  * `rpcCall(channel, endpoint, payload, signal)` answers the connection's `rpc.call` when given, and a synchronous throw of it escapes the call as the real method's would; `translated` lists the keys every bound translate was asked for.
- * `services` maps a service name to `child => service`, the service as the child that reads it sees it. `inject(deps, callback)` calls back at once, with a child `{ ...services, effect }`, only when every named service is present, and holds nothing otherwise.
+ * `services` maps a service name to `child => service`, the service as the child that reads it sees it; `slots` needs no entry, because the child reads the same slots bound to itself. `inject(deps, callback)` calls back at once, with a child `{ ...services, effect }`, only when every named service is present, and holds nothing otherwise.
  * An `effect` of the child runs at once and its disposer is collected; `children[n].dispose()` runs the collected disposers in reverse registration order, as Cordis does when the child unloads.
+ * The child's `slots.inject` and `slots.register` are the same slot machinery with the effect owned by the child: the injection runs at once when the slot is already declared, and the child's disposal retires the injection and disposes what it registered, the later `declare()` installing nothing of it.
  */
 export function fakeCtx(options = {}) {
   const log = [];
@@ -98,6 +99,34 @@ export function fakeCtx(options = {}) {
   const translated = [];
   const services = options.services ?? {};
   const children = [];
+  const registerEntry = (entryOptions, component) => {
+    if (!declared) throw new Error(`slot "${entryOptions.name}" is not declared`);
+    const registration = { options: entryOptions, component, disposed: 0 };
+    registrations.push(registration);
+    return () => { if (registration.disposed === 0) registration.disposed++; };
+  };
+  // The slots as a child reads them: the injection and what it registers are effects of that child.
+  const slotsOf = child => ({
+    inject(key, callback) {
+      log.push({ call: 'slots.inject', key });
+      const injection = { key, callback, dispose: null };
+      injections.push(injection);
+      if (declared) injection.dispose = callback();
+      const retire = () => {
+        const at = injections.indexOf(injection);
+        if (at !== -1) injections.splice(at, 1);
+        injection.dispose?.();
+        injection.dispose = null;
+      };
+      child.effect(() => retire);
+      return retire;
+    },
+    register(entryOptions, component) {
+      const dispose = registerEntry(entryOptions, component);
+      child.effect(() => dispose);
+      return dispose;
+    },
+  });
   const ctx = {
     effect(fn) {
       effectDepth++;
@@ -142,7 +171,7 @@ export function fakeCtx(options = {}) {
       },
     },
     inject(deps, callback) {
-      if (!deps.every(name => name in services)) return;
+      if (!deps.every(name => name === 'slots' || name in services)) return;
       const disposers = [];
       const child = {
         effect(execute) {
@@ -150,8 +179,13 @@ export function fakeCtx(options = {}) {
           disposers.push(dispose);
           return dispose;
         },
+        // A listener of the child's own, as Cordis's `ctx.on` returns its disposer; `emitted` runs those held for an event.
+        on(event, listener) {
+          log.push({ call: 'child.on', event, listener });
+          return () => { log.push({ call: 'child.off', event }); };
+        },
       };
-      for (const name of deps) child[name] = services[name](child);
+      for (const name of deps) child[name] = name === 'slots' ? slotsOf(child) : services[name](child);
       children.push({ dispose() { for (const dispose of disposers.splice(0).reverse()) dispose?.(); } });
       callback(child);
     },
@@ -161,12 +195,7 @@ export function fakeCtx(options = {}) {
         injections.push({ key, callback, dispose: null });
         return () => {};
       },
-      register(options, component) {
-        if (!declared) throw new Error(`slot "${options.name}" is not declared`);
-        const registration = { options, component, disposed: 0 };
-        registrations.push(registration);
-        return () => { registration.disposed++; };
-      },
+      register: registerEntry,
     },
   };
   return {

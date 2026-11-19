@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { stubDocument, fakeCtx } from './helpers/dsh-client-context.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readJson = (...parts) => JSON.parse(readFileSync(join(ROOT, ...parts), 'utf8'));
@@ -28,9 +29,9 @@ test("the version is the root package's", () => {
   assert.equal(manifest.version, rootManifest.version);
 });
 
-test('the main export points into dist and files ships dist and the bundle patch alone', () => {
+test('the main export points into dist and files ships dist, the README assets and the bundle patch alone', () => {
   assert.equal(manifest.exports['.'], './dist/index.js');
-  assert.deepEqual(manifest.files, ['dist/', 'dsh.bundle.patch.yml']);
+  assert.deepEqual(manifest.files, ['dist/', 'assets/', 'dsh.bundle.patch.yml']);
 });
 
 test('the client half is declared and its artifact registers under the package name', async (t) => {
@@ -46,7 +47,8 @@ test('the client half is declared and its artifact registers under the package n
   const [spec] = specs;
   assert.equal(spec.id, manifest.name);
   const devRequire = createRequire(import.meta.url);
-  const primitives = { useAnchoredPosition: () => null, useDismissOnOutsidePointer: () => {} };
+  const GaugeIcon = () => null;
+  const primitives = { IconGaugeOutlineMedium: GaugeIcon, useAnchoredPosition: () => null, useDismissOnOutsidePointer: () => {} };
   const exports = spec.factory((specifier) => {
     if (specifier === 'react' || specifier === 'react-dom') return devRequire(specifier);
     if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
@@ -54,6 +56,17 @@ test('the client half is declared and its artifact registers under the package n
   });
   assert.deepEqual(exports.inject, ['slots', 'locale', 'theme', 'connection']);
   assert.equal(typeof exports.apply, 'function');
+
+  stubDocument(t);
+  const fake = fakeCtx();
+  exports.apply(fake.ctx);
+  fake.declare();
+  const icon = fake.registrations.find(entry => entry.options.name === 'settings.section.icon');
+  assert.ok(icon);
+  assert.equal(icon.options.id, 'session-watcher');
+  assert.equal(icon.component, GaugeIcon);
+  fake.undeclare();
+  assert.equal(icon.disposed, 1);
 });
 
 test('the manifest names its bundle patch file and the file exists', () => {

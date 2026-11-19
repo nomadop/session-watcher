@@ -1,4 +1,4 @@
-// `/sw-load` over the host: its registration on the `commands` and `workingDirectory` services, its arguments and idle check, the failures of the host's own delivery, the title a delivered handoff gives the session, and the hand-over of a loaded handoff. The fake context's recording session, `workingDirectory` and `tools.execute` stand in for DSH's; the delivery is the host's, over the real store; the load's failure-value matrix is `test/dsh.load.test.js`.
+// `/sw-load` over the host: its registration on the `commands`, `workingDirectory` and `fs` services, its arguments and idle check, the failures of the host's own delivery, the title a delivered handoff gives the session, the shared Working Tree it reads through, and the hand-over of a loaded handoff. The fake context's recording session, `workingDirectory` and `fs` stand in for DSH's; the delivery is the host's, over the real store; the load's failure-value matrix is `test/dsh.load.test.js`.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,7 +9,9 @@ import { getStore, closeStoreGlobal } from '../lib/store.js';
 import { _resetRateLampManagerForTest } from '../lib/rate-lamp-manager.js';
 import { LOAD_MESSAGE_KIND } from '../lib/harness/dsh/load-message.js';
 import { loadedText } from '../dsh/src/load.js';
-import { fakeSessionTitle, readsFromDisk } from './helpers/dsh-fake-context.js';
+import { nodeWorkingTree } from '../dsh/src/composition.js';
+import { fakeSessionTitle } from './helpers/dsh-fake-context.js';
+import { dshCallLog, readResultText } from './helpers/attribution-fixtures.js';
 import {
   PROJECT, ROUTE, SESSION_ID, commandAgent, deferred, invoke, logFlushes, mountClear as mountOn, seedHandoff, settled,
 } from './helpers/dsh-command-host.js';
@@ -43,7 +45,7 @@ const seedPending = ({ loadToken, createdAt = Date.now(), nextTask, pathsToKeep 
 
 // --- Registration ---
 
-test('with commands and workingDirectory the command is registered once under its name, description and input hint', async () => {
+test('with commands, workingDirectory and fs the command is registered once under its name, description and input hint', async () => {
   const { commands } = mountLoad();
   await settled();
   const loads = named(commands.registered, 'sw-load');
@@ -55,7 +57,7 @@ test('with commands and workingDirectory the command is registered once under it
   assert.deepEqual(commands.unregistered, []);
 });
 
-for (const absent of ['commands', 'workingDirectory']) {
+for (const absent of ['commands', 'workingDirectory', 'fs']) {
   test(`without ${absent} /sw-load is not registered and the host still mounts`, async () => {
     const { commands, table } = mountLoad({ absent });
     await settled();
@@ -64,13 +66,15 @@ for (const absent of ['commands', 'workingDirectory']) {
   });
 }
 
-test('without workingDirectory /sw-continue is not registered either', async () => {
-  const { commands } = mountLoad({ absent: 'workingDirectory' });
-  await settled();
-  assert.deepEqual(named(commands.registered, 'sw-continue'), []);
-});
+for (const absent of ['workingDirectory', 'fs']) {
+  test(`without ${absent} /sw-continue is not registered either`, async () => {
+    const { commands } = mountLoad({ absent });
+    await settled();
+    assert.deepEqual(named(commands.registered, 'sw-continue'), []);
+  });
+}
 
-for (const leaving of ['commands', 'workingDirectory']) {
+for (const leaving of ['commands', 'workingDirectory', 'fs']) {
   test(`unproviding ${leaving} runs /sw-load's disposer`, async () => {
     const { commands, ctx } = mountLoad();
     await settled();
@@ -105,7 +109,7 @@ for (const { title, rawInput, busy = false, delivered, text } of INPUTS) {
       return;
     }
     assert.deepEqual(result, failure(text));
-    assert.deepEqual([session.appended, agent.injected, agent.woken, ctx.sessions.flushed, ctx.tools.executed], [[], [], [], [], []]);
+    assert.deepEqual([session.appended, agent.injected, agent.woken, ctx.sessions.flushed], [[], [], [], []]);
   });
 }
 
@@ -150,7 +154,7 @@ for (const { title, seed = () => {}, rawInput, text } of REFUSED) {
 
     assert.deepEqual(await load(commands, agent, { rawInput }), failure(text));
     assert.deepEqual(log, ['maintenance', 'settled']);
-    assert.deepEqual([session.appended, agent.injected, agent.woken, ctx.sessions.flushed, ctx.tools.executed], [[], [], [], [], []]);
+    assert.deepEqual([session.appended, agent.injected, agent.woken, ctx.sessions.flushed], [[], [], [], []]);
   });
 }
 
@@ -185,11 +189,10 @@ test('a delivered handoff that has a next task renames the loading session after
 
 // --- The hand-over ---
 
-test('a loaded handoff is handed over once the maintenance settles: the message, then the read\'s contexts, then one follow-up, with nothing flushed or appended', async () => {
+test('a loaded handoff is handed over once the maintenance settles: the payload message, the read message, then one follow-up, with nothing flushed or appended', async () => {
   const kept = join(dir, 'kept.txt');
   writeFileSync(kept, Array.from({ length: 10 }, (_, index) => `kept line ${index + 1}\n`).join(''));
-  const context = { id: 'context-kept', role: 'user', content: [{ type: 'text', text: 'kept context' }], source: { kind: 'tool-context' } };
-  const { ctx, session, commands } = mountLoad({ executeTool: readsFromDisk({ contexts: { [kept]: [context] } }) });
+  const { ctx, session, commands } = mountLoad();
   await settled();
   seedPending({ loadToken: 'sw-kept', pathsToKeep: JSON.stringify([{ path: 'kept.txt', lines: [[2, 4]] }]) });
   const log = [];
@@ -201,31 +204,77 @@ test('a loaded handoff is handed over once the maintenance settles: the message,
 
   assert.deepEqual(result, success('Loaded handoff sw-kept: 1 reads over 1 files, 0 skipped.'));
   assert.deepEqual(log, ['maintenance', 'settled', 'inject', 'inject', 'followup']);
-  const readArgs = { file_path: kept, offset: 2, limit: 3 };
+  const readArgs = { file_path: kept, ranges: [{ offset: 2, limit: 3 }] };
 
-  const [message, injectedContext] = agent.injected;
-  assert.equal(agent.injected.length, 2, 'the read\'s context is injected once');
-  assert.deepEqual(ctx.tools.executed, [{
-    calls: [{ type: 'tool-call', id: message.source.calls[1].id, name: 'read', arguments: JSON.stringify(readArgs) }], signal, agent,
-  }]);
-  assert.equal(message.source.kind, LOAD_MESSAGE_KIND);
-  assert.deepEqual(message.source.route, ROUTE);
-  assert.deepEqual(message.source.calls.map(call => [call.name, call.arguments]), [
-    ['load_handoff', JSON.stringify({ load_token: 'sw-kept' })], ['read', JSON.stringify(readArgs)],
-  ]);
-  assert.equal(JSON.parse(message.content[0].text).load_token, 'sw-kept');
-  assert.equal(message.content[1].text,
-    `<path>${kept}</path>\n<type>file</type>\n<content>\n2: kept line 2\n3: kept line 3\n4: kept line 4\n</content>`);
-  assert.equal(injectedContext, context);
+  const [payloadMessage, readMessage] = agent.injected;
+  assert.equal(agent.injected.length, 2);
+  for (const message of agent.injected) {
+    assert.equal(message.source.kind, LOAD_MESSAGE_KIND);
+    assert.deepEqual(message.source.route, ROUTE);
+  }
+  assert.deepEqual(payloadMessage.source.calls.map(call => [call.name, call.arguments]), [['load_handoff', JSON.stringify({ load_token: 'sw-kept' })]]);
+  assert.deepEqual(readMessage.source.calls.map(call => [call.name, call.arguments]), [['read', JSON.stringify(readArgs)]]);
+  assert.equal(JSON.parse(payloadMessage.content[0].text).load_token, 'sw-kept');
+  assert.equal(readMessage.content[0].text,
+    `${kept} (total lines: 10)\n2: kept line 2\n3: kept line 3\n4: kept line 4\n`);
 
   assert.equal(agent.woken.length, 1);
   const [followup] = agent.woken;
   assert.deepEqual(followup.source, { kind: 'user' });
   assert.deepEqual(followup.content, [{
-    type: 'text', text: loadedText({ token: 'sw-kept', skipped: [], unread: [], toPlace: [], skills: [], empty: false }),
+    type: 'text', text: loadedText({ token: 'sw-kept', skipped: [], unread: [], toPlace: [], skills: [], empty: false, reads: 1 }),
   }]);
   assert.deepEqual(session.appended, []);
   assert.deepEqual(ctx.sessions.flushed, []);
+});
+
+test('a loaded kept file is recorded as the agent\'s observation, once however many windows it was kept over, at the version the fs stated', async () => {
+  const kept = join(dir, 'kept.txt');
+  writeFileSync(kept, Array.from({ length: 10 }, (_, index) => `kept line ${index + 1}\n`).join(''));
+  const { ctx, session, commands } = mountLoad();
+  await settled();
+  seedPending({ loadToken: 'sw-kept', pathsToKeep: JSON.stringify([{ path: 'kept.txt', lines: [[2, 4], [7, 8]] }, { path: 'absent.txt' }]) });
+  const observed = [];
+  ctx.on('fs/observed', (...args) => observed.push(args));
+  const agent = commandAgent(session);
+
+  await load(commands, agent, { rawInput: 'sw-kept' });
+
+  assert.equal(observed.length, 1);
+  for (const [target, observation, actor] of observed) {
+    assert.deepEqual(target, { targetKey: kept, displayPath: kept });
+    assert.deepEqual(observation, { kind: 'present', version: 'fs-version-1' });
+    assert.equal(actor.agent, agent);
+  }
+});
+
+// The process's shared Working Tree, with its reads recorded for the case and restored when it ends.
+function spyOnSharedTree(t) {
+  const tree = nodeWorkingTree();
+  const { stat, readText } = tree;
+  const read = [];
+  tree.stat = (key) => { read.push(key); return stat(key); };
+  tree.readText = (key) => { read.push(key); return readText(key); };
+  t.after(() => Object.assign(tree, { stat, readText }));
+  return read;
+}
+
+test('the load reads the kept file through the process\'s shared Working Tree, the one the watcher attributes against', async (t) => {
+  const kept = join(dir, 'kept.txt');
+  const lines = Array.from({ length: 10 }, (_, index) => `export const kept${index + 1} = ${index + 1};`);
+  writeFileSync(kept, lines.map(line => `${line}\n`).join(''));
+  const read = spyOnSharedTree(t);
+  const { events } = dshCallLog([{ name: 'read', args: { file_path: kept }, text: readResultText(kept, lines) }]);
+  const { session, commands } = mountLoad({ events });
+  await settled();
+  const attributed = read.length;
+  assert.ok(attributed > 0, 'the watcher\'s matcher reads the file through the shared tree');
+
+  seedPending({ loadToken: 'sw-kept', pathsToKeep: JSON.stringify([{ path: kept, lines: [[2, 4]] }]) });
+  await load(commands, commandAgent(session), { rawInput: 'sw-kept' });
+
+  assert.ok(read.length > attributed, 'the load adds its reads to the same tree\'s');
+  assert.equal(read.at(-1), kept);
 });
 
 test('a hand-over that throws rejects the command with that error and retracts nothing it injected', async () => {

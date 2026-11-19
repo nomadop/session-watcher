@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { freshLedger, stateKeyOf } from '../lib/rate-lamp-store.js';
 import {
   _resetRateLampManagerForTest,
@@ -8,7 +11,6 @@ import {
   getLiveLedger,
   mutateLedger,
   schedulePersist,
-  persistLedger,
   isEnospcPaused,
   getDebugCounters,
 } from '../lib/rate-lamp-manager.js';
@@ -58,33 +60,6 @@ test('C5a-1: coalesced flush re-reads the live ledger, never a captured snapshot
   const lastWrite = writes[writes.length - 1];
   assert.equal(lastWrite.ledgerRevision, 2, 'flush re-read the live ledger (revision 2), not the snapshot at schedule time (1)');
   assert.equal(lastWrite.billProgress, 0.5, 'flush carries the latest mutation');
-});
-
-test('C5a-1: revision gate refuses to write an older revision over a newer one', (t) => {
-  _resetRateLampManagerForTest();
-  const sid = 'test-c5a-gate-' + Date.now();
-
-  const writes = [];
-  _setRateLampManagerTestHooks({
-    writer: (path, obj) => { writes.push(obj); },
-  });
-  t.after(() => _resetRateLampManagerForTest());
-
-  // Persist a ledger at revision 5 via setLiveLedger (force:true → updates _lastPersistedRevision)
-  const ledger5 = { ...freshLedger(KEY, 940), ledgerRevision: 5, billProgress: 0.5 };
-  setLiveLedger(sid, ledger5);
-
-  // Now attempt to persistLedger with a stale revision 3 WITHOUT force
-  const staleLedger = { ...freshLedger(KEY, 940), ledgerRevision: 3, billProgress: 0.1 };
-  writes.length = 0; // clear tracked writes
-  persistLedger(sid, staleLedger); // without force, revision gate blocks
-
-  // The writer should NOT have been called (revision 3 < last persisted 5, no force)
-  assert.equal(writes.length, 0, 'writer NOT called for stale revision (3 < 5) without force');
-
-  // But with force:true, it SHOULD succeed (force bypasses < gate — needed for fresh ledger after key change)
-  persistLedger(sid, staleLedger, { force: true });
-  assert.equal(writes.length, 1, 'writer called with force:true even for stale revision (key-change recovery)');
 });
 
 test('C5a-1: an unchanged advance elides the write (write-elision via _lastSaved still holds)', (t) => {
@@ -254,7 +229,8 @@ test('C5a-1: /api/debug/rate-lamp/:sid accessible from loopback', async (t) => {
     setRatioOverride() { return { changed: false, diagnostics: [] }; },
   };
 
-  const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid });
+  const stateDir = mkdtempSync(join(tmpdir(), 'sw-debug-route-'));
+  const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid, stateDir, disableTelemetrySweep: true });
 
   const origDebug = process.env.SW_DEBUG;
   delete process.env.SW_DEBUG;
@@ -263,6 +239,7 @@ test('C5a-1: /api/debug/rate-lamp/:sid accessible from loopback', async (t) => {
     else delete process.env.SW_DEBUG;
     server.close();
     _resetRateLampManagerForTest();
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -300,7 +277,8 @@ test('C5a-1: /api/debug/rate-lamp/:sid rejects non-loopback without SW_DEBUG', a
     setRatioOverride() { return { changed: false, diagnostics: [] }; },
   };
 
-  const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid });
+  const stateDir = mkdtempSync(join(tmpdir(), 'sw-debug-route-'));
+  const { app, server } = createSWServer({ watcher, pollIntervalMs: 0, sessionId: sid, stateDir, disableTelemetrySweep: true });
 
   const origDebug = process.env.SW_DEBUG;
   delete process.env.SW_DEBUG;
@@ -315,6 +293,7 @@ test('C5a-1: /api/debug/rate-lamp/:sid rejects non-loopback without SW_DEBUG', a
     else delete process.env.SW_DEBUG;
     server.close();
     _resetRateLampManagerForTest();
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

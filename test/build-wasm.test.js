@@ -8,6 +8,7 @@ import { execSync } from 'node:child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const DIST = join(ROOT, 'dist');
+const DSH_DIST = join(ROOT, 'dsh', 'dist');
 
 const EXPECTED = [
   'web-tree-sitter.wasm',
@@ -17,15 +18,16 @@ const EXPECTED = [
   'tree-sitter-python.wasm',
 ];
 
-test('build copies all WASM files to dist/', () => {
+test('build copies all WASM files to dist/ and dsh/dist/', () => {
   // Only rebuild if a WASM artifact is missing. scripts/build.js opens with
   // rmSync(dist, {recursive:true}), so an unconditional build deletes dist/ out from
   // under cli-e2e.test.js and build-cli.test.js, which spawn dist/bin/session-watcher.js
   // in parallel. Same guard as build-cli.test.js for the same reason.
-  if (EXPECTED.some((file) => !existsSync(join(DIST, file)))) {
+  if ([DIST, DSH_DIST].some((dir) => EXPECTED.some((file) => !existsSync(join(dir, file))))) {
     execSync('node scripts/build.js', { cwd: ROOT, stdio: 'pipe' });
   }
   for (const file of EXPECTED) {
     assert.ok(existsSync(join(DIST, file)), `${file} missing from dist/`);
+    assert.ok(existsSync(join(DSH_DIST, file)), `${file} missing from dsh/dist/`);
   }
 });

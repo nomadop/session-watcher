@@ -46,9 +46,8 @@ const wholeOf = (resourceKey, file) => showing(resourceKey, file, numbers(1, fil
 const outputOf = (file, shown) => `<path>${F}</path>\n<type>file</type>\n<content>\n${
   shown.map(line => `${line}: ${file[line - 1]}`).join('\n')}\n</content>`;
 
-// The entry the scratch holds of a line of ascii text sent whole under MODEL, and of a key a relocation emptied.
+// The entry the scratch holds of a line of ascii text sent whole under MODEL.
 const entryOf = text => ({ chars: text.length, cjk: 0, tokens: text.length / 4, fp: fp(text) });
-const ZERO = { chars: 0, cjk: 0, tokens: 0 };
 
 // Calls one after another over one scratch and one ledger, as the Projection and the Engine take them. The matcher
 // answers each fresh call from the reply the test gives; the store keeps what a fresh call offers (the first write
@@ -236,21 +235,20 @@ describe('key relocation', () => {
     chain.call(wholeOf(A, V1));
     const v2 = ['new-0001', 'new-0002', ...V1];
     const done = chain.call(showing(A, v2, [8]));
-    // The six lines are on lines three to eight; the keys one and two, which they left, hold nothing.
+    // The six lines are on lines three to eight; the keys one and two, which they left, are gone.
     assert.deepEqual(chain.scratch.get(A), new Map([
-      [1, ZERO], [2, ZERO],
       [3, entryOf('aaaa-001')], [4, entryOf('bbbb-002')], [5, entryOf('cccc-003')],
       [6, entryOf('dddd-004')], [7, entryOf('eeee-005')], [8, entryOf('ffff-006')],
     ]));
     assert.deepEqual(residencyOf(chain.scratch, A), [3, 4, 5, 6, 7, 8]);
     assert.equal(impactOf(done).mutation.kind, 'merge-fragments');
     assert.deepEqual(impactOf(done).mutation.fragments, [
-      { key: 1, tokens: 0 }, { key: 2, tokens: 0 },
+      { key: 1, tokens: 0, vacate: true }, { key: 2, tokens: 0, vacate: true },
       { key: 3, tokens: 2 }, { key: 4, tokens: 2 }, { key: 5, tokens: 2 },
       { key: 6, tokens: 2 }, { key: 7, tokens: 2 }, { key: 8, tokens: 2 },
     ]);
-    // The record the store is offered holds the same entries: the zero ones with no fingerprint, the others with theirs,
-    // and the entries that moved marked as moved. The line of the call, key eight, is the call's own and is not marked.
+    // The record the store is offered is as it was before a vacated key left: the entries of the keys left carry no
+    // characters and no fingerprint, the others have theirs, and the entries that moved marked as moved. The line of the call, key eight, is the call's own and is not marked.
     const sent = text => ({ chars: text.length, cjk: 0, fp: fp(text) });
     assert.deepEqual(chain.records.get('c2').effects[0].impacts[0].entries, [
       { key: 1, chars: 0, cjk: 0 }, { key: 2, chars: 0, cjk: 0 },
@@ -261,26 +259,26 @@ describe('key relocation', () => {
     assertTwin(chain);
   });
 
-  test('moves the entries of a file whose lines moved up, and zeroes those whose lines are gone', () => {
+  test('moves the entries of a file whose lines moved up, and drops the keys whose lines are gone', () => {
     const chain = chainOf();
     chain.call(wholeOf(A, V1));
     chain.call(showing(A, V1.slice(2), [4]));
     // The first two lines are deleted: the other four are on lines one to four, and the keys five and six are left.
     assert.deepEqual(chain.scratch.get(A), new Map([
       [1, entryOf('cccc-003')], [2, entryOf('dddd-004')], [3, entryOf('eeee-005')], [4, entryOf('ffff-006')],
-      [5, ZERO], [6, ZERO],
     ]));
+    assert.deepEqual(fragmentsOf(chain.ledger, A), { 1: 2, 2: 2, 3: 2, 4: 2 });
     assertTwin(chain);
   });
 
-  test('zeroes an entry whose line is not in the file any more, and moves the entries around it', () => {
+  test('drops an entry whose line is not in the file any more, and moves the entries around it', () => {
     const chain = chainOf();
     chain.call(wholeOf(A, V1));
     const v2 = V1.filter(line => line !== 'cccc-003');
     chain.call(showing(A, v2, [1]));
     assert.deepEqual(chain.scratch.get(A), new Map([
       [1, entryOf('aaaa-001')], [2, entryOf('bbbb-002')], [3, entryOf('dddd-004')],
-      [4, entryOf('eeee-005')], [5, entryOf('ffff-006')], [6, ZERO],
+      [4, entryOf('eeee-005')], [5, entryOf('ffff-006')],
     ]));
     assertTwin(chain);
   });
@@ -304,7 +302,7 @@ describe('key relocation', () => {
     // What the call sends is the key whose line is gone and its own line. The lines that stayed keep the four tokens
     // they were priced at.
     assert.deepEqual(keysOfImpact(impactOf(done)), [3, 1]);
-    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 2, 2: 4, 3: 0, 4: 4, 5: 4, 6: 4 });
+    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 2, 2: 4, 4: 4, 5: 4, 6: 4 });
     assertTwin(chain);
   });
 
@@ -318,7 +316,7 @@ describe('key relocation', () => {
     assert.equal(new Set(keys).size, keys.length);
     assert.deepEqual(chain.scratch.get(A).get(3), { chars: 11, cjk: 0, tokens: 2.75, fp: fp('bbbb-002') });
     assert.deepEqual(chain.scratch.get(A).get(4), { chars: 11, cjk: 0, tokens: 2.75, fp: fp('cccc-003') });
-    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 0, 2: 2, 3: 2.75, 4: 2.75, 5: 2, 6: 2, 7: 2 });
+    assert.deepEqual(tokensOf(chain.scratch, A), { 2: 2, 3: 2.75, 4: 2.75, 5: 2, 6: 2, 7: 2 });
     // The lines of the call that landed on moved keys are the call's own: they carry no mark, the others do, and the
     // spend is those two lines alone.
     const entries = chain.records.get('c2').effects[0].impacts[0].entries;
@@ -329,7 +327,7 @@ describe('key relocation', () => {
     assertTwin(chain);
   });
 
-  test('leaves an entry without a fingerprint where it is: not moved, not zeroed, not sent', () => {
+  test('leaves an entry without a fingerprint where it is: not moved, not dropped, not sent', () => {
     // The first call is replayed from a record whose fingerprint of key nine is no fingerprint.
     const record = {
       v: 1,
@@ -419,7 +417,7 @@ describe('key relocation', () => {
     const done = chain.call(bothSides(v2, [3], [5]));
     assert.deepEqual(keysOfImpact(impactOf(done, 'write')), [1, 2, 3, 4, 5, 6, 7]);
     assert.deepEqual(keysOfImpact(impactOf(done, 'read')), [5]);
-    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 0, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2 });
+    assert.deepEqual(tokensOf(chain.scratch, A), { 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2 });
     assertTwin(chain);
   });
 
@@ -457,7 +455,7 @@ describe('the limits of a relocation', () => {
     chain.call(wholeOf(A, EIGHT));
     chain.call(showing(A, EDITED, [1]));
     // Five lines against six is thirty cells. The first four lines are on lines two to five; the fifth is gone.
-    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 0, 7: 2, 8: 2, 9: 2 });
+    assert.deepEqual(tokensOf(chain.scratch, A), { 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 7: 2, 8: 2, 9: 2 });
     assert.equal(chain.scratch.get(A).get(2).fp, fp('aaaa-001'));
     assertTwin(chain);
   });
@@ -470,9 +468,9 @@ describe('the limits of a relocation', () => {
     const chain = chainOf({ limits });
     chain.call(wholeOf(A, file));
     chain.call(showing(A, edited, [100, 101]));
-    // Every entry moved down a line; the key it left holds nothing.
+    // Every entry moved down a line; the key it left is gone.
     assert.deepEqual(residencyOf(chain.scratch, A), numbers(2, 201));
-    assert.equal(chain.scratch.get(A).get(1).tokens, 0);
+    assert.equal(chain.scratch.get(A).has(1), false);
     assert.equal(chain.scratch.get(A).get(2).fp, fp('row 001'));
     assert.equal(chain.scratch.get(A).get(201).fp, fp('row 200'));
     assertTwin(chain);
@@ -499,7 +497,7 @@ describe('the limits of a relocation', () => {
       assert.equal(chain.scratch.get(A).get(11).fp, fp('hdr-A001'), label);
       assert.equal(chain.scratch.get(A).get(12).fp, fp('hdr-B002'), label);
       assert.equal(chain.scratch.get(A).get(13).fp, fp('hdr-C003'), label);
-      assert.deepEqual(chain.scratch.get(A).get(10), ZERO, label);
+      assert.equal(chain.scratch.get(A).has(10), false, label);
       assert.deepEqual(residencyOf(chain.scratch, A), [11, 12, 13], label);
       assertTwin(chain);
     }
@@ -560,30 +558,30 @@ describe('the limits of a relocation', () => {
   });
 });
 
+// A chain with a real Engine beside it, which takes the effects of every call.
+function engineChain(options) {
+  const chain = chainOf(options);
+  const engine = makeEngine();
+  engine.ingest([stepOf('m0', 100_000)]);
+  return {
+    chain,
+    engine,
+    call(reply) {
+      const done = chain.call(reply);
+      engine.ingest(done.effects.map(effect => ({ type: 'effect', ...effect })));
+      return done;
+    },
+  };
+}
+
+const rowFigures = (engine) => {
+  const { tokens, totalSpent, churn, efficiency } = rowOf(engine, A);
+  return { tokens, totalSpent, churn, efficiency };
+};
+
 describe('the spend of a call that moves entries', () => {
   // Six authored lines of eight characters: two tokens apiece under MODEL.
   const V1 = ['aaaa-001', 'bbbb-002', 'cccc-003', 'dddd-004', 'eeee-005', 'ffff-006'];
-
-  // A chain with a real Engine beside it, which takes the effects of every call.
-  function engineChain() {
-    const chain = chainOf();
-    const engine = makeEngine();
-    engine.ingest([stepOf('m0', 100_000)]);
-    return {
-      chain,
-      engine,
-      call(reply) {
-        const done = chain.call(reply);
-        engine.ingest(done.effects.map(effect => ({ type: 'effect', ...effect })));
-        return done;
-      },
-    };
-  }
-
-  const rowFigures = (engine) => {
-    const { tokens, totalSpent, churn, efficiency } = rowOf(engine, A);
-    return { tokens, totalSpent, churn, efficiency };
-  };
 
   test('is the tokens of the call\'s own lines alone, the same live and replayed from the JSON of its record', () => {
     const live = chainOf();
@@ -593,7 +591,7 @@ describe('the spend of a call that moves entries', () => {
     const [effect] = done.effects;
     const fragments = effect.impacts[0].mutation.fragments;
     assert.deepEqual(fragments.map(fragment => fragment.key), [1, 2, 3, 4, 5, 6, 7]);
-    // The impact still holds the six moved entries and the two lines of the call, two tokens each, the zero entry none.
+    // The impact still holds the six moved entries and the two lines of the call, two tokens each, the vacated key none.
     assert.equal(fragments.reduce((total, fragment) => total + fragment.tokens, 0), 12);
     assert.equal(effect.spentTokens, 4);
 
@@ -672,6 +670,104 @@ describe('the spend of a call that moves entries', () => {
       const held = 2 * file.length;
       assert.deepEqual(rowFigures(rig.engine), { tokens: held, totalSpent: held, churn: 1, efficiency: 100 }, `after edit ${edit}`);
     }
+  });
+});
+
+describe('a vacated key', () => {
+  // Six authored lines of eight characters: two tokens apiece under MODEL.
+  const V1 = ['aaaa-001', 'bbbb-002', 'cccc-003', 'dddd-004', 'eeee-005', 'ffff-006'];
+  const ABOVE = ['new-0001', ...V1];
+
+  test('leaves the Engine\'s line numbers, and the weights, spend and residual of the call as an unmoved file has them', () => {
+    const unmoved = engineChain();
+    unmoved.call(wholeOf(A, V1));
+    const same = unmoved.call(showing(A, V1, [3, 4]));
+    const moved = engineChain();
+    moved.call(wholeOf(A, V1));
+    const done = moved.call(showing(A, ABOVE, [4, 5]));
+    // The six lines are on lines two to seven: the key one that they left is not a line the Engine reports.
+    assert.deepEqual(rowOf(unmoved.engine, A).lineNumbers, numbers(1, 6));
+    assert.deepEqual(rowOf(moved.engine, A).lineNumbers, numbers(2, 7));
+    assert.deepEqual(rowFigures(moved.engine), rowFigures(unmoved.engine));
+    assert.equal(done.effects[0].spentTokens, same.effects[0].spentTokens);
+    assert.equal(weightOf(done), weightOf(same));
+    assert.equal(rowOf(moved.engine, A).fullSnapshot, true);
+  });
+
+  test('keeps the key of a blank line, read where it is and moved with the lines around it', () => {
+    const file = ['head-001', '', 'tail-003'];
+    const rig = engineChain();
+    rig.call(wholeOf(A, file));
+    assert.deepEqual(rowOf(rig.engine, A).lineNumbers, [1, 2, 3]);
+    // A line is inserted above: the blank line is on line three and the key two it left is gone, as the key one is.
+    const above = ['new-0001', ...file];
+    rig.call(showing(A, above, [4]));
+    assert.deepEqual(rowOf(rig.engine, A).lineNumbers, [2, 3, 4]);
+    assert.deepEqual(fragmentsOf(rig.chain.ledger, A), { 2: 2, 3: 0, 4: 2 });
+    assert.deepEqual(tokensOf(rig.chain.scratch, A), fragmentsOf(rig.chain.ledger, A));
+    assertTwin(rig.chain);
+  });
+
+  test('removes the key a blank line held at no tokens when the lines move down past it', () => {
+    const file = ['', 'head-002', 'tail-003'];
+    const rig = engineChain();
+    rig.call(wholeOf(A, file));
+    assert.deepEqual(fragmentsOf(rig.chain.ledger, A), { 1: 0, 2: 2, 3: 2 });
+    // A line is inserted above: the blank line is on line two and the key one it left holds no tokens and is taken out all the same.
+    rig.call(showing(A, ['new-0001', ...file], [4]));
+    assert.deepEqual(rowOf(rig.engine, A).lineNumbers, [2, 3, 4]);
+    assert.deepEqual(fragmentsOf(rig.chain.ledger, A), { 2: 0, 3: 2, 4: 2 });
+    assertTwin(rig.chain);
+  });
+
+  test('leaves the key of a line emptied in place where the call shows it as the blank line it now is', () => {
+    const rig = engineChain();
+    rig.call(wholeOf(A, V1));
+    const emptied = [...V1];
+    emptied[2] = '';
+    rig.call(showing(A, emptied, [3]));
+    // The line is blank, so the key three stays at no tokens; no other key left.
+    assert.deepEqual(rowOf(rig.engine, A).lineNumbers, numbers(1, 6));
+    assert.deepEqual(fragmentsOf(rig.chain.ledger, A), { 1: 2, 2: 2, 3: 0, 4: 2, 5: 2, 6: 2 });
+    assertTwin(rig.chain);
+  });
+
+  test('replays from the JSON of its records into the keys the live chain holds, in the scratch, the ledger and the Engine', () => {
+    const replies = [wholeOf(A, V1), showing(A, ABOVE, [4]), showing(A, ABOVE.slice(3), [1])];
+    const live = engineChain();
+    const lives = replies.map(reply => live.call(reply));
+    assert.deepEqual(rowOf(live.engine, A).lineNumbers, numbers(1, 4));
+    const recalled = new Map([...live.chain.records].map(([toolUseId, record]) => [toolUseId, JSON.parse(JSON.stringify(record))]));
+    const replay = engineChain({ recalled });
+    const replays = replies.map(() => replay.call(undefined));
+    assert.equal(replay.chain.asked(), 0);
+    assert.deepEqual(replays.map(done => done.effects), lives.map(done => done.effects));
+    assert.deepEqual(rowOf(replay.engine, A).lineNumbers, rowOf(live.engine, A).lineNumbers);
+    assert.deepEqual(fragmentsOf(replay.chain.ledger, A), fragmentsOf(live.chain.ledger, A));
+    assert.deepEqual(rowFigures(replay.engine), rowFigures(live.engine));
+    assert.deepEqual(replay.chain.scratch, live.chain.scratch);
+    assertTwin(replay.chain);
+  });
+
+  test('is taken from a recalled record whose key nothing holds without changing a total', () => {
+    const record = {
+      v: 1,
+      effects: [{
+        access: 'read',
+        impacts: [{
+          resourceKey: A,
+          kind: 'merge-fragments',
+          entries: [{ key: 7, chars: 0, cjk: 0 }, { key: 1, chars: 8, cjk: 0, fp: fp('aaaa-001') }],
+        }],
+      }],
+      residual: null,
+    };
+    const rig = engineChain({ recalled: new Map([['c1', record]]) });
+    rig.call(undefined);
+    assert.deepEqual(rowOf(rig.engine, A).lineNumbers, [1]);
+    assert.equal(rowOf(rig.engine, A).tokens, 2);
+    assert.deepEqual(fragmentsOf(rig.chain.ledger, A), { 1: 2 });
+    assertTwin(rig.chain);
   });
 });
 
@@ -877,7 +973,7 @@ describe('the residual weight', () => {
       const done = chain.call(showing(A, EDITED, [12], { side: 'input' }));
       // Placed under the lines they are on: the header on eleven, the closing line on thirteen, and the long line, which
       // has no line any more, gone. The new line takes twelve.
-      assert.deepEqual(charsOf(chain.scratch, A), { 10: 0, 11: 7, 12: 17, 13: 1 });
+      assert.deepEqual(charsOf(chain.scratch, A), { 11: 7, 12: 17, 13: 1 });
       assert.deepEqual(keysOfImpact(impactOf(done, 'write')), [10, 11, 12, 13]);
       // The call carried 17 characters while the entries fell by 7, from 32 to 25: 24 characters sit in context beyond
       // what the entries grew by, the long line the ledger gave up and the context still holds. Against the closing
@@ -892,10 +988,10 @@ describe('the residual weight', () => {
       chain.call(showing(A, SEEN, [10, 11, 12]));
       // The comment is in and the long line not yet edited; a read of line one places the entries a line down.
       const shifted = chain.call(showing(A, [...HEAD, COMMENT, DEF, LONG, CLOSE], [1]));
-      assert.deepEqual(charsOf(chain.scratch, A), { 1: 5, 10: 0, 11: 7, 12: 24, 13: 1 });
+      assert.deepEqual(charsOf(chain.scratch, A), { 1: 5, 11: 7, 12: 24, 13: 1 });
       assert.equal(weightOf(shifted), 0);
       assert.deepEqual(shifted.residuals, []);
-      // The key the entries left holds nothing and carries no fingerprint, and that does not stop the edit being weighed.
+      // The key the entries left is gone, and that does not stop the edit being weighed.
       const done = chain.call(showing(A, EDITED, [12], { side: 'input' }));
       assert.equal(weightOf(done), 24);
       assertTwin(chain);
@@ -1262,8 +1358,8 @@ describe('through the Projection', () => {
     assert.equal(rowOf(engine, F).tokens, 6 * 2.75);
     tree.set({ [F]: EDITED.join('\n') + '\n' });
     read(EDITED, [7, 8]);
-    // The six lines moved down by two: the keys one and two are kept as empty fragments and the six lines are held once.
-    assert.deepEqual(rowOf(engine, F).lineNumbers, numbers(1, 8));
+    // The six lines moved down by two: the keys one and two are gone and the six lines are held once.
+    assert.deepEqual(rowOf(engine, F).lineNumbers, numbers(3, 8));
     assert.equal(rowOf(engine, F).tokens, 6 * 2.75);
 
     engine.ingest(rig.projection.project({ type: 'epoch-boundary' }, {}).records);

@@ -213,7 +213,7 @@ test('the view and the dock register without the services the picker reads, and 
   fake.declare();
 
   for (const name of ['conversation.view', 'conversation.composer.dock']) {
-    assert.equal(fake.registrations.filter(registration => registration.options.name === name).length, 1, name);
+    assert.equal(fake.registrations.filter(registration => registration.options.name === name && registration.options.id === 'session-watcher').length, 1, name);
   }
-  assert.deepEqual(fake.children, [], 'no picker without commandUi, sessions and conversation');
+  assert.equal(fake.children.length, 1, 'no picker without commandUi, sessions and conversation: the monitor\'s injection child, which reads `slots` alone, is the only one');
 });

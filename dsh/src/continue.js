@@ -1,7 +1,8 @@
 // dsh/src/continue.js — `/sw-continue`: the clear as one compaction-protocol transaction the plugin writes itself with no model call, and the command around it.
-// It knows no Cordis: the watcher table, the store, the token meter, the flush, the load's delivery, tool runtime and working directory, and the DSH values it builds events from (`kit`) reach it by parameter.
+// It knows no Cordis: the watcher table, the store, the token meter, the flush, the load's delivery, read and working directory, and the DSH values it builds events from (`kit`) reach it by parameter.
 import { randomUUID } from 'node:crypto';
 
+import { checkpointText } from './handoff-text.js';
 import { handOver, loadHandoffInto } from './load.js';
 
 // The summary's route names this plugin and the command: no model wrote it.
@@ -31,7 +32,6 @@ const NOT_FINISHED = 'Clearing did not finish cleanly; some history may be shado
 const NOT_SAVED = 'Clearing finished, but the session could not be saved.';
 const NOTHING_TO_CLEAR = 'No history to clear.';
 
-const checkpointText = token => `[Session Watcher] Context cleared by /sw-continue. Handoff token: ${token}`;
 const clearedText = ({ count, shadowedTokenCount }, token) => `Cleared ${count} history items (~${shadowedTokenCount} tokens); loaded handoff ${token}.`;
 const notLoadedText = (reason, token) => `Context cleared, but the handoff was not loaded: ${reason}. Run /sw-load ${token}.`;
 const textBlocks = token => [{ type: 'text', text: checkpointText(token) }];
@@ -117,11 +117,11 @@ const success = text => ({ kind: 'success', text });
  * Once the task has settled, a loaded handoff is handed over (`handOver`, with `resume`), which wakes the model; a failed load answers its reason and the token to load by hand, and a rejected flush answers that the session could not be saved, whatever the load's outcome; neither wakes anything.
  * The task is an async function, so a throw inside it is a rejection and only `runMaintenance` refusing the agent throws synchronously.
  * Only a `ClearError` and the flush's rejection become results; any other rejection, the watcher's wait among them, and a throw of the hand-over reach the caller unchanged.
- * `meter` is the token meter, `flush(session)` saves the session, `kit` is `clearSurface`'s and `loadHandoffInto`'s, and `deliver`, `tools` and `cwdOf` are `loadHandoffInto`'s.
+ * `meter` is the token meter, `flush(session)` saves the session, `kit` is `clearSurface`'s and `loadHandoffInto`'s, and `deliver`, `readFile` and `cwdOf` are `loadHandoffInto`'s.
  *
  * @returns {{ name: string, description: string, handler: Function }} the definition the command registry takes
  */
-export function createContinueCommand({ table, store, kit, meter, flush, deliver, tools, cwdOf }) {
+export function createContinueCommand({ table, store, kit, meter, flush, deliver, readFile, cwdOf }) {
   async function handler({ commandId, agent, rawInput, signal }) {
     if (rawInput.trim().length > 0) return failure(USAGE);
     const { session } = agent;
@@ -136,7 +136,7 @@ export function createContinueCommand({ table, store, kit, meter, flush, deliver
       maintenance = agent.runMaintenance(async () => {
         const cleared = clearSurface({ session, meter, kit, commandId, token });
         if (cleared === null) return { status: 'empty' };
-        const load = await loadHandoffInto({ agent, session, tools, deliver, kit, signal, token, cwdOf });
+        const load = await loadHandoffInto({ agent, session, readFile, deliver, kit, signal, token, cwdOf });
         // Only a rejection is a failure: the real flush resolves `false` when no listener saves the session, and the clear stands.
         try {
           await flush(session);

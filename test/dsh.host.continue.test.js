@@ -55,7 +55,7 @@ function closingTurns() {
 const failure = text => ({ kind: 'error', text });
 const success = text => ({ kind: 'success', text });
 
-test('with both services the command is registered once under its name and description and carries no input', () => {
+test('with its services the command is registered once under its name and description and carries no input', () => {
   const { commands } = mountClear();
   assert.equal(continueOf(commands).length, 1);
   const [definition] = continueOf(commands);
@@ -65,7 +65,7 @@ test('with both services the command is registered once under its name and descr
   assert.deepEqual(commands.unregistered, []);
 });
 
-for (const absent of ['commands', 'tokenMeter']) {
+for (const absent of ['commands', 'tokenMeter', 'fs']) {
   test(`without ${absent} no command is registered and the host still mounts`, async () => {
     const { commands, table } = mountClear({ absent });
     await settled();
@@ -74,7 +74,7 @@ for (const absent of ['commands', 'tokenMeter']) {
   });
 }
 
-for (const leaving of ['commands', 'tokenMeter']) {
+for (const leaving of ['commands', 'tokenMeter', 'fs']) {
   test(`unproviding ${leaving} runs the command's disposer`, () => {
     const { commands, ctx } = mountClear();
     ctx.unprovide(leaving);
@@ -174,17 +174,19 @@ test('a clear loads the session\'s newest handoff, flushes once, and after the m
 
   assert.deepEqual(result, success(`Cleared ${shadowed} history items (~${shadowed * 10} tokens); loaded handoff ${TOKEN}.`));
   assert.deepEqual(session.appended.map(event => event.type), ['compaction/start', 'compaction/summary', 'user/message', 'compaction/end']);
-  assert.deepEqual(log, ['maintenance', 'flush', 'settled', 'inject', 'followup']);
+  assert.deepEqual(log, ['maintenance', 'flush', 'settled', 'inject', 'inject', 'followup']);
   assert.deepEqual(ctx.sessions.flushed, [session]);
-  const [message] = agent.injected;
-  assert.equal(message.source.kind, LOAD_MESSAGE_KIND);
-  assert.deepEqual(message.source.calls.map(call => [call.name, call.arguments]), [
-    ['load_handoff', JSON.stringify({ load_token: TOKEN })], ['read', JSON.stringify({ file_path: kept, offset: 2, limit: 3 })],
-  ]);
-  assert.deepEqual(ctx.tools.executed.flatMap(input => input.calls.map(call => call.arguments)), [JSON.stringify({ file_path: kept, offset: 2, limit: 3 })]);
+  const [payloadMessage, readMessage] = agent.injected;
+  assert.equal(agent.injected.length, 2);
+  assert.equal(payloadMessage.source.kind, LOAD_MESSAGE_KIND);
+  assert.equal(readMessage.source.kind, LOAD_MESSAGE_KIND);
+  assert.deepEqual(payloadMessage.source.calls.map(call => [call.name, call.arguments]), [['load_handoff', JSON.stringify({ load_token: TOKEN })]]);
+  assert.deepEqual(readMessage.source.calls.map(call => [call.name, call.arguments]), [['read', JSON.stringify({ file_path: kept, ranges: [{ offset: 2, limit: 3 }] })]]);
+  assert.equal(readMessage.content[0].text,
+    `${kept} (total lines: 10)\n2: kept line 2\n3: kept line 3\n4: kept line 4\n`);
   assert.equal(agent.woken.length, 1);
   assert.deepEqual(agent.woken[0].content, [{
-    type: 'text', text: loadedText({ token: TOKEN, skipped: [], unread: [], toPlace: [], skills: [], empty: false }, { resume: true }),
+    type: 'text', text: loadedText({ token: TOKEN, skipped: [], unread: [], toPlace: [], skills: [], empty: false, reads: 1 }, { resume: true }),
   }]);
   assert.deepEqual(agent.woken[0].source, { kind: 'user' });
 });
