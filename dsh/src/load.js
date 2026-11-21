@@ -6,7 +6,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import { ATTRIBUTION_LIMITS } from '../../lib/constants.js';
 import { formatAge } from '../../lib/handoff-discovery.js';
-import { carryChanges, foldCarried } from '../../lib/harness/dsh/inner-seal-message.js';
+import { carryChanges, foldCarried } from '../../lib/carried-evidence.js';
 import { LOAD_PAYLOAD_CALL, loadMessageInput } from '../../lib/harness/dsh/load-message.js';
 import { renderFileEvidence } from '../../lib/working-tree-text.js';
 import { loadedLead, quoted } from './handoff-text.js';

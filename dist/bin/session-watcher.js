@@ -1914,6 +1914,79 @@ var ZSTD_MAGIC, GZIP_MAGIC, init_log_frames = __esm({
   }
 });
 
+// lib/measurement/usage.js
+var stockOf, init_usage = __esm({
+  "lib/measurement/usage.js"() {
+    stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
+  }
+});
+
+// lib/measurement/source-facts.js
+function initialSourceFacts() {
+  return { epoch: 0, headDone: !1, points: [], carriers: [] };
+}
+function withCarrier(facts, input) {
+  let listed = new Set(input.sealed);
+  return {
+    ...facts,
+    points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
+    carriers: [...facts.carriers, { seq: input.seq, epoch: facts.epoch, post: null }]
+  };
+}
+function withMainCall(facts, input) {
+  let usage = usageOf(input), waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null), carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: input.seq, usage } } : carrier) : facts.carriers;
+  if (usage === null) return waiting ? { ...facts, carriers } : facts;
+  let role = facts.headDone ? waiting ? "post" : "current" : "head";
+  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: input.seq, role }], carriers };
+}
+function qualifiedCalls(facts) {
+  let pending = facts.points.findIndex((point) => point.role === "current");
+  return pending === -1 ? facts.points.length : pending;
+}
+function foldSourceFacts(facts, input) {
+  return isIndex(input.seq) ? startsEpoch(input) ? { ...facts, epoch: facts.epoch + 1, headDone: !1, points: [] } : isCarrier(input) ? withCarrier(facts, input) : input.mainCall ? withMainCall(facts, input) : facts : facts;
+}
+var isCarrier, usageOf, startsEpoch, isIndex, init_source_facts = __esm({
+  "lib/measurement/source-facts.js"() {
+    init_usage();
+    isCarrier = (input) => Array.isArray(input.sealed), usageOf = (input) => input.observations.find((observation) => observation.type === "usage")?.usage ?? null, startsEpoch = ({ observations }) => observations.some((observation) => observation.type === "epoch-boundary");
+    isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
+  }
+});
+
+// lib/measurement/source-fold.js
+function sealedBatch(batch, selected) {
+  return batch.flatMap((observation) => observation.type === "tool-result" ? [observation.effectsOnly ? observation : { ...observation, effectsOnly: !0 }] : observation.type === "usage" ? selected ? [observation] : [] : ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : []);
+}
+function createSourceFold() {
+  let kept = [], epochStart = 0, facts = initialSourceFacts();
+  function push(input) {
+    let { observations, diagnostics, sealed = [] } = input;
+    facts = foldSourceFacts(facts, input);
+    let rewound = !1;
+    if (sealed.length > 0) {
+      let listed = new Set(sealed), selected = new Set(facts.points.map((point) => point.seq));
+      for (let index = epochStart; index < kept.length; index += 1) {
+        if (!listed.has(kept[index].seq)) continue;
+        let next = sealedBatch(kept[index].batch, selected.has(kept[index].seq));
+        changed(kept[index].batch, next) && (kept[index].batch = next, rewound = !0);
+      }
+    }
+    let batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
+    return batch.length === 0 ? { batch: null, rewound, diagnostics } : (batch.some((observation) => observation.type === "epoch-boundary") && (epochStart = kept.length), kept.push({ seq: input.seq, batch }), { batch, rewound, diagnostics });
+  }
+  function batches() {
+    return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
+  }
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+}
+var changed, init_source_fold = __esm({
+  "lib/measurement/source-fold.js"() {
+    init_source_facts();
+    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+  }
+});
+
 // lib/harness/dsh/load-message.js
 function loadRouteOf(message) {
   return message?.source?.kind === LOAD_MESSAGE_KIND ? message.source.route : void 0;
@@ -2000,6 +2073,19 @@ function readableText(tree, key, { size }, { fileBytes }) {
   let text = tree.readText(key);
   return text === null ? unreadable("unreadable") : text.includes("\0") ? unreadable("binary") : { status: "readable", text };
 }
+function readTreeWindows(tree, key, ranges, { fileBytes }) {
+  let stat = tree.stat(key);
+  if (stat === null) return unreadable("missing");
+  if (!stat.isFile) return unreadable("not-file");
+  let judged = readableText(tree, key, stat, { fileBytes });
+  if (judged.status !== "readable") return judged;
+  let all = splitLines(judged.text), windows = [];
+  for (let { offset, limit } of ranges) {
+    let lines = all.slice(offset - 1, offset - 1 + limit).map((text, index) => ({ number: offset + index, text }));
+    (lines.length > 0 || all.length === 0 && offset === 1) && windows.push({ offset, lines });
+  }
+  return { status: "readable", totalLines: all.length, windows };
+}
 var unreadable, init_working_tree_text = __esm({
   "lib/working-tree-text.js"() {
     init_line_align();
@@ -2007,91 +2093,39 @@ var unreadable, init_working_tree_text = __esm({
   }
 });
 
-// lib/harness/dsh/inner-seal-message.js
-function todoItemsOf(value) {
-  if (value === null) return [];
-  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
-  return value.map(({ content, status }) => ({ content, status }));
+// lib/carried-evidence.js
+function runsOf(numbers) {
+  let runs = [];
+  for (let number of numbers) {
+    let last = runs.at(-1);
+    last && last[1] + 1 === number ? last[1] = number : runs.push([number, number]);
+  }
+  return runs;
 }
-function textEntriesOf(value, fields, what) {
-  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry == "object" && fields.every((field) => typeof entry[field] == "string")))
-    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
-  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
-}
-var INNER_SEAL_KIND, CARRIER_WORDING, isTodoItem, sameEntries, AGENT_FIELDS, TODO_FIELDS, STATE_ITEMS, init_inner_seal_message = __esm({
-  "lib/harness/dsh/inner-seal-message.js"() {
+var init_carried_evidence = __esm({
+  "lib/carried-evidence.js"() {
     init_working_tree_text();
-    init_load_message();
-    INNER_SEAL_KIND = "session-watcher-inner-seal", CARRIER_WORDING = {
-      addresses: "These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: holds the user's own words instead, cut where a marker says so.",
-      slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
-      imageSaved: (name2) => `The image ${name2} is not in the current context; read_image can read the file below when it is needed.`,
-      carried: "Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. The reads behind this file text still count in this session, so edit a file without reading it again.",
-      empty: (path3) => `${path3} is empty.`,
-      unreadable: (path3, reason) => `${path3} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
-      skill: (name2, text) => `Skill ${name2}:
-${text}`,
-      stateHeading: (seq) => `Session state as of session seq ${seq}:`,
-      stateLabels: {
-        workingDirectory: (tool) => `Working directory, as ${tool} would show:`,
-        subagents: (tool) => `Running subagents, as ${tool} would show:`,
-        jobs: (tool) => `Running jobs, as ${tool} would show:`,
-        todos: (tool) => `Todo list, as ${tool} last left it:`
-      },
-      stateList: (entries) => entries.map(({ id, label }) => `${id} \u2014 ${label}`).join("; "),
-      stateUnchanged: "unchanged since the last summary that shows it",
-      stateEmpty: "(empty)",
-      questionMark: "A line marked question: holds the original question.",
-      questionLine: (question) => `question: ${question}`,
-      userLine: (user) => `user: ${user}`,
-      askCall: ({ id, name: name2, arguments: args2 }) => `Original ${name2} call ${id}, arguments:
-${args2}`,
-      askResult: (id, { text, isError }) => `Original result of call ${id}${isError ? " (marked as an error)" : ""}:
-${text}`
-    }, isTodoItem = (item) => item !== null && typeof item == "object" && typeof item.content == "string" && typeof item.status == "string";
-    sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field])), AGENT_FIELDS = ["id", "label"], TODO_FIELDS = ["content", "status"], STATE_ITEMS = Object.freeze([
-      Object.freeze({
-        key: "workingDirectory",
-        tool: "working_directory",
-        normalize: (value) => {
-          if (typeof value != "string" || value === "") throw new Error("the working directory is not a path text");
-          return value;
-        },
-        isEmpty: () => !1,
-        same: (a, b) => a === b,
-        text: (value) => value
-      }),
-      Object.freeze({
-        key: "subagents",
-        tool: "list_agents",
-        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
-        isEmpty: (entries) => entries.length === 0,
-        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-        text: CARRIER_WORDING.stateList
-      }),
-      Object.freeze({
-        key: "jobs",
-        tool: "job_list",
-        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
-        isEmpty: (entries) => entries.length === 0,
-        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-        text: CARRIER_WORDING.stateList
-      }),
-      Object.freeze({
-        key: "todos",
-        tool: "todo_write",
-        normalize: todoItemsOf,
-        isEmpty: (items) => items.length === 0,
-        same: (a, b) => sameEntries(TODO_FIELDS, a, b),
-        text: (items) => JSON.stringify(items)
-      })
-    ]);
+  }
+});
+
+// lib/inner-seal/state-block.js
+var init_state_block = __esm({
+  "lib/inner-seal/state-block.js"() {
+  }
+});
+
+// lib/inner-seal/carrier.js
+var INNER_SEAL_KIND, init_carrier = __esm({
+  "lib/inner-seal/carrier.js"() {
+    init_carried_evidence();
+    init_state_block();
+    INNER_SEAL_KIND = "session-watcher-inner-seal";
   }
 });
 
 // lib/harness/dsh/transcript-observation.js
 function violation(event, field) {
-  let at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
+  let at = isIndex2(event.seq) ? ` at seq ${event.seq}` : "";
   return {
     observations: [],
     diagnostics: [{ scope: SCOPE, code: "shape-violation", message: `${event.type}${at}: malformed ${field}` }]
@@ -2101,7 +2135,7 @@ function faultOf(checks) {
   return checks.find(([, holds]) => !holds)?.[0] ?? null;
 }
 function envelopeChecks(event) {
-  return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
+  return [["seq", isIndex2(event.seq)], ["time", Number.isFinite(event.time)]];
 }
 function baseOf(event) {
   return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
@@ -2125,7 +2159,7 @@ function parseArguments(raw) {
 function isUsage(usage) {
   return isObject(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
 }
-function usageOf(usage) {
+function usageOf2(usage) {
   return {
     input: usage.inputTokens,
     output: usage.outputTokens,
@@ -2190,7 +2224,7 @@ function reduceLoadMessage(event) {
 }
 function reduceInnerSeal(event) {
   let seqs = event.sourceEventSeqs;
-  return !Array.isArray(seqs) || !seqs.every(isIndex) ? violation(event, "sourceEventSeqs") : { observations: [], diagnostics: [], withdraws: seqs };
+  return !Array.isArray(seqs) || !seqs.every(isIndex2) ? violation(event, "sourceEventSeqs") : { observations: [], diagnostics: [], sealed: seqs };
 }
 function reduceUserMessage(event) {
   let kind = event.data?.source?.kind;
@@ -2199,8 +2233,8 @@ function reduceUserMessage(event) {
 function reduceAssistantMessage(event) {
   let { data } = event, message = data?.message, fault = faultOf([
     ...envelopeChecks(event),
-    ["data.turn", isIndex(data?.turn)],
-    ["data.step", isIndex(data?.step)],
+    ["data.turn", isIndex2(data?.turn)],
+    ["data.step", isIndex2(data?.step)],
     ["data.message.id", isId2(message?.id)],
     ["data.message.source.model", typeof message?.source?.model == "string"],
     ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
@@ -2225,7 +2259,7 @@ function reduceAssistantMessage(event) {
     type: "usage",
     messageId,
     model,
-    usage: usageOf(data.usage),
+    usage: usageOf2(data.usage),
     ...base,
     provenance: "assistant"
   }), { observations, diagnostics: [] };
@@ -2235,8 +2269,8 @@ function reduceToolResult(event) {
   if (event.surfaceOp !== "append") return nothing();
   let { data } = event, message = data?.message, fault = faultOf([
     ...envelopeChecks(event),
-    ["data.turn", isIndex(data?.turn)],
-    ["data.step", isIndex(data?.step)],
+    ["data.turn", isIndex2(data?.turn)],
+    ["data.step", isIndex2(data?.step)],
     ["data.message.toolCallId", isId2(message?.toolCallId)],
     ["data.message.isError", message?.isError === void 0 || typeof message.isError == "boolean"],
     ["data.message.content", isContent(message?.content, textShaped)]
@@ -2268,6 +2302,9 @@ function reduceDshEvent(event) {
       return nothing();
   }
 }
+function foldInputOf(event) {
+  return { ...reduceDshEvent(event), seq: event.seq, mainCall: isMainCall(event) };
+}
 function reduceDshSnapshot(events) {
   let batches = [], diagnostics = [];
   for (let event of events) {
@@ -2276,80 +2313,14 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, init_transcript_observation2 = __esm({
+var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall, init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     init_load_message();
-    init_inner_seal_message();
-    SCOPE = "dsh-transcript-observation", MESSAGE_NAMESPACE = "dsh:message:", isObject = (value) => value !== null && typeof value == "object" && !Array.isArray(value), isIndex = (value) => Number.isSafeInteger(value) && value >= 0, isId2 = (value) => typeof value == "string" && value !== "", isSurfaceOp = (value) => value === "append" || isObject(value) && value.op === "replace", nothing = () => ({ observations: [], diagnostics: [] });
+    init_carrier();
+    SCOPE = "dsh-transcript-observation", MESSAGE_NAMESPACE = "dsh:message:", isObject = (value) => value !== null && typeof value == "object" && !Array.isArray(value), isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0, isId2 = (value) => typeof value == "string" && value !== "", isSurfaceOp = (value) => value === "append" || isObject(value) && value.op === "replace", nothing = () => ({ observations: [], diagnostics: [] });
     textShaped = (block) => block.type !== "text" || typeof block.text == "string", toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name == "string" && typeof block.arguments == "string";
     isRoute = (route) => isObject(route) && typeof route.provider == "string" && typeof route.model == "string";
-  }
-});
-
-// lib/harness/dsh/source-facts.js
-function initialSourceFacts() {
-  return { epoch: 0, headDone: !1, points: [], carriers: [] };
-}
-function withCarrier(facts, event, reduced) {
-  let listed = new Set(reduced.withdraws);
-  return {
-    ...facts,
-    points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
-    carriers: [...facts.carriers, { seq: event.seq, epoch: facts.epoch, post: null }]
-  };
-}
-function withMainCall(facts, event, reduced) {
-  let usage = usageOf2(reduced), waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null), carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: event.seq, usage } } : carrier) : facts.carriers;
-  if (usage === null) return waiting ? { ...facts, carriers } : facts;
-  let role = facts.headDone ? waiting ? "post" : "current" : "head";
-  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: event.seq, role }], carriers };
-}
-function qualifiedCalls(facts) {
-  let pending = facts.points.findIndex((point) => point.role === "current");
-  return pending === -1 ? facts.points.length : pending;
-}
-function foldSourceFacts(facts, event, reduced = reduceDshEvent(event)) {
-  return isIndex2(event.seq) ? startsEpoch(reduced) ? { ...facts, epoch: facts.epoch + 1, headDone: !1, points: [] } : isCarrier(reduced) ? withCarrier(facts, event, reduced) : isMainCall(event) ? withMainCall(facts, event, reduced) : facts : facts;
-}
-var isCarrier, usageOf2, stockOf, startsEpoch, isIndex2, isMainCall, init_source_facts = __esm({
-  "lib/harness/dsh/source-facts.js"() {
-    init_transcript_observation2();
-    isCarrier = (reduced) => Array.isArray(reduced.withdraws), usageOf2 = (reduced) => reduced.observations.find((observation) => observation.type === "usage")?.usage ?? null, stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite, startsEpoch = (reduced) => reduced.observations.some((observation) => observation.type === "epoch-boundary");
-    isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0, isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
-  }
-});
-
-// lib/harness/dsh/source-fold.js
-function withdrawn(batch, selected) {
-  return batch.flatMap((observation) => observation.type === "tool-result" ? [observation.effectsOnly ? observation : { ...observation, effectsOnly: !0 }] : observation.type === "usage" ? selected ? [observation] : [] : ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : []);
-}
-function createDshSourceFold() {
-  let kept = [], epochStart = 0, facts = initialSourceFacts();
-  function push(event) {
-    let reduced = reduceDshEvent(event), { observations, diagnostics, withdraws = [] } = reduced;
-    facts = foldSourceFacts(facts, event, reduced);
-    let rewound = !1;
-    if (withdraws.length > 0) {
-      let listed = new Set(withdraws), selected = new Set(facts.points.map((point) => point.seq));
-      for (let index = epochStart; index < kept.length; index += 1) {
-        if (!listed.has(kept[index].seq)) continue;
-        let next = withdrawn(kept[index].batch, selected.has(kept[index].seq));
-        changed(kept[index].batch, next) && (kept[index].batch = next, rewound = !0);
-      }
-    }
-    let batch = isMainCall(event) ? [{ type: "main-call", sourceOrdinal: event.seq }, ...observations] : observations;
-    return batch.length === 0 ? { batch: null, rewound, diagnostics } : (batch.some((observation) => observation.type === "epoch-boundary") && (epochStart = kept.length), kept.push({ seq: event.seq, batch }), { batch, rewound, diagnostics });
-  }
-  function batches() {
-    return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
-  }
-  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
-}
-var changed, init_source_fold = __esm({
-  "lib/harness/dsh/source-fold.js"() {
-    init_transcript_observation2();
-    init_source_facts();
-    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+    isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
   }
 });
 
@@ -2358,11 +2329,11 @@ function indexDshLog(events) {
   return events.filter((event) => event.type === "assistant/message" && event.data?.usage !== void 0).map((event) => ({ limit: event.seq, ts: event.time }));
 }
 function createDshPlaybackDriver({ sessionId, events }) {
-  let fold = createDshSourceFold(), cursor = 0, replaced = !1;
+  let fold = createSourceFold(), cursor = 0, replaced = !1;
   function advance({ captureMode = "replay", limit = 1 / 0 } = {}) {
     let batches = [], rewound = !1;
     for (; cursor < events.length && events[cursor].seq <= limit; cursor += 1) {
-      let pushed = fold.push(events[cursor]);
+      let pushed = fold.push(foldInputOf(events[cursor]));
       rewound = rewound || pushed.rewound, pushed.batch !== null && batches.push(pushed.batch);
     }
     return rewound ? (replaced = !0, {
@@ -2378,6 +2349,7 @@ function createDshPlaybackDriver({ sessionId, events }) {
 var init_playback = __esm({
   "lib/harness/dsh/playback.js"() {
     init_source_fold();
+    init_transcript_observation2();
   }
 });
 
@@ -22751,10 +22723,11 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
           cacheRead: point.cacheRead,
           cacheCreation: point.cacheWrite,
           turnSeq: point.turnSeq,
-          foldedSeq: point.foldedSeq
+          foldedSeq: point.foldedSeq,
+          ...point.amberStockL === void 0 ? {} : { amberStockL: point.amberStockL }
         }));
       }
-      // The only bucket/resource query. It reads the Engine first, then passes only default-selected file rows
+      // Reads the Engine first, then passes only default-selected file rows
       // to Resource Enrichment — a row the position basis excludes buys no symbols, and a Skill has no file.
       getBucketData({ includeSymbols = !1 } = {}) {
         let bucket = this._engine.getBucketData(), skills = [], paths = [];
@@ -22794,6 +22767,11 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
           currentTurnSeq: bucket.currentTurnSeq,
           segment: bucket.segment
         };
+      }
+      // The Engine's held line numbers of one file, ascending; null when it has no resource at that path, and for a Skill
+      // key, whose number key 1 is no line of any file.
+      getHeldLines(path3) {
+        return path3.startsWith(SKILL_RESOURCE_PREFIX) ? null : this._engine.heldLines().get(path3) ?? null;
       }
       // The value host wiring persists unchanged as `profile_snapshot`. `b_total` is the UNCAPPED resident total:
       // the read-time cap belongs to the live dashboard, while persistence needs the belief its own path rows sum
@@ -26367,7 +26345,7 @@ function fitAffine(points) {
 function landmarksOf(reference, mf) {
   if (!reference || !(Number.isFinite(mf) && mf > 0))
     return { xSweet: null, xBrAmberL: null, xBrAmberR: null, xBrRedR: null };
-  let xAt = (u) => reference.a + reference.d * u;
+  let xAt = (u) => xOn(reference, u);
   return {
     xSweet: xAt(1),
     xBrAmberL: xAt(uLeftAtBr(mf, 0.1)),
@@ -26375,10 +26353,14 @@ function landmarksOf(reference, mf) {
     xBrRedR: xAt(uAtBr(mf, 0.25))
   };
 }
-var init_position = __esm({
+function amberStockOf({ reference, u, xBrAmberR, bDefault }, anchorL) {
+  return !reference || !Number.isFinite(u) || !Number.isFinite(xBrAmberR) || !(Number.isFinite(bDefault) && bDefault > 0) ? null : anchorL + bDefault * (xBrAmberR - xOn(reference, u));
+}
+var xOn, init_position = __esm({
   "lib/measurement/position.js"() {
     init_rate_lamp();
     init_bill_regret();
+    xOn = (reference, u) => reference.a + reference.d * u;
   }
 });
 
@@ -26769,7 +26751,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     segmentLPeak = Math.max(segmentLPeak, L), segmentGMin = Math.min(segmentGMin, effectiveG(gEma));
   }
   function acceptNewStep(record, usage, usageTotal, timestamp, result) {
-    let totalStock = usage.input + usage.cacheRead + usage.cacheWrite, model = record.model ?? null, firstOfEpoch = segmentSteps.length === 0;
+    let totalStock = stockOf(usage), model = record.model ?? null, firstOfEpoch = segmentSteps.length === 0;
     totalStock > 0 && frames.length > 0 && invariant3(
       mainCallsBetween(frames.at(-1).mainCallOrdinal, record.mainCallOrdinal) >= 1,
       "a frame's main call must come after the previous frame's"
@@ -26885,8 +26867,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         turnAtBrAmber
       },
       paths
-    };
-    return openFreshSegment(), closed;
+    }, { rateLamp } = readView(), lastStep = segmentSteps.at(-1);
+    return lastStep.amberStockL = rateLamp.reference?.provisional ? null : amberStockOf(rateLamp, stockOf(lastStep.usage)), openFreshSegment(), closed;
   }
   function closeCurrentSegment() {
     let closed = finalizeSegment();
@@ -26952,7 +26934,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function getHistory() {
     return calls.map((step) => {
-      let B = step.bAtCall, L = step.usage.input + step.usage.cacheRead + step.usage.cacheWrite;
+      let B = step.bAtCall, L = stockOf(step.usage);
       return {
         ts: step.timestamp,
         segment: step.segment,
@@ -26967,7 +26949,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         cacheRead: step.usage.cacheRead,
         cacheWrite: step.usage.cacheWrite,
         turnSeq: step.turn,
-        foldedSeq: step.foldedSeq
+        foldedSeq: step.foldedSeq,
+        ...step.amberStockL === void 0 ? {} : { amberStockL: step.amberStockL }
       };
     });
   }
@@ -27157,6 +27140,7 @@ var USAGE_KEYS, SETTLEMENT_EPSILON, init_engine = __esm({
     init_bill_regret();
     init_position();
     init_resident_ledger();
+    init_usage();
     USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"], SETTLEMENT_EPSILON = 1e-6;
   }
 });
@@ -28660,6 +28644,10 @@ function pricingResponse({ model, saved, policy, cliRatio }) {
     presets
   };
 }
+function heldFilePayload(path3, lineNumbers, workingTree, { fileBytes }) {
+  let ranges = runsOf(lineNumbers).map(([first, last]) => ({ offset: first, limit: last - first + 1 })), read = readTreeWindows(workingTree, path3, ranges, { fileBytes });
+  return read.status !== "readable" ? { path: path3, reason: read.reason } : { path: path3, total: read.totalLines, runs: read.windows };
+}
 function turnPageWire({ turnPage, nextBefore }) {
   return {
     turn_page: turnPage,
@@ -28678,7 +28666,7 @@ async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSour
     return process.env.SW_DEBUG && console.error("[turn_page_load]", err2), { ...core, turn_page_error: "turn_page_unavailable" };
   }
 }
-var INVALID_OVERRIDES_MESSAGE, init_wire = __esm({
+var INVALID_OVERRIDES_MESSAGE, INVALID_BUCKET_FILE_MESSAGE, NOT_HELD_MESSAGE, init_wire = __esm({
   "lib/wire.js"() {
     init_rate_lamp_manager();
     init_bill_regret();
@@ -28686,7 +28674,10 @@ var INVALID_OVERRIDES_MESSAGE, init_wire = __esm({
     init_lineage();
     init_turn_browse();
     init_lineage_headlines();
+    init_carried_evidence();
+    init_working_tree_text();
     INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
+    INVALID_BUCKET_FILE_MESSAGE = "Body must contain { path: string }", NOT_HELD_MESSAGE = "The path is not held in the current context.";
   }
 });
 
@@ -29330,7 +29321,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.0",
+      version: "0.11.1",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -29907,6 +29898,36 @@ var TURN_NOTICE, SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY, init_turn_recovery = 
   }
 });
 
+// lib/held-view.js
+function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
+  return (observations) => {
+    let completed = [], projection = createProjection({
+      completeToolResult: (pending, observation, context, options) => {
+        let answer = completeToolResult(pending, observation, context, options);
+        return completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal }), answer;
+      }
+    }), engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED }), skills = /* @__PURE__ */ new Map(), effects = [];
+    for (let observation of observations) {
+      completed = [];
+      let { records } = projection.project(observation, frameCtx);
+      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch")), records.some((record) => record.type === "epoch") && (skills = /* @__PURE__ */ new Map());
+      for (let { effects: answered, text, seq } of completed)
+        for (let { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
+          let isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX), key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
+          isSkill && skills.set(key, text), effects.push({ seq, kind: isSkill ? "skill" : "path", key });
+        }
+    }
+    return { paths: new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX))), skills, effects };
+  };
+}
+var SELECTED, init_held_view = __esm({
+  "lib/held-view.js"() {
+    init_engine();
+    init_resource_policy();
+    SELECTED = () => ({ selectedByDefault: !0, defaultDiscardReason: null });
+  }
+});
+
 // lib/harness/dsh/dialogue-source.js
 function createDshDialogueSource({ readSession }) {
   return {
@@ -29927,6 +29948,29 @@ var init_dialogue_source2 = __esm({
   }
 });
 
+// lib/harness/dsh/ask-result.js
+function askAnswersOf(resultText) {
+  let value;
+  try {
+    value = JSON.parse(resultText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value?.answers)) return [];
+  let answers = [];
+  for (let answer of value.answers) {
+    let { id, selected, custom } = answer ?? {};
+    if (!Array.isArray(selected) || !selected.every((label) => typeof label == "string")) return [];
+    if (custom !== void 0 && typeof custom != "string") return [];
+    answers.push(custom === void 0 ? { id, selected } : { id, selected, custom });
+  }
+  return answers;
+}
+var init_ask_result = __esm({
+  "lib/harness/dsh/ask-result.js"() {
+  }
+});
+
 // lib/harness/dsh/history-turn-rules.js
 function createDshHumanHeadRule() {
   return (line) => {
@@ -29935,24 +29979,12 @@ function createDshHumanHeadRule() {
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
-function answerText(result) {
-  let value;
-  try {
-    value = JSON.parse(result);
-  } catch {
-    return "";
-  }
-  let lines = [];
-  for (let answer of Array.isArray(value?.answers) ? value.answers : [])
-    Array.isArray(answer?.selected) && lines.push(...answer.selected), answer?.custom && lines.push(answer.custom);
-  return lines.join(`
-`);
-}
 function createDshAskHeadRule() {
   return (line) => {
     if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME2) return PASS;
     if (line.tool.isError === !0) return ABSORB;
-    let text = answerText(line.tool.result).trim();
+    let text = askAnswersOf(line.tool.result).flatMap(({ selected, custom }) => custom ? [...selected, custom] : selected).join(`
+`).trim();
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
@@ -29974,6 +30006,7 @@ var ASK_TOOL_NAME2, init_history_turn_rules2 = __esm({
   "lib/harness/dsh/history-turn-rules.js"() {
     init_turn();
     init_dialogue_fold();
+    init_ask_result();
     ASK_TOOL_NAME2 = "ask_user_question";
   }
 });
@@ -30094,48 +30127,34 @@ function composeWatcher({
     }),
     resourceKeysOf,
     modelPolicyFor: policyFor
-  }), heldView = heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult });
-  return { watcher, dialogueSource, dialogueProjection, heldView };
-}
-function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult }) {
-  let frameCtx = sessionId ? { recall: (toolUseId) => {
-    try {
-      return store.recallAttribution(sessionId, toolUseId);
-    } catch {
-      return null;
-    }
-  } } : {};
-  return (events, range) => {
-    let inRange = new Set(range), touched = { paths: /* @__PURE__ */ new Set(), skills: /* @__PURE__ */ new Set() }, completed = [], projection = createDshMeasurementProjection({
+  }), view = createHeldView({
+    createProjection: ({ completeToolResult: recording }) => createDshMeasurementProjection({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy: policyFor,
       interpretToolUse,
-      completeToolResult: (pending, observation, context, options) => {
-        let answer = completeToolResult(pending, observation, context, options);
-        return completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal }), answer;
+      completeToolResult: recording
+    }),
+    completeToolResult,
+    resolveModelPolicy: policyFor,
+    frameCtx: sessionId ? { recall: (toolUseId) => {
+      try {
+        return store.recallAttribution(sessionId, toolUseId);
+      } catch {
+        return null;
       }
-    }), engine = createMeasurementEngine({ resolveModelPolicy: policyFor, resolveResourcePolicy: SELECTED }), skills = /* @__PURE__ */ new Map();
-    for (let observation of reduceDshSnapshot(events).observations) {
-      completed = [];
-      let { records } = projection.project(observation, frameCtx);
-      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch")), records.some((record) => record.type === "epoch") && (skills = /* @__PURE__ */ new Map());
-      for (let { effects, text, seq } of completed)
-        for (let { resourceKey } of effects.flatMap((effect) => effect.impacts)) {
-          let isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX), key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
-          isSkill && skills.set(key, text), inRange.has(seq) && touched[isSkill ? "skills" : "paths"].add(key);
-        }
-    }
-    return { paths: new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX))), skills, touched };
-  };
+    } } : {}
+  });
+  return { watcher, dialogueSource, dialogueProjection, heldView: (events) => view(reduceDshSnapshot(events).observations) };
 }
-var DSH_TURN_NOTES_ROOT, sharedWorkingTree, SELECTED, init_composition = __esm({
+var DSH_TURN_NOTES_ROOT, sharedWorkingTree, init_composition = __esm({
   "dsh/src/composition.js"() {
     init_session_watcher();
     init_resource_policy();
     init_resource_enrichment();
     init_handoff();
     init_engine();
+    init_held_view();
     init_model_policy();
     init_pricing_store();
     init_project_key();
@@ -30150,7 +30169,6 @@ var DSH_TURN_NOTES_ROOT, sharedWorkingTree, SELECTED, init_composition = __esm({
     init_transcript_observation2();
     init_tool_evidence_profile2();
     DSH_TURN_NOTES_ROOT = join8(tmpdir(), "session-watcher", "turn-notes"), sharedWorkingTree = null;
-    SELECTED = () => ({ selectedByDefault: !0, defaultDiscardReason: null });
   }
 });
 
@@ -30377,6 +30395,12 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
     if (!isOverrideMap(overrides))
       return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
     res.json({ scenario: watcher.readScenario(overrides) });
+  }), app.post("/api/bucket/file", (req, res) => {
+    let { path: path3 } = req.body || {};
+    if (typeof path3 != "string") return res.status(400).json({ error: "invalid_body", message: INVALID_BUCKET_FILE_MESSAGE });
+    let lineNumbers = activeWatcher.getHeldLines(path3);
+    if (lineNumbers === null) return res.status(404).json({ error: "not_held", message: NOT_HELD_MESSAGE });
+    res.json(heldFilePayload(path3, lineNumbers, nodeWorkingTree2(), { fileBytes: ATTRIBUTION_LIMITS.fileBytes }));
   });
   let _replayController = null;
   app.post("/api/replay/start", async (req, res) => {
@@ -31156,7 +31180,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.11.0", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.11.1", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

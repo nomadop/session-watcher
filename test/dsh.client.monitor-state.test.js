@@ -1,15 +1,16 @@
-// The monitor view's pure state, `monitor-state.js`: the expansion and selection reducer, the rows the list shows with the attempts' display ordinals, the previews and elapsed times they show, the scroll tail and the drawer width.
+// The monitor view's pure state, `monitor-state.js`: the expansion, selection and filter reducer, the rows the list shows with the attempts' display ordinals, payback and settlements, the previews and elapsed times they show, the scroll tail and the drawer width.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, DRAWER_KEY_STEP, LIST_MIN_WIDTH, PREVIEW_CHARS,
-  createViewState, reduceView, isOpen, ordinalsOf, paybackOf, settlementsOf, unexpectedMissOf, shownStatusOf, sourceCategoryOf, slotTitleOf, rowIdentity, flattenRows, previewOf, elapsedOf, formatElapsed, clampDrawerWidth,
+  createViewState, reduceView, isOpen, slotTitleOf, rowIdentity, flattenRows, visibleGroups, previewOf, elapsedOf, formatElapsed, clampDrawerWidth,
   handoffSegmentOf, contextRangeText, NOT_AVAILABLE, LEAVES_LOADING, LEAVES_FAILED,
 } from '../dsh/src/client/monitor-state.js';
-import { attemptRow, slotRow, handoffRow } from './helpers/dsh-monitor-wire.js';
+import { settlementsOf } from '../public/lib/compactionEconomics.js';
+import { attemptRow, slotRow, handoffRow, failedRow, progressRow, paying, rebuilt, clearing, SUMMARY } from './helpers/dsh-monitor-wire.js';
 
-test('a new view state has nothing selected, no choices of its own and the drawer at its default width', () => {
-  assert.deepEqual(createViewState(), { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH });
+test('a new view state has nothing selected, no choices of its own, the drawer at its default width and the filter listing everything', () => {
+  assert.deepEqual(createViewState(), { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH, filter: { category: 'all', warned: false } });
 });
 
 test('every group is closed by default, a manual open is the group\'s own and stays, and a toggle of what shows open closes it', () => {
@@ -67,10 +68,6 @@ test('a row identity names the kind and the ids of the row alone: the same row h
 const identities = rows => rows.map(row => row.identity);
 /** A view state with the groups of the attempts `ids` opened, which a group is not by default. */
 const opening = (...ids) => ids.reduce((state, attemptId) => reduceView(state, { type: 'toggle', attemptId, open: false }), createViewState());
-const failedRow = id => attemptRow(id, { status: 'failed', reason: 'the response has no finish chunk', slots: null, endedAt: 1_800 + id });
-const progressRow = (id, status) => attemptRow(id, {
-  status, endedAt: null, slots: null, call: { state: 'generating', endedAt: null, finish: null, output: null, usage: null },
-});
 
 test('an open attempt lists its call row and, once committed with its slots loaded, a slot row per slot in source order, a closed attempt its own row alone, and by default every attempt is closed', () => {
   const attempts = [attemptRow(1), failedRow(2), progressRow(3, 'generating')];
@@ -136,11 +133,8 @@ test('the identity of a row does not depend on the order of the attempts or the 
   assert.deepEqual(byIdentity(backward), byIdentity(forward), 'each identity names the same row');
 });
 
-test('an attempt\'s display ordinal is its place among the attempts of its segment, counted from one, whatever its seq, and neither folding, a loaded slot list nor a later arrival moves it', () => {
+test('an attempt\'s row carries its segment and ordinal, and neither folding, a loaded slot list nor a later arrival moves it', () => {
   const attempts = [attemptRow(3), failedRow(17), progressRow(40, 'generating')];
-  assert.deepEqual(ordinalsOf(attempts), { 3: { epoch: 1, ordinal: 1 }, 17: { epoch: 1, ordinal: 2 }, 40: { epoch: 1, ordinal: 3 } });
-  assert.deepEqual(ordinalsOf([]), {});
-
   const ordinalRows = rows => Object.fromEntries(rows.filter(row => row.kind === 'attempt').map(row => [row.attempt.id, [row.epoch, row.ordinal]]));
   assert.deepEqual(ordinalRows(flattenRows(attempts, {}, createViewState())), { 3: [1, 1], 17: [1, 2], 40: [1, 3] }, 'each parent row carries its segment and its ordinal');
   const listed = flattenRows(attempts, { 3: [slotRow(10)] }, opening(3, 17, 40));
@@ -153,123 +147,14 @@ test('an attempt\'s display ordinal is its place among the attempts of its segme
 
   const appended = [...attempts, attemptRow(52)];
   assert.deepEqual(ordinalRows(flattenRows(appended, {}, createViewState())), { 3: [1, 1], 17: [1, 2], 40: [1, 3], 52: [1, 4] }, 'a later attempt takes the next ordinal and moves no earlier one');
-  const legacyAndUnknown = [attemptRow(5, { legacy: true, startedAt: null }), attemptRow(9, { status: 'unknown', slots: null, endedAt: null })];
-  assert.deepEqual(ordinalsOf(legacyAndUnknown), { 5: { epoch: 1, ordinal: 1 }, 9: { epoch: 1, ordinal: 2 } }, 'a legacy attempt and one with no terminal evidence count like any other');
 });
 
-test('the ordinal restarts at one in each segment, a segment is the host\'s boundary count plus one, and a segment with no attempt keeps its number unused', () => {
+test('the rows restart the ordinal at one in each segment', () => {
   const attempts = [0, 0, 1, 1, 3].map((epoch, at) => attemptRow(10 + at, { epoch }));
-  assert.deepEqual(Object.values(ordinalsOf(attempts)).map(({ epoch, ordinal }) => [epoch, ordinal]), [[1, 1], [1, 2], [2, 1], [2, 2], [4, 1]], 'the segments skipped by no attempt are not renumbered');
   assert.deepEqual(
     flattenRows(attempts, {}, createViewState()).filter(row => row.kind === 'attempt').map(row => [row.epoch, row.ordinal]),
     [[1, 1], [1, 2], [2, 1], [2, 2], [4, 1]],
   );
-  const { epoch: _, ...older } = attemptRow(7);
-  assert.deepEqual(ordinalsOf([older, attemptRow(8, { epoch: 0 })]), { 7: { epoch: 1, ordinal: 1 }, 8: { epoch: 1, ordinal: 2 } }, 'a row from a host that sends no segment reads as the first');
-});
-
-// A compaction that cut 74000 tokens at a rebuild of 8000 tokens, its summary call having read 48000 tokens from the cache and taken 1000 more (400 uncached and 600 written to it), under a write-to-read price ratio of 12, pays back (12 − 1) × 8000 + 48000 + 12 × 1000 = 148000 read-price tokens, which two later steps of 74000 each cover exactly.
-const CUT = { before: 100_000, after: 26_000, delta: -74_000, miss: 8_000 };
-const SUMMARY = { input: 400, output: 2_400, cacheRead: 48_000, cacheWrite: 600 };
-const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const paying = (id, overrides = {}) => attemptRow(id, { contextChange: CUT, cRatio: 12, call: { usage: SUMMARY }, stepN: 8, epoch: 0, ...overrides });
-const paidIds = attempts => attempts.filter(attempt => shownStatusOf(attempt, paybackOf(attempts)) === 'paid').map(({ id }) => id).sort((a, b) => a - b);
-const percentsOf = attempts => Object.fromEntries(paybackOf(attempts));
-
-test('a committed compaction has paid back once the steps that followed it in its segment save what its summary call and its rebuild cost, those of the compactions after it, never its own', () => {
-  assert.deepEqual(paidIds([paying(1), paying(2, { stepN: 1 }), paying(3, { stepN: 1 })]), [1], 'two later steps cover the cost exactly, which is enough; one does not, and the last has none after it');
-  assert.deepEqual(paidIds([paying(1, { stepN: 99 }), paying(2, { stepN: 1 })]), [], 'its own step count is steps before it');
-  assert.deepEqual(paidIds([paying(1), paying(2, { stepN: 2 })]), [1]);
-  assert.deepEqual(paidIds([paying(1), paying(2, { stepN: 1 }), paying(3, { stepN: 5 })]), [1, 2], 'the steps of every later compaction add up');
-  assert.equal(paybackOf([]).size, 0);
-});
-
-test('only the later compactions of the same segment count, and only the committed ones: a failed, cancelled or running attempt adds none of its steps, a later segment none, and a missing step count reads as none', () => {
-  const later = (overrides = {}) => [paying(1), paying(2, { stepN: 2, ...overrides })];
-  assert.deepEqual(paidIds(later()), [1], 'the control');
-  for (const status of ['failed', 'cancelled', 'generating', 'validating', 'unknown']) assert.deepEqual(paidIds(later({ status, slots: null })), [], status);
-  assert.deepEqual(paidIds(later({ epoch: 1 })), [], 'the steps of the next segment are not the segment\'s');
-  assert.deepEqual(paidIds([paying(1, { epoch: 1 }), paying(2, { stepN: 2, epoch: 0 })]), [], 'a segment before it either');
-  assert.deepEqual(paidIds(later({ stepN: null })), []);
-  assert.deepEqual(paidIds(later({ stepN: undefined })), []);
-  for (const stepN of [null, NaN, 'many']) assert.deepEqual(paidIds([paying(1), paying(2, { stepN }), paying(3, { stepN: 2 })]), [1, 2], `a row whose steps are ${String(stepN)} leaves the others' steps as they are`);
-  const { epoch: _, ...older } = paying(1);
-  assert.deepEqual(paidIds([older, paying(2, { stepN: 2 })]), [1], 'a row from a host that sends no segment is in the first');
-});
-
-test('what the compaction cost and what it saved must both be known: no cut, no measured rebuild, no usage of its summary call or no price ratio, and a compaction that is not committed, has not paid back', () => {
-  const next = attemptRow(2, { stepN: 100 });
-  assert.deepEqual(paidIds([paying(1), next]), [1], 'the control');
-  const unpaid = overrides => paidIds([paying(1, overrides), next]);
-  assert.deepEqual(unpaid({ contextChange: null }), []);
-  assert.deepEqual(unpaid({ contextChange: { ...CUT, delta: null } }), []);
-  assert.deepEqual(unpaid({ contextChange: { ...CUT, delta: 0 } }), [], 'a context that did not shrink saves nothing');
-  assert.deepEqual(unpaid({ contextChange: { ...CUT, delta: 250 } }), [], 'nor one that grew');
-  assert.deepEqual(unpaid({ contextChange: { ...CUT, miss: null } }), []);
-  assert.deepEqual(unpaid({ contextChange: { ...CUT, miss: undefined } }), []);
-  assert.deepEqual(unpaid({ call: { usage: null } }), []);
-  assert.deepEqual(unpaid({ cRatio: null }), []);
-  assert.deepEqual(unpaid({ cRatio: undefined }), [], 'a row from a host that sends none');
-  for (const status of ['failed', 'cancelled', 'generating', 'validating', 'unknown']) assert.deepEqual(unpaid({ status, slots: null }), [], status);
-});
-
-test('whether a compaction paid back does not depend on the order the rows arrive in', () => {
-  const attempts = [paying(1), paying(2, { stepN: 1 }), paying(3, { stepN: 1 }), paying(4, { stepN: 3, epoch: 1 })];
-  assert.deepEqual(paidIds(attempts), [1]);
-  assert.deepEqual(paidIds([...attempts].reverse()), [1]);
-});
-
-test('the progress of a committed compaction is the share of its cost the later steps of its segment saved, in whole percent and without a ceiling, none for an attempt that is not committed', () => {
-  assert.deepEqual(percentsOf([paying(1), paying(2, { stepN: 1 }), paying(3, { stepN: 1 })]), { 1: 100, 2: 50, 3: 0 }, 'a step saves half of what the compaction cost; the last compaction has no step after it');
-  assert.deepEqual(percentsOf([paying(1), paying(2, { stepN: 5 })]), { 1: 250, 2: 0 }, 'it keeps rising past a whole');
-  assert.deepEqual(percentsOf([paying(1), paying(2, { stepN: 1 }), failedRow(3), progressRow(4, 'generating')]), { 1: 50, 2: 0 }, 'a failed or running attempt has no progress of its own and adds no steps');
-  assert.equal(paybackOf([failedRow(3)]).has(3), false);
-});
-
-test('the cost of a compaction is what its summary call spent and what the next call rebuilt: the tokens the cache served at read price, the others at write price, the rebuild beyond read price, and the output not at all', () => {
-  const halfOf = (usage, miss = 0) => paybackOf([
-    paying(1, { cRatio: 2, contextChange: { before: 1_000, after: 900, delta: -100, miss }, call: { usage: { ...NO_USAGE, ...usage } } }), attemptRow(2, { stepN: 1 }),
-  ]).get(1);
-  assert.equal(halfOf({ cacheRead: 200 }), 50, 'a cost of 200 against a saving of 100: the cache read at read price');
-  assert.equal(halfOf({ input: 100 }), 50, 'an uncached input at write price');
-  assert.equal(halfOf({ cacheWrite: 100 }), 50, 'a cache write at write price');
-  assert.equal(halfOf({ cacheRead: 200, output: 99_999 }), 50, 'the output is not priced');
-  assert.equal(halfOf({}, 200), 50, 'the rebuild beyond read price, (2 − 1) × 200');
-  assert.equal(halfOf({ cacheRead: 100 }, 100), 50, 'the call and the rebuild add');
-});
-
-test('the progress is rounded down on the exact figures, so it reads a whole only for a compaction that paid back', () => {
-  const costing = (delta, overrides = {}) => paying(1, { contextChange: { before: 100_000, after: 26_000, delta, miss: 8_000 }, ...overrides });
-  const later = attemptRow(2, { stepN: 3 });
-  assert.equal(paybackOf([costing(-49_333), later]).get(1), 99, '147999 of 148000');
-  assert.equal(paybackOf([costing(-49_334), later]).get(1), 100);
-  const small = (delta, steps) => paybackOf([paying(1, { contextChange: { before: 200, after: 100, delta, miss: 0 }, cRatio: 2, call: { usage: { ...NO_USAGE, cacheRead: 100 } } }), attemptRow(2, { stepN: steps })]).get(1);
-  assert.equal(small(-57, 1), 57, 'a cost of 100 and a saving of 57, where 0.57 × 100 falls short of 57');
-  assert.equal(small(-1, 1), 1);
-});
-
-test('the progress is none where what the compaction cost or saved is not known, and nothing where the context did not shrink', () => {
-  const next = attemptRow(2, { stepN: 100 });
-  assert.equal(paybackOf([paying(1), next]).get(1), 5_000, 'the control');
-  const of = overrides => paybackOf([paying(1, overrides), next]).get(1);
-  for (const overrides of [
-    { contextChange: null }, { contextChange: { ...CUT, delta: null } }, { contextChange: { ...CUT, miss: null } }, { contextChange: { ...CUT, miss: undefined } },
-    { call: { usage: null } }, { cRatio: null }, { cRatio: undefined },
-    { cRatio: 0, call: { usage: NO_USAGE } }, { cRatio: 1, call: { usage: NO_USAGE } },
-  ]) assert.equal(of(overrides), null, JSON.stringify(overrides));
-  assert.equal(of({ contextChange: { ...CUT, delta: 0 } }), 0, 'a context that did not shrink saves nothing');
-  assert.equal(of({ contextChange: { ...CUT, delta: 250 } }), 0, 'nor one that grew, which shows no negative progress');
-});
-
-test('the status a row shows is paid for a compaction whose progress is a whole and its own status otherwise', () => {
-  const at = percent => new Map([[1, percent]]);
-  assert.equal(shownStatusOf(paying(1), at(100)), 'paid');
-  assert.equal(shownStatusOf(paying(1), at(250)), 'paid');
-  assert.equal(shownStatusOf(paying(1), at(99)), 'committed');
-  assert.equal(shownStatusOf(paying(1), at(null)), 'committed');
-  assert.equal(shownStatusOf(paying(1), new Map()), 'committed');
-  assert.equal(shownStatusOf(paying(2), at(100)), 'committed');
-  assert.equal(shownStatusOf(failedRow(3), new Map([[3, 100]])), 'failed', 'only a committed compaction can have paid back');
 });
 
 test('the parent rows carry the status they show, and no call or slot row carries one', () => {
@@ -281,55 +166,6 @@ test('the parent rows carry the status they show, and no call or slot row carrie
   assert.deepEqual(others.map(row => row.kind), ['call', 'slot']);
   assert.equal(others.some(row => 'shownStatus' in row), false);
   assert.equal(rows.find(row => row.identity === 'attempt:1').attempt.status, 'committed', 'the row\'s own status is left as the host gave it');
-});
-
-// A committed compaction whose first call after it saw `after` tokens of context and rebuilt `miss` of them in the cache.
-const rebuilt = (id, after, miss, overrides = {}) => attemptRow(id, { contextChange: { before: after + 1_000, after, delta: -1_000, miss }, epoch: 0, ...overrides });
-const warnedIds = attempts => [...unexpectedMissOf(attempts)].sort((a, b) => a - b);
-
-test('a cache rebuild is unexpected when it exceeds the context\'s growth since the previous compaction of its segment by more than 30 percent of that compaction\'s context', () => {
-  const after = (grown, miss) => [rebuilt(1, 10_000, 0), rebuilt(2, 10_000 + grown, miss)];
-  assert.deepEqual(warnedIds(after(2_000, 2_004)), [], 'a rebuild a little above the growth is within the tolerance');
-  assert.deepEqual(warnedIds(after(2_000, 5_000)), [], 'a shortfall of exactly 30 percent of 10000 is not past it');
-  assert.deepEqual(warnedIds(after(2_000, 5_001)), [2], 'one token past it is');
-  assert.deepEqual(warnedIds(after(-2_000, 1_000)), [], 'a context that shrank has a negative growth, and the shortfall 3000 is not past it either');
-  assert.deepEqual(warnedIds(after(-2_000, 1_001)), [2]);
-  assert.deepEqual(warnedIds(after(5_000, 0)), [], 'a rebuild below the growth never warns');
-  assert.deepEqual(warnedIds(after(0, 10_000)), [2], 'a rebuild of the whole context against none grown');
-});
-
-test('only a committed compaction after another of its own segment can warn, the previous one being the nearest committed one whatever its own rebuild was', () => {
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 9_999)]), [], 'the first of a segment has none to compare with');
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 0, { epoch: 0 }), rebuilt(2, 10_000, 9_999, { epoch: 1 })]), [], 'the previous compaction of another segment is none');
-  const { epoch: _, ...older } = rebuilt(1, 10_000, 0);
-  assert.deepEqual(warnedIds([older, rebuilt(2, 10_000, 9_999, { epoch: undefined })]), [2], 'a row from a host that sends no segment is in the first');
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 0), failedRow(2), rebuilt(3, 12_000, 9_000)]), [3], 'a failed attempt between them is skipped');
-  const noise = status => [rebuilt(1, 10_000, 0), rebuilt(2, 50_000, 0, { status, slots: null }), rebuilt(3, 12_000, 4_000)];
-  for (const status of ['failed', 'cancelled', 'generating', 'validating', 'unknown']) assert.deepEqual(warnedIds(noise(status)), [], `${status}: neither warned nor the previous`);
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 0), rebuilt(2, 11_000, 50_000), rebuilt(3, 12_000, 1_004)]), [2], 'a warned compaction is the previous one all the same, and an ordinary rebuild after it is none');
-});
-
-test('what the comparison needs must be known: the context after both compactions, the rebuild of this one and a context after the previous one that is not none', () => {
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 0), rebuilt(2, 12_000, 9_000)]), [2], 'the control');
-  const of = overrides => warnedIds([rebuilt(1, 10_000, 0), rebuilt(2, 12_000, 9_000, overrides)]);
-  assert.deepEqual(of({ contextChange: null }), []);
-  assert.deepEqual(of({ contextChange: undefined }), []);
-  assert.deepEqual(of({ contextChange: { before: 11_000, after: null, delta: null, miss: 9_000 } }), [], 'no context after it');
-  assert.deepEqual(of({ contextChange: { before: 5_000, after: 4_000, delta: -1_000, miss: null } }), [], 'no rebuild, which is not a rebuild of none');
-  assert.deepEqual(of({ contextChange: { before: 11_000, after: 12_000, delta: 1_000 } }), [], 'a row from a host that sends none');
-  const from = overrides => warnedIds([rebuilt(1, 10_000, 0, overrides), rebuilt(2, 2_000, 9_000)]);
-  assert.deepEqual(from({}), [2], 'the control');
-  assert.deepEqual(from({ contextChange: null }), []);
-  assert.deepEqual(from({ contextChange: { before: 11_000, after: null, delta: null, miss: 0 } }), [], 'no context after the previous one');
-  assert.deepEqual(from({ contextChange: { before: 1_000, after: 0, delta: -1_000, miss: 0 } }), [], 'a context of none has no share to take');
-  assert.deepEqual(warnedIds([rebuilt(1, 10_000, 0), rebuilt(2, 11_000, 0, { contextChange: { before: 11_000, after: null, delta: null, miss: 0 } }), rebuilt(3, 12_000, 9_000)]), [], 'the previous one is the nearest, not the nearest that is known');
-});
-
-test('whether a rebuild is unexpected does not depend on the order the rows arrive in', () => {
-  const attempts = [rebuilt(1, 10_000, 0), rebuilt(2, 12_000, 9_000), rebuilt(3, 13_000, 1_004), rebuilt(4, 5_000, 90_000, { epoch: 1 })];
-  assert.deepEqual(warnedIds(attempts), [2]);
-  assert.deepEqual(warnedIds([...attempts].reverse()), [2]);
-  assert.deepEqual(warnedIds([]), []);
 });
 
 test('the parent rows carry whether their rebuild is unexpected, and no call or slot row does', () => {
@@ -405,28 +241,13 @@ test('a slot previews the display of its source where the host sent one and its 
   ]);
 });
 
-test('a source falls into a category of its own by its event type and producer kind: a human\'s user message is the user, any other recorded kind of a user message an injection, the other known types their own, and anything missing or unknown is other', () => {
-  const user = kind => ({ type: 'user/message', kind });
-  assert.equal(sourceCategoryOf(user('user')), 'user');
-  assert.equal(sourceCategoryOf(user('runtime-context')), 'injected');
-  assert.equal(sourceCategoryOf(user('a-kind-no-list-names')), 'injected', 'no list of producers decides it');
-  assert.equal(sourceCategoryOf(user(null)), 'other', 'a user message that records no source');
-  assert.equal(sourceCategoryOf({ type: 'developer/message', kind: 'user' }), 'developer', 'the type decides first');
-  assert.equal(sourceCategoryOf({ type: 'system/message', kind: 'system-prompt' }), 'system');
-  assert.equal(sourceCategoryOf({ type: 'tool/result', kind: 'tool' }), 'tool');
-  assert.equal(sourceCategoryOf({ type: 'assistant/message', kind: 'model' }), 'assistant');
-  assert.equal(sourceCategoryOf({ type: 'plugin:x/y', kind: null }), 'other');
-  assert.equal(sourceCategoryOf(undefined), 'other', 'a host that sends no source');
-  assert.equal(sourceCategoryOf(null), 'other');
-});
-
 test('a slot is titled by its turn and step, by its turn alone, and by the category of its source where it has neither', () => {
   const t = (key, params = {}) => `${key}(${Object.entries(params).map(([name, value]) => `${name}=${value}`).join(',')})`;
-  const user = { type: 'user/message', kind: 'user' };
+  const user = { type: 'user/message', kind: 'user', category: 'user' };
   assert.equal(slotTitleOf({ turn: 2, step: 3, source: user }, t), 'monitor.object.turn(turn=2) · monitor.object.step(step=3)');
   assert.equal(slotTitleOf({ turn: 2, step: null, source: user }, t), 'monitor.object.turn(turn=2)');
   assert.equal(slotTitleOf({ turn: null, step: null, source: user }, t), 'monitor.source.user()');
-  assert.equal(slotTitleOf({ turn: null, step: null, source: { type: 'tool/result', kind: 'tool' } }, t), 'monitor.source.tool()');
+  assert.equal(slotTitleOf({ turn: null, step: null, source: { type: 'tool/result', kind: 'tool', category: 'tool' } }, t), 'monitor.source.tool()');
 });
 
 test('a slot\'s preview pairs the source the call saw with the slot\'s C string, an empty string being a preview of its own', () => {
@@ -452,7 +273,6 @@ test('an attempt in progress is as old as the clock says, a finished one keeps t
     assert.equal(elapsedOf(running, 'attempt', START - 50), 0, `${status} never reads below zero`);
   }
   assert.equal(elapsedOf(attemptRow(1, { status: 'unknown', endedAt: null }), 'attempt', NOW), null, 'no terminal evidence, no end to measure');
-  assert.equal(elapsedOf(attemptRow(1, { startedAt: null, legacy: true }), 'attempt', NOW), null, 'an attempt of old data has no start');
   assert.equal(elapsedOf(attemptRow(1, { endedAt: null }), 'attempt', NOW), null, 'a settled attempt without its end time');
 });
 
@@ -469,7 +289,6 @@ test('a call is as old as the clock says while its stream runs and keeps its own
   assert.equal(elapsedOf(generating, 'call', NOW + 1_000), NOW + 1_000 - START);
   assert.equal(elapsedOf(attemptRow(1, { status: 'failed', call: { state: 'absent', endedAt: null } }), 'call', NOW), null, 'no call, no duration');
   assert.equal(elapsedOf(attemptRow(1, { status: 'unknown', endedAt: null }), 'call', NOW), 500, 'a recorded call keeps its duration whatever the attempt came to');
-  assert.equal(elapsedOf(attemptRow(1, { startedAt: null, legacy: true }), 'call', NOW), null, 'no start is inferred for the call');
   assert.equal(elapsedOf({ ...committed, firstAt: START + 300, response: { firstAt: START + 300 } }, 'call', NOW), 500, 'a first chunk starts nothing');
 });
 
@@ -646,114 +465,7 @@ test('the range of a handoff\'s context names the words it is given, a dash wher
   assert.equal(contextRangeText(null, t, 'monitor.handoff.meta.range'), NOT_AVAILABLE);
 });
 
-// ── The settlement of a segment a /sw-continue cleared ───────────────────────
-
-/** The continue row of the clear of segment `epoch - 1`, which cut `tailSteps` steps off after the segment's last carrier or checkpoint. */
-const clearing = (id, epoch, tailSteps, overrides = {}) => handoffRow(id, { type: 'continue', epoch, tailSteps, ...overrides });
-const percentsWith = (attempts, handoffs) => Object.fromEntries(paybackOf(attempts, handoffs));
-
-test('the steps a clear cut off count for every compaction of the segment it cleared, on top of the steps of the compactions after it, so the progress reads what the whole run earned', () => {
-  const segment = [paying(1), paying(2, { stepN: 1 })];
-  assert.deepEqual(percentsOf(segment), { 1: 50, 2: 0 }, 'the control: no handoff');
-  assert.deepEqual(percentsWith(segment, [clearing(5, 1, 2)]), { 1: 150, 2: 100 }, 'two steps after the last compaction add to the one step after the first');
-  assert.deepEqual(percentsWith(segment, [clearing(5, 1, 0)]), { 1: 50, 2: 0 }, 'a clear that cut off no step adds none');
-  assert.equal(shownStatusOf(segment[1], paybackOf(segment, [clearing(5, 1, 2)])), 'paid', 'the last compaction of a cleared segment can have paid back');
-  assert.equal(shownStatusOf(segment[1], paybackOf(segment, [])), 'committed');
-  assert.deepEqual(percentsWith(segment, undefined), percentsOf(segment), 'no list of handoffs is none');
-});
-
-test('only a continue counts, the first of its segment, and only the segment it cleared: a load, a clear of another segment, a count it does not have and a failed attempt add nothing', () => {
-  const segment = [paying(1), paying(2, { stepN: 1 })];
-  const unchanged = { 1: 50, 2: 0 };
-  assert.deepEqual(percentsWith(segment, [handoffRow(5, { epoch: 1 })]), unchanged, 'a load');
-  assert.deepEqual(percentsWith(segment, [handoffRow(5, { epoch: 1, tailSteps: 2 })]), unchanged, 'a load that carries a count is still a load');
-  assert.deepEqual(percentsWith(segment, [clearing(5, 2, 2)]), unchanged, 'the clear of the next segment');
-  assert.deepEqual(percentsWith(segment, [clearing(5, 0, 2)]), unchanged, 'a continue that cleared no segment');
-  for (const tailSteps of [null, undefined, NaN, 'many']) assert.deepEqual(percentsWith(segment, [clearing(5, 1, tailSteps)]), unchanged, `a count of ${String(tailSteps)}`);
-  assert.deepEqual(percentsWith(segment, [clearing(9, 1, 7), clearing(5, 1, 2)]), { 1: 150, 2: 100 }, 'of two continues of one segment, the first by id, whatever the order they come in');
-  const both = [...segment, paying(3, { epoch: 1 }), paying(4, { epoch: 1, stepN: 1 }), failedRow(6)];
-  assert.deepEqual(percentsWith(both, [clearing(5, 1, 2)]), { 1: 150, 2: 100, 3: 50, 4: 0 }, 'the next segment does not take the steps of the clear before it, and a failed attempt has no progress');
-});
-
-test('a segment a continue cleared settles into its compactions\' own savings and costs, in the order of their ids, and the totals of those whose savings and costs are known', () => {
-  const segment = [paying(1), paying(2, { stepN: 1 })];
-  const settled = settlementsOf(segment, [clearing(5, 1, 2)]);
-  assert.deepEqual([...settled.keys()], [5], 'keyed by the handoff id');
-  assert.deepEqual(settled.get(5), {
-    epoch: 1,
-    count: 2,
-    steps: 11,
-    saved: 370_000,
-    cost: 296_000,
-    rows: [{ id: 1, ordinal: 1, saved: 222_000, cost: 148_000 }, { id: 2, ordinal: 2, saved: 148_000, cost: 148_000 }],
-  });
-  assert.equal(settlementsOf([], []).size, 0);
-  assert.deepEqual(settlementsOf([...segment].reverse(), [clearing(5, 1, 2)]).get(5).rows.map(row => row.id), [1, 2], 'by id, not by arrival');
-});
-
-test('a settlement names the segment as its compactions\' titles do, and each compaction by its place in it, whichever segment it is', () => {
-  const attempts = [paying(1), paying(2, { epoch: 2 }), paying(3, { epoch: 2, stepN: 1 })];
-  const settled = settlementsOf(attempts, [clearing(5, 1, 1), clearing(9, 3, 4)]);
-  assert.deepEqual([...settled.keys()], [5, 9]);
-  assert.deepEqual([settled.get(5).epoch, settled.get(5).rows.map(row => row.ordinal)], [1, [1]]);
-  assert.deepEqual([settled.get(9).epoch, settled.get(9).rows.map(row => row.ordinal)], [3, [1, 2]]);
-  const ordinals = ordinalsOf(attempts);
-  assert.deepEqual(settled.get(9).rows.map(row => [row.id, ordinals[row.id].epoch, ordinals[row.id].ordinal]), [[2, 3, 1], [3, 3, 2]], 'the title the compaction\'s own row shows');
-});
-
-test('there is no settlement for a load, for a segment no clear cut, for a segment of no committed compaction, for one whose compactions all lack a saving or a cost, or for a second continue of a segment', () => {
-  const segment = [paying(1), paying(2, { stepN: 1 })];
-  assert.equal(settlementsOf(segment, [handoffRow(5, { epoch: 1 })]).size, 0, 'a load');
-  assert.equal(settlementsOf(segment, [clearing(5, 2, 2)]).size, 0, 'the segment after');
-  assert.equal(settlementsOf(segment, [clearing(5, 0, 2)]).size, 0);
-  assert.equal(settlementsOf([failedRow(1), progressRow(2, 'generating')], [clearing(5, 1, 2)]).size, 0, 'no committed compaction');
-  assert.equal(settlementsOf([paying(1, { cRatio: null }), paying(2, { call: { usage: null } })], [clearing(5, 1, 2)]).size, 0, 'none whose figures are all known');
-  assert.deepEqual([...settlementsOf(segment, [clearing(5, 1, 2), clearing(9, 1, 3)]).keys()], [5], 'the first continue of the segment alone');
-});
-
-test('a compaction whose saving or cost is not known stays in the settlement\'s rows and its count with neither figure, and in none of its totals; an attempt that did not commit is in none', () => {
-  const attempts = [paying(1), failedRow(2), paying(3, { stepN: 1, cRatio: null }), paying(4, { stepN: 1 }), progressRow(6, 'generating')];
-  const settlement = settlementsOf(attempts, [clearing(9, 1, 2)]).get(9);
-  assert.equal(settlement.count, 3, 'the committed compactions, those without figures included');
-  assert.deepEqual(settlement.rows, [
-    { id: 1, ordinal: 1, saved: 296_000, cost: 148_000 },
-    { id: 3, ordinal: 3, saved: null, cost: null },
-    { id: 4, ordinal: 4, saved: 148_000, cost: 148_000 },
-  ], 'a compaction keeps the place its own row shows, a failed one before it taking one');
-  assert.deepEqual([settlement.saved, settlement.cost], [444_000, 296_000], 'the totals add up those with figures');
-});
-
-test('a settlement\'s steps are the whole run of its segment: the steps of its committed compactions, those without figures included, and the steps the first clear cut off after the segment\'s last carrier or checkpoint', () => {
-  const attempts = [paying(1, { stepN: 3 }), paying(2, { stepN: 4, cRatio: null }), paying(3, { stepN: null }), paying(4, { stepN: 'many' }), paying(5, { stepN: 2, epoch: 1 }), { ...failedRow(6), stepN: 50 }, { ...progressRow(7, 'generating'), stepN: 60 }, paying(8, { stepN: NaN }), paying(10, { stepN: Infinity })];
-  const settled = settlementsOf(attempts, [clearing(9, 1, 5), clearing(12, 1, 99)]);
-  assert.equal(settled.get(9).steps, 12, '3 and 4 of the compactions, none of those without a count, a failed or a running attempt or the next segment, and the 5 the clear cut off');
-});
-
-test('a settlement\'s figures are the progress\'s own: a context that did not shrink saves nothing, and what the progress reads from the same compaction is its saving over its cost', () => {
-  const attempts = [paying(1, { contextChange: { ...CUT, delta: 250 } }), paying(2, { stepN: 1 })];
-  const handoffs = [clearing(5, 1, 2)];
-  const settlement = settlementsOf(attempts, handoffs).get(5);
-  assert.deepEqual(settlement.rows.map(row => [row.saved, row.cost]), [[0, 148_000], [148_000, 148_000]]);
-  const progress = paybackOf(attempts, handoffs);
-  assert.deepEqual(settlement.rows.map(row => Math.floor(row.saved * 100 / row.cost)), [progress.get(1), progress.get(2)]);
-});
-
-test('a row from a host that sends no segment is in the first segment, for the progress and the settlement alike', () => {
-  const bare = attempt => { const { epoch: _, ...older } = attempt; return older; };
-  const segment = [bare(paying(1)), bare(paying(2, { stepN: 1 }))];
-  const handoffs = [clearing(5, 1, 2)];
-  assert.deepEqual(percentsWith(segment, handoffs), { 1: 150, 2: 100 });
-  const settlement = settlementsOf(segment, handoffs).get(5);
-  assert.deepEqual(settlement.rows.map(row => [row.id, row.ordinal, row.saved]), [[1, 1, 222_000], [2, 2, 148_000]]);
-});
-
-test('a continue row from a host that sends no step count settles as though it cut none off, and the host\'s rows without handoffs keep reading as before', () => {
-  const segment = [paying(1), paying(2, { stepN: 1 })];
-  const { tailSteps: _, ...older } = clearing(5, 1, 2);
-  assert.deepEqual(percentsWith(segment, [older]), percentsOf(segment));
-  assert.equal(settlementsOf(segment, [older]).get(5).saved, 74_000);
-  assert.equal(settlementsOf(segment, [older]).get(5).steps, 9);
-});
+// ── The settlement row of a segment a /sw-continue cleared ────────────────────
 
 test('a settlement row has an identity of its own: the kind and the handoff id, never the handoff\'s, and selecting it keeps that handoff id with no turn', () => {
   assert.equal(rowIdentity({ kind: 'settlement', handoffId: 7 }), 'settlement:7');
@@ -784,4 +496,107 @@ test('the compactions\' shown status reads the steps a clear cut off, as their p
   const status = handoffs => flattenRows(attempts, {}, createViewState(), handoffs).find(row => row.kind === 'attempt').shownStatus;
   assert.equal(status([]), 'committed');
   assert.equal(status([clearing(5, 1, 2)]), 'paid');
+});
+
+// ── The filter and the collapse of every group ────────────────────────────────
+
+test('choosing another category or switching the warning filter changes the filter and closes the drawer, and choosing what is already chosen answers the state it was given', () => {
+  const base = createViewState();
+  const open = reduceView(base, { type: 'toggle', attemptId: 1, open: false });
+  const wide = reduceView(open, { type: 'resize', width: 600, containerWidth: 1_400 });
+  const selected = reduceView(wide, { type: 'select', kind: 'call', attemptId: 1 });
+  assert.equal(reduceView(selected, { type: 'category', category: 'all' }), selected);
+  assert.equal(reduceView(selected, { type: 'warned', warned: false }), selected);
+
+  const handoffs = reduceView(selected, { type: 'category', category: 'handoff' });
+  assert.deepEqual(handoffs.filter, { category: 'handoff', warned: false });
+  assert.equal(handoffs.selected, null, 'a change of the filter closes the drawer, whether the selected row stays listed or not');
+  assert.deepEqual(handoffs.overrides, selected.overrides, 'the groups the user opened stay open');
+  assert.equal(handoffs.drawerWidth, selected.drawerWidth);
+  assert.equal(reduceView(handoffs, { type: 'category', category: 'handoff' }), handoffs);
+
+  const warned = reduceView(reduceView(handoffs, { type: 'select', kind: 'content', handoffId: 5 }), { type: 'warned', warned: true });
+  assert.deepEqual(warned.filter, { category: 'handoff', warned: true }, 'each part of the filter leaves the other');
+  assert.equal(warned.selected, null);
+  assert.deepEqual(reduceView(warned, { type: 'category', category: 'compaction' }).filter, { category: 'compaction', warned: true });
+  assert.deepEqual(reduceView(warned, { type: 'warned', warned: false }).filter, { category: 'handoff', warned: false });
+  assert.deepEqual(base, createViewState(), 'a reduction leaves the state it was given');
+});
+
+test('collapsing closes every group the user opened and leaves the selection and the filter; with no group open it answers the state it was given', () => {
+  let state = createViewState();
+  for (const action of [{ type: 'toggle', attemptId: 1, open: false }, { type: 'toggle', attemptId: 2, open: false }, { type: 'toggle', handoffId: 5, open: false }, { type: 'warned', warned: true }, { type: 'select', kind: 'slot', attemptId: 1, slotKey: 10 }]) state = reduceView(state, action);
+
+  const collapsed = reduceView(state, { type: 'collapse' });
+  for (const id of [1, 2, 5]) assert.equal(isOpen(collapsed, id), false, `group ${id}`);
+  assert.equal(collapsed.selected, state.selected, 'the selection under a collapsed group stays');
+  assert.equal(collapsed.filter, state.filter);
+  assert.equal(collapsed.drawerWidth, state.drawerWidth);
+  assert.equal(reduceView(collapsed, { type: 'collapse' }), collapsed);
+
+  const reclosed = reduceView(reduceView(createViewState(), { type: 'toggle', attemptId: 1, open: false }), { type: 'toggle', attemptId: 1, open: true });
+  assert.equal(reduceView(reclosed, { type: 'collapse' }), reclosed, 'a group the user closed again is no open group');
+});
+
+// Two compactions of segment 0 that cut the context, the second rebuilding enough of the first's context in the cache to pass `UNEXPECTED_MISS_PERCENT` (a warning); the continue 5 that cleared the segment, a settlement before it; a later load 7; and a compaction of segment 1 that grew the context (a warning).
+const mixed = () => ({ attempts: [paying(1), paying(2, { stepN: 1 }), attemptRow(9, { epoch: 1 })], handoffs: [clearing(5, 1, 2), handoffRow(7, { epoch: 1 })] });
+const filtering = (...actions) => actions.reduce(reduceView, createViewState());
+const category = name => ({ type: 'category', category: name });
+const WARNED = { type: 'warned', warned: true };
+
+test('a filter lists the groups of its category and, with the warning filter on, the compactions that carry a warning, whether the context grew or the cache rebuilt more than it grew by; a handoff and a settlement carry none', () => {
+  const { attempts, handoffs } = mixed();
+  const listed = (...actions) => identities(flattenRows(attempts, {}, filtering(...actions), handoffs));
+  const ids = rows => [rows.attempts.map(attempt => attempt.id), rows.handoffs.map(handoff => handoff.id)];
+
+  assert.deepEqual(listed(), ['attempt:1', 'attempt:2', 'settlement:5', 'handoff:5', 'handoff:7', 'attempt:9']);
+  assert.deepEqual(listed(category('handoff')), ['settlement:5', 'handoff:5', 'handoff:7'], 'the settlement is of the handoffs');
+  assert.deepEqual(listed(category('compaction')), ['attempt:1', 'attempt:2', 'attempt:9']);
+  assert.deepEqual(listed(WARNED), ['attempt:2', 'attempt:9'], 'the rebuild of the cache and the growth of the context are each a warning');
+  assert.deepEqual(listed(WARNED, category('compaction')), ['attempt:2', 'attempt:9']);
+  assert.deepEqual(listed(WARNED, category('handoff')), [], 'the two filters intersect');
+  assert.deepEqual(listed(WARNED, { type: 'warned', warned: false }), listed());
+
+  assert.deepEqual(ids(visibleGroups(attempts, handoffs, filtering().filter)), [[1, 2, 9], [5, 7]]);
+  assert.deepEqual(ids(visibleGroups(attempts, handoffs, filtering(category('handoff')).filter)), [[], [5, 7]]);
+  assert.deepEqual(ids(visibleGroups(attempts, handoffs, filtering(WARNED).filter)), [[2, 9], []]);
+});
+
+test('the filter hides rows and changes no figure of the rest: the ordinals, the shown status and the cache warning of a compaction read all the compactions and all the handoffs', () => {
+  const { attempts, handoffs } = mixed();
+  const attemptRows = state => Object.fromEntries(flattenRows(attempts, {}, state, handoffs).filter(row => row.kind === 'attempt').map(({ attempt, epoch, ordinal, shownStatus, missWarned }) => [attempt.id, { epoch, ordinal, shownStatus, missWarned }]));
+  const all = attemptRows(createViewState());
+  assert.deepEqual(all[1], { epoch: 1, ordinal: 1, shownStatus: 'paid', missWarned: false }, 'the steps of the cleared segment pay it back');
+  assert.equal(all[2].missWarned, true);
+  for (const actions of [[category('compaction')], [WARNED], [WARNED, category('compaction')]]) {
+    const shown = attemptRows(filtering(...actions));
+    for (const [id, figures] of Object.entries(shown)) assert.deepEqual(figures, all[id], `attempt ${id}`);
+  }
+  assert.deepEqual(Object.keys(attemptRows(filtering(WARNED))), ['2', '9']);
+  assert.equal(flattenRows(attempts, {}, filtering(category('handoff')), handoffs).find(row => row.kind === 'settlement').settlement.count, 2, 'a settlement reads the compactions the filter hides');
+});
+
+test('a compaction the filter hides still pays back the ones it lists: the steps after a listed compaction count whether they are listed or not', () => {
+  const rebuilding = attemptRow(2, { contextChange: { before: 150_000, after: 50_000, delta: -100_000, miss: 40_000 }, cRatio: 12, call: { usage: SUMMARY }, stepN: 4, epoch: 0 });
+  const quiet = attemptRow(3, { contextChange: { before: 51_000, after: 50_000, delta: -1_000, miss: 0 }, stepN: 5, epoch: 0 });
+  const attempts = [paying(1), rebuilding, quiet];
+  const statusOf = state => Object.fromEntries(flattenRows(attempts, {}, state).map(row => [row.attempt.id, row.shownStatus]));
+  assert.equal(statusOf(createViewState())[2], 'paid');
+  assert.deepEqual(statusOf(filtering(WARNED)), { 2: 'paid' }, 'the compaction after it is not listed and still counts');
+});
+
+test('a group the filter hides lists none of its leaves and keeps its choice of open: it is open again where the filter lists it again', () => {
+  const { attempts, handoffs } = mixed();
+  const slots = { 1: [slotRow(10)], 2: [slotRow(20)] };
+  const turns = { 5: [{ address: null, user: 'u', note: null }] };
+  let state = filtering({ type: 'toggle', attemptId: 1, open: false }, { type: 'toggle', handoffId: 5, open: false });
+  const before = identities(flattenRows(attempts, slots, state, handoffs, turns));
+  assert.deepEqual(before, ['attempt:1', 'call:1', 'slot:1:10', 'attempt:2', 'settlement:5', 'handoff:5', 'content:5', 'turn:5:0', 'handoff:7', 'attempt:9']);
+
+  state = reduceView(state, category('handoff'));
+  assert.deepEqual(identities(flattenRows(attempts, slots, state, handoffs, turns)), ['settlement:5', 'handoff:5', 'content:5', 'turn:5:0', 'handoff:7']);
+  state = reduceView(state, category('compaction'));
+  assert.deepEqual(identities(flattenRows(attempts, slots, state, handoffs, turns)), ['attempt:1', 'call:1', 'slot:1:10', 'attempt:2', 'attempt:9']);
+  state = reduceView(state, category('all'));
+  assert.deepEqual(identities(flattenRows(attempts, slots, state, handoffs, turns)), before);
 });

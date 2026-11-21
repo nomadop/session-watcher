@@ -107,6 +107,25 @@ describe('getBucketData', () => {
     assert.equal(bd.paths[0].lastActiveTurn, undefined, 'lastActiveTurn is not a bucket field');
   });
 
+  test('getHeldLines answers the lines a Read of a file holds, and null for a Skill and a path never read', () => {
+    const watcher = compose();
+    apply(watcher, [
+      userMessage({ uuid: 'u0', text: 'go', timestamp: ts(0) }),
+      step('a1', 'm1', { input: 10000, output: 5 }, [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/p/a.js' } },
+        { type: 'tool_use', id: 't2', name: 'Skill', input: { skill: 'brainstorming' } },
+      ]),
+      toolResult({ uuid: 'r1', parentUuid: 'a1', toolUseId: 't1', content: numbered(2, 'const a = 1;'), timestamp: ts(2) }),
+      toolResult({ uuid: 'r2', parentUuid: 'r1', toolUseId: 't2', content: 'Launching skill: brainstorming', timestamp: ts(2) }),
+      skillPayloadRow({ uuid: 'r3', parentUuid: 'r2', sourceToolUseID: 't2', text: SKILL_BODY, timestamp: ts(2) }),
+      step('a2', 'm2', { cacheRead: 20000, output: 5 }),
+    ]);
+    assert.deepEqual(watcher.getHeldLines('/p/a.js'), [1, 2]);
+    assert.equal(watcher.getHeldLines('/p/never-read.js'), null);
+    assert.equal(watcher.getBucketData().skills.length, 1, 'the Skill is held');
+    assert.equal(watcher.getHeldLines('skill:brainstorming'), null);
+  });
+
   test('residual arrays carry name/detail and tool fields, never a raw command', () => {
     const watcher = compose();
     apply(watcher, [

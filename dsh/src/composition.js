@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import nodePath, { join } from 'node:path';
 
 import { SessionWatcher } from '../../lib/session-watcher.js';
-import { createResourcePolicy, SKILL_RESOURCE_PREFIX } from '../../lib/resource-policy.js';
+import { createResourcePolicy } from '../../lib/resource-policy.js';
 import { createResourceEnrichment } from '../../lib/resource-enrichment.js';
 import { createHandoffComposition } from '../../lib/handoff.js';
 import { createMeasurementEngine } from '../../lib/measurement/engine.js';
+import { createHeldView } from '../../lib/held-view.js';
 import { modelPolicyFor } from '../../lib/model-policy.js';
 import { loadPricingOverride } from '../../lib/pricing-store.js';
 import { resolveProjectKey } from '../../lib/project-key.js';
@@ -67,11 +68,10 @@ function interpretersFor({ workingTree, cwd }) {
  *   readSession: (sessionId: string) => Promise<{ events: object[] }>,
  *   isIgnored: ((path: string) => boolean)|null, cacheTtl: () => string|null,
  *   workingTree?: object }} options
- * `heldView(events, range)` answers what a raw event slice holds, apart from the watcher and whatever its state: each held file's line keys and each held skill's text, and under `touched` the file keys and skill names that `range`, the seqs of the events a seal replaces, touched.
- * An effect belongs to the event of the result that completes its call, a load message's included, since the interpreter makes none when the call is issued; the seq of the call's own message is not consulted; a result the pruner replaced belongs to its original's seq, not to its replacement's. A key is touched when some effect on it, a read or a write, belongs to an event of `range`, one that leaves the file's text unchanged included, and a skill when its load effect does, a repeated load included. `range` changes nothing of what is held.
+ * `heldView(events)` answers what a raw event slice holds, apart from the watcher and whatever its state (`lib/held-view.js`): each held file's line keys, each held skill's text and the event each effect belongs to. The slice is reduced as the Dialogue side reads it, and projected under a frame context that recalls the session's saved records, none for a null session id, and keeps none.
  * @returns {{ watcher: SessionWatcher, dialogueSource: object, dialogueProjection: object,
- *   heldView: (events: object[], range: number[]) => { paths: Map<string, number[]>, skills: Map<string, string>,
- *     touched: { paths: Set<string>, skills: Set<string> } } }}
+ *   heldView: (events: object[]) => { paths: Map<string, number[]>, skills: Map<string, string>,
+ *     effects: { seq: number, kind: 'path'|'skill', key: string }[] } }}
  */
 export function composeWatcher({
   sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl, workingTree,
@@ -105,17 +105,6 @@ export function composeWatcher({
     resourceKeysOf,
     modelPolicyFor: policyFor,
   });
-  const heldView = heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult });
-  return { watcher, dialogueSource, dialogueProjection, heldView };
-}
-
-// The held view answers line keys and texts, which no resource selection changes, so every resource is selected.
-const SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
-
-// The held view of a raw event slice, a pass of its own that shares no state with the watcher: the slice reduced as
-// the Dialogue side reads it, projected under a frame context that recalls the session's records and keeps none, and
-// its effect and epoch records ingested into an Engine of its own.
-function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult }) {
   const recall = (toolUseId) => {
     try {
       return store.recallAttribution(sessionId, toolUseId);
@@ -123,39 +112,14 @@ function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, comple
       return null;
     }
   };
-  const frameCtx = sessionId ? { recall } : {};
-  return (events, range) => {
-    const inRange = new Set(range);
-    const touched = { paths: new Set(), skills: new Set() };
-    // The results the Projection completes while one observation is projected, beside the effects each answered:
-    // a skill's text is the result behind its effect, so a call the interpreter gave no effect loads no text.
-    // The seq is that of the completing result's event, the one an effect belongs to.
-    let completed = [];
-    const projection = createDshMeasurementProjection({
-      cwd, projectRoot: cwd, resolveModelPolicy: policyFor, interpretToolUse,
-      completeToolResult: (pending, observation, context, options) => {
-        const answer = completeToolResult(pending, observation, context, options);
-        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
-        return answer;
-      },
-    });
-    const engine = createMeasurementEngine({ resolveModelPolicy: policyFor, resolveResourcePolicy: SELECTED });
-    let skills = new Map();
-    for (const observation of reduceDshSnapshot(events).observations) {
-      completed = [];
-      const { records } = projection.project(observation, frameCtx);
-      engine.ingest(records.filter(record => record.type === 'effect' || record.type === 'epoch'));
-      if (records.some(record => record.type === 'epoch')) skills = new Map();
-      for (const { effects, text, seq } of completed) {
-        for (const { resourceKey } of effects.flatMap(effect => effect.impacts)) {
-          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
-          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
-          if (isSkill) skills.set(key, text);
-          if (inRange.has(seq)) touched[isSkill ? 'skills' : 'paths'].add(key);
-        }
-      }
-    }
-    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, touched };
-  };
+  const view = createHeldView({
+    createProjection: ({ completeToolResult: recording }) => createDshMeasurementProjection({
+      cwd, projectRoot: cwd, resolveModelPolicy: policyFor, interpretToolUse, completeToolResult: recording,
+    }),
+    completeToolResult,
+    resolveModelPolicy: policyFor,
+    frameCtx: sessionId ? { recall } : {},
+  });
+  const heldView = events => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView };
 }

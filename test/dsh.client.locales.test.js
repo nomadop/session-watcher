@@ -2,8 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { en, zh, resultSignalState } from '../dsh/src/client/locales.js';
-import { KAPPA_PRESETS } from '../dsh/src/inner-quote.js';
-import { SKIP_REASONS, SOURCE_FAILURES } from '../dsh/src/pi-ai-integration.js';
+import { KAPPA_PRESETS } from '../lib/inner-seal/quote.js';
+import { SOURCE_FAILURES } from '../dsh/src/pi-ai-integration.js';
+import { SKIP_REASONS } from '../lib/llm-adapter/carrier-results.js';
 
 test('resultSignalState names the signal state a result without a reading reads as: no result and bootstrapping are reading, an unreachable result unreachable, the rest their own state', () => {
   assert.equal(resultSignalState(null), 'reading');

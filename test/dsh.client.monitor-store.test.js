@@ -87,7 +87,7 @@ test('for answers the same handles for one session, and a frame reads that sessi
   const stores = createMonitorStores({ call: host.call });
   assert.equal(stores.for('s1'), stores.for('s1'), 'one store per session');
   assert.notEqual(stores.for('s1'), stores.for('s2'));
-  assert.deepEqual(Object.keys(stores.for('s1')).sort(), ['resource', 'rows']);
+  assert.deepEqual(Object.keys(stores.for('s1')).sort(), ['readCurrentSettlement', 'resource', 'rows']);
   const sessionsRead = () => host.log.map(({ payload }) => payload.sessionId);
   const unsubscribe = stores.for('s1').rows.subscribe(() => {});
   stores.for('s2').rows.subscribe(() => {});
@@ -108,6 +108,16 @@ test('for answers the same handles for one session, and a frame reads that sessi
   stores.signal('s1');
   await flush();
   assert.equal(host.log.length, 5, 'a signal without a subscriber is ignored');
+});
+
+test('one-shot current settlement reads distinguish an unavailable session, transport failure and incomplete reply', async () => {
+  const answers = [UNAVAILABLE_REPLY, new Error('transport down'), ok({ epoch: 1, attempts: [], tailCalls: 0 })];
+  const host = channel(() => answers.shift());
+  const { readCurrentSettlement } = createMonitorStores({ call: host.call }).for('s1');
+
+  assert.deepEqual(await readCurrentSettlement(), { kind: 'unavailable' });
+  assert.deepEqual(await readCurrentSettlement(), { kind: 'unreachable', message: 'transport down' });
+  assert.equal((await readCurrentSettlement()).kind, 'unreachable', 'a snapshot without its calls cannot be displayed');
 });
 
 test('signals that arrive while a rows read is in flight cost one more read, and the last answer is the latest', async () => {
@@ -382,12 +392,11 @@ test('a signal that arrives while a settled attempt\'s first read is in flight d
   assert.equal(host.held.length, 0, 'a failed read is not retried by itself');
 });
 
-test('a success whose request has no tool definitions or is a legacy partial request is a snapshot like any other and is not read again', async () => {
+test('a success whose request has no tool definitions is a snapshot like any other and is not read again', async () => {
   const row = attemptRow(7);
   const { request } = callPayload(row);
   const snapshots = [
     callPayload(row, { request: { ...request, tools: { count: 2, definitions: null, reason: 'the log holds no request header at seq 1' } } }),
-    callPayload(row, { request: { recorded: 'partial', selection: { provider: 'p', model: 'm' }, tail: request.messages.tail, throughSeq: 9, headerSeq: null } }),
   ];
   for (const payload of snapshots) {
     const host = hostOf({ attempts: () => [row], details: { [CALL]: () => ok(payload) } });

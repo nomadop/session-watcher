@@ -23,7 +23,7 @@ import {
   reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, REUSED_CALL_ID_SYMBOL_FILES, sessionLog, compactCheckpoint, turnStart,
   turnEnd, stepStart, stepEnd, userMessage, assistantMessage, header,
 } from './helpers/dsh-events.js';
-import { createFakeContext, fakeSession, fakeSessionTitle } from './helpers/dsh-fake-context.js';
+import { createFakeContext, fakeSession, fakeSessionLogs, fakeSessionTitle } from './helpers/dsh-fake-context.js';
 import { filesUnder, watchedTree, writeFilesUnder } from './helpers/attribution-fixtures.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
@@ -67,13 +67,14 @@ afterEach(() => {
 function mountHost({ sessions = [], snapshots = {}, readSession, listSessions, sessionTitle } = {}) {
   const read = readSession
     ?? (async sessionId => ({ session: {}, inheritedEventCount: 0, events: snapshots[sessionId] ?? [] }));
-  const ctx = createFakeContext({ sessions, readSession: read, listSessions, sessionTitle });
+  const logs = Object.fromEntries(sessions.map(({ id, header }) => [id, { header: { id, ...header }, events: snapshots[id] ?? [] }]));
+  const ctx = createFakeContext({ sessions, readSession: read, listSessions, sessionTitle, sessionReads: fakeSessionLogs(logs) });
   const registered = [];
   const register = ctx.tools.register;
   ctx.tools.register = (definition) => { registered.push(definition); register(definition); };
   const { table } = applyHost(ctx, {
     defineTool: definition => definition, storePath: join(dir, 'store.sqlite'), turnNotesRoot: join(dir, 'turn-notes'), loadIsIgnored: () => null,
-    skillsDir: SKILLS_DIR,
+    skillsDir: SKILLS_DIR, queryKit: { extractSessionEventText: () => '', HarnessError: class HarnessError extends Error { constructor(message, code) { super(message); this.code = code; } } },
   });
   const tool = name => registered.find(definition => definition.name === name);
   const deliver = createHandoffDelivery({ table, store: getStore(), sessionTitle: () => ctx.get('sessionTitle') });
@@ -127,9 +128,9 @@ async function prepareNotedHandoff(tool, sessionId) {
   return prepared.load_token;
 }
 
-test('the registered names are the Claude Code set minus rotate_session and load_handoff', async () => {
+test('the registered names are the Claude Code set minus rotate_session and load_handoff, and the event read', async () => {
   const { ctx, registered } = mountHost();
-  assert.deepEqual(registered.map(definition => definition.name).sort(), [...EXPECTED_TOOLS].sort());
+  assert.deepEqual(registered.map(definition => definition.name).sort(), [...EXPECTED_TOOLS, 'sw_event_read'].sort());
   ctx.dispose();
 });
 
@@ -408,13 +409,20 @@ test('the turn reads carry the DSH recovery sentences', async () => {
 
   const page = await run(tool('turn_page'), {}, 's-dst');
   assert.equal(page.turn_page.split('\n')[0], recovery.notice);
-  const located = await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst');
-  assert.equal(located.recovery, recovery.locateHit);
+  const locatedReply = await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst');
+  assert.equal(locatedReply.recovery, recovery.locateHit);
   const searched = await run(tool('turn_search'), { q: 'answer3' }, 's-dst');
   assert.equal(searched.recovery, recovery.searchHit);
-  for (const sentence of [recovery.notice, recovery.locateHit, recovery.searchHit]) {
-    assert.match(sentence, /session_event_read/);
-  }
+
+  // The addresses the replies carry are read back as the sentences say: a hit's `transcript_path` as `session_id` and its `line` as `seq`.
+  const read = args => tool('sw_event_read').execute(args, { agent: { session: { id: 's-dst', header: { cwd: '/repo' } } }, signal: new AbortController().signal });
+  const [{ transcript_path: sourceId, matches: [hit] }] = searched.ranges;
+  const eventOf = async args => JSON.parse(/```json\n([\s\S]*?)\n```/.exec(await read(args))[1]);
+  const event = await eventOf({ session_id: sourceId, seq: hit.line });
+  assert.equal(event.seq, hit.line);
+  assert.equal(event.data.message.content[0].text, 'answer3', 'the hit\'s own event holds the literal it matched');
+  const located = (await run(tool('turn_locate'), { q: 'turn3data' }, 's-dst')).ranges.find(range => range.hit === true);
+  assert.equal((await eventOf({ session_id: located.transcript_path, seq: Number(/:(\d+)$/.exec(located.scope)[1]) })).data.content[0].text, 'turn3data', 'a located scope\'s T reads the turn\'s first user event');
   ctx.dispose();
 });
 

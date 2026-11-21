@@ -1,7 +1,9 @@
 // dsh/src/client/monitor-model.js — the inner compaction monitor's display model: what a parent row's meta, a content block and a slot's overview say, as plain data with the texts already worded.
-// The React pages and the Markdown export each render this one model, so the two never disagree on what a detail says. It imports the pure modules beside it and nothing else, so Node and the browser bundle load it alike.
-import { NOT_AVAILABLE, PART_SEPARATOR, paybackPercent, elapsedOf, formatElapsed, handoffSegmentOf, contextChangeText, contextRangeText, contextMissText, sourceCategoryOf } from './monitor-state.js';
+// The React pages and the Markdown export each render this one model, so the two never disagree on what a detail says. It imports the pure modules beside it, the economics model's `paybackPercent` (`public/lib/compactionEconomics.js`) and the settings form's `PRESET_IDS` (`public/lib/compactionSettings.js`), nothing else, so Node and the browser bundle load it alike.
+import { NOT_AVAILABLE, elapsedOf, formatElapsed, handoffSegmentOf, contextChangeText, contextRangeText, contextMissText, costWarningsOf } from './monitor-state.js';
 import { compactCount } from './monitor-files-model.js';
+import { paybackPercent } from '../../../public/lib/compactionEconomics.js';
+import { PRESET_IDS } from '../../../public/lib/compactionSettings.js';
 
 /** A value as indented JSON text; a value JSON has no text for is shown as `String` makes it. */
 export const jsonText = value => JSON.stringify(value, null, 2) ?? String(value);
@@ -15,7 +17,7 @@ const stepPart = (attempt, t) => ({ part: 'step', text: Number.isFinite(attempt.
 // The decimals a deviation and a tolerance read to in a row's meta.
 const DECIMALS = 2;
 
-// The estimate slot: the deviation q of the quote the attempt triggered on, a dash where the quote has none or the attempt was recorded without one; its title is the deviation's meaning, with the tolerance kappa the quote was compared with where it holds one.
+// The estimate slot: the deviation q of the quote the attempt triggered on, a dash where the attempt was recorded without a quote; its title is the deviation's meaning, with the tolerance kappa the quote was compared with where it holds one.
 function estimatePart({ trigger }, t) {
   const q = trigger?.q;
   const kappa = trigger?.kappa;
@@ -33,7 +35,7 @@ function estimatePart({ trigger }, t) {
 export function parentMetaParts(attempt, now, t, missWarned = false) {
   const elapsed = elapsedOf(attempt, 'attempt', now);
   const { usage } = attempt.call;
-  const grew = attempt.contextChange?.delta > 0;
+  const warnings = costWarningsOf(attempt, missWarned);
   return [
     { part: 'time', text: elapsed === null ? NOT_AVAILABLE : formatElapsed(elapsed), title: t('monitor.meta.time') },
     stepPart(attempt, t),
@@ -46,11 +48,11 @@ export function parentMetaParts(attempt, now, t, missWarned = false) {
         title: t('monitor.usage.title', { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite }),
       },
     { part: 'range', text: contextRangeText(attempt.contextChange, t), title: t('monitor.meta.range.title') },
-    grew
-      ? { part: 'context', text: contextChangeText(attempt.contextChange, t), title: t('monitor.meta.context.grew'), attention: true }
+    warnings.context
+      ? { part: 'context', text: contextChangeText(attempt.contextChange, t), title: t(warnings.context), attention: true }
       : { part: 'context', text: contextChangeText(attempt.contextChange, t), title: t('monitor.meta.context') },
-    missWarned
-      ? { part: 'miss', text: contextMissText(attempt.contextChange, t), title: t('monitor.meta.miss.unexpected'), attention: true }
+    warnings.miss
+      ? { part: 'miss', text: contextMissText(attempt.contextChange, t), title: t(warnings.miss), attention: true }
       : { part: 'miss', text: contextMissText(attempt.contextChange, t), title: t('monitor.meta.miss.title') },
     { part: 'seq', text: t('monitor.overview.seq', { seq: attempt.id }) },
   ];
@@ -82,23 +84,25 @@ export function handoffMetaParts(handoff, t) {
 // The sign of a loss, U+2212, which no hyphen stands for.
 const MINUS = '\u2212';
 
-// The figures of a settlement, or of one of its compactions, as the texts `format` makes of the whole numbers they round to: what it saved, what it cost, the difference of the two rounded figures with its sign, none at zero, and the share of the cost it saved as `paybackPercent` has it of the unrounded figures.
-function settlementFigures(saved, cost, format) {
-  const net = Math.round(saved) - Math.round(cost);
+/** A whole number as the text of its magnitude `format` writes, with its sign: U+2212 for a loss, `+` for a gain and none at zero. */
+export const signedText = (value, format) => `${value > 0 ? '+' : value < 0 ? MINUS : ''}${format(Math.abs(value))}`;
+
+/** The settlement figures as formatted whole counts; net subtracts the rounded totals, while payback uses the unrounded figures. */
+export function settlementFigures(saved, cost, format) {
   return {
     saved: format(Math.round(saved)),
     cost: format(Math.round(cost)),
-    net: `${net > 0 ? '+' : net < 0 ? MINUS : ''}${format(Math.abs(net))}`,
+    net: signedText(Math.round(saved) - Math.round(cost), format),
     payback: `${paybackPercent(saved, cost)}%`,
   };
 }
 
 /**
- * The parts of a settlement row's meta in the order the row shows them, each `{ part, text, title }`: the `count` of the committed compactions of the segment, the `steps` the segment ran, what the compactions `saved`, what they `cost`, the `net` of the two with its sign and the `payback`, the share of the cost saved. The saved, cost and net figures are compact counts of read-price tokens, rounded before they are subtracted; no part is marked as a warning, a loss being signed and no more.
+ * The parts of a settlement row's meta in the order the row shows them, each `{ part, text, title }`: the `count` of the committed compactions of the segment, the `steps` the segment ran, what the compactions `saved`, what they `cost`, the `net` of the two with its sign and the `payback`, the share of the cost saved. The saved, cost and net figures are the whole numbers they round to, rounded before they are subtracted, as `format` writes them (compact counts of read-price tokens for a row of the list); no part is marked as a warning, a loss being signed and no more.
  * `settlement` is an entry of `settlementsOf`.
  */
-export function settlementMetaParts(settlement, t) {
-  const figures = settlementFigures(settlement.saved, settlement.cost, compactCount);
+export function settlementMetaParts(settlement, t, format = compactCount) {
+  const figures = settlementFigures(settlement.saved, settlement.cost, format);
   return [
     { part: 'count', text: t('monitor.settlement.count', { count: settlement.count }), title: t('monitor.settlement.count.title') },
     { part: 'steps', text: t('monitor.settlement.steps', { count: settlement.steps }), title: t('monitor.settlement.steps.title') },
@@ -109,52 +113,22 @@ export function settlementMetaParts(settlement, t) {
   ];
 }
 
-// The four figure texts of a line of a settlement's text, in the words of its parts.
-const figureTexts = (figures, t) => [
-  t('monitor.settlement.saved', { count: figures.saved }),
-  t('monitor.settlement.cost', { count: figures.cost }),
-  t('monitor.settlement.net', { count: figures.net }),
-  t('monitor.settlement.payback', { percent: figures.payback }),
-];
-
-const NO_FIGURES = { saved: NOT_AVAILABLE, cost: NOT_AVAILABLE, net: NOT_AVAILABLE, payback: NOT_AVAILABLE };
-
-/**
- * A settlement as the text of its drawer: a line for each compaction of its rows, titled as its own row is, with its figures as whole numbers and a dash for each of those it has none of; the total line, its `count`, its `steps` and the figures of the sums; and, on a line of its own, the unit the figures are in.
- * `settlement` is an entry of `settlementsOf`.
- */
-export function settlementTextOf(settlement, t) {
-  const { epoch, count, steps, saved, cost, rows } = settlement;
-  return [
-    ...rows.map(row => [
-      t('monitor.object.attempt', { epoch, ordinal: row.ordinal }),
-      ...figureTexts(row.saved === null ? NO_FIGURES : settlementFigures(row.saved, row.cost, String), t),
-    ].join(PART_SEPARATOR)),
-    [t('monitor.settlement.total'), t('monitor.settlement.count', { count }), t('monitor.settlement.steps', { count: steps }), ...figureTexts(settlementFigures(saved, cost, String), t)].join(PART_SEPARATOR),
-    t('monitor.settlement.unit'),
-  ].join('\n');
-}
-
 // A quantity of a quote as the page shows it: a whole number as it is, any other to three decimals, null where the quote has none.
 const quantityText = value => (value === null || value === undefined ? null : Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3))));
 
 // The quantities the page lists before the compaction policy and after it.
-const QUANTITIES_BEFORE_PRESET = ['n', 'lA', 'bEst', 'cEst', 'sEst', 'cRatio', 'fee'];
+const QUANTITIES_BEFORE_PRESET = ['n', 'lA', 'bEst', 'cEst', 'sEst', 'cRatio', 'fee', 'summaryReadCost'];
 const QUANTITIES_AFTER_PRESET = ['kappa', 'q'];
 
-/** The ids of the tolerance presets a quote can be priced under, the names `monitor.quote.preset.<id>` words; the host's `KAPPA_PRESETS` holds the same ids, which a test keeps equal. */
-export const KAPPA_PRESET_IDS = Object.freeze(['E2', 'W2', 'M2', 'S3', 'X3']);
-
 /**
- * The facts of a quote as `[term, value]` in the order its page lists them: the reason it has no results where it has none, its inputs and parameters, the compaction policy it was priced under, its tolerance kappa, its result q and the arm, `value` a text, null where the quote holds none, a quote that lacks `preset` and a preset id the client has no name for included; the renderers word that themselves. The reference's own intermediates (`nRef`, `N`, `jRef`) stay in the snapshot and are not listed.
+ * The facts of a quote as `[term, value]` in the order its page lists them: its inputs and parameters, the `summaryReadCost` only where the quote holds it, the compaction policy it was priced under, its tolerance kappa, its result q and the arm, `value` a text, null where the quote holds none, a quote that lacks `preset` and a preset id the client has no name for included; the renderers word that themselves. The reference's own intermediates (`nRef`, `N`, `jRef`) stay in the snapshot and are not listed.
  * `quote` is the `innerQuote` snapshot the attempt record keeps.
  */
 export function quoteFactsOf(quote, t) {
   const quantity = key => [t(`monitor.quote.${key}`), quantityText(quote[key])];
   return [
-    ...(quote.missing === null ? [] : [[t('monitor.quote.missingReason'), t(`monitor.quote.missing.${quote.missing}`)]]),
-    ...QUANTITIES_BEFORE_PRESET.map(quantity),
-    [t('monitor.quote.preset'), KAPPA_PRESET_IDS.includes(quote.preset) ? t(`monitor.quote.preset.${quote.preset}`) : null],
+    ...QUANTITIES_BEFORE_PRESET.filter(key => key !== 'summaryReadCost' || quote.summaryReadCost !== undefined).map(quantity),
+    [t('monitor.quote.preset'), PRESET_IDS.includes(quote.preset) ? t(`monitor.quote.preset.${quote.preset}`) : null],
     ...QUANTITIES_AFTER_PRESET.map(quantity),
     [t('monitor.quote.arm'), quote.arm === null ? null : t(`monitor.quote.arm.${quote.arm}`)],
   ];
@@ -205,7 +179,7 @@ export function slotFactsOf(detail, t) {
     [t('monitor.slot.seqs'), seqs.join(', ')],
     ...(turn === null ? [] : [[t('monitor.slot.turn'), turn]]),
     ...(step === null ? [] : [[t('monitor.slot.step'), step]]),
-    [t('monitor.slot.source'), t(`monitor.source.${sourceCategoryOf(source)}`)],
+    [t('monitor.slot.source'), t(`monitor.source.${source?.category ?? 'other'}`)],
     [t('monitor.slot.sourceType'), source?.type ?? null],
     [t('monitor.slot.sourceKind'), source?.kind ?? null],
     [t('monitor.slot.visibleCount'), t('monitor.slot.visibleCountValue', { visible: events.filter(event => event.visible).length, total: events.length })],

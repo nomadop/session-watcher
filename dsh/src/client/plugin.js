@@ -27,7 +27,7 @@ const EVENTS_URL = 'api/session-watcher.events';
  * the dock entry's hands the same store, and the dock is built from the handed placement hooks and portal.
  * The session mode's `ModeToggle` registers in `conversation.hero.options` and `ModeMark` in `conversation.session.header.actions` for every declaration lifetime of each slot; both entries' `inject(sessionId)` hand the session's mode reader (`mode-reader.js`), and the toggle also a call that binds the session into `inner-mode/select`.
  * The `/sw-load` picker (`handoff-picker.js`) registers under its own `ctx.inject` on `commandUi`, `sessions` and `conversation`, so the view and the dock do not wait for those services.
- * The monitor view (`monitor-register.js`) registers in `conversation.view` under its own `ctx.inject` on `slots`, for every session whatever its inner mode; its `inject(sessionId)` hands the session's monitor stores, whose frames and opens signal as above while a handle has subscribers.
+ * The monitor view (`monitor-register.js`) registers in `conversation.view` under its own `ctx.inject` on `slots`, for every session whatever its inner mode; its `inject(sessionId)` hands the session's monitor stores and its session store, whose frames and opens signal as above while a handle has subscribers.
  *
  * @param {object} ctx - the client plugin context with `slots`, `locale`, `theme` and `connection`.
  * The category of DSH's Settings, which also shows the failure of the opt-in pi-ai entry that the channel's `pi-ai/status` reports, and the new-session switch's visibility follow the host's configuration mirror from injection children of their own (`settings.js`), so the tab, the dock and the mode entries do not wait for `configForms`, `remote` or `remote.session`: the switch is hidden until the mirror holds the setting on, and the category is registered under `settings.section` once the services stand.
@@ -146,7 +146,7 @@ export function applyClient(ctx, { tabCss, useAnchoredPosition, useDismissOnOuts
   }, ModeMark));
   // Its own injection, so the tab and the dock above do not wait for the services the picker reads.
   ctx.inject(['commandUi', 'sessions', 'conversation'], child => registerHandoffPicker(child, { call, t }));
-  ctx.inject(['slots'], child => registerMonitorView(child, { monitors, t }));
+  ctx.inject(['slots'], child => registerMonitorView(child, { monitors, sessions, t }));
   ctx.inject(['configForms'], child => optionVisibility.bind(child));
   ctx.inject(['slots', 'configForms', 'remote', 'remote.session'], child => registerSettingsSection(child, { t, call }));
 }

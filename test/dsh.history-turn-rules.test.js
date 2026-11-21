@@ -133,6 +133,18 @@ describe('the DSH Ask head rule', () => {
     }
   });
 
+  test('a malformed answer absorbs the whole result, a well-formed answer beside it included', () => {
+    const good = { id: 'plan', selected: ['Ship now'] };
+    for (const bad of [
+      { id: 'notes', selected: ['Changelog', 1] },
+      { id: 'notes', selected: ['Changelog'], custom: 3 },
+    ]) {
+      assert.deepEqual(askResult({ text: answersJson([good, bad]) }), ABSORB, JSON.stringify(bad));
+    }
+    assert.deepEqual(askResult({ text: JSON.stringify({ answers: 'Ship now' }) }), ABSORB);
+    assert.deepEqual(askResult({ text: JSON.stringify({ answers: { id: 'plan', selected: ['Ship now'] } }) }), ABSORB);
+  });
+
   test('a question with no paired result absorbs', () => {
     const line = askLineOf(sessionLog([
       userMessage({ text: 'Help me pick a release plan.' }),

@@ -1,5 +1,5 @@
-// dsh/src/pi-ai-integration.js — the seam between the host entry and the opt-in pi-ai entry (`pi-ai-index.js`): the name of the service the pi-ai entry provides and the causes it reports.
-// It imports nothing: the two entries are separate bundles, and a mounted pi-ai entry and the host meet only through the service the host reads at each use with `ctx.get`, which leaves with the pi-ai entry's fiber.
+// dsh/src/pi-ai-integration.js — the seam between the host entry and the opt-in pi-ai entry (`pi-ai-index.js`): the names of the services each provides for the other and the causes the pi-ai entry reports.
+// It imports nothing: the two entries are separate bundles, and a mounted pi-ai entry and the host meet only through services the other reads at each use with `ctx.get`, which leave with their provider's fiber.
 
 /**
  * The service the pi-ai entry provides once it has settled its source: `{ failure: null, cacheRetention, routes }` while the entry serves the original `llm-pi-ai` row's routes, and `{ failure: { cause } }` when it serves none.
@@ -19,17 +19,14 @@ export const SOURCE_FAILURES = ['source-missing', 'source-enabled', 'source-inva
 export const ORIGINAL_ROW = 'include:llm-pi-ai';
 
 /**
- * The service the host entry provides for the pi-ai entry's wrapped `onPayload` hook to report to and ask: `{ record(result), responsesBreakpoint() }`.
- * Each call of the hook reports the closed result it reached (`carrier-evidence.js` states the shapes), and the service files it under the summary request whose stream is being iterated, none when the call belongs to no such request.
- * `responsesBreakpoint()` answers whether the owner's saved switch for the OpenAI Responses breakpoint is on, asked once for each OpenAI Responses request; the entry takes anything but `true`, a service with no such member and one that throws included, as off.
- * A context where no such service stands has no host mounted, and the hook then reports nothing and finds the switch off.
+ * The service the host entry provides for the pi-ai entry's wrapped `onPayload` hook to report to: `{ record(result) }`.
+ * Each call of the hook reports the closed result it reached (`lib/llm-adapter/carrier-results.js` states the shapes), and the service files it under the summary request whose stream is being iterated, none when the call belongs to no such request.
+ * A context where no such service stands has no host mounted, and the hook then reports nothing.
  */
 export const CARRIER_EVIDENCE_SERVICE = 'sessionWatcherCarrierEvidence';
 
-/** What one invocation of the wrapped hook did about the last carrier of the request it was handed: `added` its own cache point, `native` the request's own point already ends the carrier at that position, `skipped` it checked the request and added none, with one of `SKIP_REASONS`. */
-export const CARRIER_RESULTS = ['added', 'native', 'skipped'];
-
 /**
- * Why a checked request got no point of its own for its carrier: `no-carrier` the request holds none, `no-native-point` the route's serializer wrote no cache point of its own for the carrier's to follow (caching is off for the route, or the model takes none), `points-full` the route's point limit is already met, `responses-off` the request is an OpenAI Responses one and the owner's switch for its breakpoint is off, and `unsupported` the protocol is none the writer handles or the request is one it does not (an input of another shape, the ChatGPT sign-in lane).
+ * The service the host entry provides for the pi-ai entry to ask: `{ responsesBreakpoint() }`, whether the owner's saved switch for the OpenAI Responses breakpoint is on, asked once for each OpenAI Responses request; the entry takes anything but `true`, a service with no such member and one that throws included, as off.
+ * A context where no such service stands has no host mounted, and the entry then finds the switch off.
  */
-export const SKIP_REASONS = ['no-carrier', 'no-native-point', 'points-full', 'responses-off', 'unsupported'];
+export const CARRIER_SETTINGS_SERVICE = 'sessionWatcherCarrierSettings';

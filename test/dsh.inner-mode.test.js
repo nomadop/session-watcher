@@ -1,4 +1,4 @@
-// The session mode (`dsh/src/inner-mode.js`) over the real `dsh-session` record functions where `SW_DSH_CHECKOUT` names a built checkout and a recording double elsewhere: the pure projection fold, the atomic selection and the plain subagent's inheritance.
+// The session mode (`dsh/src/inner-mode.js`) over the real `dsh-session` record functions where `SW_DSH_CHECKOUT` names a built checkout and a recording double elsewhere: the projection's classification, the atomic selection and the plain subagent's inheritance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -36,48 +36,55 @@ function captureStderr(t) {
   return lines;
 }
 
-test('a record whose data does not read as { v: 1, enabled: boolean } makes the mode invalid, the last record still decides, and repeated folds and reads write no diagnostic', (t) => {
+test('a mode record whose data does not read as { v: 1, enabled: boolean } folds to invalid through the classification, and repeated folds and reads write no diagnostic', (t) => {
   const lines = captureStderr(t);
-  for (const data of [null, 7, 'on', [], {}, { v: 1 }, { v: 2, enabled: true }, { v: 1, enabled: 'yes' }, { enabled: true }]) {
+  for (const data of [null, 7, {}, { v: 2, enabled: true }, { v: 1, enabled: 'yes' }]) {
     const session = newSession(`s-invalid-${JSON.stringify(data)}`);
     modeKit.appendPluginRecord(session, MODE_RECORD_TYPE, data);
     assert.deepEqual(fold(session), { mode: 'invalid', locked: false }, JSON.stringify(data));
   }
-  const session = newSession('s-invalid-then-valid');
+  const session = newSession('s-invalid-then-turn');
   modeKit.appendPluginRecord(session, MODE_RECORD_TYPE, { v: 1, enabled: 1 });
   const events = session.snapshotEvents();
   const readInvalid = () => events.reduce((state, event) => projection.apply(state, event), projection.init());
   for (let read = 0; read < 5; read += 1) assert.equal(readInvalid().mode, 'invalid');
   session.append('turn/start', { turn: 1 });
   assert.deepEqual(fold(session), { mode: 'invalid', locked: true }, 'a locked invalid mode stays invalid');
-  const repaired = newSession('s-repaired');
-  modeKit.appendPluginRecord(repaired, MODE_RECORD_TYPE, { v: 1 });
-  select(repaired, true);
-  assert.deepEqual(fold(repaired), { mode: 'on', locked: false }, 'a valid record after an invalid one decides');
   assert.deepEqual(lines, [], 'the fold and the reads wrote nothing');
 });
 
-test('the fold returns the state it was given for an event that changes nothing, so the registry does no downstream work', () => {
+test('only a mode record and a turn/start are inputs of the projection: any other event answers the state it was given', () => {
   const session = newSession('s-reference');
   select(session, true);
   const on = fold(session);
   session.append('turn/start', { turn: 1 });
   const locked = projection.apply(on, session.eventAt(1));
   assert.deepEqual(locked, { mode: 'on', locked: true });
-  assert.equal(projection.apply(locked, session.eventAt(1)), locked, 'a second turn/start');
   assert.equal(projection.apply(locked, { type: 'plugin:other/thing', seq: 9, time: 1, data: {}, ignorable: true }), locked);
   assert.equal(projection.apply(on, { type: 'user/message', seq: 9, time: 1, data: {} }), on, 'an event that is not the unit\'s');
   assert.equal(projection.apply(on, { type: MODE_RECORD_TYPE, seq: 9, time: 1, data: { v: 1, enabled: false } }), on, 'an event of the record\'s type that is not an ignorable record');
-  const restated = newSession('s-restated');
-  select(restated, true);
-  select(restated, true);
-  assert.equal(projection.apply(fold(newSession('s-first')), restated.eventAt(0)), projection.apply(projection.init(), restated.eventAt(1)), 'a record that restates the mode reaches the one state it names');
 });
 
-test('the state schema accepts exactly the six states the fold reaches and refuses any other persisted value', () => {
-  for (const mode of ['off', 'on', 'invalid']) {
-    for (const locked of [false, true]) assert.deepEqual(projection.stateSchema.parse({ mode, locked }), { mode, locked });
+test('the state a real log folds to survives the projection cache: the state schema reads it back as the same canonical state, and refuses any value outside the six states', () => {
+  const states = [];
+  for (const [selected, turn] of [[undefined, false], [true, false], [false, false], [true, true], [false, true], ['invalid', true]]) {
+    const session = newSession(`s-cache-${selected}-${turn}`);
+    if (selected === 'invalid') modeKit.appendPluginRecord(session, MODE_RECORD_TYPE, { v: 1, enabled: 'yes' });
+    else if (selected !== undefined) select(session, selected);
+    if (turn) session.append('turn/start', { turn: 1 });
+    const folded = fold(session);
+    const restored = projection.stateSchema.parse(JSON.parse(JSON.stringify(folded)));
+    assert.deepEqual(restored, folded);
+    assert.equal(restored, folded, 'the cache read-back is the canonical reference the fold yields');
+    assert.equal(projection.apply(restored, { type: 'user/message', seq: 9, time: 1, data: {} }), restored, 'and a later event that is not the unit\'s still answers it');
+    states.push(restored);
   }
+  assert.deepEqual(states.map(state => `${state.mode}:${state.locked}`), ['off:false', 'on:false', 'off:false', 'on:true', 'off:true', 'invalid:true']);
+  const turned = newSession('s-cache-turned');
+  select(turned, true);
+  const cached = projection.stateSchema.parse({ mode: 'on', locked: false });
+  turned.append('turn/start', { turn: 1 });
+  assert.deepEqual(turned.snapshotEvents().reduce((state, event) => projection.apply(state, event), cached), { mode: 'on', locked: true }, 'a fold seeded by the cache continues over later events');
   for (const value of [null, undefined, 'on', {}, { mode: 'on' }, { locked: false }, { mode: 'maybe', locked: false }, { mode: 'on', locked: 1 }]) {
     assert.throws(() => projection.stateSchema.parse(value), JSON.stringify(value));
   }

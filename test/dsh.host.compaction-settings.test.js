@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { applyHost } from '../dsh/src/host.js';
-import { INNER_QUOTE } from '../dsh/src/inner-quote.js';
+import { INNER_QUOTE } from '../lib/inner-seal/quote.js';
 import { INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE } from '../dsh/src/inner-seal.js';
 import { MODE_RECORD_TYPE } from '../dsh/src/inner-mode.js';
 import { closeStoreGlobal } from '../lib/store.js';

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { summarizeSlots } from '../dsh/src/inner-summary.js';
-import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
 import { assistantMessage, requestHeader, sessionLog, stepEnd, stepStart, systemMessage, toolResult, turnEnd, turnStart, userMessage } from './helpers/dsh-events.js';
 
 const CHECKOUT = process.env.SW_DSH_CHECKOUT;
@@ -53,17 +53,17 @@ async function rowsOf(calls, failing = []) {
     },
   };
   await summarizeSlots({
-    llm, session, index: new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
+    llm, session, index: new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
     slots, range: slots.flatMap(slot => slot.seqs), held: { paths: new Map(), skills: new Map() }, signal: new AbortController().signal, kit: kitOf(),
   });
   return rowLinesOf(sent[0].messages.at(-1));
 }
 
-test('a call row carries the call\'s id, its tool name, its outcome and the string values of its arguments joined by single spaces in the order they appear, nested ones included and numbers, booleans and null left out', { skip }, async () => {
+test('a call row carries the call\'s id, its tool name, its outcome and the values of its arguments joined by single spaces in the order they appear, nested ones included: a string as it is, a number or a boolean after the key it sits under, and null left out', { skip }, async () => {
   const rows = await rowsOf([
     { id: 'c1', name: 'edit', arguments: JSON.stringify({ description: 'why', path: 'src/a.js', replace_all: true, count: 3, edits: [{ old: 'x', n: 1 }, { old: 'y', gone: null }], note: 'last' }) },
   ]);
-  assert.deepEqual(rows.slice(0, 3), ['[1] assistant step', '  text: none', '  call c1 edit → ok: "why src/a.js x y last"']);
+  assert.deepEqual(rows.slice(0, 3), ['[1] assistant step', '  text: none', '  call c1 edit → ok: "why src/a.js replace_all true count 3 x n 1 y last"']);
 });
 
 test('the arguments cue is whole up to the cue width and its opening and ending around an ellipsis beyond it, with runs of whitespace folded', { skip }, async () => {
@@ -87,15 +87,16 @@ test('a failed call keeps its error outcome beside the arguments cue, and an ans
   assert.deepEqual(rows.slice(2, 4), ['  call c1 bash → error: "npm test"', '  call c2 read → ok: "src/a.js"']);
 });
 
-test('a call with no string argument has no cue suffix, whatever shape its arguments take, and arguments that are not JSON count as one string', { skip }, async () => {
+test('a call with no string, number or boolean argument has no cue suffix, whatever shape its arguments take, a number keeps its key as an array element too, and arguments that are not JSON count as one string', { skip }, async () => {
   const rows = await rowsOf([
     { id: 'c1', name: 'a', arguments: '{}' },
-    { id: 'c2', name: 'b', arguments: '{"n":1,"ok":false,"none":null,"list":[1,[]],"empty":"","blank":"","space":" \\n"}' },
+    { id: 'c2', name: 'b', arguments: '{"none":null,"list":[[]],"empty":"","blank":"","space":" \\n"}' },
+    { id: 'c6', name: 'sw_event_read', arguments: '{"seq":2038,"after":4,"ok":false,"list":[1,[]]}' },
     { id: 'c3', name: 'c', arguments: '' },
     { id: 'c4', name: 'd', arguments: 'not json' },
     { id: 'c5', name: 'e', arguments: '{"empty":"","path":"a.js","blank":""}' },
   ]);
-  assert.deepEqual(rows.slice(2, 7), ['  call c1 a → ok', '  call c2 b → ok', '  call c3 c → ok', '  call c4 d → ok: "not json"', '  call c5 e → ok: "a.js"']);
+  assert.deepEqual(rows.slice(2, 8), ['  call c1 a → ok', '  call c2 b → ok', '  call c6 sw_event_read → ok: "seq 2038 after 4 ok false list 1"', '  call c3 c → ok', '  call c4 d → ok: "not json"', '  call c5 e → ok: "a.js"']);
 });
 
 test('a standalone tool result row still names the id of the call it answers and no cue', { skip }, async () => {

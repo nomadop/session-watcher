@@ -7,7 +7,10 @@
 // snapshot GET goes through browser fetch directly and is awaited where it is made.
 //
 // Every piece of server-derived text reaches the DOM as textContent. innerHTML is limited to
-// module-owned static markup: the drawer shell and the four SVG literals below.
+// module-owned static markup: the search field and the four SVG literals below. The drawer itself
+// (scrim, dialog, title row, close button, focus and Escape) is `public/lib/drawerShell.js`.
+
+import { createDrawerShell } from '../lib/drawerShell.js';
 
 const USER_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="4" r="2"/><path d="M2.5 10c.5-2 1.7-3 3.5-3s3 .9 3.5 3"/></svg>';
 const ASSISTANT_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.8v8.4M1.8 6h8.4"/></svg>';
@@ -23,7 +26,6 @@ const BROWSE_URL = '/api/turn/browse';
  */
 export function mount(root, ctx) {
   // ── State ──────────────────────────────────────────────────────────────────
-  let isOpen = false;
   let sections = [];
   let unavailable = false;
   // A request writes its outcome only while it is still the newest, so an overlapped one cannot land
@@ -64,36 +66,19 @@ export function mount(root, ctx) {
     trigger.appendChild(countEl);
   };
 
-  // ── Scrim + panel ──────────────────────────────────────────────────────────
-  const scrim = document.createElement('div');
-  scrim.className = 'sw-history-scrim';
-  scrim.setAttribute('aria-hidden', 'true');
-  ctx.overlayRoot.appendChild(scrim);
-
-  const drawer = document.createElement('aside');
-  drawer.className = 'sw-history-drawer';
-  drawer.setAttribute('role', 'dialog');
-  drawer.setAttribute('aria-label', 'History');
-  drawer.setAttribute('aria-modal', 'true');
-  drawer.innerHTML = `
-    <header class="sw-history-head">
-      <div class="sw-history-title-row">
-        <h2 class="sw-history-title">History</h2>
-        <button class="sw-history-close" type="button" aria-label="Close history">×</button>
-      </div>
-      <label class="sw-history-search">
-        ${SEARCH_SVG}
-        <input type="search" aria-label="Search history"
-               placeholder="Search turns and notes" autocomplete="off">
-      </label>
-    </header>
-    <div class="sw-history-list"></div>
+  // ── Drawer ─────────────────────────────────────────────────────────────────
+  const shell = createDrawerShell({ overlayRoot: ctx.overlayRoot, title: 'History', closeLabel: 'Close history' });
+  const searchLabel = document.createElement('label');
+  searchLabel.className = 'sw-history-search';
+  searchLabel.innerHTML = `
+    ${SEARCH_SVG}
+    <input type="search" aria-label="Search history"
+           placeholder="Search turns and notes" autocomplete="off">
   `;
-  ctx.overlayRoot.appendChild(drawer);
-
-  const closeBtn = drawer.querySelector('.sw-history-close');
-  const listEl = drawer.querySelector('.sw-history-list');
-  const searchEl = drawer.querySelector('.sw-history-search input');
+  shell.head.appendChild(searchLabel);
+  const listEl = shell.body;
+  listEl.classList.add('sw-history-list');
+  const searchEl = searchLabel.querySelector('input');
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -349,16 +334,10 @@ export function mount(root, ctx) {
   // ── Open / close ───────────────────────────────────────────────────────────
 
   async function openDrawer() {
-    if (isOpen) return;
-    isOpen = true;
-
-    drawer.classList.add('sw-history-drawer-open');
-    scrim.classList.add('sw-history-scrim-visible');
-    scrim.setAttribute('aria-hidden', 'false');
-    document.querySelector('.sw-wrap')?.setAttribute('inert', '');
-    // Move focus into the modal before awaiting I/O; otherwise the active element is the trigger
-    // inside the background subtree that was just made inert.
-    searchEl.focus();
+    if (shell.isOpen()) return;
+    // The shell moves focus into the modal before the I/O is awaited; otherwise the active element
+    // is the trigger inside the background subtree that was just made inert.
+    shell.open({ focus: searchEl, returnFocus: trigger });
 
     // Keep the previous snapshot, search filter and expansion visible while the local request
     // resolves; the completed request is rendered through that same UI state and replaces the view
@@ -369,7 +348,7 @@ export function mount(root, ctx) {
     await loadSnapshot();
     if (destroyed) return;
     paintCount();
-    if (!isOpen) return;
+    if (!shell.isOpen()) return;
     // Capture at replacement time, not request start: the retained snapshot stays interactive while
     // fetch is pending, and a scroll made during that interval is the position to preserve.
     const savedScrollTop = listEl.scrollTop;
@@ -379,19 +358,7 @@ export function mount(root, ctx) {
     requestAnimationFrame(() => { listEl.scrollTop = savedScrollTop; });
   }
 
-  function closeDrawer() {
-    if (!isOpen) return;
-    isOpen = false;
-    drawer.classList.remove('sw-history-drawer-open');
-    scrim.classList.remove('sw-history-scrim-visible');
-    scrim.setAttribute('aria-hidden', 'true');
-    document.querySelector('.sw-wrap')?.removeAttribute('inert');
-    trigger.focus();
-  }
-
   trigger.addEventListener('click', openDrawer);
-  closeBtn.addEventListener('click', closeDrawer);
-  scrim.addEventListener('click', closeDrawer);
 
   searchEl.addEventListener('input', (event) => {
     query = event.target.value.trim();
@@ -400,18 +367,6 @@ export function mount(root, ctx) {
     // returns it to the top, which is the intended search reset.
     renderList();
   });
-
-  function onKeydown(event) {
-    if (event.key !== 'Escape' || !isOpen) return;
-    // Blink treats Escape on a non-empty input[type="search"] as a clear, and it applies that default
-    // AFTER this handler has moved focus to the trigger — emptying the field without firing an input
-    // event, so `query` would keep filtering with nothing on screen to explain it. Suppressing the
-    // default keeps the field, `query` and the rendered list in agreement across close/reopen. The
-    // native cancel button still clears the field while the drawer is open.
-    event.preventDefault();
-    closeDrawer();
-  }
-  document.addEventListener('keydown', onKeydown);
 
   // One fetch at mount, for the entry's number alone — and it costs a whole browse snapshot, not a
   // count, on a dashboard where the drawer may never be opened. It is paid again on every remount,
@@ -425,10 +380,7 @@ export function mount(root, ctx) {
     update() {},
     destroy() {
       destroyed = true;
-      document.removeEventListener('keydown', onKeydown);
-      document.querySelector('.sw-wrap')?.removeAttribute('inert');
-      scrim.remove();
-      drawer.remove();
+      shell.destroy();
       anchor.textContent = '';
     },
   };

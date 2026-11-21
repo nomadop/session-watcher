@@ -1,9 +1,10 @@
-// The inner seal's quote (`dsh/src/inner-quote.js`): the estimate of the current A and the bounded decision over it, read through the module's own functions. The expected values are worked examples computed apart from the module.
+// The inner seal's quote (`lib/inner-seal/quote.js`): the estimate of the current A and the bounded decision over it, read through the module's own functions. The expected values are worked examples computed apart from the module.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { estimateInnerA, INNER_QUOTE, innerQuote as quoteUnder, KAPPA_PRESETS, kappaOf } from '../dsh/src/inner-quote.js';
-import { renderCarried } from '../lib/harness/dsh/inner-seal-message.js';
+import { estimateInnerA, INNER_QUOTE, innerQuote as quoteUnder, isQuote, KAPPA_PRESETS, kappaOf, QUOTE_QUANTITIES } from '../lib/inner-seal/quote.js';
+import { renderCarried } from '../lib/carried-evidence.js';
+import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 
 // E2 is the policy the worked values below were derived under; a case that names another preset says so.
 const innerQuote = input => quoteUnder({ preset: 'E2', ...input });
@@ -216,7 +217,6 @@ test('the quote\'s kappa is the named preset\'s own for this n and ratio, the sn
     const quote = innerQuote({ n, estimate, cRatio: 30 });
     assert.equal(quote.trigger, trigger, why);
     assert.equal(quote.arm, arm, why);
-    assert.equal(quote.missing, null, why);
     close(quote.nRef, nRef, `${why} nRef`);
     close(quote.N, N, `${why} N`);
     close(quote.jRef, jRef, `${why} jRef`);
@@ -231,7 +231,7 @@ test('the quote\'s kappa is the named preset\'s own for this n and ratio, the sn
   // The kappa of a ratio and a step count read off the independent oracle.
   close(innerQuote({ n: 8, estimate: GREAT(8), cRatio: 30 }).kappa, 1.0994084552089021, 'kappa at n 8, ratio 30');
   assert.equal(Object.hasOwn(INNER_QUOTE, 'kappa'), false, 'no fixed kappa stands beside the preset');
-  const snapshot = innerQuote({ n: 8, estimate: estimateInnerA({ n: 8, range: [], messageOf: () => null, carried: { paths: [] }, ctp: CTP }), cRatio: 30 });
+  const snapshot = innerQuote({ n: 8, estimate: estimateInnerA({ n: 8, texts: [], bText: null, ctp: CTP }), cRatio: 30 });
   assert.equal(Object.hasOwn(snapshot, 'todoEst'), false, 'the state block is no priced term of the quote');
 });
 
@@ -319,27 +319,25 @@ test('the bounds: below the minimum nothing triggers however good the quote, and
   // A left quote at or past the retired hard bound's step count is declined where q is not under kappa: at ratio 1 kappa is under 1, and savings of 100 leave q above it.
   for (const n of [24, 30]) {
     const declined = innerQuote({ n, estimate: estimateOf({ n, lA: C_PER_STEP * n + 100 }), cRatio: 1 });
-    assert.equal(declined.missing, null);
     assert.equal(declined.arm, 'left');
     assert.ok(declined.q >= declined.kappa, `the quote alone declines at ${n}`);
     assert.equal(declined.trigger, null, `no mandatory attempt at ${n}`);
   }
 });
 
-test('a quote with no results never triggers, wherever the step count: a missing ratio, a failed estimate, savings not positive or a kappa not computable are recorded as missing with no result made up, no kappa where the ratio is missing and no value read as zero', () => {
+test('a quote with no results never triggers, wherever the step count: a missing ratio, a failed estimate, savings not positive or a kappa not computable leave no result made up, no kappa where the ratio is missing and no value read as zero', () => {
   const unpriced = { nRef: null, N: null, jRef: null, q: null, arm: null };
   const cases = [
-    { why: 'a ratio that could not be read', n: 24, estimate: GREAT(24), cRatio: null, missing: 'ratio_unavailable' },
-    { why: 'a ratio that is not finite', n: 24, estimate: GREAT(24), cRatio: Infinity, missing: 'ratio_unavailable' },
-    { why: 'an estimate that failed', n: 24, estimate: null, cRatio: 30, missing: 'estimate_failed' },
-    { why: 'savings that are not positive', n: 24, estimate: estimateOf({ n: 24, lA: C_PER_STEP * 24 }), cRatio: 30, missing: 'non_positive_savings' },
-    { why: 'savings below zero', n: 40, estimate: estimateOf({ n: 40, lA: 100 }), cRatio: 30, missing: 'non_positive_savings' },
-    { why: 'a ratio whose kappa is not a number', n: 8, estimate: GREAT(8), cRatio: 0, missing: 'undefined_result' },
+    { why: 'a ratio that could not be read', n: 24, estimate: GREAT(24), cRatio: null },
+    { why: 'a ratio that is not finite', n: 24, estimate: GREAT(24), cRatio: Infinity },
+    { why: 'an estimate that failed', n: 24, estimate: null, cRatio: 30 },
+    { why: 'savings that are not positive', n: 24, estimate: estimateOf({ n: 24, lA: C_PER_STEP * 24 }), cRatio: 30 },
+    { why: 'savings below zero', n: 40, estimate: estimateOf({ n: 40, lA: 100 }), cRatio: 30 },
+    { why: 'a ratio whose kappa is not a number', n: 8, estimate: GREAT(8), cRatio: 0 },
   ];
-  for (const { why, n, estimate, cRatio, missing } of cases) {
+  for (const { why, n, estimate, cRatio } of cases) {
     const quote = innerQuote({ n, estimate, cRatio });
     assert.equal(quote.trigger, null, why);
-    assert.equal(quote.missing, missing, why);
     assert.deepEqual({ nRef: quote.nRef, N: quote.N, jRef: quote.jRef, q: quote.q, arm: quote.arm }, unpriced, why);
   }
   const failed = innerQuote({ n: 24, estimate: null, cRatio: 30 });
@@ -352,43 +350,46 @@ test('a quote with no results never triggers, wherever the step count: a missing
 
 // A calibrated pair as a model policy supplies it, chosen so each figure below is worked by hand: an ASCII character is half a token, a CJK character two.
 const CTP = Object.freeze({ ascii: 2, cjk: 0.5, version: 1 });
-const userOf = (...texts) => ({ role: 'user', content: texts.map(text => ({ type: 'text', text })) });
 
-test('the estimate of A: L_A and B are priced under the model policy\'s calibrated pair, L_A over the messages of the range\'s seqs alone, B as the carrier\'s rendered B block without the framing every message carries, the lines the request already shows left out, and C is the per-step estimate', () => {
-  // Seqs 1 and 9 lie outside the range; seq 6 is a node that derives no message.
-  const messages = new Map([
-    [1, userOf('x'.repeat(1000))],
-    [4, userOf('abcd', '中文')],
-    [5, { role: 'assistant', content: [{ type: 'text', text: 'ok' }, { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{"p":"中"}' }] }],
-    [9, userOf('y'.repeat(1000))],
-  ]);
+test('the estimate of A: L_A is each request text priced on its own under the model policy\'s calibrated pair, B the rendered B text as handed with nothing added to it, and C is the per-step estimate', () => {
+  // The request texts of two messages: a user message of 'abcd' and '中文', and an assistant message of 'ok' and a call of the tool 'read' with its arguments.
+  const texts = ['abcd中文', 'okread{"p":"中"}'];
   const path = '/repo/src/held.js';
   const carried = {
     paths: [{ path, displayPath: path, totalLines: 3, state: 'readable', write: [[1, 'shown again'], [2, 'new 中文 line']], omit: [1] }],
     skills: [{ name: 'tdd', text: 'test first' }],
   };
-  const estimate = estimateInnerA({ n: 8, range: [4, 5, 6], messageOf: seq => messages.get(seq) ?? null, carried, ctp: CTP });
+  const bText = renderCarried(carried, CARRIER_TABLE);
+  const estimate = estimateInnerA({ n: 8, texts, bText, ctp: CTP });
 
-  // Seq 4: four ASCII characters are 2, two CJK characters 4. Seq 5: 'ok' is 1; the call's name and arguments hold twelve ASCII characters, 6, and one CJK character, 2.
-  assert.equal(estimate.lA, 6 + 9, 'the messages of seqs 4 and 5 under the pair, none outside the range and none for a node without a message');
-  const block = `\n\n${renderCarried({ ...carried })}`;
-  assert.ok(block.includes('new 中文 line') && !block.includes('shown again') && block.includes('test first'), 'the rendered B leaves the omitted line out');
-  // The block's two CJK characters are 4 tokens, every other character half of one: neither the address block nor any role framing is in it.
-  assert.equal(estimate.bEst, (block.length - 2) / 2 + 4);
+  // The first text: four ASCII characters are 2, two CJK characters 4. The second: fourteen ASCII characters are 7, one CJK character 2.
+  assert.equal(estimate.lA, 6 + 9);
+  assert.ok(bText.includes('new 中文 line') && !bText.includes('shown again') && bText.includes('test first'), 'the rendered B leaves the omitted line out');
+  // The text's two CJK characters are 4 tokens, every other character half of one: no blank-line opening, address block or role framing is in it.
+  assert.equal(estimate.bEst, (bText.length - 2) / 2 + 4);
   assert.equal(estimate.cEst, C_PER_STEP * 8);
   assert.equal(estimate.sEst, estimate.lA - estimate.bEst - C_PER_STEP * 8);
   assert.equal(estimate.n, 8);
 
-  const none = estimateInnerA({ n: 8, range: [4, 5], messageOf: seq => messages.get(seq) ?? null, carried: { paths: [] }, ctp: CTP });
+  const none = estimateInnerA({ n: 8, texts, bText: null, ctp: CTP });
   assert.equal(none.bEst, 0, 'a carrier that changes no evidence renders no B');
   assert.equal(none.lA, 15);
   const unsaid = { paths: [{ path, displayPath: path, withdraw: [1, 2] }, { path: '/repo/src/back.js', displayPath: '/repo/src/back.js', state: 'readable' }], removed: ['/repo/src/gone.js'] };
-  assert.equal(estimateInnerA({ n: 8, range: [4], messageOf: seq => messages.get(seq) ?? null, carried: unsaid, ctp: CTP }).bEst, 0, 'withdrawn lines, a removed path and a readable state are no part of B');
+  assert.equal(renderCarried(unsaid, CARRIER_TABLE), null, 'withdrawn lines, a removed path and a readable state are no part of B');
+  assert.equal(estimateInnerA({ n: 8, texts: [], bText: renderCarried(unsaid, CARRIER_TABLE), ctp: CTP }).bEst, 0);
+  assert.equal(estimateInnerA({ n: 8, texts: [], bText: null, ctp: CTP }).lA, 0, 'a range of nodes deriving no message has no A');
+});
+
+test('L_A prices each text on its own: the sum of the texts\' token counts, not the count of the texts joined', () => {
+  // Under three ASCII characters to a token, one character is 1/3 of a token and four are 4/3. Their sum is 1.6666666666666665 where the five characters priced as one text are 1.6666666666666667, so only per-text pricing equals the sum.
+  const ctp = { ascii: 3, cjk: 0.5, version: 1 };
+  assert.notEqual(1 / 3 + 4 / 3, 5 / 3, 'the fixture tells the sum of per-text counts from the joined text\'s');
+  assert.equal(estimateInnerA({ n: 8, texts: ['a', 'bcde'], bText: null, ctp }).lA, 1 / 3 + 4 / 3);
+  assert.equal(estimateInnerA({ n: 8, texts: ['a', '', 'bcde'], bText: null, ctp }).lA, 1 / 3 + 0 + 4 / 3, 'a message with no text is no tokens');
 });
 
 test('C is priced per counted step and the fixed fee is the specified one: the estimate of n steps carries 200n as C, never a fixed total, and the quote is priced under a fee of 10000', () => {
-  const messages = new Map([[4, userOf('abcd')]]);
-  const estimateAt = n => estimateInnerA({ n, range: [4], messageOf: seq => messages.get(seq) ?? null, carried: { paths: [] }, ctp: CTP });
+  const estimateAt = n => estimateInnerA({ n, texts: ['abcd'], bText: null, ctp: CTP });
   assert.deepEqual([8, 24, 1].map(n => estimateAt(n).cEst), [1600, 4800, 200]);
   assert.equal(estimateAt(24).sEst, 2 - 4800);
   assert.equal(innerQuote({ n: 8, estimate: GREAT(8), cRatio: 30 }).fee, 10000);
@@ -396,3 +397,75 @@ test('C is priced per counted step and the fixed fee is the specified one: the e
   close(innerQuote({ n: 8, estimate: GREAT(8), cRatio: 30 }).nRef, 300000 / 998400, 'nRef under the fee');
 });
 
+// The summary call reads the active history once: its estimate is already at the cache-read price, so it adds to the fixed load as it stands. At n 8, ratio 25, E2 (kappa 1.068853694464, no price compensation at the anchor), no B and a range of lA 32850 (C 1600, S 31250), F is 250000 plus the read: [read, nRef, N, jRef, q, arm, trigger], worked apart from the module.
+const READ_COST_AT_ANCHOR = [
+  [0, 8, 9.2288, 17.2288, 1, 'right', 'quote'],
+  [140625, 12.5, 13.7288, 21.2288, 1.0235529092553512, 'left', 'quote'],
+  [312500, 18, 19.2288, 25.2288, 1.0792744799594115, 'left', null],
+];
+
+test('the summary call\'s one read of the history joins the fixed load once and not again at the price ratio: both arms use that one reference, the left arm still passes strictly under the same kappa, and the snapshot keeps the read it used', () => {
+  const estimate = estimateOf({ n: 8, lA: 32850 });
+  assert.equal(estimate.sEst, 31250);
+  for (const [summaryReadCost, nRef, N, jRef, q, arm, trigger] of READ_COST_AT_ANCHOR) {
+    const quote = innerQuote({ n: 8, estimate, cRatio: 25, summaryReadCost });
+    const why = `read ${summaryReadCost}`;
+    close(quote.nRef, nRef, `${why} nRef`);
+    close(quote.N, N, `${why} N`);
+    close(quote.jRef, jRef, `${why} jRef`);
+    close(quote.q, q, `${why} q`);
+    assert.deepEqual([quote.arm, quote.trigger], [arm, trigger], why);
+    assert.equal(quote.summaryReadCost, summaryReadCost, `${why}: the snapshot keeps the read it was priced with`);
+    assert.deepEqual([quote.fee, quote.sEst, quote.cEst, quote.bEst], [FEE, 31250, 1600, 0], `${why}: the fee, the savings and the B and C estimates stay as estimated`);
+    close(quote.kappa, 1.068853694464, `${why} kappa is the one the read does not move`);
+  }
+});
+
+test('a read that cannot be used leaves the quote as it was with no read recorded, and a read of zero is a valid one that is kept: missing, not a finite number or negative falls back whole', () => {
+  const estimate = estimateOf({ n: 8, lA: 32850 });
+  const original = innerQuote({ n: 8, estimate, cRatio: 25 });
+  assert.equal(Object.hasOwn(original, 'summaryReadCost'), false, 'a quote priced with no read has none');
+  for (const [why, summaryReadCost] of [['undefined', undefined], ['null', null], ['NaN', NaN], ['Infinity', Infinity], ['negative', -1], ['a text', '140625']]) {
+    assert.deepEqual(innerQuote({ n: 8, estimate, cRatio: 25, summaryReadCost }), original, why);
+  }
+  const zero = innerQuote({ n: 8, estimate, cRatio: 25, summaryReadCost: 0 });
+  assert.deepEqual({ ...zero, summaryReadCost: undefined }, { ...original, summaryReadCost: undefined });
+  assert.equal(zero.summaryReadCost, 0, 'zero is a reading, kept');
+  // A quote that has no results used no read, so records none.
+  assert.equal(Object.hasOwn(innerQuote({ n: 8, estimate: null, cRatio: 25, summaryReadCost: 1 }), 'summaryReadCost'), false);
+  assert.equal(Object.hasOwn(innerQuote({ n: 8, estimate, cRatio: null, summaryReadCost: 1 }), 'summaryReadCost'), false);
+});
+
+// ── The snapshot as a record keeps it ────────────────────────────────────────────────────────────────
+
+test('a snapshot the quote answers reads as a quote after the log\'s JSON, one whose quantities are null as recorded does too, and every quantity the table names is a member of the snapshot', () => {
+  const triggered = innerQuote({ n: 8, estimate: estimateOf({ n: 8, lA: 200_000 }), cRatio: 30 });
+  assert.equal(triggered.trigger, 'quote');
+  assert.equal(isQuote(triggered), true);
+  assert.equal(isQuote(JSON.parse(JSON.stringify(triggered))), true);
+  assert.deepEqual(QUOTE_QUANTITIES.filter(key => !(key in triggered)), [], 'each named quantity is the snapshot\'s own');
+
+  const withoutResults = { ...triggered, ...Object.fromEntries(QUOTE_QUANTITIES.map(key => [key, null])), arm: null };
+  assert.equal(isQuote(withoutResults), true, 'a quantity the quote has none of is null, as recorded');
+  assert.equal(isQuote({ ...triggered, missing: null }), true, 'a member of an earlier snapshot beyond these is not read');
+});
+
+test('a value that is no snapshot of a triggered quote reads as none: a trigger other than quote, a quantity or a member that is no number, an arm outside the three, a count of steps that is no count', () => {
+  const good = innerQuote({ n: 8, estimate: estimateOf({ n: 8, lA: 200_000 }), cRatio: 30 });
+  const none = {
+    'no value': undefined,
+    'null': null,
+    'text': 'quote',
+    'a list': [good],
+    'a declined quote': { ...good, trigger: null },
+    'the retired hard trigger': { ...good, trigger: 'hard' },
+    'a step count below zero': { ...good, n: -1 },
+    'a fractional step count': { ...good, n: 1.5 },
+    'a fee that is no number': { ...good, fee: null },
+    'a kappa that is no number': { ...good, kappa: null },
+    'a kappa that is not finite': { ...good, kappa: NaN },
+    'an arm outside the three': { ...good, arm: 'middle' },
+    ...Object.fromEntries(QUOTE_QUANTITIES.map(key => [`${key} that is text`, { ...good, [key]: '1' }])),
+  };
+  for (const [why, value] of Object.entries(none)) assert.equal(isQuote(value), false, why);
+});

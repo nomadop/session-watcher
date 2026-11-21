@@ -1,4 +1,4 @@
-// The shared read of Working Tree text: `readTreeWindows`, which turns the ranges a caller asks for into numbered lines or says why the file cannot be read, `renderFileEvidence`, which renders the runs of one file's lines under a single path header, and `parseFileEvidence`, which reads such a rendering back. Both trees the port has answer the same table. The rendered rows are compared with the real `read` tool's in `test/dsh.load.integration.test.js` `each row of a block`.
+// The shared read of Working Tree text: `readTreeWindows`, which turns the ranges a caller asks for into numbered lines or says why the file cannot be read, `renderFileEvidence`, which renders the runs of one file's lines under a single path header. Both trees the port has answer the same table. The rendered rows are compared with the real `read` tool's in `test/dsh.load.integration.test.js` `each row of a block`.
 import test, { after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import nodePath, { join } from 'node:path';
 
 import { createMemoryWorkingTree, createNodeWorkingTree } from '../lib/working-tree.js';
-import { parseFileEvidence, readTreeWindows, renderFileEvidence } from '../lib/working-tree-text.js';
+import { readTreeWindows, renderFileEvidence } from '../lib/working-tree-text.js';
 
 const FILE_BYTES = 100;
 
@@ -214,50 +214,5 @@ describe('renderFileEvidence', () => {
       const first = { offset: 1, lines: [{ number: 1, text: 'tiny' }, { number: 2, text: 'tiny' }] };
       assert.deepEqual(renderFileEvidence(ROWS_PATH, { totalLines: 9, runs: [first, wide, next] }, { maxChars: joined.length + 3 }), { text: joined.replace('\n4: tiny', '\n--\n4: tiny'), shown: [2, 0, 1] });
     });
-  });
-});
-
-describe('parseFileEvidence', () => {
-  const stretch = (...numbers) => ({ offset: numbers[0], lines: numbers.map(number => ({ number, text: `l${number}` })) });
-  const parsed = (input, options) => parseFileEvidence(renderFileEvidence(PATH, input, options).text);
-
-  test('reads back what renderFileEvidence prints: the path, the total and each stretch of consecutive lines, the runs it prints with no `--` between them one stretch', () => {
-    assert.deepEqual(parsed({ totalLines: 9, runs: [{ offset: 1, lines: rows(1, 2) }, { offset: 5, lines: rows(5) }] }),
-      { path: PATH, totalLines: 9, runs: [stretch(1, 2), stretch(5)] });
-    assert.deepEqual(parsed({ totalLines: 9, runs: [{ offset: 1, lines: rows(1, 2) }, { offset: 3, lines: rows(3, 4) }, { offset: 9, lines: [] }, { offset: 6, lines: rows(6) }] }),
-      { path: PATH, totalLines: 9, runs: [stretch(1, 2, 3, 4), stretch(6)] });
-    assert.deepEqual(parsed({ totalLines: 0, runs: [{ offset: 1, lines: [] }] }), { path: PATH, totalLines: 0, runs: [] }, 'an empty file prints its header alone');
-  });
-
-  test('a line is its text after the number and one space, whatever the text is: empty, indented, a `--`, a notice, another row, with a colon, or holding a carriage return or a Unicode line separator', () => {
-    const texts = ['', '  indented', '--', '(Output capped after line 1. Use offset=2 to continue.)', '3: not a row', 'a: b', '\ttab', 'a\rb', 'a\u2028b', 'a\u2029b'];
-    const lines = texts.map((text, index) => ({ number: index + 1, text }));
-    assert.deepEqual(parsed({ totalLines: 10, runs: [{ offset: 1, lines }] }), { path: PATH, totalLines: 10, runs: [{ offset: 1, lines }] });
-  });
-
-  test('a path that holds parentheses, spaces, a carriage return or a Unicode line separator is the whole of the header before its last `(total lines: N)`', () => {
-    for (const odd of ['/repo/a (copy) (total lines: 4) b.txt', '/repo/a\rb.txt', '/repo/a\u2028b.txt']) {
-      assert.deepEqual(parseFileEvidence(renderFileEvidence(odd, { totalLines: 2, runs: [{ offset: 1, lines: rows(1) }] }).text), { path: odd, totalLines: 2, runs: [stretch(1)] });
-    }
-  });
-
-  test('a run that was capped ends its stretch, and the one after it is another although its number follows on', () => {
-    const wide = Array.from({ length: 6 }, (_, index) => ({ number: index + 1, text: 'r'.repeat(40) }));
-    const next = { offset: 4, lines: [{ number: 4, text: 'tiny' }] };
-    const text = ['/repo/rows.txt (total lines: 9)', ...wide.slice(0, 3).map(({ number, text: row }) => `${number}: ${row}`), '(Output capped after line 3. Use offset=4 to continue.)', '--', '4: tiny'].join('\n');
-    const capped = renderFileEvidence('/repo/rows.txt', { totalLines: 9, runs: [{ offset: 1, lines: wide }, next] }, { maxChars: text.length });
-    assert.equal(capped.text, text);
-    assert.deepEqual(parseFileEvidence(capped.text).runs, [{ offset: 1, lines: wide.slice(0, 3) }, next], 'the notice and the `--` are no lines');
-  });
-
-  test('the block a load keeps, which a newline ends, reads as the rendering does', () => {
-    const input = { totalLines: 3, runs: [{ offset: 1, lines: rows(1, 2) }] };
-    assert.deepEqual(parseFileEvidence(`${renderFileEvidence(PATH, input).text}\n`), parsed(input));
-  });
-
-  test('a text that is no rendering answers null: no header, a header without the total, a row without its number, a stray line', () => {
-    for (const text of ['', '1: l1', `${PATH}\n1: l1`, `${PATH} (total lines: x)`, `${PATH} (total lines: 2)\nl1`, `${PATH} (total lines: 2)\n1:l1`, `${PATH} (total lines: 2)\n1: l1\nstray`]) {
-      assert.equal(parseFileEvidence(text), null, JSON.stringify(text));
-    }
   });
 });

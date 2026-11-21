@@ -10,18 +10,21 @@ import { createWatcherTable, writeDiagnostic, handlerFailed, hostDiagnostic } fr
 import { createModelNames } from './model-names.js';
 import { createEpochModelName } from './epoch-model-name.js';
 import { createRpcHandler } from './rpc.js';
-import { CARRIER_EVIDENCE_SERVICE, PI_AI_SERVICE } from './pi-ai-integration.js';
+import { CARRIER_EVIDENCE_SERVICE, CARRIER_SETTINGS_SERVICE, PI_AI_SERVICE } from './pi-ai-integration.js';
 import { createCarrierEvidence } from './carrier-evidence.js';
 import { carrierCacheDepsOf, createCarrierCacheSwitch } from './carrier-cache-switch.js';
 import { createSignalHub } from './signal.js';
 import { createHandoffDelivery, createTools } from './tools.js';
 import { createContinueCommand } from './continue.js';
+import { createEventReadTool } from './event-read.js';
+import { EVENT_READ_GUIDANCE, EVENT_READ_TOOL } from '../../lib/harness/dsh/event-read.js';
 import { createLoadCommand } from './load.js';
 import { registerSkills } from './skills.js';
 import { innerModeProjection, createModeSelection, createModeInheritance, createModeAccess, isModeInput } from './inner-mode.js';
 import { createInnerSeal } from './inner-seal.js';
+import { readGitState } from '../../lib/inner-seal/git-state.js';
 import { createInnerMonitor } from './inner-monitor.js';
-import { innerMonitorProjection, createMonitorAccess, isMonitorInput } from './inner-monitor-read.js';
+import { heldInContext, innerMonitorProjection, createMonitorAccess, isMonitorInput } from './inner-monitor-read.js';
 
 /** The services `applyHost` reads on `ctx` itself, which the plugin face injects. */
 export const HOST_INJECT = ['sessions', 'sessionQuery', 'tools', 'skills', 'llm'];
@@ -37,17 +40,18 @@ const SESSION_NOT_FOUND = 'SESSION_QUERY_SESSION_NOT_FOUND';
  * The agent tools answer each calling session from its watcher, `watcher_status` any session the host has run or persisted, and the skills are registered from the `SKILL.md` files under `skillsDir`; with `connection` and `webServer` present, the `/session-watcher` RPC channel answers from the watcher table, and the `/api/session-watcher.events` route streams the id of each session whose entry changes state, applies a frame, has its readings changed over the channel or is announced by `session/created`, which signals whether or not the table already holds its entry.
  * Each model call is measured under the `llm` catalog name of its provider and model id once `llm.resolveModelInfo` has answered one, and under the id until then; a pair keeps the first name it resolves to until the plugin remounts. An `agent/pre-step` listener (`createEpochModelName`) holds a step whose session has no measured call in its open epoch until the name of the model the step captured is resolved or fails to resolve, so the call that fixes the Epoch Model is mapped under it. The plugin requires `llm`, and a re-provided `llm` remounts the whole host, as a re-provided `sessions` does.
  * With the `commands`, `workingDirectory` and `fs` services present, the `/sw-load` command (`createLoadCommand`) is registered on their injection's child, and with `tokenMeter` as well, the `/sw-continue` command (`createContinueCommand`) on its own injection's child; each leaves with any service its injection names. Both deliver through the one `createHandoffDelivery` over the table, the store and the title service, which titles the loading session when one is mounted, read the kept text with `readObserved` over their child's `fs` and the process's shared Working Tree (`nodeWorkingTree`, the one the watchers attribute against), resolve a session's directory through their child's `workingDirectory.get`, and build their messages and events from `commandKit`, the `CompactionId`, `compactCheckpointSource` and `createUserMessage` values, read only there, so a caller that mounts neither command omits it.
- * With `innerKit`, the `appendPluginRecord` and `pluginRecordOf` values of `dsh-session`, the `AssistantStreamAccumulator`, `BlockAssembler`, `assembleAssistantStream`, `lastAssistantStreamChunk`, `errorChain` and `createUserMessage` values of `dsh-llm`, the `toolPairingBalancedBefore` and `toolPairingBalancedAfter` values of `dsh-compaction` and the `loads` value of `ai-json-repair`, which the seal (`createInnerSeal`) and its auxiliary call (`summarizeSlots`) take as their `kit` and the monitor's projection (`innerMonitorProjection`) and rows read through it, `assembleAssistantStream` the monitor's alone and `loads` the auxiliary call's alone, which recovers a summary reply whose JSON syntax fails, and the `sessionProjections`, `agents`, `fs`, `attachments` and `tokenMeter` services present, the inner compaction feature's one child registers the session mode's projection (`innerModeProjection`) and awaits it before it publishes anything: the mode access the channel's `inner-mode` and `inner-mode/select` read (`createModeAccess`) and the watcher table's frames read as well, so a session whose mode is on has the qualified prefix of its Source for its Rate Lamp budget and one whose mode is off or invalid counts every call; the frames and the selection keep to the synchronous read of the instances the host holds, while the page's `inner-mode` answers through the access's `display`, which gives a session the host holds no instance of the state of its stored log, read once and folded under the registered projection (`readStored`), a `session/event` listener that publishes a session's id on a mode record, `turn/start`, an attempt record, an inner-seal carrier or a message of a handoff load, an `agent/created` listener that gives a plain subagent its parent's mode (`createModeInheritance`), which the serial creation awaits before the child's first turn, and the seal's `agent/pre-step` listener, registered with `prepend`, which reads the held text it quotes through `readUnobserved` over the child's `fs` and the shared tree, the C ratio of the session's live watcher (`getStatus`) and the calibrated pair of its epoch model (`getEpochModel`), each none without a live watcher, the session's state items through `readState`, the adapter over the child's `sessionProjections.snapshot(session, ['todos', 'subagentCatalog'])`, its `agents`, and the context's `workingDirectory` and `jobs` services where they are provided, and takes the child's `createInnerMonitor`, built over `innerKit.appendPluginRecord` and the hub's `publish`, so a change of its registry of attempts in flight signals as well. Once those stand it registers the monitor's projection the same way and builds the monitor access the channel's `inner-monitor` endpoints read (`createMonitorAccess`) over the projection's state, the registry's entries, the host's `readSession`, which an attempt's and a handoff's details read the log through, the store's next task of a handoff (`nextTaskOf`, over `getHandoff`), and `readStored`, which gives a session the host holds no instance of the one snapshot of its stored log, its state folded under the registered projection and its details read from. A rejected mode registration fails the child and publishes none of them; a monitor registration or access that fails is one `inner_monitor_register` stderr line that leaves the monitor access unpublished, nothing retried, until the child mounts again, and takes back nothing the mode wired. The child's disposer withdraws both accesses, its listeners leave with it, and the appearance and the withdrawal of the accesses each publish every session `ctx.sessions` lists. A caller that mounts no feature omits `innerKit`.
- * `readSettings()` answers the user's current settings, `{ preset, fallbackModel, inheritInSubagents, carrierResponsesBreakpoint }`, the Config's volatile values as the plugin face reads them: the seal reads the policy and the backup model once per quote, the plain-subagent inheritance reads whether to give a child its parent's mode as the child is created, and `CARRIER_EVIDENCE_SERVICE` answers the Responses breakpoint switch from `carrierResponsesBreakpoint` (off where the caller passes no `readSettings`) each time the pi-ai entry asks, so a save changes the next read and the host keeps no copy. A caller that passes `innerKit` passes it too.
+ * With `queryKit`, the `extractSessionEventText` value of `dsh-session-query` and the `HarnessError` value of `dsh-llm`, the `sw_event_read` tool (`createEventReadTool`) is registered beside the others and answers any session the caller's directory holds from `ctx.sessionQuery`, with no watcher, and refuses an event of the caller's own session that the monitor's projection holds in its context whole (`heldInContext`), refusing none while the monitor's access is unpublished; with the `systemPrompt` service as well, its injection's child registers the tool's guidance (`EVENT_READ_GUIDANCE`) as a system prompt section at the session query order, empty for a step whose tool set does not hold the tool.
+ * With `innerKit`, the `appendPluginRecord` and `pluginRecordOf` values of `dsh-session`, the `AssistantStreamAccumulator`, `BlockAssembler`, `assembleAssistantStream`, `lastAssistantStreamChunk`, `errorChain` and `createUserMessage` values of `dsh-llm`, the `toolPairingBalancedBefore` and `toolPairingBalancedAfter` values of `dsh-compaction` and the `loads` value of `ai-json-repair`, which the seal (`createInnerSeal`) and its auxiliary call (`summarizeSlots`) take as their `kit` and the monitor's projection (`innerMonitorProjection`) and rows read through it, `assembleAssistantStream` the monitor's alone and `loads` the auxiliary call's alone, which recovers a summary reply whose JSON syntax fails, and the `sessionProjections`, `agents`, `fs`, `attachments` and `tokenMeter` services present, the inner compaction feature's one child registers the session mode's projection (`innerModeProjection`) and awaits it before it publishes anything: the mode access the channel's `inner-mode` and `inner-mode/select` read (`createModeAccess`) and the watcher table's frames read as well, so a session whose mode is on has the qualified prefix of its Source for its Rate Lamp budget and one whose mode is off or invalid counts every call; the frames and the selection keep to the synchronous read of the instances the host holds, while the page's `inner-mode` answers through the access's `display`, which gives a session the host holds no instance of the state of its stored log, read once and folded under the registered projection (`readStored`), a `session/event` listener that publishes a session's id on a mode record, `turn/start`, an attempt record, an inner-seal carrier or a message of a handoff load, an `agent/created` listener that gives a plain subagent its parent's mode (`createModeInheritance`), which the serial creation awaits before the child's first turn, and the seal's `agent/pre-step` listener, registered with `prepend`, which reads the held text it quotes through `readUnobserved` over the child's `fs` and the shared tree, the C ratio of the session's live watcher (`getStatus`) and the calibrated pair of its epoch model (`getEpochModel`), each none without a live watcher, the session's state items through `readState`, the adapter over the child's `sessionProjections.snapshot(session, ['todos', 'subagentCatalog'])`, its `agents`, and the context's `workingDirectory` and `jobs` services where they are provided, and its git state through `readGit`, which reads it in the directory the `workingDirectory` service shows (`readGitState`), and takes the child's `createInnerMonitor`, built over `innerKit.appendPluginRecord` and the hub's `publish`, so a change of its registry of attempts in flight signals as well. Once those stand it registers the monitor's projection the same way and builds the monitor access the channel's `inner-monitor` endpoints read (`createMonitorAccess`) over the projection's state, the registry's entries, the host's `readSession`, which an attempt's and a handoff's details and a clear's settlement read the log through, the store's next task of a handoff (`nextTaskOf`, over `getHandoff`), and `readStored`, which supplies one log snapshot and its folded monitor state for sessions without a held instance and for current settlement regardless of whether the session is held. A rejected mode registration fails the child and publishes none of them; a monitor registration or access that fails is one `inner_monitor_register` stderr line that leaves the monitor access unpublished, nothing retried, until the child mounts again, and takes back nothing the mode wired. The child's disposer withdraws both accesses, its listeners leave with it, and the appearance and the withdrawal of the accesses each publish every session `ctx.sessions` lists. A caller that mounts no feature omits `innerKit`.
+ * `readSettings()` answers the user's current settings, `{ preset, fallbackModel, inheritInSubagents, carrierResponsesBreakpoint }`, the Config's volatile values as the plugin face reads them: the seal reads the policy and the backup model once per quote, the plain-subagent inheritance reads whether to give a child its parent's mode as the child is created, and `CARRIER_SETTINGS_SERVICE` answers the Responses breakpoint switch from `carrierResponsesBreakpoint` (off where the caller passes no `readSettings`) each time the pi-ai entry asks, so a save changes the next read and the host keeps no copy. A caller that passes `innerKit` passes it too.
  * A route's cache lifetime is the retention its profile declares: the service of the opt-in pi-ai entry (`pi-ai-integration.js`, read through `ctx.get` at each use) answers it from the configuration it read at startup while the entry is mounted and serves, and the Settings service answers it otherwise, an entry that reports a failure included. The channel's `pi-ai/status` answers that service's `failure` cause, null while the entry is not mounted.
- * The host provides `CARRIER_EVIDENCE_SERVICE` (`carrier-evidence.js`), which the opt-in pi-ai entry's wrapped payload hook reports each serialization's closed result to and asks whether the owner's Responses breakpoint switch is on; the seal takes a scope of it around each summary request's stream, and the request's call record keeps what the scope held. The channel's `carrier-cache/status` and `carrier-cache/set` answer the owner alone from the one switch (`carrier-cache-switch.js`) the host builds over the `pluginManager`, `loader` and `llm` services and the pi-ai entry's service, each read at the call.
+ * The host provides `CARRIER_EVIDENCE_SERVICE` (`carrier-evidence.js`), which the opt-in pi-ai entry's wrapped payload hook reports each serialization's closed result to, and `CARRIER_SETTINGS_SERVICE`, which the entry asks whether the owner's Responses breakpoint switch is on; the seal takes a scope of the evidence service around each summary request's stream, and the request's call record keeps what the scope held. The channel's `carrier-cache/status` and `carrier-cache/set` answer the owner alone from the one switch (`carrier-cache-switch.js`) the host builds over the `pluginManager`, `loader` and `llm` services and the pi-ai entry's service, each read at the call.
  * `carrierInstallTarget()` is the install target of the official carrier cache bundle (`carrier-cache-switch.js`), `{ spec, version }` or null; the plugin face gives the bundle's name at the version of its own `package.json`, and a composition that passes none leaves a profile without the bundle with no switch.
  * `turnNotesRoot` is the Turn Notes root; `loadIsIgnored(cwd)` answers a session's ignore matcher.
  * No handler or disposer throws into the host: a failure is a watcher's diagnostic or a stderr line.
  *
  * @returns {{ table: ReturnType<typeof createWatcherTable> }}
  */
-export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, defineTool, skillsDir, commandKit, innerKit, readSettings, carrierInstallTarget }) {
+export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, defineTool, skillsDir, commandKit, queryKit, innerKit, readSettings, carrierInstallTarget }) {
   initStore(storePath);
   // Registered right after the store opens, so a disposal after a later throw in `apply` still closes it.
   ctx.effect(() => () => {
@@ -64,7 +68,7 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
   };
   // `readSession` reads its service's own state, so it is called on the service and never passed bare.
   const readSession = sessionId => ctx.sessionQuery.readSession(sessionId);
-  // The one read of a session the host holds no instance of, for the inner compaction pages: its stored log as one snapshot, folded under `definition`, the projection registered for the page, as the registry folds a log it holds; `{ state, events }`, or undefined for an id the service neither holds nor lists.
+  // Read a session log and fold the page's projection over that same snapshot. The mode and monitor use this without a held projection; the current settlement uses it even for a held session.
   // Any other failure of the read or of the fold propagates. It makes no watcher, no session and no record, and keeps nothing: each call reads again.
   const readStored = async (definition, sessionId) => {
     let snapshot;
@@ -98,9 +102,10 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
     if (record !== null) table.ensure({ id: record.header.id, header: record.header });
     return record;
   };
-  // What the opt-in pi-ai entry's wrapped payload hook reports, filed under the scope of the summary request whose stream is being iterated, and the owner's saved Responses breakpoint switch it asks at each request; the entry reads this service at each use, and the seal takes the scopes.
-  const carrierEvidence = createCarrierEvidence({ responsesBreakpoint: () => readSettings?.().carrierResponsesBreakpoint === true });
+  // What the opt-in pi-ai entry's wrapped payload hook reports, filed under the scope of the summary request whose stream is being iterated, and the owner's saved Responses breakpoint switch it asks at each request; the entry reads each service at each use, and the seal takes the scopes.
+  const carrierEvidence = createCarrierEvidence();
   ctx.provide(CARRIER_EVIDENCE_SERVICE, carrierEvidence.service);
+  ctx.provide(CARRIER_SETTINGS_SERVICE, { responsesBreakpoint: () => readSettings?.().carrierResponsesBreakpoint === true });
   const hub = createSignalHub();
   table.onChange(sessionId => hub.publish(sessionId));
   // It reads the epoch model after `next()`, so a boundary a listener inside it writes has cleared it by then.
@@ -131,6 +136,20 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
   // Read at each call: a deployment without a title service mounts the host all the same, and titles nothing.
   const sessionTitle = () => ctx.get('sessionTitle');
   for (const definition of createTools({ defineTool, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
+  // The monitor's answer of whether an event is in a session's context whole, published with the monitor's access and withdrawn with it; the event read asks it at each call and refuses nothing while it is unpublished.
+  let heldOf = null;
+  // The event read answers from the session query service alone, so it stands outside the watcher table and every gate the other tools wait on; a caller without `queryKit` mounts none.
+  if (queryKit !== undefined) {
+    ctx.tools.register(createEventReadTool({ defineTool, ctx, ...queryKit, heldInContext: (sessionId, seq) => heldOf?.(sessionId, seq) === true }));
+    // The section is an effect of the child, so the callback returns nothing.
+    ctx.inject(['systemPrompt'], (child) => {
+      child.systemPrompt.section({
+        name: `tool:${EVENT_READ_TOOL}`,
+        order: child.systemPrompt.getSectionOrder('TOOL_SESSION_QUERY'),
+        text: ({ scope, toolSet }) => (ctx.tools.get(EVENT_READ_TOOL, scope, toolSet) === undefined ? '' : EVENT_READ_GUIDANCE),
+      });
+    });
+  }
   const deliver = createHandoffDelivery({ table, store: getStore(), sessionTitle });
   registerSkills(ctx, { skillsDir });
   // The kept text of a load, read from the shared tree and recorded as the agent's observation through the `fs` of the child that registers the command.
@@ -162,6 +181,11 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
         todos: projected('todos'),
       },
     };
+  };
+  // The seal's read of the git state in the directory the session's working directory item shows; it takes an await, so it is not among `stateOf`'s synchronous reads. None where the host holds no working directory service; a directory that cannot be read rejects.
+  const gitStateOf = async (session, signal) => {
+    const workingDirectory = ctx.get('workingDirectory');
+    return workingDirectory === undefined ? null : readGitState({ cwd: workingDirectory.get(session), signal });
   };
   // The C ratio a session's live watcher reads, its model policy's default and a saved override included; null while the session has no live watcher.
   const ratioOf = (sessionId) => {
@@ -210,12 +234,13 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
       // Prepended, so the seal runs ahead of every other pre-step listener, a stock compaction's included, and they read the sealed surface.
       child.on('agent/pre-step', createInnerSeal({
         readMode: session => handle.stateOf(session),
-        sourceFacts: sessionId => table.sourceFacts(sessionId),
+        eventFacts: sessionId => table.eventFacts(sessionId),
         readSession,
-        heldView: (sessionId, events, range) => table.heldView(sessionId, events, range),
+        heldView: (sessionId, events) => table.heldView(sessionId, events),
         readFile: readFileThrough(child.fs),
         readUnobserved: readUnobservedThrough(child.fs),
         readState: stateOf(child),
+        readGit: gitStateOf,
         cRatio: ratioOf,
         ctpOf,
         readSettings,
@@ -237,6 +262,10 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
           // The store answers null for an id it holds no row of, so an absent handoff reads as no next task.
           nextTaskOf: handoffId => getStore().getHandoff(handoffId)?.nextTask ?? null,
         });
+        heldOf = (sessionId, seq) => {
+          const session = sessionOf(sessionId);
+          return session !== undefined && heldInContext(monitorHandle.stateOf(session), seq);
+        };
       } catch (error) {
         writeDiagnostic(null, hostDiagnostic('inner_monitor_register', error));
       }
@@ -244,6 +273,7 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
       return () => {
         modeAccess = null;
         monitorAccess = null;
+        heldOf = null;
         publishListed();
       };
     });
@@ -262,7 +292,7 @@ export function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored, define
   // `rpc.handle` and `fetch.register` are effects of the context that reads them, so the channel and the route leave with this child, and the streams it served close with it.
   ctx.inject(['connection', 'webServer'], (child) => {
     child.extend({ webServer: child.webServer }).connection.rpc.handle('/session-watcher', createRpcHandler({
-      table, store: getStore(), publish: hub.publish, resolvePersisted, innerMode: () => modeAccess, innerMonitor: () => monitorAccess, piAiFailure,
+      table, store: getStore(), workingTree, publish: hub.publish, resolvePersisted, innerMode: () => modeAccess, innerMonitor: () => monitorAccess, piAiFailure,
       carrierCache: () => carrierCacheSwitch,
     }));
     child.connection.fetch.register(hub.route());

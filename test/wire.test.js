@@ -1,9 +1,11 @@
 // test/wire.test.js — the payload shapers `lib/wire.js` holds so the Claude Code host and the DSH host share one home for each shape.
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import nodePath from 'node:path';
 import {
-  statusWire, statusWireWithLedger, statusDigest, bucketsPayload, bucketSummaryPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap,
+  statusWire, statusWireWithLedger, statusDigest, bucketsPayload, bucketSummaryPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap, heldFilePayload,
 } from '../lib/wire.js';
+import { createMemoryWorkingTree } from '../lib/working-tree.js';
 import { formatLine, renderBr, renderU, renderDelta, renderLB, renderMeterV3, renderBackstopProgress } from '../lib/statusline-format.js';
 import { stateKeyForStatus } from '../lib/rate-lamp-store.js';
 import { lampZone } from '../lib/bill-regret.js';
@@ -313,4 +315,41 @@ test('statusDigest of an unreliable payload nulls the measures and keeps model, 
 test('statusDigest throws on a body that carries no rateLamp, a route error body included', () => {
   assert.throws(() => statusDigest({ error: 'not_found' }), TypeError);
   assert.throws(() => statusDigest({ model: 'm', L: 1, B: 2 }), TypeError);
+});
+
+describe('heldFilePayload', () => {
+  const FILE_BYTES = 100;
+  const FILES = {
+    '/repo/nine.txt': Array.from({ length: 9 }, (_, at) => `l${at + 1}`).join('\n') + '\n',
+    '/repo/five.txt': 'l1\nl2\nl3\nl4\nl5\n',
+    '/repo/binary.dat': 'a\u0000b\n',
+    '/repo/over.txt': 'x'.repeat(FILE_BYTES + 1),
+  };
+  const tree = createMemoryWorkingTree({ files: FILES, path: nodePath.posix, homeDir: null });
+  const payloadOf = (path, lineNumbers, over = tree) => heldFilePayload(path, lineNumbers, over, { fileBytes: FILE_BYTES });
+  const lines = (...numbers) => numbers.map(number => ({ number, text: `l${number}` }));
+
+  test('the held lines are runs of consecutive numbers, each a window of the file\'s own text, beside its total', () => {
+    assert.deepEqual(payloadOf('/repo/nine.txt', [2, 3, 4, 7]), {
+      path: '/repo/nine.txt', total: 9, runs: [{ offset: 2, lines: lines(2, 3, 4) }, { offset: 7, lines: lines(7) }],
+    });
+  });
+
+  test('a held line the file no longer reaches is dropped, a run left with none is no run', () => {
+    assert.deepEqual(payloadOf('/repo/five.txt', [2, 8, 9]), { path: '/repo/five.txt', total: 5, runs: [{ offset: 2, lines: lines(2) }] });
+    assert.deepEqual(payloadOf('/repo/five.txt', [8, 9]), { path: '/repo/five.txt', total: 5, runs: [] });
+  });
+
+  test('a file with no held line answers its total and no run', () => {
+    assert.deepEqual(payloadOf('/repo/five.txt', []), { path: '/repo/five.txt', total: 5, runs: [] });
+  });
+
+  test('a file that cannot be read answers its reason and no text', () => {
+    assert.deepEqual(payloadOf('/repo/absent.txt', [1]), { path: '/repo/absent.txt', reason: 'missing' });
+    assert.deepEqual(payloadOf('/repo', [1]), { path: '/repo', reason: 'not-file' });
+    assert.deepEqual(payloadOf('/repo/over.txt', [1]), { path: '/repo/over.txt', reason: 'too-large' });
+    assert.deepEqual(payloadOf('/repo/binary.dat', [1]), { path: '/repo/binary.dat', reason: 'binary' });
+    const refusing = { ...tree, readText: () => null };
+    assert.deepEqual(payloadOf('/repo/five.txt', [1], refusing), { path: '/repo/five.txt', reason: 'unreadable' });
+  });
 });

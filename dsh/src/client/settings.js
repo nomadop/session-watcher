@@ -177,7 +177,7 @@ export function createCarrierCacheStore({ call }) {
   };
 }
 
-/** The field of the plugin's Config, in the configuration mirror, that holds the owner's Responses breakpoint switch; the host reads it at each request (`CARRIER_EVIDENCE_SERVICE`). */
+/** The field of the plugin's Config, in the configuration mirror, that holds the owner's Responses breakpoint switch; the host reads it at each request (`CARRIER_SETTINGS_SERVICE`). */
 const RESPONSES_FIELD = 'carrierResponsesBreakpoint';
 
 /**

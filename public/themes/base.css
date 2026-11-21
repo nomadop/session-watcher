@@ -349,6 +349,11 @@ body {
   background-color: var(--sw-hover, rgba(79, 224, 176, 0.06));
 }
 
+/* A file row opens the file drawer. */
+#sw-buckets .bucket-row.is-file {
+  cursor: pointer;
+}
+
 /* Indent — dynamic depth (IDE-style: no hard cap).
    Each indent level adds 18px padding. Vertical guide lines are drawn via
    multiple backgrounds set by JS (one 1px line per ancestor level). */
@@ -1188,8 +1193,11 @@ body {
   stroke-width: 1.4;
 }
 
+/* ── Drawer shell ─────────────────────────────────────────────────────────────
+   The modal drawer that public/lib/drawerShell.js builds, for the History drawer and the file drawer. */
+
 /* Scrim */
-.sw-history-scrim {
+.sw-drawer-scrim {
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -1199,13 +1207,13 @@ body {
   transition: opacity 150ms ease-out;
 }
 
-.sw-history-scrim.sw-history-scrim-visible {
+.sw-drawer-scrim.sw-drawer-scrim-visible {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* Drawer panel */
-.sw-history-drawer {
+.sw-drawer {
   position: fixed;
   inset: 0 0 0 auto;
   z-index: 1001;
@@ -1220,25 +1228,25 @@ body {
   visibility: hidden;
 }
 
-.sw-history-drawer.sw-history-drawer-open {
+.sw-drawer.sw-drawer-open {
   transform: translateX(0);
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1), visibility 0s;
   visibility: visible;
 }
 
 /* Header */
-.sw-history-head {
+.sw-drawer-head {
   padding: 20px 20px 15px;
   border-bottom: 1px solid var(--edge);
 }
 
-.sw-history-title-row {
+.sw-drawer-title-row {
   display: flex;
   min-height: 28px;
   align-items: center;
 }
 
-.sw-history-title {
+.sw-drawer-title {
   margin: 0;
   font-family: "Sora", sans-serif;
   font-size: 15px;
@@ -1246,7 +1254,7 @@ body {
   letter-spacing: -0.01em;
 }
 
-.sw-history-close {
+.sw-drawer-close {
   display: grid;
   width: 28px;
   height: 28px;
@@ -1260,9 +1268,18 @@ body {
   font-size: 18px;
 }
 
-.sw-history-close:hover {
+.sw-drawer-close:hover {
   background: var(--sw-hover, rgba(27, 35, 42, 0.7));
   color: var(--txt);
+}
+
+/* Body: the one scroller, filled by the drawer's own content */
+.sw-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--edge) transparent;
+  scrollbar-width: thin;
 }
 
 /* Search */
@@ -1307,12 +1324,7 @@ body {
 
 /* List */
 .sw-history-list {
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 8px 12px 24px 10px;
-  scrollbar-color: var(--edge) transparent;
-  scrollbar-width: thin;
 }
 
 /* Session divider — also the section's collapse toggle, so it takes the affordances of a control. It
@@ -1546,9 +1558,85 @@ body {
   line-height: 1.6;
 }
 
+/* ── File Drawer ──────────────────────────────────────────────────────────────
+   The lines a file holds, in the drawer shell above. public/lib/fileRows.js draws them and themes/file-rows.css
+   styles them from the --sw-fl-* variables, which map the dashboard's own variables here. The block's host is a
+   size container, as file-rows.css asks. */
+.sw-filedrawer {
+  --sw-fl-bg: var(--bg);
+  --sw-fl-text: var(--txt);
+  --sw-fl-dim: var(--mute);
+  --sw-fl-edge: var(--edge);
+  --sw-fl-hover: var(--sw-hover, color-mix(in srgb, var(--txt) 7%, transparent));
+  --sw-fl-warn: var(--amber);
+  --sw-fl-mono: "JetBrains Mono", monospace;
+  --sw-fl-sep-font: 11px/16px "Inter", system-ui, sans-serif;
+  width: min(720px, 100vw);
+}
+
+.sw-filedrawer .sw-drawer-title {
+  min-width: 0;
+  padding-right: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sw-filedrawer-meta {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--txt-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-filedrawer-wrap {
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--txt-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.sw-filedrawer-wrap:hover {
+  background: var(--sw-hover, rgba(79, 224, 176, 0.06));
+  color: var(--txt);
+}
+
+.sw-filedrawer-wrap[aria-pressed="true"] {
+  border-color: var(--mint-dim);
+  color: var(--txt);
+}
+
+.sw-filedrawer-rows {
+  container-type: inline-size;
+}
+
+.sw-filedrawer-notice {
+  padding: 28px 20px;
+  color: var(--mute);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sw-filedrawer-foot {
+  padding: 10px 20px 20px;
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* ── Responsive: mobile full-width ─── */
 @media (max-width: 760px) {
-  .sw-history-drawer {
+  .sw-drawer {
     width: 100vw;
     border-left: 0;
     box-shadow: none;
@@ -1557,8 +1645,8 @@ body {
 
 /* ── Reduced motion ─── */
 @media (prefers-reduced-motion: reduce) {
-  .sw-history-drawer,
-  .sw-history-scrim {
+  .sw-drawer,
+  .sw-drawer-scrim {
     transition: none;
   }
 }

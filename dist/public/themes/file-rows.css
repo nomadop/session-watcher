@@ -1,0 +1,87 @@
+/* file-rows.css — the block of one file's lines that `public/lib/fileRows.js` draws, for the dashboard's file drawer and the DSH tab's file lists.
+   Each rule starts at `.sw-fl-scroll` and reads only the `--sw-fl-*` variables, which the host sets on an ancestor of the block: --sw-fl-bg and --sw-fl-text (the block's fill and text), --sw-fl-dim (line numbers and gap rows), --sw-fl-edge (borders), --sw-fl-hover (a hovered line and a gap row), --sw-fl-warn (withdrawn rows), --sw-fl-mono (the code font) and --sw-fl-sep-font (the `font` shorthand of gap rows).
+   A gap and a withdrawn row stay at the left of a sideways-scrolled block and are as wide as the block shows, `100cqw`, so an ancestor of the block must be a size container. */
+.sw-fl-scroll {
+  background: var(--sw-fl-bg);
+  color: var(--sw-fl-text);
+  overflow-x: auto;
+}
+.sw-fl-scroll .sw-fl-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  font-family: var(--sw-fl-mono);
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 2;
+}
+.sw-fl-scroll[data-wrap="off"] .sw-fl-rows {
+  width: max-content;
+  min-width: 100%;
+}
+.sw-fl-scroll .sw-fl-row {
+  display: contents;
+}
+.sw-fl-scroll .sw-fl-n {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  min-height: 18px;
+  padding: 0 6px 0 14px;
+  border-right: 0.5px solid var(--sw-fl-edge);
+  background: color-mix(in srgb, var(--sw-fl-bg) 94%, var(--sw-fl-text));
+  color: var(--sw-fl-dim);
+  text-align: right;
+  user-select: none;
+}
+.sw-fl-scroll .sw-fl-t {
+  min-width: 0;
+  min-height: 18px;
+  padding: 0 14px 0 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.sw-fl-scroll[data-wrap="off"] .sw-fl-t {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+.sw-fl-scroll .sw-fl-sep {
+  grid-column: 1 / -1;
+  border-top: 0.5px dashed var(--sw-fl-edge);
+  border-bottom: 0.5px dashed var(--sw-fl-edge);
+  background: var(--sw-fl-hover);
+  color: var(--sw-fl-dim);
+  font: var(--sw-fl-sep-font);
+  font-variant-numeric: inherit;
+}
+.sw-fl-scroll .sw-fl-sep > span,
+.sw-fl-scroll .sw-fl-wd > span {
+  position: sticky;
+  left: 0;
+  width: max-content;
+  max-width: 100cqw;
+  padding: 0 14px;
+}
+.sw-fl-scroll .sw-fl-sep > span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.sw-fl-scroll .sw-fl-wd {
+  grid-column: 1 / -1;
+  background: color-mix(in srgb, var(--sw-fl-warn) 11%, transparent);
+  color: var(--sw-fl-warn);
+  font-family: var(--sw-fl-mono);
+}
+.sw-fl-scroll .sw-fl-wd > span {
+  display: flex;
+  gap: 8px;
+}
+.sw-fl-scroll .sw-fl-wd b {
+  flex: none;
+  width: 1ch;
+  font-weight: 600;
+}
+@media (hover: hover) {
+  .sw-fl-scroll .sw-fl-row:hover > .sw-fl-t {
+    background: var(--sw-fl-hover);
+  }
+}

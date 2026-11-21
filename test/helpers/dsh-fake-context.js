@@ -72,18 +72,60 @@ export function recordingSession({
   };
 }
 
+/**
+ * The reads of the session query service that the event-read tool makes, over `logs`, a map of session id to `{ header, events }` whose events are in the log shape (`seq` their index): `readEvent` answers the window and header the service does, `filterSessions` the records whose header matches an `id` and a `cwd` filter, and `readTitleSnapshots` one fulfilled result per id with the title `titles` gives it.
+ * An id in `unreadable` rejects the read of it with its error and an id in `untitled` has no title; a title read of an id that `logs` lacks is a rejected result, as the service isolates a session's failure.
+ */
+export function fakeSessionLogs(logs, { titles = {}, rejectTitle = {} } = {}) {
+  const notFound = id => Object.assign(new Error(`session "${id}" was not found`), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' });
+  return {
+    async readEvent({ sessionId, seq, before = 0, after = 0 }, signal) {
+      signal?.throwIfAborted();
+      const log = logs[sessionId];
+      if (log === undefined) throw notFound(sessionId);
+      const target = log.events[seq];
+      if (target === undefined) throw Object.assign(new Error(`session "${sessionId}" has no event at seq ${seq}`), { code: 'SESSION_QUERY_EVENT_NOT_FOUND' });
+      const startSeq = Math.max(0, seq - before);
+      const endSeq = Math.min(log.events.length - 1, seq + after);
+      return {
+        session: structuredClone(log.header), inheritedEventCount: 0, target: structuredClone(target),
+        events: structuredClone(log.events.slice(startSeq, endSeq + 1)), startSeq, endSeq,
+      };
+    },
+    async filterSessions(filters, signal) {
+      signal?.throwIfAborted();
+      const wanted = kind => filters.find(filter => filter.kind === kind)?.values;
+      return Object.values(logs)
+        .filter(({ header }) => (wanted('id') ?? [header.id]).includes(header.id) && (wanted('cwd') ?? [header.cwd]).includes(header.cwd))
+        .map(({ header }) => ({ header: structuredClone(header), live: true, persisted: false }));
+    },
+    async readTitleSnapshots(ids, signal) {
+      signal?.throwIfAborted();
+      return ids.map((sessionId) => {
+        if (rejectTitle[sessionId] !== undefined) return { sessionId, status: 'rejected', reason: rejectTitle[sessionId] };
+        if (logs[sessionId] === undefined) return { sessionId, status: 'rejected', reason: notFound(sessionId) };
+        return {
+          sessionId, status: 'fulfilled',
+          value: { session: structuredClone(logs[sessionId].header), ...titles[sessionId] === undefined ? {} : { title: { title: titles[sessionId] } } },
+        };
+      });
+    },
+  };
+}
+
 // The price of a node `fakeTokenMeter` was given none for: the route price and the heuristic price agree.
 const DEFAULT_PRICE = { tokens: 10, heuristicTokens: 10 };
 
 /**
- * A token meter whose `measure(session)` answers `{ nodes }`, one `{ seq, tokens, heuristicTokens }` per node of the session's surface in surface order, priced by `prices[seq]` and at `fallback` (`DEFAULT_PRICE` unless given) where a seq has none.
+ * A token meter whose `measure(session)` answers `{ nodes, totalTokens }`, one `{ seq, tokens, heuristicTokens }` per node of the session's surface in surface order, priced by `prices[seq]` and at `fallback` (`DEFAULT_PRICE` unless given) where a seq has none, and the request pressure `totalTokens`, the sum of the nodes' route prices unless given: the real total carries a baseline of its own, so a case that needs the two apart states the total.
  * Like the real method, `measure` works only when called on the meter.
  */
-export function fakeTokenMeter({ prices = {}, fallback = DEFAULT_PRICE } = {}) {
+export function fakeTokenMeter({ prices = {}, fallback = DEFAULT_PRICE, totalTokens } = {}) {
   const meter = {
     measure(session) {
       if (this !== meter) throw new TypeError('measure called without its service');
-      return { nodes: session.surface.nodes.map(seq => ({ seq, ...(prices[seq] ?? fallback) })) };
+      const nodes = session.surface.nodes.map(seq => ({ seq, ...(prices[seq] ?? fallback) }));
+      return { nodes, totalTokens: totalTokens ?? nodes.reduce((sum, node) => sum + node.tokens, 0) };
     },
   };
   return meter;
@@ -159,8 +201,9 @@ function noAdapterLlm() {
  * `sessions` are the sessions `sessions.list()` answers and `sessions.get(id)` looks up. `readSession` backs `sessionQuery.readSession` and `listSessions` backs `sessionQuery.listSessions`, which answers `[]` without it and forwards its `signal` argument; like the real methods, each works only when called on its service.
  * `llm` is a top-level service, on the context itself; without one given it is a service whose `resolveModelInfo` rejects with the llm service's `NO_ADAPTER` Error and whose `listConfigurableProviders` answers `[]`.
  * `connection` and `settings` are the optional services, present when given and reachable only on an `inject` child: reading one on the context itself throws, as Cordis does for a service the plugin does not inject.
- * `webServer`, `sessionTitle`, `tokenMeter`, `commands`, `workingDirectory`, `fs`, `agents`, `attachments`, `sessionProjections` and `jobs` are such services too. `get(name)` answers any present service on the context itself and undefined for an absent one, as Cordis's does without the inject requirement.
+ * `webServer`, `sessionTitle`, `tokenMeter`, `commands`, `workingDirectory`, `fs`, `agents`, `attachments`, `sessionProjections`, `jobs` and `systemPrompt` are such services too. `get(name)` answers any present service on the context itself and undefined for an absent one, as Cordis's does without the inject requirement.
  * `inject(deps, callback)` calls back at once when every named service is present, with a child `{ ...services, effect, extend, on }` whose `commands` registers as an effect of the child, whose `on(name, handler)` is a listener `emit` runs until the child is disposed and whose `extend(props)` answers a context that inherits the child and whose own `props` shadow its services, as Cordis's `extend` does; what the callback returns, or resolves to, is collected as the child's disposer, and one that resolves after the child was disposed runs at once; `unprovide(name)` runs the disposers of every child that injects `name` and drops the service.
+ * `sessionReads` are the further session query reads `fakeSessionLogs` answers.
  * `sessions.flush(session)` records the session in `sessions.flushed` and resolves `true`, or rejects with `flushError` when given; like the real method it works only when called on `sessions`.
  * `skills.register` records each registration in `skills.registered` and returns a disposer, as the real method does.
  * `sibling` is a real context whose `get(name)` answers the services this context holds none of, a service another plugin provides in the context the host shares with it.
@@ -168,10 +211,10 @@ function noAdapterLlm() {
  */
 export function createFakeContext({
   sessions = [], readSession, listSessions = () => [], connection, webServer, llm = noAdapterLlm(), settings, sessionTitle, tokenMeter,
-  commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, flushError, sibling, pluginManager, loader,
+  commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, systemPrompt, flushError, sibling, pluginManager, loader, sessionReads,
 } = {}) {
   const services = new Map(Object.entries({
-    connection, webServer, settings, sessionTitle, tokenMeter, commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, pluginManager, loader,
+    connection, webServer, settings, sessionTitle, tokenMeter, commands, workingDirectory, fs, agents, attachments, sessionProjections, jobs, systemPrompt, pluginManager, loader,
   }).filter(([, value]) => value !== undefined));
   const listeners = [];
   const disposers = [];
@@ -186,6 +229,11 @@ export function createFakeContext({
       if (this !== sessionQuery) throw new TypeError('listSessions called without its service');
       return listSessions(signal);
     },
+    // The reads of `sessionReads` (`fakeSessionLogs`), each answered only when called on the service, as the real methods are.
+    ...Object.fromEntries(Object.entries(sessionReads ?? {}).map(([name, read]) => [name, function bound(...args) {
+      if (this !== sessionQuery) return Promise.reject(new TypeError(`${name} called without its service`));
+      return read(...args);
+    }])),
   };
 
   const sessionStore = {
@@ -249,7 +297,7 @@ export function createFakeContext({
       services.delete(name);
     },
   };
-  for (const name of ['connection', 'webServer', 'settings', 'sessionTitle', 'tokenMeter', 'commands', 'workingDirectory', 'fs', 'agents', 'attachments', 'sessionProjections', 'jobs']) {
+  for (const name of ['connection', 'webServer', 'settings', 'sessionTitle', 'tokenMeter', 'commands', 'workingDirectory', 'fs', 'agents', 'attachments', 'sessionProjections', 'jobs', 'systemPrompt']) {
     Object.defineProperty(ctx, name, { get() { throw new Error(`cannot get property "${name}" without inject`); } });
   }
   return ctx;

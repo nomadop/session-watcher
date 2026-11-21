@@ -1,6 +1,7 @@
 // dsh/src/client/monitor-export.js — the inner compaction monitor's export as Markdown: the session's attempts and handoffs as a list, and one attempt as a document of its slots with each slot's source events and C string whole.
-// It is a renderer of the display model (`monitor-model.js`), as the React pages are, and reads through a reader that resolves the monitor endpoints' payloads and rejects when a read fails. It imports nothing but its siblings, so Node and the browser bundle load it alike.
-import { slotTitleOf, ordinalsOf, paybackOf, settlementsOf, shownStatusOf, PART_SEPARATOR } from './monitor-state.js';
+// It is a renderer of the display model (`monitor-model.js`), as the React pages are, and reads through a reader that resolves the monitor endpoints' payloads and rejects when a read fails. It imports its siblings and the economics model (`public/lib/compactionEconomics.js`), nothing else, so Node and the browser bundle load it alike.
+import { slotTitleOf, PART_SEPARATOR } from './monitor-state.js';
+import { ordinalsOf, paybackOf, settlementsOf, shownStatusOf } from '../../../public/lib/compactionEconomics.js';
 import { parentMetaParts, handoffMetaParts, handoffTitle, settlementMetaParts, blockListParts, slotFactsOf } from './monitor-model.js';
 
 const MIN_FENCE_LENGTH = 3;

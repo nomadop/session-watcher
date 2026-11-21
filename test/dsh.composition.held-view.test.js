@@ -11,7 +11,7 @@ import { createDshSourceDriver } from '../lib/harness/dsh/source-driver.js';
 import { openStore, closeStore } from '../lib/store.js';
 import { dshCallLog, editableTree, readResultText, toolUseIdOf } from './helpers/attribution-fixtures.js';
 import {
-  assistantMessage, compactCheckpoint, prunedResult, sessionLog, stepEnd, stepStart, toolResult, turnEnd, turnStart, userMessage,
+  assistantMessage, compactCheckpoint, sessionLog, stepEnd, stepStart, toolResult, turnEnd, turnStart, userMessage,
 } from './helpers/dsh-events.js';
 
 const SESSION = 's-held';
@@ -166,79 +166,5 @@ describe('the held skills', () => {
     const { skills } = heldView(events);
     assert.deepEqual(skills, new Map([['domain', 'Domain body']]));
     assert.deepEqual([...skills.keys()], liveSkills(watcher));
-  });
-});
-
-// ── What a range touched ─────────────────────────────────────────────────────
-
-const C = ['export const first = 1;', 'export const second = 2;'];
-const C_PATH = '/repo/src/c.js';
-// A read of a.js, a `cat` of b.js, a write of c.js and the first read of a.js again, unchanged.
-const TOUCH_CALLS = [
-  CALLS[0],
-  CALLS[1],
-  { name: 'write', args: { file_path: 'src/c.js', content: textOf(C) }, text: 'Wrote 2 lines to src/c.js' },
-  CALLS[0],
-];
-const TOUCH_FILES = { ...FILES, [C_PATH]: textOf(C) };
-
-// The seqs of the assistant messages and tool results of `steps`: the surface events a range over those steps holds.
-const stepSeqs = (events, steps) => events
-  .filter(event => (event.type === 'assistant/message' || event.type === 'tool/result') && steps.includes(event.data.step))
-  .map(event => event.seq);
-
-describe('the entries a range touched', () => {
-  test('a file is touched by a read or a write of it in the range, an unchanged re-read included, and the range changes nothing of what is held', (t) => {
-    const { heldView } = composed(t, TOUCH_FILES);
-    const { events } = dshCallLog(TOUCH_CALLS);
-    const middle = heldView(events, stepSeqs(events, [2, 3]));
-    assert.deepEqual(middle.touched, { paths: new Set(['/repo/src/b.js', C_PATH]), skills: new Set() });
-    assert.deepEqual([...middle.paths.keys()].sort(), ['/repo/src/a.js', '/repo/src/b.js', C_PATH]);
-
-    const rereading = heldView(events, stepSeqs(events, [4]));
-    assert.deepEqual(rereading.touched, { paths: new Set(['/repo/src/a.js']), skills: new Set() });
-    assert.deepEqual(rereading.paths, middle.paths);
-
-    const none = heldView(events, []);
-    assert.deepEqual(none.touched, { paths: new Set(), skills: new Set() });
-    assert.deepEqual(none.paths, middle.paths);
-  });
-
-  test('an effect belongs to the result that completes its call: a result in the range touches, a call alone does not', (t) => {
-    const { heldView } = composed(t, TOUCH_FILES);
-    const { events } = dshCallLog(TOUCH_CALLS);
-    const [call, result] = stepSeqs(events, [2]);
-    assert.equal(events[call].type, 'assistant/message');
-    assert.deepEqual(heldView(events, [call]).touched.paths, new Set());
-    assert.deepEqual(heldView(events, [result]).touched.paths, new Set(['/repo/src/b.js']));
-  });
-
-  test('a result the pruner replaced belongs to its original\'s seq: the replacement alone touches nothing', (t) => {
-    const { heldView } = composed(t, TOUCH_FILES);
-    const { events } = dshCallLog(TOUCH_CALLS);
-    const original = events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === 'call_2');
-    const replacement = prunedResult(original, { text: 'pruned' });
-    const at = events.indexOf(original) + 1;
-    const log = sessionLog([...events.slice(0, at), replacement, ...events.slice(at)]);
-    assert.equal(log[at].surfaceOp.startSeq, original.seq, 'the replacement stands for the original');
-    assert.deepEqual(heldView(log, [log[at].seq]).touched.paths, new Set());
-    assert.deepEqual(heldView(log, [original.seq]).touched.paths, new Set(['/repo/src/b.js']));
-  });
-
-  test('a skill is touched by its load in the range, a repeated load included, and a failed load touches none', (t) => {
-    const { heldView } = composed(t);
-    const events = sessionLog([
-      turnStart(), userMessage({ text: 'Work.' }),
-      stepStart({ step: 1 }), skillCall(1, 'c1', 'tdd'), skillResult(1, 'c1', 'TDD body'), stepEnd({ step: 1 }),
-      stepStart({ step: 2 }), skillCall(2, 'c2', 'grill'), skillResult(2, 'c2', 'Grill body'), stepEnd({ step: 2 }),
-      stepStart({ step: 3 }), skillCall(3, 'c3', 'tdd'), skillResult(3, 'c3', 'TDD again'), stepEnd({ step: 3 }),
-      stepStart({ step: 4 }), skillCall(4, 'c4', 'domain'), skillResult(4, 'c4', 'no such skill', true), stepEnd({ step: 4 }),
-      turnEnd(),
-    ]);
-    const loads = heldView(events, stepSeqs(events, [2, 3, 4]));
-    assert.deepEqual(loads.touched, { paths: new Set(), skills: new Set(['grill', 'tdd']) });
-    assert.deepEqual(loads.skills, new Map([['tdd', 'TDD again'], ['grill', 'Grill body']]));
-    assert.deepEqual(heldView(events, stepSeqs(events, [2])).touched.skills, new Set(['grill']));
-    assert.deepEqual(heldView(events, stepSeqs(events, [1, 4])).touched.skills, new Set(['tdd']));
   });
 });

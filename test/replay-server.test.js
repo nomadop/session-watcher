@@ -522,6 +522,9 @@ describe('the replay route on a dsh log', () => {
     assert.deepEqual(buckets.paths.map(entry => entry.path).sort(),
       [join(log.header.cwd, 'src/a.js'), join(log.header.cwd, 'src/b.js')],
       'a relative read resolves under the header\'s cwd');
+    const held = await ctx.requestRaw('/api/bucket/file', { method: 'POST', body: { path: join(log.header.cwd, 'src/b.js') } });
+    assert.equal(held.status, 200, 'the replay watcher\'s held path is answered');
+    assert.equal((await held.json()).total, 2);
     assert.equal(profileRows(), rowsBefore, 'the closed segment archived no profile row');
   });
 });

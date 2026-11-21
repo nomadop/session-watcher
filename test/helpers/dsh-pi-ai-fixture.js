@@ -6,10 +6,13 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { CARRIER_WORDING, INNER_SEAL_KIND, renderCarrier } from '../../lib/harness/dsh/inner-seal-message.js';
+import { INNER_SEAL_KIND, renderCarrier } from '../../lib/inner-seal/carrier.js';
+import { STATE_WORDING } from '../../lib/inner-seal/state-block.js';
+import { carriedNote } from '../../lib/carried-evidence.js';
+import { CARRIER_TABLE } from '../../lib/harness/dsh/carrier-table.js';
 import { CHECKOUT, DSH_HOME, fromCheckout, IMPORTER, loaderWith, PROFILE_DIR, RecordCredentials } from './dsh-shipped-loop.js';
 
-export { CARRIER_WORDING };
+export { CARRIER_TABLE, STATE_WORDING, carriedNote };
 
 /** The credential reference every fixture route names and the placeholder the credentials double answers it with. */
 export const KEY_REF = 'SW_FIXTURE_PI_AI_KEY';
@@ -153,7 +156,7 @@ export function carrierOf(llm, tag, { evidence = true, state = true } = {}) {
     paths: evidence ? [{ displayPath: `/work/${tag}.txt`, totalLines: 2, state: 'readable', write: [[1, `${tag} line one`], [2, `${tag} line two`]] }] : [],
     ...(state ? { state: { asOfSeq: 9, items: { todos: { value: [{ content: `${tag} item`, status: 'pending' }] } } } } : {}),
   };
-  return llm.createUserMessage({ content: renderCarrier(source), source });
+  return llm.createUserMessage({ content: renderCarrier(source, CARRIER_TABLE), source });
 }
 
 /**

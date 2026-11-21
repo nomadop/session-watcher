@@ -1,6 +1,7 @@
-// dsh/src/client/monitor-files-model.js — the display model of the evidence page and the handoff files page: the groups and files each lists as plain data with the texts already worded, the rows an open file shows, the shortened path and the view state of the list.
-// The React list renders this one model, so the two pages never disagree on what a file says. It imports the pure state module beside it and nothing else, so Node and the browser bundle load it alike.
+// dsh/src/client/monitor-files-model.js — the display model of the evidence page and the handoff files page: the groups and files each lists as plain data with the texts already worded, the shortened path and the view state of the list.
+// The React list renders this one model, so the two pages never disagree on what a file says. It imports the pure state module beside it and the rows module of `public/lib`, and nothing else, so Node and the browser bundle load it alike.
 import { NOT_AVAILABLE, PART_SEPARATOR } from './monitor-state.js';
+import { spanText, linesOf } from '../../../public/lib/fileRows.js';
 
 const PERCENT = 100;
 const SPAN_SEPARATOR = ', ';
@@ -94,18 +95,10 @@ const SHORT_REASON_COLUMNS = 16;
 // The reasons a path cannot be read that carry a word of their own, `monitor.files.reason.<reason>`; any other reason is shown as it is.
 const REASONS = Object.freeze(['missing', 'not-file', 'too-large', 'binary', 'unreadable']);
 
-/** A span of lines as `[first, last]` as the list writes it: the one line, or the first and the last. */
-export const spanText = ([first, last]) => (first === last ? String(first) : `${first}–${last}`);
 const spansText = spans => spans.map(spanText).join(SPAN_SEPARATOR);
 const runSpan = run => [run.offset, run.offset + run.lines.length - 1];
 const runLines = runs => runs.reduce((sum, run) => sum + run.lines.length, 0);
 const runChars = runs => runs.reduce((sum, run) => sum + run.lines.reduce((chars, line) => chars + line.text.length, 0), 0);
-// The lines of a text as `splitLines` of `lib/line-align.js`, the host's one reading of lines, has them.
-function linesOf(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines;
-}
 const withdrawnLines = spans => spans.reduce((sum, { first, last }) => sum + last - first + 1, 0);
 
 const plainItem = (id, path, why, tone, removed) => ({
@@ -192,7 +185,7 @@ const groupOf = (id, t, items) => ({ id, label: t(`monitor.files.group.${id}`), 
 const rootNoteOf = (root, t) => (root === '' ? null : t('monitor.files.sub.root', { root: root.slice(0, -1) }));
 
 /**
- * The evidence page's model, `{ mode: 'carried', groups, summary, sub, foot }`, from the `carried` of the `inner-monitor/call` detail: the groups that hold something in the order changed files, files with no text, removed, skills; each item a `file` (with its count, statistics, bar and meta line, and the lines it shows by `bodyRowsOf`) or a one-line `plain` item that says why it has no lines, and every text worded by `t`.
+ * The evidence page's model, `{ mode: 'carried', groups, summary, sub, foot }`, from the `carried` of the `inner-monitor/call` detail: the groups that hold something in the order changed files, files with no text, removed, skills; each item a `file` (with its count, statistics, bar and meta line, and the lines it shows) or a one-line `plain` item that says why it has no lines, and every text worded by `t`.
  * The paths of the files and the removed paths are each relative to the root they all share; the name of a removed skill is no path and is shown as it is.
  * `summary` is the lines written, the lines withdrawn where there are any and the changed files, each `{ text, tone }`; `sub` the text that names that root and counts what else the carrier says, null where it says neither; `foot` the folds at the page's foot, each `{ key, label, text, pre }`: the carrier's wording as a paragraph and B's whole text preformatted.
  * A file counts as changed where it writes or withdraws a line; the others say their state.
@@ -236,7 +229,7 @@ export function carriedFilesOf({ files, removed, skills, note, text }, t) {
   };
 }
 
-// A file of the files page with no line: one whose rendering an older load wrote in another form, an empty one, or one whose lines the rendering shows none of.
+// A file of the files page with no line: one with no recorded line count, which the entry of a read message's `paths` states only with written lines and an older log's read message states not at all, an empty one, or one whose lines are all left out.
 function readNoteOf({ total }, t) {
   if (total === null) return t('monitor.files.unrecorded');
   return t(total === 0 ? 'monitor.files.empty' : 'monitor.files.noLines');
@@ -265,34 +258,6 @@ export function readFilesOf(files, t) {
     sub: rootNoteOf(root, t),
     foot: [],
   };
-}
-
-/**
- * The rows an open file shows, in the order of the file: a `line` row `{ type, number, text }` for each line of its runs, a `gap` row `{ type, first, last }` for the lines of the file that no run shows, and a `withdrawn` row for the lines it withdrew, the rows of the spans placed by their first line.
- * A gap stops at the file's end where its line count is known, and there is a gap to the end too; where it is not, a gap opens the file but none closes it. A skill shows its text line by line, with no number.
- * `item` is a `file` item of the models.
- */
-export function bodyRowsOf({ skill, text, total, runs, withdrawn }) {
-  if (skill) return linesOf(text).map(line => ({ type: 'line', number: null, text: line }));
-  const spans = [
-    ...runs.map(run => ({ type: 'run', run, first: run.offset, last: run.offset + run.lines.length - 1 })),
-    ...withdrawn.map(({ first, last }) => ({ type: 'withdrawn', first, last })),
-  ].sort((a, b) => a.first - b.first);
-  const known = Number.isFinite(total);
-  const rows = [];
-  let next = 1;
-  const gap = (first, last) => {
-    const end = known ? Math.min(last, total) : last;
-    if (first <= end) rows.push({ type: 'gap', first, last: end });
-  };
-  for (const span of spans) {
-    gap(next, span.first - 1);
-    if (span.type === 'run') rows.push(...span.run.lines.map(line => ({ type: 'line', number: line.number, text: line.text })));
-    else rows.push({ type: 'withdrawn', first: span.first, last: span.last });
-    next = Math.max(next, span.last + 1);
-  }
-  if (known) gap(next, total);
-  return rows;
 }
 
 /** A new list: every file folded, every group open, the lines wrapping and the foot folded. `files` and `groups` hold what the user chose, by id, `foot` the foot's folds by key. */

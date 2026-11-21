@@ -14,7 +14,7 @@ export const INNER_CALL_RECORD_TYPE = 'plugin:session-watcher/inner-call';
 export const INNER_ATTEMPT_RECORD_TYPE = 'plugin:session-watcher/inner-attempt';
 /** The plugin record the monitor appends when an attempt fails or is cancelled. */
 export const INNER_END_RECORD_TYPE = 'plugin:session-watcher/inner-end';
-import { INNER_QUOTE } from '../../dsh/src/inner-quote.js';
+import { INNER_QUOTE } from '../../lib/inner-seal/quote.js';
 
 /** The counted steps at which a scenario's range is first quoted: the quote's own minimum. Whether the quote then permits the seal is the scenario's replies' business (`REPLY_PADDING`), and each seal's quote the evidence of it. */
 export const SEAL_STEPS = INNER_QUOTE.minSteps;
@@ -204,12 +204,12 @@ export function loopAdapter(LlmAdapter, {
  * With `tools`, the real `tool-fs` (read, edit, write; `read_image` beside the attachment store) and the fs observation policy mount before the entry. With `skills`, the real skill registry, which the entry registers its bundled skills on, and the `skill` tool do; without it `skills` is a double that registers nothing. With `persistence` or `stock`, the JSONL persistence under the fixture's `DSH_HOME` does. With `stock`, the stock consumers of `agent/pre-step` mount before the entry too: `compaction-basic` under `stock.compaction` and the session checkpoint policy.
  * With `todo`, the real `tool-todo` mounts before the entry: its `todos` unit stands on the projection registry the entry's inner child reads and its `todo_write` tool on the tool runtime. With `directoryTool`, the real `tool-working-directory` does, its `working_directory` tool on the tool runtime beside the working directory service the loop mounts.
  * With `contexts`, the real `agent-instructions` and `time-context` mount before the entry: the first request of a session then carries the workspace instructions and the time reading admitted ahead of it, beside the skill catalog `skills` publishes.
- * With `piAi`, the checkout's `llm-pi-ai` adapter under `piAi.config`, or with `piAi.replacement` the built opt-in pi-ai entry of this package over the Loader service `piAi.loader` (`loaderOf`), mounts before the entry, and the credentials double resolves `piAi.placeholders`; with `sessionTools`, the model-facing `tool-session-query` does.
+ * With `piAi`, the checkout's `llm-pi-ai` adapter under `piAi.config`, or with `piAi.replacement` the built opt-in pi-ai entry of this package over the Loader service `piAi.loader` (`loaderOf`), mounts before the entry, and the credentials double resolves `piAi.placeholders`.
  * `settings` is the entry's configuration as the Loader would hand it, the fields the user saved (none by default, so the Config's own defaults stand).
  * With `events`, the events route is opened on the context once the entry is mounted and its reader answered as `events` (`eventsOn`).
  * Answers the context, the channel's `call`, the adapter, the harness that creates agents, the llm package and, with `events`, the events reader.
  */
-export async function mountShippedLoop({ stock, tools = false, skills = false, contexts = false, persistence = false, commands = false, subagents = false, todo = false, directoryTool = false, piAi, sessionTools = false, events = false, settings = {}, ...script }) {
+export async function mountShippedLoop({ stock, tools = false, skills = false, contexts = false, persistence = false, commands = false, subagents = false, todo = false, directoryTool = false, piAi, events = false, settings = {}, ...script }) {
   const [
     { Context }, connectionPlugin, { WebServer }, appBoot, testkit, fsLocal, tokenMeter, llm, attachmentLocal, sessionQuery,
   ] = await Promise.all([
@@ -268,7 +268,6 @@ export async function mountShippedLoop({ stock, tools = false, skills = false, c
     if (piAi.replacement) ctx.provide('loader', piAi.loader);
     await ctx.plugin(adapterModule, piAi.replacement ? undefined : piAi.config);
   }
-  if (sessionTools) await ctx.plugin(await fromCheckout('packages/experimental/tool-session-query/lib/index.js'));
   if (tools) {
     const [toolFs, observation] = await Promise.all([
       'packages/fs/tool-fs/lib/index.js',

@@ -80,7 +80,7 @@ test('the Responses breakpoint switch off, or no host service at all: no Respons
   runShippedScenario(t, 'responses-switch-off', CHECKOUT, PI_AI);
 });
 
-test('the Responses breakpoint switch is read once for each Responses request, and a host service with no such member, one whose answer is not true and one that cannot answer each leave the request the original adapter\'s, the last with one warning', SHIPPED, (t) => {
+test('the Responses breakpoint switch is read once for each Responses request, and no settings service, one with no such member, one whose answer is not true and one that cannot answer each leave the request the original adapter\'s, the last with one warning', SHIPPED, (t) => {
   runShippedScenario(t, 'responses-switch-unreadable', CHECKOUT, PI_AI);
 });
 

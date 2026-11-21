@@ -25,6 +25,7 @@ test('request maps each dashboard path and method to its endpoint and hands the 
   await request('/api/pricing', { method: 'DELETE' });
   await request('/api/user-overrides', json({ overrides: { 'a.js': 'exclude' } }));
   await request('/api/preview', json({ overrides: {} }));
+  await request('/api/bucket/file', json({ path: '/repo/a.js' }));
   await request('/api/turn/browse');
   assert.deepEqual(calls, [
     { endpoint: 'pricing', payload: {} },
@@ -32,6 +33,7 @@ test('request maps each dashboard path and method to its endpoint and hands the 
     { endpoint: 'pricing/delete', payload: {} },
     { endpoint: 'user-overrides', payload: { overrides: { 'a.js': 'exclude' } } },
     { endpoint: 'preview', payload: { overrides: {} } },
+    { endpoint: 'bucket/file', payload: { path: '/repo/a.js' } },
     { endpoint: 'turn/browse', payload: {} },
   ]);
 });
@@ -46,7 +48,7 @@ test('a live value answers ok with the payload as json', async () => {
 });
 
 test('an ok false envelope answers the route\'s status and body', async () => {
-  for (const [code, status] of [['invalid_body', 400], ['invalid_input', 400], ['no_model', 409], ['unknown_endpoint', 404]]) {
+  for (const [code, status] of [['invalid_body', 400], ['invalid_input', 400], ['no_model', 409], ['not_held', 404], ['unknown_endpoint', 404]]) {
     const { call } = fakeCall(() => Promise.resolve(failure(code, `${code} text`)));
     const res = await createTabContext({ call, root: {} }).request('/api/user-overrides', json({ overrides: 1 }));
     assert.equal(res.ok, false, code);

@@ -1,7 +1,7 @@
 // The `/session-watcher` RPC channel over the DSH host's watcher table: the state each reply carries, the payload each endpoint shares with its express route, the route's failure codes, the pricing write's fan-out to every live watcher, and the handoff catalog `handoff/list` answers, which has no express route.
 import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,14 +20,14 @@ import { lampZone } from '../lib/bill-regret.js';
 import { forLoadedHandoff } from '../lib/lineage.js';
 import { loadPricingOverride } from '../lib/pricing-store.js';
 import { modelPolicyFor } from '../lib/model-policy.js';
-import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
+import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL, ATTRIBUTION_LIMITS } from '../lib/constants.js';
 import { initParser, loadGrammar } from '../lib/symbol-outline.js';
 import {
   reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, REUSED_CALL_ID_SYMBOL_FILES, header,
   assistantMessage, compactionPrune, continueCheckpoint, ignorableEvent, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, loadReads, sessionLog,
-  turnEnd, turnStart, userMessage,
+  toolCall, turnEnd, turnStart, userMessage,
 } from './helpers/dsh-events.js';
-import { createFakeContext, fakeSession, fakeTokenMeter, fakeFs } from './helpers/dsh-fake-context.js';
+import { createFakeContext, fakeSession, fakeSessionLogs, fakeTokenMeter, fakeFs } from './helpers/dsh-fake-context.js';
 import { writeFilesUnder } from './helpers/attribution-fixtures.js';
 import { innerModeProjection, createModeSelection, createModeAccess, MODE_RECORD_TYPE, MODE_PROJECTION_KEY } from '../dsh/src/inner-mode.js';
 import { MONITOR_PROJECTION_KEY } from '../dsh/src/inner-monitor-read.js';
@@ -457,6 +457,35 @@ test('preview and the read endpoints publish nothing', async () => {
   ctx.dispose();
 });
 
+test('bucket/file answers the held lines of a held path as the host\'s working tree reads them, and a failure for a body or a path it cannot serve', async () => {
+  const sessionId = 's-file';
+  const cwd = join(dir, 'repo');
+  writeFilesUnder(cwd, REUSED_CALL_ID_FILES);
+  const { ctx, handler } = mountHost({
+    sessions: [fakeSession({ id: sessionId, cwd })], snapshots: { [sessionId]: reusedCallIdAcrossSteps() },
+  });
+  await settled();
+  const held = join(cwd, 'src/b.js');
+  const file = path => call(handler, 'bucket/file', { sessionId, path });
+
+  assert.deepEqual(await file(held), liveReply({
+    path: held, total: 2,
+    runs: [{ offset: 1, lines: [{ number: 1, text: 'export const b = 2;' }, { number: 2, text: 'export default b;' }] }],
+  }));
+  const notHeld = failure('not_held', 'The path is not held in the current context.');
+  assert.deepEqual(await file(join(cwd, 'src/c.js')), notHeld);
+  assert.deepEqual(await file('skill:tdd'), notHeld);
+  const invalid = failure('invalid_body', 'Body must contain { path: string }');
+  assert.deepEqual(await call(handler, 'bucket/file', { sessionId }), invalid);
+  assert.deepEqual(await file(7), invalid);
+
+  writeFileSync(held, 'x'.repeat(ATTRIBUTION_LIMITS.fileBytes + 1));
+  assert.deepEqual(await file(held), liveReply({ path: held, reason: 'too-large' }));
+  rmSync(held);
+  assert.deepEqual(await file(held), liveReply({ path: held, reason: 'missing' }), 'a held file the disk lost is held and unreadable');
+  ctx.dispose();
+});
+
 test('a pricing write with no epoch model answers no_model', async () => {
   const sessionId = 's-unmeasured';
   const { ctx, table, handler } = mountHost({ sessions: [fakeSession({ id: sessionId })] });
@@ -518,7 +547,7 @@ test('the connection registers the channel once', async () => {
 
 // ── On-demand bootstrap ──────────────────────────────────────────────────────
 
-const ENDPOINTS = ['status', 'history', 'buckets', 'turn/browse', 'user-overrides', 'preview', 'pricing', 'pricing/save', 'pricing/delete', 'handoff/list'];
+const ENDPOINTS = ['status', 'history', 'buckets', 'bucket/file', 'turn/browse', 'user-overrides', 'preview', 'pricing', 'pricing/save', 'pricing/delete', 'handoff/list'];
 
 // A persisted session's listing record, as `sessionQuery.listSessions` answers it.
 const persisted = (id, over = {}) => ({ header: header({ id, ...over }), live: false, persisted: true });
@@ -851,7 +880,7 @@ function monitorHandler({ innerMonitor, entry = { state: 'bootstrapping' }, publ
 
 // A row as the read side states it, in the shape the wire carries.
 const ROW = {
-  id: 7, revision: 12, status: 'committed', legacy: false, startedAt: 1_700_000_000_000, endedAt: 1_700_000_005_000,
+  id: 7, revision: 12, status: 'committed', startedAt: 1_700_000_000_000, endedAt: 1_700_000_005_000,
   range: { first: 3, last: 5, count: 3 }, reason: null, slots: 3,
   call: {
     state: 'received', endedAt: 1_700_000_004_000, finish: 'stop', thrown: null, input: 'the prompt', output: '["a","b","c"]',
@@ -927,16 +956,18 @@ const DETAIL_ENDPOINTS = [
   ['inner-monitor/slots', 'slots', { attempt: 7 }, [7]],
   ['inner-monitor/slot', 'slot', { attempt: 7, slot: 11 }, [7, 11]],
   ['inner-monitor/handoff', 'handoff', { handoff: 21 }, [21]],
+  ['inner-monitor/settlement', 'settlement', { handoff: 21 }, [21]],
 ];
 const CALL_PAYLOAD = {
-  row: ROW, ids: { start: 7, call: 9, end: null, carrier: 12 }, request: { recorded: 'partial' }, response: null, usage: null, timing: { attempt: {}, call: {} },
+  row: ROW, ids: { start: 7, call: 9, end: null, carrier: 12 }, request: { options: {} }, response: null, usage: null, timing: { attempt: {}, call: {} },
 };
 const SLOTS_PAYLOAD = { slots: [{ key: 3, turn: null, step: null, input: 'the source', output: 'the summary' }] };
 const SLOT_PAYLOAD = { key: 3, seqs: [3], turn: null, step: null, c: 'the summary', events: [] };
 const HANDOFF_PAYLOAD = {
   row: { id: 21, type: 'load', token: 'amber-falcon' }, summary: 'the summary', files: [], lineage: null, turnPage: null, turns: [], followUp: null,
 };
-const DETAIL_PAYLOADS = { call: CALL_PAYLOAD, slots: SLOTS_PAYLOAD, slot: SLOT_PAYLOAD, handoff: HANDOFF_PAYLOAD };
+const SETTLEMENT_PAYLOAD = { calls: [{ seq: 4, stock: 440, post: false }, { seq: 9, stock: null, post: true }] };
+const DETAIL_PAYLOADS = { call: CALL_PAYLOAD, slots: SLOTS_PAYLOAD, slot: SLOT_PAYLOAD, handoff: HANDOFF_PAYLOAD, settlement: SETTLEMENT_PAYLOAD };
 const notCommitted = failure('inner_monitor_not_committed', 'The inner compaction attempt has no committed seal, so it has no slots.');
 
 // The access as far as the detail endpoints read it: each method records its arguments in `calls` and answers `answer(method)` for the held session, undefined for any other.
@@ -945,7 +976,7 @@ function detailAccessOf(answer, calls = []) {
     calls.push([name, sessionId, ...addresses]);
     return sessionId === 's-held' ? answer(name) : undefined;
   };
-  return { rows: method('rows'), call: method('call'), slots: method('slots'), slot: method('slot'), handoff: method('handoff') };
+  return { rows: method('rows'), call: method('call'), slots: method('slots'), slot: method('slot'), handoff: method('handoff'), settlement: method('settlement') };
 }
 
 test('the detail endpoints answer the access\'s payload for the addresses in the body, awaited, before the measurement entry: a bootstrapping, failed or unobserved measurement changes nothing, nothing is listed and nothing is published', async () => {
@@ -1022,6 +1053,7 @@ test('the detail endpoints need a string sessionId and a non-negative safe integ
     'inner-monitor/slots': failure('invalid_body', 'Body must contain { sessionId: string, attempt: non-negative integer }'),
     'inner-monitor/slot': failure('invalid_body', 'Body must contain { sessionId: string, attempt: non-negative integer, slot: non-negative integer }'),
     'inner-monitor/handoff': failure('invalid_body', 'Body must contain { sessionId: string, handoff: non-negative integer }'),
+    'inner-monitor/settlement': failure('invalid_body', 'Body must contain { sessionId: string, handoff: non-negative integer }'),
   };
   const refused = [undefined, null, '7', -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, true, {}];
 
@@ -1037,7 +1069,7 @@ test('the detail endpoints need a string sessionId and a non-negative safe integ
     }
     assert.equal((await call(handler, endpoint, { sessionId: 's-held', ...Object.fromEntries(Object.keys(address).map(name => [name, 0])) })).ok, true, `${endpoint}: zero is an address`);
   }
-  assert.deepEqual(calls.map(([, , ...addresses]) => addresses), [[0], [0], [0, 0], [0]], 'only the zero addresses reached the access');
+  assert.deepEqual(calls.map(([, , ...addresses]) => addresses), [[0], [0], [0, 0], [0], [0]], 'only the zero addresses reached the access');
 });
 
 // ── The mode through the host ────────────────────────────────────────────────
@@ -1060,19 +1092,21 @@ function fakeProjections(registration) {
 // The host over a fake context holding every service the mode's child injects but those in `absent`; `sessions` are the live sessions it lists and looks up.
 function mountModeHost({
   sessions = [], absent = [], projections = fakeProjections(), readSession = async () => ({ session: {}, inheritedEventCount: 0, events: [] }), listSessions,
-  kit = modeKit,
+  kit = modeKit, queryKit, sessionReads,
 } = {}) {
   const { handled, routes, connection } = fakeConnection();
   const services = {
     tokenMeter: fakeTokenMeter(), fs: fakeFs(), agents: fakeAgents(), attachments: {}, sessionProjections: projections,
   };
   for (const name of absent) delete services[name];
-  const ctx = createFakeContext({ sessions, readSession, listSessions, connection, webServer, ...services });
+  const ctx = createFakeContext({ sessions, readSession, listSessions, connection, webServer, sessionReads, ...services });
+  const tools = [];
+  ctx.tools.register = (definition) => { tools.push(definition); };
   const { table } = applyHost(ctx, {
     defineTool: definition => definition, storePath: join(dir, 'store.sqlite'), turnNotesRoot: join(dir, 'turn-notes'), loadIsIgnored: () => null,
-    skillsDir: SKILLS_DIR, innerKit: kit, readSettings: () => INHERITING_SETTINGS,
+    skillsDir: SKILLS_DIR, innerKit: kit, readSettings: () => INHERITING_SETTINGS, queryKit,
   });
-  return { ctx, table, projections, routes, handler: handled[0].handler };
+  return { ctx, table, projections, routes, handler: handled[0].handler, tools };
 }
 
 const liveModeSession = id => newSession(id, { header: { cwd: '/repo' } });
@@ -1188,7 +1222,7 @@ test('the host answers the monitor\'s rows over its channel once its projection 
 
   const start = modeKit.appendPluginRecord(session, INNER_ATTEMPT_RECORD_TYPE, innerAttempt({ range: [3, 4, 5] }).data);
   const { value } = await call(handler, 'inner-monitor', { sessionId: session.id });
-  assert.deepEqual(value.attempts.map(row => [row.id, row.status, row.legacy, row.range]), [[start, 'unknown', false, { first: 3, last: 5, count: 3 }]]);
+  assert.deepEqual(value.attempts.map(row => [row.id, row.status, row.range]), [[start, 'unknown', { first: 3, last: 5, count: 3 }]]);
   assert.deepEqual(await call(handler, 'inner-monitor', { sessionId: 's-not-listed' }), monitorUnavailable);
   ctx.dispose();
 });
@@ -1371,7 +1405,7 @@ test('a session the host stores answers its handoffs and their detail over the c
   events = sessionLog([
     ask, before, continueCheckpoint({ token: 'amber-falcon', startSeq: ask.seq, endSeq: before.seq }),
     loadPayload({ token: 'amber-falcon', handoffId, summary: 'the summary as sent', paths: ['/repo/src/a.js'], turnPage: 'notice\n\nS1  /logs/a.jsonl\n\nS1:4 | U: ask\n     | A: note' }),
-    loadReads({ files: [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/a.js (total lines: 1)\n1: a\n' }] }),
+    loadReads({ files: [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/a.js (total lines: 1)\n1: a\n', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'a' }] }] }] }),
     loadFollowUp({ token: 'amber-falcon' }), after,
   ]);
   const payloadSeq = events[3].seq;
@@ -1395,6 +1429,14 @@ test('a session the host stores answers its handoffs and their detail over the c
   assert.deepEqual(await call(handler, 'inner-monitor/handoff', { sessionId: 's-stored-handoff', handoff: 9999 }), failure('inner_monitor_read_failed', 'the inner monitor holds no handoff 9999'));
   assert.deepEqual(lines, ['s-stored-handoff [dsh-host] inner_monitor_read_failed: the inner monitor holds no handoff 9999']);
   assert.deepEqual(await call(handler, 'inner-monitor/handoff', { sessionId: 's-not-listed', handoff: payloadSeq }), monitorUnavailable);
+
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-stored-handoff', handoff: payloadSeq }), { ok: true, value: { calls: [{ seq: events[1].seq, stock: 440, post: false }] } }, 'the calls of the segment the clear cut off, the stock the monitor reads of each');
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-stored-handoff', handoff: 9999 }), failure('inner_monitor_read_failed', 'the inner monitor holds no handoff 9999'));
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-not-listed', handoff: payloadSeq }), monitorUnavailable);
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement/current', { sessionId: 's-stored-handoff' }), {
+    ok: true, value: { epoch: 2, attempts: [], tailCalls: 1, calls: [{ seq: events[6].seq, stock: 710, post: false }] },
+  });
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement/current', { sessionId: 's-not-listed' }), monitorUnavailable);
   ctx.dispose();
 });
 
@@ -1430,6 +1472,7 @@ const storedLog = (id, events) => ({ id, header: sessionHeader(id), snapshotEven
 const UNAVAILABLE_CALLS = [
   ['inner-mode', {}, unavailable], ['inner-monitor', {}, monitorUnavailable], ['inner-monitor/call', { attempt: 0 }, monitorUnavailable],
   ['inner-monitor/slots', { attempt: 0 }, monitorUnavailable], ['inner-monitor/slot', { attempt: 0, slot: 0 }, monitorUnavailable],
+  ['inner-monitor/settlement', { handoff: 0 }, monitorUnavailable],
 ];
 
 test('an id the session service neither holds nor lists is unavailable on every page endpoint, while a stored session whose read fails answers a read failure with one stderr line, never off, an empty list or its last answer, and the next read is made again', async (t) => {
@@ -1684,6 +1727,65 @@ test('an attempt record, a call record, an end record and an inner-seal carrier 
     assert.deepEqual(await stream.drain(), [], why);
   }
   ctx.dispose();
+});
+
+test('the live monitor publishes slot warnings with the carrier that first shows them, without measurement', { skip: NEEDS_KIT }, async () => {
+  const session = sealedLog('s-slot-warnings');
+  session.carrier.data.source.verbatimSeqs = [session.ask.seq];
+  const { ctx, handler, routes } = mountModeHost({ sessions: [session], kit: monitorKit, readSession: () => new Promise(() => {}) });
+  await settled();
+  const stream = await collectingStream(routes[0]);
+  await stream.drain();
+  const warnings = async () => (await call(handler, 'inner-monitor', { sessionId: session.id })).value.attempts.map(row => row.slotWarnings);
+  const send = async (event) => {
+    session.events.push(event);
+    await ctx.emit('session/event', session, event);
+    return stream.drain();
+  };
+
+  const args = JSON.stringify({ seq: session.ask.seq });
+  const reply = assistantMessage({ turn: 2, toolCalls: [{ id: 'recall', name: 'sw_event_read', arguments: args }] });
+  await send(reply);
+  assert.deepEqual(await send(toolCall({ turn: 2, callId: 'recall', name: 'sw_event_read', arguments: args })), []);
+  assert.deepEqual(await warnings(), [undefined]);
+
+  const range = [reply.seq];
+  const start = innerAttempt({ range });
+  const summary = innerCall({ range, attempt: start.seq });
+  const prune = compactionPrune(reply);
+  for (const event of [start, summary, prune]) await send(event);
+  assert.deepEqual(await warnings(), [undefined, undefined]);
+  const carrier = innerSealCarrier({ sourceEventSeqs: [summary.seq, prune.seq, ...range], slots: [{ seqs: range, text: 'read the earlier message' }] });
+  assert.deepEqual(await send(carrier), [`data: ${JSON.stringify({ sessionId: session.id })}\n\n`]);
+  assert.deepEqual(await warnings(), [undefined, { [reply.seq]: ['verbatim-recall'] }]);
+  ctx.dispose();
+});
+
+test('sw_event_read refuses an event the monitor holds in the caller\'s context, and refuses none while the monitor is unpublished', { skip: NEEDS_KIT }, async () => {
+  const queryKit = { extractSessionEventText: () => '', HarnessError: class HarnessError extends Error { constructor(message, code) { super(message); this.code = code; } } };
+  const codeOf = (tool, session, seq) => tool.execute({ seq }, { agent: { session: { id: session.id, header: { cwd: '/repo' } } }, signal: new AbortController().signal })
+    .then(text => (/^Session s-held — /.test(text) ? 'read' : text), error => error.code);
+  const session = sealedLog('s-held');
+  session.carrier.data.source.verbatimSeqs = [session.ask.seq];
+  // The service's log of the session, each event at its seq.
+  const bySeq = [];
+  for (const event of session.events) bySeq[event.seq] = event;
+  const sessionReads = fakeSessionLogs({ [session.id]: { header: { id: session.id, cwd: '/repo' }, events: bySeq } });
+  const mount = absent => mountModeHost({ sessions: [session], kit: monitorKit, absent, readSession: () => new Promise(() => {}), queryKit, sessionReads });
+  const { ctx, tools } = mount([]);
+  await settled();
+  const tool = tools.find(({ name }) => name === 'sw_event_read');
+  assert.equal(await codeOf(tool, session, session.ask.seq), 'SW_EVENT_CARRIED', 'verbatim text');
+  assert.equal(await codeOf(tool, session, session.carrier.seq), 'SW_EVENT_CARRIED', 'the carrier');
+  assert.equal(await codeOf(tool, session, session.reading.seq), 'read', 'a summarized source');
+  ctx.unprovide('tokenMeter');
+  assert.equal(await codeOf(tool, session, session.ask.seq), 'read', 'withdrawn with the monitor');
+  ctx.dispose();
+
+  const unmonitored = mount(['tokenMeter']);
+  await settled();
+  assert.equal(await codeOf(unmonitored.tools.find(({ name }) => name === 'sw_event_read'), session, session.ask.seq), 'read');
+  unmonitored.ctx.dispose();
 });
 
 // The context the host shares with the pi-ai entry, as far as the host reads it: `get(name)` answers the service the entry provides while `provided.service` holds one.

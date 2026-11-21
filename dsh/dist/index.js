@@ -7723,8 +7723,9 @@ var require_ignore = __commonJS({
 // dsh/src/index.js
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { CompactionId, compactCheckpointSource, toolPairingBalancedAfter, toolPairingBalancedBefore } from "@deepseek-ai/dsh-compaction";
-import { AssistantStreamAccumulator, BlockAssembler, assembleAssistantStream, createUserMessage, errorChain, lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm";
+import { AssistantStreamAccumulator, BlockAssembler, HarnessError, assembleAssistantStream, createUserMessage, errorChain, lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm";
 import { appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
+import { extractSessionEventText } from "@deepseek-ai/dsh-session-query";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
 
@@ -13519,10 +13520,11 @@ var SessionWatcher = class {
       cacheRead: point.cacheRead,
       cacheCreation: point.cacheWrite,
       turnSeq: point.turnSeq,
-      foldedSeq: point.foldedSeq
+      foldedSeq: point.foldedSeq,
+      ...point.amberStockL === void 0 ? {} : { amberStockL: point.amberStockL }
     }));
   }
-  // The only bucket/resource query. It reads the Engine first, then passes only default-selected file rows
+  // Reads the Engine first, then passes only default-selected file rows
   // to Resource Enrichment — a row the position basis excludes buys no symbols, and a Skill has no file.
   getBucketData({ includeSymbols = false } = {}) {
     const bucket = this._engine.getBucketData();
@@ -13565,6 +13567,12 @@ var SessionWatcher = class {
       currentTurnSeq: bucket.currentTurnSeq,
       segment: bucket.segment
     };
+  }
+  // The Engine's held line numbers of one file, ascending; null when it has no resource at that path, and for a Skill
+  // key, whose number key 1 is no line of any file.
+  getHeldLines(path3) {
+    if (path3.startsWith(SKILL_RESOURCE_PREFIX)) return null;
+    return this._engine.heldLines().get(path3) ?? null;
   }
   // The value host wiring persists unchanged as `profile_snapshot`. `b_total` is the UNCAPPED resident total:
   // the read-time cap belongs to the live dashboard, while persistence needs the belief its own path rows sum
@@ -18529,17 +18537,22 @@ function fitAffine(points) {
   if (!(Number.isFinite(d) && d > 0)) return null;
   return { a: sx / n - d * uMean, d };
 }
+var xOn = (reference, u) => reference.a + reference.d * u;
 function landmarksOf(reference, mf) {
   if (!reference || !(Number.isFinite(mf) && mf > 0)) {
     return { xSweet: null, xBrAmberL: null, xBrAmberR: null, xBrRedR: null };
   }
-  const xAt = (u) => reference.a + reference.d * u;
+  const xAt = (u) => xOn(reference, u);
   return {
     xSweet: xAt(1),
     xBrAmberL: xAt(uLeftAtBr(mf, BR_AMBER)),
     xBrAmberR: xAt(uAtBr(mf, BR_AMBER)),
     xBrRedR: xAt(uAtBr(mf, BR_RED))
   };
+}
+function amberStockOf({ reference, u, xBrAmberR, bDefault }, anchorL) {
+  if (!reference || !Number.isFinite(u) || !Number.isFinite(xBrAmberR) || !(Number.isFinite(bDefault) && bDefault > 0)) return null;
+  return anchorL + bDefault * (xBrAmberR - xOn(reference, u));
 }
 
 // lib/measurement/resident-ledger.js
@@ -18738,6 +18751,10 @@ function createResidentLedger() {
   }
   return { applyEffect, applyResidualAllocation, residentTotals, snapshot };
 }
+
+// lib/measurement/usage.js
+var stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
+var uncachedOf = ({ input, cacheWrite }) => input + cacheWrite;
 
 // lib/measurement/engine.js
 var USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
@@ -19094,7 +19111,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     segmentGMin = Math.min(segmentGMin, effectiveG(gEma));
   }
   function acceptNewStep(record, usage, usageTotal, timestamp, result) {
-    const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
+    const totalStock = stockOf(usage);
     const model = record.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
     if (totalStock > 0 && frames.length > 0) {
@@ -19193,8 +19210,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
           pendingTurn = true;
           break;
         case "epoch": {
-          const closed2 = finalizeSegment();
-          if (closed2) result.closedSegments.push(closed2);
+          const closed = finalizeSegment();
+          if (closed) result.closedSegments.push(closed);
           break;
         }
         case "residual":
@@ -19249,7 +19266,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     }
     const oAvg = segmentUsageCount > 0 ? segmentOutputSum / segmentUsageCount : null;
     const durationMs = Number.isFinite(segmentFirstTs) && Number.isFinite(segmentLastTs) ? segmentLastTs - segmentFirstTs : null;
-    const closed2 = {
+    const closed = {
       segment: segmentSeq,
       epochModel,
       steps,
@@ -19276,12 +19293,15 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       },
       paths
     };
+    const { rateLamp } = readView();
+    const lastStep = segmentSteps.at(-1);
+    lastStep.amberStockL = rateLamp.reference?.provisional ? null : amberStockOf(rateLamp, stockOf(lastStep.usage));
     openFreshSegment();
-    return closed2;
+    return closed;
   }
   function closeCurrentSegment() {
-    const closed2 = finalizeSegment();
-    return { closedSegments: closed2 ? [closed2] : [], diagnostics: [] };
+    const closed = finalizeSegment();
+    return { closedSegments: closed ? [closed] : [], diagnostics: [] };
   }
   function readView() {
     const lastStep = segmentSteps.length ? segmentSteps[segmentSteps.length - 1] : null;
@@ -19354,7 +19374,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function getHistory() {
     return calls.map((step) => {
       const B = step.bAtCall;
-      const L = step.usage.input + step.usage.cacheRead + step.usage.cacheWrite;
+      const L = stockOf(step.usage);
       return {
         ts: step.timestamp,
         segment: step.segment,
@@ -19369,7 +19389,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         cacheRead: step.usage.cacheRead,
         cacheWrite: step.usage.cacheWrite,
         turnSeq: step.turn,
-        foldedSeq: step.foldedSeq
+        foldedSeq: step.foldedSeq,
+        ...step.amberStockL === void 0 ? {} : { amberStockL: step.amberStockL }
       };
     });
   }
@@ -19581,6 +19602,40 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   };
 }
 
+// lib/held-view.js
+var SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
+function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
+  return (observations) => {
+    let completed = [];
+    const projection = createProjection({
+      completeToolResult: (pending, observation, context, options) => {
+        const answer = completeToolResult(pending, observation, context, options);
+        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
+        return answer;
+      }
+    });
+    const engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED });
+    let skills = /* @__PURE__ */ new Map();
+    const effects = [];
+    for (const observation of observations) {
+      completed = [];
+      const { records } = projection.project(observation, frameCtx);
+      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch"));
+      if (records.some((record) => record.type === "epoch")) skills = /* @__PURE__ */ new Map();
+      for (const { effects: answered, text, seq } of completed) {
+        for (const { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
+          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
+          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
+          if (isSkill) skills.set(key, text);
+          effects.push({ seq, kind: isSkill ? "skill" : "path", key });
+        }
+      }
+    }
+    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
+    return { paths, skills, effects };
+  };
+}
+
 // lib/pricing-store.js
 function tryGetStore() {
   try {
@@ -19635,7 +19690,7 @@ function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
 // package.json
 var package_default2 = {
   name: "@nomadop/session-watcher",
-  version: "0.11.0",
+  version: "0.11.1",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -19749,7 +19804,7 @@ function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars 
   requireBound("cacheChars", cacheChars);
   const cache = /* @__PURE__ */ new Map();
   let cachedChars = 0;
-  const orNull2 = (attempt) => {
+  const orNull3 = (attempt) => {
     try {
       return attempt();
     } catch {
@@ -19773,11 +19828,11 @@ function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars 
   }
   return {
     resolve: resolve3,
-    stat: (file) => orNull2(() => {
+    stat: (file) => orNull3(() => {
       const st = statSync3(file);
       return { size: st.size, isFile: st.isFile() };
     }),
-    readText: (file) => orNull2(() => {
+    readText: (file) => orNull3(() => {
       const st = statSync3(file);
       if (!st.isFile()) return null;
       const hit = cache.get(file);
@@ -19941,29 +19996,6 @@ function renderFileEvidence(displayPath, { totalLines, runs }, { maxChars = Infi
     room -= length;
   });
   return shown.every((count) => count === 0) && available.some((count) => count > 0) ? null : { text: parts2.join("\n"), shown };
-}
-var HEADER_ROW = /^(.*) \(total lines: (\d+)\)$/s;
-var NUMBERED_ROW = /^(\d+): (.*)$/s;
-var NOTICE_ROW = /^\(Output capped after line \d+\. Use offset=\d+ to continue\.\)$/;
-function parseFileEvidence(text) {
-  const rows = text.replace(/\n$/, "").split("\n");
-  const header = HEADER_ROW.exec(rows.shift());
-  if (header === null) return null;
-  const runs = [];
-  let apart = true;
-  for (const row of rows) {
-    if (row === SEPARATOR || NOTICE_ROW.test(row)) {
-      apart = true;
-      continue;
-    }
-    const numbered = NUMBERED_ROW.exec(row);
-    if (numbered === null) return null;
-    const number = Number(numbered[1]);
-    if (apart) runs.push({ offset: number, lines: [] });
-    runs.at(-1).lines.push({ number, text: numbered[2] });
-    apart = false;
-  }
-  return { path: header[1], totalLines: Number(header[2]), runs };
 }
 
 // lib/resource-attribution.js
@@ -20889,9 +20921,23 @@ function loadCallsOf(message) {
   return calls.map(({ id, name: name3, arguments: args2 }, index) => ({ id, name: name3, arguments: args2, text: content[index].text }));
 }
 
-// lib/harness/dsh/inner-seal-message.js
-var INNER_SEAL_KIND = "session-watcher-inner-seal";
-var carriesEvidence = (source) => source?.kind === INNER_SEAL_KIND || source?.kind === LOAD_MESSAGE_KIND && Array.isArray(source.paths);
+// lib/carried-evidence.js
+var CARRIED_WORDING = {
+  empty: (path3) => `${path3} is empty.`,
+  unreadable: (path3, reason) => `${path3} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
+  skill: (name3, text) => `Skill ${name3}:
+${text}`
+};
+var carriedNote = (wording) => `Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. ${wording.editGuard}`;
+function runsOf(numbers) {
+  const runs = [];
+  for (const number of numbers) {
+    const last = runs.at(-1);
+    if (last && last[1] + 1 === number) last[1] = number;
+    else runs.push([number, number]);
+  }
+  return runs;
+}
 function foldCarried(sources) {
   const paths = /* @__PURE__ */ new Map();
   const skills = /* @__PURE__ */ new Map();
@@ -20944,59 +20990,6 @@ function carryChanges(baseline, current) {
     ...skills.length > 0 ? { skills } : {}
   };
 }
-var CARRIER_WORDING = {
-  addresses: "These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: holds the user's own words instead, cut where a marker says so.",
-  slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
-  imageSaved: (name3) => `The image ${name3} is not in the current context; read_image can read the file below when it is needed.`,
-  carried: "Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. The reads behind this file text still count in this session, so edit a file without reading it again.",
-  empty: (path3) => `${path3} is empty.`,
-  unreadable: (path3, reason) => `${path3} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
-  skill: (name3, text) => `Skill ${name3}:
-${text}`,
-  stateHeading: (seq) => `Session state as of session seq ${seq}:`,
-  stateLabels: {
-    workingDirectory: (tool) => `Working directory, as ${tool} would show:`,
-    subagents: (tool) => `Running subagents, as ${tool} would show:`,
-    jobs: (tool) => `Running jobs, as ${tool} would show:`,
-    todos: (tool) => `Todo list, as ${tool} last left it:`
-  },
-  stateList: (entries) => entries.map(({ id, label }) => `${id} \u2014 ${label}`).join("; "),
-  stateUnchanged: "unchanged since the last summary that shows it",
-  stateEmpty: "(empty)",
-  questionMark: "A line marked question: holds the original question.",
-  questionLine: (question) => `question: ${question}`,
-  userLine: (user) => `user: ${user}`,
-  askCall: ({ id, name: name3, arguments: args2 }) => `Original ${name3} call ${id}, arguments:
-${args2}`,
-  askResult: (id, { text, isError }) => `Original result of call ${id}${isError ? " (marked as an error)" : ""}:
-${text}`
-};
-function runsOf(numbers) {
-  const runs = [];
-  for (const number of numbers) {
-    const last = runs.at(-1);
-    if (last && last[1] + 1 === number) last[1] = number;
-    else runs.push([number, number]);
-  }
-  return runs;
-}
-function shownRuns(write, omit) {
-  const texts = new Map(write);
-  const left = new Set(omit);
-  return runsOf(write.map(([number]) => number).filter((number) => !left.has(number))).map(([first, last]) => ({
-    offset: first,
-    lines: Array.from({ length: last - first + 1 }, (_, at) => ({ number: first + at, text: texts.get(first + at) }))
-  }));
-}
-function entryParts({ displayPath, totalLines, state, reason, write = [], omit = [] }) {
-  const W = CARRIER_WORDING;
-  const parts2 = [];
-  if (state === "empty") parts2.push(W.empty(displayPath));
-  if (state === "unreadable") parts2.push(W.unreadable(displayPath, reason));
-  const runs = shownRuns(write, omit);
-  if (runs.length > 0) parts2.push(renderFileEvidence(displayPath, { totalLines, runs }).text);
-  return parts2;
-}
 function omitShown(changes, earlier) {
   const shown = /* @__PURE__ */ new Map();
   for (const source of earlier) {
@@ -21015,12 +21008,30 @@ function omitShown(changes, earlier) {
     })
   };
 }
-function renderCarried(source) {
+var carriedOf = (earlier, current) => omitShown(carryChanges(foldCarried(earlier), current), earlier);
+function shownRuns(write, omit) {
+  const texts = new Map(write);
+  const left = new Set(omit);
+  return runsOf(write.map(([number]) => number).filter((number) => !left.has(number))).map(([first, last]) => ({
+    offset: first,
+    lines: Array.from({ length: last - first + 1 }, (_, at) => ({ number: first + at, text: texts.get(first + at) }))
+  }));
+}
+function entryParts({ displayPath, totalLines, state, reason, write = [], omit = [] }) {
+  const W = CARRIED_WORDING;
+  const parts2 = [];
+  if (state === "empty") parts2.push(W.empty(displayPath));
+  if (state === "unreadable") parts2.push(W.unreadable(displayPath, reason));
+  const runs = shownRuns(write, omit);
+  if (runs.length > 0) parts2.push(renderFileEvidence(displayPath, { totalLines, runs }).text);
+  return parts2;
+}
+function renderCarried(source, wording) {
   const carried = [
     ...source.paths.flatMap(entryParts),
-    ...(source.skills ?? []).filter((skill) => skill.removed !== true).map((skill) => CARRIER_WORDING.skill(skill.name, skill.text))
+    ...(source.skills ?? []).filter((skill) => skill.removed !== true).map((skill) => CARRIED_WORDING.skill(skill.name, skill.text))
   ];
-  return carried.length > 0 ? [CARRIER_WORDING.carried, ...carried].join("\n\n") : null;
+  return carried.length > 0 ? [carriedNote(wording), ...carried].join("\n\n") : null;
 }
 function showsChange(entry) {
   const { state, write = [], withdraw = [] } = entry;
@@ -21039,64 +21050,18 @@ function carriedEvidence(source) {
   const skills = (source.skills ?? []).map((skill) => skill.removed === true ? { name: skill.name, removed: true } : { name: skill.name, text: skill.text });
   return files.length + removed.length + skills.length > 0 ? { files, removed, skills } : null;
 }
-var isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
-function todoItemsOf(value) {
-  if (value === null) return [];
-  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
-  return value.map(({ content, status }) => ({ content, status }));
-}
-function textEntriesOf(value, fields, what) {
-  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && fields.every((field) => typeof entry[field] === "string"))) {
-    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
-  }
-  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
-}
-var sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
-var AGENT_FIELDS = ["id", "label"];
-var TODO_FIELDS = ["content", "status"];
-var STATE_ITEMS = Object.freeze([
-  Object.freeze({
-    key: "workingDirectory",
-    tool: "working_directory",
-    normalize: (value) => {
-      if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
-      return value;
-    },
-    isEmpty: () => false,
-    same: (a, b) => a === b,
-    text: (value) => value
-  }),
-  Object.freeze({
-    key: "subagents",
-    tool: "list_agents",
-    normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
-    isEmpty: (entries) => entries.length === 0,
-    same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-    text: CARRIER_WORDING.stateList
-  }),
-  Object.freeze({
-    key: "jobs",
-    tool: "job_list",
-    normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
-    isEmpty: (entries) => entries.length === 0,
-    same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-    text: CARRIER_WORDING.stateList
-  }),
-  Object.freeze({
-    key: "todos",
-    tool: "todo_write",
-    normalize: todoItemsOf,
-    isEmpty: (items) => items.length === 0,
-    same: (a, b) => sameEntries(TODO_FIELDS, a, b),
-    text: (items) => JSON.stringify(items)
-  })
-]);
+
+// lib/inner-seal/state-block.js
+var STATE_WORDING = {
+  heading: (seq) => `Session state as of session seq ${seq}:`,
+  unchanged: "unchanged since the last summary that shows it",
+  empty: "(empty)"
+};
 var checkedCut = (asOfSeq) => {
   if (!Number.isSafeInteger(asOfSeq)) throw new Error("the session state names no session seq as its cut");
   return asOfSeq;
 };
 function shownIn(source, { key }) {
-  if (source.kind !== INNER_SEAL_KIND) return void 0;
   return Object.hasOwn(source.state?.items ?? {}, key) ? { value: source.state.items[key].value } : void 0;
 }
 function carryItem(item, value, earlier) {
@@ -21105,12 +21070,12 @@ function carryItem(item, value, earlier) {
   if (last === void 0) return item.isEmpty(current) ? null : { value: current };
   return !item.isEmpty(current) && item.same(current, item.normalize(last.value)) ? { value: current, unchanged: true } : { value: current };
 }
-function carryState({ asOfSeq, items }, { tools, earlier, failed: failed2 }) {
+function carryState({ asOfSeq, items }, { stateItems, tools, earlier, failed: failed2 }) {
   checkedCut(asOfSeq);
   const shown = {};
-  for (const item of STATE_ITEMS) {
+  for (const item of stateItems) {
     const read = items[item.key];
-    if (read === void 0 || !tools.has(item.tool)) continue;
+    if (read === void 0 || item.tool !== void 0 && !tools.has(item.tool)) continue;
     try {
       const carried = carryItem(item, read(), earlier);
       if (carried !== null) shown[item.key] = carried;
@@ -21120,37 +21085,66 @@ function carryState({ asOfSeq, items }, { tools, earlier, failed: failed2 }) {
   }
   return Object.keys(shown).length === 0 ? null : { asOfSeq, items: shown };
 }
-function renderState({ asOfSeq, items }) {
-  const W = CARRIER_WORDING;
-  const lines = STATE_ITEMS.filter(({ key }) => Object.hasOwn(items, key)).map((item) => {
+function renderState({ asOfSeq, items }, stateItems) {
+  const W = STATE_WORDING;
+  const lines = stateItems.filter(({ key }) => Object.hasOwn(items, key)).map((item) => {
     const { value, unchanged = false } = items[item.key];
     const shown = item.normalize(value);
-    return `${W.stateLabels[item.key](item.tool)} ${item.isEmpty(shown) ? W.stateEmpty : unchanged ? W.stateUnchanged : item.text(shown)}`;
+    if (item.isEmpty(shown)) return `${item.label} ${W.empty}`;
+    if (unchanged) return `${item.label} ${W.unchanged}`;
+    return `${item.label}${item.multiline === true ? "\n" : " "}${item.text(shown)}`;
   });
-  return [W.stateHeading(checkedCut(asOfSeq)), ...lines].join("\n");
+  return [W.heading(checkedCut(asOfSeq)), ...lines].join("\n");
 }
-function renderCarrier(source) {
+
+// lib/inner-seal/carrier.js
+var INNER_SEAL_KIND = "session-watcher-inner-seal";
+var sourceEventSeqsOf = ({ callSeq, pruneSeq, replaced }) => [callSeq, pruneSeq, ...replaced];
+var callSeqOf = (seqs) => seqs[0];
+function assembleCarrierSource({ slots, summaries, questions, attachments, verbatimSeqs = [], changes, state }) {
+  const injected = [.../* @__PURE__ */ new Set([...verbatimSeqs, ...questions.flat().flatMap(({ seqs }) => seqs ?? [])])];
+  return {
+    kind: INNER_SEAL_KIND,
+    v: 1,
+    slots: slots.map(({ seqs }, index) => ({
+      seqs,
+      text: summaries[index],
+      ...questions[index].length > 0 ? { questions: questions[index].map(({ question, user }) => ({ question, user })) } : {},
+      ...attachments[index].length > 0 ? { attachments: attachments[index] } : {}
+    })),
+    ...injected.length > 0 ? { verbatimSeqs: injected } : {},
+    ...changes,
+    ...state === null ? {} : { state }
+  };
+}
+var CARRIER_WORDING = {
+  slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
+  imageSaved: (name3, tool) => `The image ${name3} is not in the current context; ${tool} can read the file below when it is needed.`,
+  questionMark: "A line marked question: holds the question as it was asked, and the user: line under it the user's whole answer.",
+  questionLine: (question) => `question: ${question}`,
+  userLine: (user) => `user: ${user}`
+};
+function renderCarrier(source, wording) {
   const W = CARRIER_WORDING;
   const blocks = [];
-  let lines = [source.slots.some(({ questions }) => questions !== void 0) ? `${W.addresses} ${W.questionMark}` : W.addresses];
+  let lines = [source.slots.some(({ questions }) => questions !== void 0) ? `${wording.addresses} ${W.questionMark}` : wording.addresses];
   const flush = () => {
     if (lines.length > 0) blocks.push({ type: "text", text: lines.join("\n") });
     lines = [];
   };
-  for (const { seqs, text, questions = [], asks = [], attachments = [] } of source.slots) {
+  for (const { seqs, text, questions = [], attachments = [] } of source.slots) {
     lines.push(`${W.slotLine(seqs)}${text}`);
     for (const { question, user } of questions) lines.push(W.questionLine(question), W.userLine(user));
-    for (const { call, result } of asks) lines.push(W.askCall(call), W.askResult(call.id, result));
     for (const { file, image } of attachments) {
-      if (image !== void 0) lines.push(W.imageSaved(image.name ?? image.attachmentId));
+      if (image !== void 0) lines.push(W.imageSaved(image.name ?? image.attachmentId, wording.imageReadTool));
       flush();
       blocks.push({ type: "file", attachment: file });
     }
   }
   flush();
-  const carried = renderCarried(source);
+  const carried = renderCarried(source, wording);
   const carriedBlock = carried === null ? null : { type: "text", text: carried };
-  const stateBlock = Object.hasOwn(source, "state") ? { type: "text", text: renderState(source.state) } : null;
+  const stateBlock = Object.hasOwn(source, "state") ? { type: "text", text: renderState(source.state, wording.stateItems) } : null;
   for (const block of [carriedBlock, stateBlock]) if (block !== null) blocks.push(block);
   return blocks.map((block, index) => {
     if (block.type !== "text") return block;
@@ -21287,7 +21281,7 @@ function reduceLoadMessage(event) {
 function reduceInnerSeal(event) {
   const seqs = event.sourceEventSeqs;
   if (!Array.isArray(seqs) || !seqs.every(isIndex)) return violation(event, "sourceEventSeqs");
-  return { observations: [], diagnostics: [], withdraws: seqs };
+  return { observations: [], diagnostics: [], sealed: seqs };
 }
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
@@ -21385,6 +21379,10 @@ function reduceDshEvent(event) {
       return nothing();
   }
 }
+var isMainCall = (event) => event.type === "assistant/message" && isIndex(event.seq);
+function foldInputOf(event) {
+  return { ...reduceDshEvent(event), seq: event.seq, mainCall: isMainCall(event) };
+}
 function reduceDshSnapshot(events) {
   const batches = [];
   const diagnostics = [];
@@ -21411,6 +21409,25 @@ function createDshDialogueSource({ readSession }) {
   };
 }
 
+// lib/harness/dsh/ask-result.js
+function askAnswersOf(resultText) {
+  let value;
+  try {
+    value = JSON.parse(resultText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value?.answers)) return [];
+  const answers = [];
+  for (const answer of value.answers) {
+    const { id, selected, custom } = answer ?? {};
+    if (!Array.isArray(selected) || !selected.every((label) => typeof label === "string")) return [];
+    if (custom !== void 0 && typeof custom !== "string") return [];
+    answers.push(custom === void 0 ? { id, selected } : { id, selected, custom });
+  }
+  return answers;
+}
+
 // lib/harness/dsh/history-turn-rules.js
 function createDshHumanHeadRule() {
   return (line) => {
@@ -21420,25 +21437,11 @@ function createDshHumanHeadRule() {
   };
 }
 var ASK_TOOL_NAME = "ask_user_question";
-function answerText(result) {
-  let value;
-  try {
-    value = JSON.parse(result);
-  } catch {
-    return "";
-  }
-  const lines = [];
-  for (const answer of Array.isArray(value?.answers) ? value.answers : []) {
-    if (Array.isArray(answer?.selected)) lines.push(...answer.selected);
-    if (answer?.custom) lines.push(answer.custom);
-  }
-  return lines.join("\n");
-}
 function createDshAskHeadRule() {
   return (line) => {
     if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME) return PASS;
     if (line.tool.isError === true) return ABSORB;
-    const text = answerText(line.tool.result).trim();
+    const text = askAnswersOf(line.tool.result).flatMap(({ selected, custom }) => custom ? [...selected, custom] : selected).join("\n").trim();
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
@@ -21962,11 +21965,6 @@ function composeWatcher({
     resourceKeysOf,
     modelPolicyFor: policyFor
   });
-  const heldView = heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult });
-  return { watcher, dialogueSource, dialogueProjection, heldView };
-}
-var SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
-function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult }) {
   const recall = (toolUseId) => {
     try {
       return store.recallAttribution(sessionId, toolUseId);
@@ -21974,41 +21972,20 @@ function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, comple
       return null;
     }
   };
-  const frameCtx = sessionId ? { recall } : {};
-  return (events, range) => {
-    const inRange = new Set(range);
-    const touched = { paths: /* @__PURE__ */ new Set(), skills: /* @__PURE__ */ new Set() };
-    let completed = [];
-    const projection = createDshMeasurementProjection({
+  const view = createHeldView({
+    createProjection: ({ completeToolResult: recording }) => createDshMeasurementProjection({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy: policyFor,
       interpretToolUse,
-      completeToolResult: (pending, observation, context, options) => {
-        const answer = completeToolResult(pending, observation, context, options);
-        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
-        return answer;
-      }
-    });
-    const engine = createMeasurementEngine({ resolveModelPolicy: policyFor, resolveResourcePolicy: SELECTED });
-    let skills = /* @__PURE__ */ new Map();
-    for (const observation of reduceDshSnapshot(events).observations) {
-      completed = [];
-      const { records } = projection.project(observation, frameCtx);
-      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch"));
-      if (records.some((record) => record.type === "epoch")) skills = /* @__PURE__ */ new Map();
-      for (const { effects, text, seq } of completed) {
-        for (const { resourceKey } of effects.flatMap((effect) => effect.impacts)) {
-          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
-          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
-          if (isSkill) skills.set(key, text);
-          if (inRange.has(seq)) touched[isSkill ? "skills" : "paths"].add(key);
-        }
-      }
-    }
-    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, touched };
-  };
+      completeToolResult: recording
+    }),
+    completeToolResult,
+    resolveModelPolicy: policyFor,
+    frameCtx: sessionId ? { recall } : {}
+  });
+  const heldView = (events) => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView };
 }
 
 // dsh/src/observed-read.js
@@ -22045,33 +22022,31 @@ async function readUnobserved({ fs: fs3, tree, key, ranges, fileBytes, signal })
   return { read: readTreeWindows(tree, key, ranges, { fileBytes }), displayPath };
 }
 
-// lib/harness/dsh/source-facts.js
+// lib/measurement/source-facts.js
 function initialSourceFacts() {
   return { epoch: 0, headDone: false, points: [], carriers: [] };
 }
-var isCarrier = (reduced) => Array.isArray(reduced.withdraws);
-var usageOf2 = (reduced) => reduced.observations.find((observation) => observation.type === "usage")?.usage ?? null;
-var stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
-var startsEpoch = (reduced) => reduced.observations.some((observation) => observation.type === "epoch-boundary");
-function withCarrier(facts, event, reduced) {
-  const listed = new Set(reduced.withdraws);
+var isCarrier = (input) => Array.isArray(input.sealed);
+var usageOf2 = (input) => input.observations.find((observation) => observation.type === "usage")?.usage ?? null;
+var startsEpoch = ({ observations }) => observations.some((observation) => observation.type === "epoch-boundary");
+function withCarrier(facts, input) {
+  const listed = new Set(input.sealed);
   return {
     ...facts,
     points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
-    carriers: [...facts.carriers, { seq: event.seq, epoch: facts.epoch, post: null }]
+    carriers: [...facts.carriers, { seq: input.seq, epoch: facts.epoch, post: null }]
   };
 }
-function withMainCall(facts, event, reduced) {
-  const usage = usageOf2(reduced);
+function withMainCall(facts, input) {
+  const usage = usageOf2(input);
   const waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null);
-  const carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: event.seq, usage } } : carrier) : facts.carriers;
+  const carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: input.seq, usage } } : carrier) : facts.carriers;
   if (usage === null) return waiting ? { ...facts, carriers } : facts;
   const role = facts.headDone ? waiting ? "post" : "current" : "head";
-  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: event.seq, role }], carriers };
+  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: input.seq, role }], carriers };
 }
 var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0;
-var isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
 var isUsage2 = (value) => isObject3(value) && ["input", "output", "cacheRead", "cacheWrite"].every((field) => Number.isFinite(value[field]));
 var isPost = (value) => value === null || isObject3(value) && isIndex2(value.seq) && (value.usage === null || isUsage2(value.usage));
 function qualifiedCalls(facts) {
@@ -22081,16 +22056,16 @@ function qualifiedCalls(facts) {
 function isSourceFacts(value) {
   return isObject3(value) && isIndex2(value.epoch) && typeof value.headDone === "boolean" && Array.isArray(value.points) && value.points.every((point) => isObject3(point) && isIndex2(point.seq) && ["head", "post", "current"].includes(point.role)) && Array.isArray(value.carriers) && value.carriers.every((carrier) => isObject3(carrier) && isIndex2(carrier.seq) && isIndex2(carrier.epoch) && isPost(carrier.post));
 }
-function foldSourceFacts(facts, event, reduced = reduceDshEvent(event)) {
-  if (!isIndex2(event.seq)) return facts;
-  if (startsEpoch(reduced)) return { ...facts, epoch: facts.epoch + 1, headDone: false, points: [] };
-  if (isCarrier(reduced)) return withCarrier(facts, event, reduced);
-  if (isMainCall(event)) return withMainCall(facts, event, reduced);
+function foldSourceFacts(facts, input) {
+  if (!isIndex2(input.seq)) return facts;
+  if (startsEpoch(input)) return { ...facts, epoch: facts.epoch + 1, headDone: false, points: [] };
+  if (isCarrier(input)) return withCarrier(facts, input);
+  if (input.mainCall) return withMainCall(facts, input);
   return facts;
 }
 
-// lib/harness/dsh/source-fold.js
-function withdrawn(batch, selected) {
+// lib/measurement/source-fold.js
+function sealedBatch(batch, selected) {
   return batch.flatMap((observation) => {
     if (observation.type === "tool-result") return [observation.effectsOnly ? observation : { ...observation, effectsOnly: true }];
     if (observation.type === "usage") return selected ? [observation] : [];
@@ -22098,30 +22073,29 @@ function withdrawn(batch, selected) {
   });
 }
 var changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
-function createDshSourceFold() {
+function createSourceFold() {
   const kept = [];
   let epochStart = 0;
   let facts = initialSourceFacts();
-  function push(event) {
-    const reduced = reduceDshEvent(event);
-    const { observations, diagnostics, withdraws = [] } = reduced;
-    facts = foldSourceFacts(facts, event, reduced);
+  function push(input) {
+    const { observations, diagnostics, sealed = [] } = input;
+    facts = foldSourceFacts(facts, input);
     let rewound = false;
-    if (withdraws.length > 0) {
-      const listed = new Set(withdraws);
+    if (sealed.length > 0) {
+      const listed = new Set(sealed);
       const selected = new Set(facts.points.map((point) => point.seq));
       for (let index = epochStart; index < kept.length; index += 1) {
         if (!listed.has(kept[index].seq)) continue;
-        const next = withdrawn(kept[index].batch, selected.has(kept[index].seq));
+        const next = sealedBatch(kept[index].batch, selected.has(kept[index].seq));
         if (!changed(kept[index].batch, next)) continue;
         kept[index].batch = next;
         rewound = true;
       }
     }
-    const batch = isMainCall(event) ? [{ type: "main-call", sourceOrdinal: event.seq }, ...observations] : observations;
+    const batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
-    kept.push({ seq: event.seq, batch });
+    kept.push({ seq: input.seq, batch });
     return { batch, rewound, diagnostics };
   }
   function batches() {
@@ -22137,7 +22111,7 @@ function invariant5(ok, message) {
 function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => false } = {}) {
   invariant5(typeof onDiagnostics === "function", "onDiagnostics must be a function");
   const queue = [];
-  const fold = createDshSourceFold();
+  const fold = createSourceFold();
   let installed = false;
   let drained = false;
   let snapshotTail;
@@ -22153,7 +22127,7 @@ function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => 
     captureMode: "replay"
   });
   function liveFrame(event) {
-    const { batch, rewound, diagnostics } = fold.push(event);
+    const { batch, rewound, diagnostics } = fold.push(foldInputOf(event));
     report(diagnostics);
     if (rewound) return replayFrame();
     if (batch === null) return null;
@@ -22161,7 +22135,7 @@ function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => 
   }
   function install(snapshotEvents) {
     invariant5(!installed, "install runs once");
-    const diagnostics = snapshotEvents.flatMap((event) => fold.push(event).diagnostics);
+    const diagnostics = snapshotEvents.flatMap((event) => fold.push(foldInputOf(event)).diagnostics);
     installed = true;
     snapshotTail = snapshotEvents.length === 0 ? -1 : snapshotEvents.at(-1).seq;
     report(diagnostics);
@@ -22186,90 +22160,38 @@ function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => 
   return { install, feed, drain };
 }
 
-// lib/harness/dsh/inner-source.js
+// lib/harness/dsh/event-facts.js
 var CHECKPOINT_KIND = "compact-checkpoint";
 var TURN_SKELETON_TOOL = "get_turn_skeleton";
-var stepKey = ({ turn, step }) => `${turn}:${step}`;
-function sourceFactOf(event) {
+function markerOf(source) {
+  if (source?.kind === INNER_SEAL_KIND) return "carrier";
+  if (source?.kind === CHECKPOINT_KIND) return "checkpoint";
+  return isLoadPayload(source) ? "payload" : null;
+}
+function eventFactOf(event) {
   const message = event.data?.message ?? event.data;
-  const blocks = event.type === "assistant/message" && Array.isArray(message?.content) ? message.content : [];
+  const assistant = event.type === "assistant/message";
+  const blocks = assistant && Array.isArray(message?.content) ? message.content : [];
+  const marker = event.type === "user/message" ? markerOf(message?.source) : null;
   return {
-    type: event.type,
-    kind: message?.source?.kind ?? null,
-    payload: isLoadPayload(message?.source),
-    epoch: message?.source?.kind === CHECKPOINT_KIND && startsEpoch(reduceDshEvent(event)),
+    system: event.type === "system/message",
+    header: event.type === "request/header",
+    marker,
+    epoch: marker === "checkpoint" && startsEpoch(reduceDshEvent(event)),
     step: blocks.length > 0 ? { turn: event.data.turn, step: event.data.step } : null,
+    owner: { turn: event.data?.turn, step: event.data?.step },
+    assistant,
     skeletonCall: blocks.some((block) => block?.type === "tool-call" && block.name === TURN_SKELETON_TOOL)
   };
-}
-function headerSeq(facts, latest, above = -1) {
-  let found = null;
-  for (const [seq, fact] of facts) {
-    if (fact.type === "request/header" && seq > above && (found === null || (latest ? seq > found : seq < found))) found = seq;
-  }
-  return found;
-}
-function initialPrefixLength(facts, nodes) {
-  let length = nodes.length > 0 && facts.get(nodes[0]).type === "system/message" ? 1 : 0;
-  let opened = -1;
-  nodes.forEach((seq, index) => {
-    if (facts.get(seq).epoch && seq > opened) {
-      opened = seq;
-      length = Math.max(length, index + 1);
-    }
-  });
-  const first = headerSeq(facts, false, opened);
-  if (first === null) return length;
-  while (length < nodes.length && nodes[length] > opened && nodes[length] < first) length += 1;
-  return length;
-}
-function innerSource(facts, nodes) {
-  const prefix = initialPrefixLength(facts, nodes);
-  let at = -1;
-  nodes.forEach((seq, index) => {
-    const { kind, payload } = facts.get(seq);
-    const marker = kind === INNER_SEAL_KIND || kind === CHECKPOINT_KIND || payload && index >= prefix;
-    if (marker && (at < 0 || seq > nodes[at])) at = index;
-  });
-  const range = nodes.slice(Math.max(prefix, at + 1));
-  const steps = new Set(range.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey));
-  const lastCall = range.findLastIndex((seq) => facts.get(seq).skeletonCall);
-  const lastPayload = range.findLastIndex((seq) => facts.get(seq).payload);
-  return { frontier: at < 0 ? null : nodes[at], range, stepN: steps.size, paused: lastCall > lastPayload };
-}
-function headerSeqOf(facts) {
-  return headerSeq(facts, true);
 }
 var isPrunedResult = (event) => event.type === "tool/result" && event.surfaceOp?.op === "replace";
 var originalsOf = (event, bySeq) => event.sourceEventSeqs.flatMap((seq) => {
   const cited = bySeq.get(seq);
   return isPrunedResult(cited) ? originalsOf(cited, bySeq) : [seq];
 });
-function prunedOriginals(events, seqs) {
+function eventFactsOf(events) {
   const bySeq = new Map(events.map((event) => [event.seq, event]));
-  return seqs.flatMap((seq) => isPrunedResult(bySeq.get(seq)) ? originalsOf(bySeq.get(seq), bySeq) : []);
-}
-function skeletonSlots(events, nodes, range) {
-  const bySeq = new Map(events.map((event) => [event.seq, event]));
-  const selected = new Set(range);
-  const sources = nodes.filter((seq) => selected.has(seq)).map((seq) => bySeq.get(seq));
-  const counted = new Set(sources.map((event) => sourceFactOf(event).step).filter((step) => step !== null).map(stepKey));
-  const slots = [];
-  const stepSlots = /* @__PURE__ */ new Map();
-  for (const event of sources) {
-    const key = stepKey(event.data);
-    const seqs = [...isPrunedResult(event) ? originalsOf(event, bySeq) : [], event.seq];
-    if (!counted.has(key)) {
-      if (event.type !== "assistant/message") slots.push({ seqs });
-    } else if (stepSlots.has(key)) {
-      stepSlots.get(key).seqs.push(...seqs);
-    } else {
-      const slot = { seqs, step: { turn: event.data.turn, step: event.data.step } };
-      stepSlots.set(key, slot);
-      slots.push(slot);
-    }
-  }
-  return slots;
+  return new Map(events.map((event) => [event.seq, { ...eventFactOf(event), originals: isPrunedResult(event) ? originalsOf(event, bySeq) : [] }]));
 }
 
 // lib/ledger-schema.js
@@ -22705,7 +22627,7 @@ function createWatcherTable({
 }) {
   const entries = /* @__PURE__ */ new Map();
   const listeners = /* @__PURE__ */ new Set();
-  let closed2 = false;
+  let closed = false;
   function notify(sessionId) {
     for (const listener of listeners) {
       try {
@@ -22781,7 +22703,7 @@ function createWatcherTable({
         fail(entry, hostDiagnostic("read_session_rejected", error));
         return;
       }
-      for (const event of snapshot.events) entry.facts.set(event.seq, sourceFactOf(event));
+      for (const event of snapshot.events) entry.facts.set(event.seq, eventFactOf(event));
       entry.sourceReady = true;
       await modelNames.warm(modelNames.pairsOf([...snapshot.events, ...entry.pending]));
       if (entry.state !== "bootstrapping") return;
@@ -22805,7 +22727,7 @@ function createWatcherTable({
     }
   }
   function ensure(session) {
-    if (closed2) throw new Error("the watcher table is closed");
+    if (closed) throw new Error("the watcher table is closed");
     const sessionId = session.id;
     if (entries.has(sessionId)) return;
     const entry = {
@@ -22837,7 +22759,7 @@ function createWatcherTable({
   function feed(sessionId, event) {
     const entry = entries.get(sessionId);
     if (entry === void 0) return;
-    entry.facts.set(event.seq, sourceFactOf(event));
+    entry.facts.set(event.seq, eventFactOf(event));
     if (entry.state !== "bootstrapping" && entry.state !== "live") return;
     if (event.type === "request/header") void modelNames.warm(modelNames.pairsOf([event]));
     let frame = null;
@@ -22870,7 +22792,7 @@ function createWatcherTable({
     }
   }
   function disposeAll() {
-    closed2 = true;
+    closed = true;
     for (const sessionId of [...entries.keys()]) {
       try {
         dispose(sessionId);
@@ -22905,15 +22827,15 @@ function createWatcherTable({
   function onChange(listener) {
     listeners.add(listener);
   }
-  function sourceFacts(sessionId) {
+  function eventFacts(sessionId) {
     const entry = entries.get(sessionId);
     return entry?.sourceReady ? entry.facts : null;
   }
-  function heldView(sessionId, events, range) {
+  function heldView(sessionId, events) {
     const entry = entries.get(sessionId);
-    return entry === void 0 ? null : entry.heldView(events, range);
+    return entry === void 0 ? null : entry.heldView(events);
   }
-  return { ensure, feed, dispose, disposeAll, get, waitLive, live: live2, onChange, sourceFacts, heldView };
+  return { ensure, feed, dispose, disposeAll, get, waitLive, live: live2, onChange, eventFacts, heldView };
 }
 
 // dsh/src/model-names.js
@@ -23196,6 +23118,14 @@ function pricingResponse({ model, saved, policy, cliRatio }) {
     presets
   };
 }
+var INVALID_BUCKET_FILE_MESSAGE = "Body must contain { path: string }";
+var NOT_HELD_MESSAGE = "The path is not held in the current context.";
+function heldFilePayload(path3, lineNumbers, workingTree, { fileBytes }) {
+  const ranges = runsOf(lineNumbers).map(([first, last]) => ({ offset: first, limit: last - first + 1 }));
+  const read = readTreeWindows(workingTree, path3, ranges, { fileBytes });
+  if (read.status !== "readable") return { path: path3, reason: read.reason };
+  return { path: path3, total: read.totalLines, runs: read.windows };
+}
 function turnPageWire({ turnPage, nextBefore }) {
   return {
     turn_page: turnPage,
@@ -23239,6 +23169,7 @@ var MONITOR_NOT_COMMITTED = failure("inner_monitor_not_committed", "The inner co
 function createRpcHandler({
   table,
   store,
+  workingTree,
   now = Date.now,
   publish = () => {
   },
@@ -23280,6 +23211,13 @@ function createRpcHandler({
       sessionId,
       now: now()
     })),
+    // The held lines of one path, read from the host's working tree now; a path the watcher has no resource at is refused, so the endpoint reads no file the session never held.
+    "bucket/file": ({ watcher }, { path: path3 }) => {
+      if (typeof path3 !== "string") return failure("invalid_body", INVALID_BUCKET_FILE_MESSAGE);
+      const lineNumbers = watcher.getHeldLines(path3);
+      if (lineNumbers === null) return failure("not_held", NOT_HELD_MESSAGE);
+      return live(heldFilePayload(path3, lineNumbers, workingTree, { fileBytes: ATTRIBUTION_LIMITS.fileBytes }));
+    },
     "turn/browse": (_entry, { sessionId }) => {
       const { sections } = buildTurnBrowse({ store, lineage: forLoadedHandoff({ store, sessionId }) });
       return live({ sections });
@@ -23342,7 +23280,9 @@ function createRpcHandler({
     "inner-monitor/call": { addresses: ["attempt"], read: (access, { sessionId, attempt }) => access?.call(sessionId, attempt) },
     "inner-monitor/slots": { addresses: ["attempt"], read: (access, { sessionId, attempt }) => access?.slots(sessionId, attempt) },
     "inner-monitor/slot": { addresses: ["attempt", "slot"], read: (access, { sessionId, attempt, slot }) => access?.slot(sessionId, attempt, slot) },
-    "inner-monitor/handoff": { addresses: ["handoff"], read: (access, { sessionId, handoff }) => access?.handoff(sessionId, handoff) }
+    "inner-monitor/handoff": { addresses: ["handoff"], read: (access, { sessionId, handoff }) => access?.handoff(sessionId, handoff) },
+    "inner-monitor/settlement": { addresses: ["handoff"], read: (access, { sessionId, handoff }) => access?.settlement(sessionId, handoff) },
+    "inner-monitor/settlement/current": { addresses: [], read: (access, { sessionId }) => access?.currentSettlement(sessionId) }
   };
   const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
   async function answerMonitor(endpoint, body2) {
@@ -23408,32 +23348,54 @@ function createRpcHandler({
 var PI_AI_SERVICE = "sessionWatcherPiAi";
 var ORIGINAL_ROW = "include:llm-pi-ai";
 var CARRIER_EVIDENCE_SERVICE = "sessionWatcherCarrierEvidence";
-var CARRIER_RESULTS = ["added", "native", "skipped"];
-var SKIP_REASONS = ["no-carrier", "no-native-point", "points-full", "responses-off", "unsupported"];
+var CARRIER_SETTINGS_SERVICE = "sessionWatcherCarrierSettings";
 
 // dsh/src/carrier-evidence.js
 import { AsyncLocalStorage } from "node:async_hooks";
+
+// lib/inner-seal/call-record.js
+var CALL_RECORD_NAME = "inner-call";
 var MAX_CARRIER_EVIDENCE = 8;
-function isCarrierResult(value) {
+var UNCACHED_SHARE_ALERT = 1 / 2;
+var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq = (value) => Number.isSafeInteger(value) && value >= 0;
+var isText2 = (value) => typeof value === "string";
+function callRecordOf({ purpose, selection, input, range, stream, endedAt, attempt, carrierCache, thrown }) {
+  return {
+    v: 1,
+    purpose,
+    selection,
+    input,
+    range,
+    stream,
+    endedAt,
+    ...carrierCache == null ? {} : { carrierCache },
+    ...thrown == null ? {} : { thrown },
+    ...attempt == null ? {} : { attempt }
+  };
+}
+var isCallRecord = (data) => isObject4(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq) && Array.isArray(data.stream) && isObject4(data.input) && isObject4(data.input.tail) && (data.thrown === void 0 || isObject4(data.thrown) && isText2(data.thrown.message));
+var isCarrierResult = (value) => isObject4(value) && isText2(value.result) && (value.reason === void 0 || isText2(value.reason));
+var isCarrierCache = (value) => isObject4(value) && Array.isArray(value.results) && value.results.length > 0 && value.results.length <= MAX_CARRIER_EVIDENCE && value.results.every(isCarrierResult) && Number.isSafeInteger(value.omitted) && value.omitted >= 0;
+
+// lib/llm-adapter/carrier-results.js
+var CARRIER_RESULTS = ["added", "native", "skipped"];
+var SKIP_REASONS = ["no-carrier", "no-native-point", "points-full", "responses-off", "unsupported"];
+function isCarrierResult2(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value) || !CARRIER_RESULTS.includes(value.result)) return false;
   const keys = Object.keys(value);
   return value.result === "skipped" ? keys.length === 2 && SKIP_REASONS.includes(value.reason) : keys.length === 1;
 }
-function isCarrierEvidence(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2) return false;
-  const { results, omitted } = value;
-  return Array.isArray(results) && results.length > 0 && results.length <= MAX_CARRIER_EVIDENCE && results.every(isCarrierResult) && Number.isSafeInteger(omitted) && omitted >= 0;
-}
-var closed = ({ result, reason }) => result === "skipped" ? { result, reason } : { result };
-function createCarrierEvidence({ responsesBreakpoint = () => false } = {}) {
+
+// dsh/src/carrier-evidence.js
+function createCarrierEvidence() {
   const store = new AsyncLocalStorage();
   return {
     service: Object.freeze({
-      responsesBreakpoint,
       record(result) {
         const scope = store.getStore();
-        if (scope === void 0 || !isCarrierResult(result)) return;
-        if (scope.results.length < MAX_CARRIER_EVIDENCE) scope.results.push(closed(result));
+        if (scope === void 0 || !isCarrierResult2(result)) return;
+        if (scope.results.length < MAX_CARRIER_EVIDENCE) scope.results.push(result);
         else scope.omitted += 1;
       }
     }),
@@ -23441,7 +23403,7 @@ function createCarrierEvidence({ responsesBreakpoint = () => false } = {}) {
       const own = { results: [], omitted: 0 };
       return {
         run: (body2) => store.run(own, body2),
-        evidence: () => own.results.length === 0 ? null : { results: own.results.map(closed), omitted: own.omitted }
+        evidence: () => own.results.length === 0 ? null : { results: [...own.results], omitted: own.omitted }
       };
     }
   };
@@ -24173,10 +24135,82 @@ function createTurnReadService({
   };
 }
 
+// lib/harness/dsh/event-read.js
+var EVENT_READ_TOOL = "sw_event_read";
+var NATIVE_EVENT_READ = "session_event_read";
+var EVENT_READ_GUIDANCE = `Use ${EVENT_READ_TOOL} when you need exact data from an earlier event.`;
+var isText3 = (value) => typeof value === "string";
+var listOf = (value) => Array.isArray(value) ? value : [];
+function eventReadTargetOf(call) {
+  if (call?.name !== EVENT_READ_TOOL && call?.name !== NATIVE_EVENT_READ) return void 0;
+  try {
+    const { seq, session_id: sessionId } = JSON.parse(call.arguments);
+    if (Number.isSafeInteger(seq) && seq >= 0 && (sessionId === void 0 || isText3(sessionId))) return { seq, sessionId };
+  } catch {
+    return void 0;
+  }
+  return void 0;
+}
+var sourceOf = (source) => isText3(source?.kind) ? { source: { kind: source.kind } } : {};
+function blockOf(block) {
+  switch (block?.type) {
+    case "text":
+    case "reasoning":
+      return isText3(block.text) ? [{ type: block.type, text: block.text }] : [];
+    case "tool-call":
+      return [{ type: "tool-call", id: block.id, name: block.name, arguments: block.arguments }];
+    case "file":
+    case "image":
+      return block.attachment === void 0 ? [] : [{ type: block.type, attachment: block.attachment }];
+    default:
+      return [];
+  }
+}
+var blocksOf = (content) => listOf(content).flatMap(blockOf);
+var BODIES = {
+  "user/message": (data) => ({ content: blocksOf(data.content), ...sourceOf(data.source) }),
+  // `interrupted` marks a prefix a cancellation cut short, which a reader must not take for a finished message.
+  "assistant/message": (data) => ({ message: { content: blocksOf(data.message?.content) }, ...data.interrupted === true ? { interrupted: true } : {} }),
+  "tool/call": (data) => ({ callId: data.callId, name: data.name, arguments: data.arguments }),
+  "tool/result": (data) => {
+    const { message, error } = data;
+    return {
+      message: {
+        ...isText3(message?.toolCallId) ? { toolCallId: message.toolCallId } : {},
+        ...typeof message?.isError === "boolean" ? { isError: message.isError } : {},
+        content: blocksOf(message?.content)
+      },
+      ...error === void 0 || error === null ? {} : { error: { name: error.name, code: error.code } }
+    };
+  }
+};
+function eventTextOf(event) {
+  const { type, seq, time } = event;
+  const body2 = Object.hasOwn(BODIES, type) ? BODIES[type](event.data ?? {}) : void 0;
+  return { type, seq, time, ...body2 === void 0 ? {} : { data: body2 } };
+}
+var NO_TEXT = " | (no semantic text)";
+var CARRIER_KINDS = /* @__PURE__ */ new Set([LOAD_MESSAGE_KIND, INNER_SEAL_KIND, CHECKPOINT_KIND]);
+function neighborLine(event, textOf4) {
+  const identity = `- seq ${event.seq} | ${event.type} | ${new Date(event.time).toISOString()}`;
+  if (event.type === "user/message" && CARRIER_KINDS.has(event.data?.source?.kind)) return identity;
+  const text = textOf4(event);
+  return `${identity}${text.length === 0 ? NO_TEXT : `
+  ${text.replaceAll("\n", "\n  ")}`}`;
+}
+function formatEventRead({ sessionId, title, window: window2, textOf: textOf4 }) {
+  const { target } = window2;
+  const lines = [`Session ${sessionId} \u2014 ${title}`, `Target event seq ${target.seq}:`, "```json", JSON.stringify(eventTextOf(target), null, 2), "```"];
+  for (const [heading, neighbors] of [["Before:", window2.events.filter((event) => event.seq < target.seq)], ["After:", window2.events.filter((event) => event.seq > target.seq)]]) {
+    if (neighbors.length > 0) lines.push("", heading, ...neighbors.map((event) => neighborLine(event, textOf4)));
+  }
+  return lines.join("\n");
+}
+
 // lib/harness/dsh/turn-recovery.js
-var NOTICE = "Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's id, and a row's T is that session's event seq; read it in full with session_event_read(session_id, T).";
-var SEARCH_HIT = "line is the event seq a match sits in, span the events of its fold from its anchor to its results, and transcript_path the session id; read session_event_read with transcript_path as session_id and line as seq for the full event. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.";
-var LOCATE_HIT = "A hit's transcript_path is the session id that holds its turn at event T of its scope; read session_event_read with transcript_path as session_id and T as seq for the full event. The other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it.";
+var NOTICE = `Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's id, and a row's T is that session's event seq; read it in full with ${EVENT_READ_TOOL}(session_id, T).`;
+var SEARCH_HIT = `line is the event seq a match sits in, span the events of its fold from its anchor to its results, and transcript_path the session id; read ${EVENT_READ_TOOL} with transcript_path as session_id and line as seq for the full event. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.`;
+var LOCATE_HIT = `A hit's transcript_path is the session id that holds its turn at event T of its scope; read ${EVENT_READ_TOOL} with transcript_path as session_id and T as seq for the full event. The other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it.`;
 function createDshTurnRecovery() {
   return { notice: NOTICE, searchHit: SEARCH_HIT, locateHit: LOCATE_HIT };
 }
@@ -24739,6 +24773,98 @@ function createContinueCommand({ table, store, kit, meter, flush, deliver, readF
   return { name: COMMAND_NAME2, description: COMMAND_DESCRIPTION2, handler };
 }
 
+// dsh/src/event-read.js
+var UNTITLED = "untitled";
+var UNAUTHORIZED = "SESSION_QUERY_TOOL_UNAUTHORIZED";
+var FAILED = "SESSION_QUERY_TOOL_FAILED";
+var CARRIED = "SW_EVENT_CARRIED";
+var SAFE_FAILURES = {
+  SESSION_QUERY_ABORTED: "session query was cancelled",
+  SESSION_QUERY_EVENT_NOT_FOUND: "session event was not found",
+  SESSION_QUERY_INVALID_WINDOW: "session event window is invalid",
+  SESSION_QUERY_SESSION_NOT_FOUND: "session was not found"
+};
+function createEventReadTool({ defineTool: defineTool2, ctx, extractSessionEventText: extractSessionEventText2, HarnessError: HarnessError2, heldInContext: heldInContext2 = () => false }) {
+  const failure4 = (message, code) => new HarnessError2(message, code);
+  const unauthorized = () => failure4("session target is outside the caller workspace", UNAUTHORIZED);
+  const assertCount = (name3, value) => {
+    if (!Number.isSafeInteger(value) || value < 0) throw failure4(`${name3} must be a non-negative safe integer`, "SESSION_QUERY_INVALID_WINDOW");
+  };
+  const isHeld = (sessionId, seq) => {
+    try {
+      return heldInContext2(sessionId, seq);
+    } catch (error) {
+      writeDiagnostic(sessionId, hostDiagnostic("event_read_held_failed", error));
+      return false;
+    }
+  };
+  const guarded = async (sessionId, signal, call) => {
+    signal.throwIfAborted();
+    try {
+      const value = await call();
+      signal.throwIfAborted();
+      return value;
+    } catch (error) {
+      signal.throwIfAborted();
+      writeDiagnostic(sessionId, hostDiagnostic("event_read_failed", error));
+      const message = typeof error?.code === "string" && Object.hasOwn(SAFE_FAILURES, error.code) ? SAFE_FAILURES[error.code] : void 0;
+      throw message === void 0 ? failure4("session query operation failed", FAILED) : failure4(message, error.code);
+    }
+  };
+  return defineTool2({
+    name: EVENT_READ_TOOL,
+    description: "Read the full unabridged text of one event and optional neighboring raw-event summaries from an authorized session.",
+    parameters: {
+      session_id: { type: "string", description: "Target session id. Omit for the current session." },
+      seq: { type: "integer", required: true, description: "Target event sequence number." },
+      before: { type: "integer", description: "Number of preceding raw events to summarize. Omit for none." },
+      after: { type: "integer", description: "Number of following raw events to summarize. Omit for none." }
+    },
+    output: { schema: { type: "string" }, render: (_args, value) => [{ type: "text", text: value }] },
+    isConcurrencySafe: () => true,
+    async execute({ session_id: requested, seq, before, after }, { agent, signal }) {
+      assertCount("seq", seq);
+      if (before !== void 0) assertCount("before", before);
+      if (after !== void 0) assertCount("after", after);
+      const { id: callerId, header } = agent.session;
+      const sessionId = requested ?? callerId;
+      if (sessionId === callerId && isHeld(callerId, seq)) {
+        throw failure4(`Event seq ${seq} is already in your context word for word; reading it gives the same text. Use it.`, CARRIED);
+      }
+      const run2 = (call) => guarded(callerId, signal, call);
+      const assertObserved = (observed) => {
+        if (observed?.id !== sessionId || observed.cwd !== header.cwd) throw unauthorized();
+      };
+      if (sessionId !== callerId) {
+        if (header.cwd === void 0) throw unauthorized();
+        const records = await run2(() => ctx.sessionQuery.filterSessions([{ kind: "id", values: [sessionId] }, { kind: "cwd", values: [header.cwd] }], signal));
+        if (records.length !== 1) throw unauthorized();
+      }
+      const window2 = await run2(() => ctx.sessionQuery.readEvent({
+        sessionId,
+        seq,
+        ...before === void 0 ? {} : { before },
+        ...after === void 0 ? {} : { after }
+      }, signal));
+      assertObserved(window2.session);
+      let title = UNTITLED;
+      try {
+        const [observation] = await run2(() => ctx.sessionQuery.readTitleSnapshots([sessionId], signal));
+        if (observation?.status === "fulfilled") {
+          assertObserved(observation.value.session);
+          title = observation.value.title?.title ?? UNTITLED;
+        } else {
+          writeDiagnostic(callerId, hostDiagnostic("event_read_title_failed", observation?.reason));
+        }
+      } catch (error) {
+        if (error.code === UNAUTHORIZED) throw error;
+        signal.throwIfAborted();
+      }
+      return formatEventRead({ sessionId, title, window: window2, textOf: extractSessionEventText2 });
+    }
+  });
+}
+
 // dsh/src/skills.js
 import { existsSync, readdirSync, readFileSync as readFileSync6 } from "node:fs";
 import { join as join7 } from "node:path";
@@ -24767,24 +24893,35 @@ function registerSkills(ctx, { skillsDir }) {
   }
 }
 
-// dsh/src/inner-mode.js
-var MODE_RECORD_TYPE = "plugin:session-watcher/inner-mode";
-var MODE_PROJECTION_KEY = "session-watcher/inner-mode";
+// lib/inner-seal/mode.js
 var MODES = ["off", "on", "invalid"];
-var messageOf4 = (error) => error instanceof Error ? error.message : String(error);
 var STATES = Object.fromEntries(MODES.map((mode) => [mode, {
   unlocked: Object.freeze({ mode, locked: false }),
   locked: Object.freeze({ mode, locked: true })
 }]));
 var stateOf = (mode, locked) => STATES[mode][locked ? "locked" : "unlocked"];
-var isModeInput = (event) => event.type === "turn/start" || event.type === MODE_RECORD_TYPE;
 var isModeData = (data) => data !== null && typeof data === "object" && data.v === 1 && typeof data.enabled === "boolean";
+var INITIAL_MODE = stateOf("off", false);
+function modeStateOf(value) {
+  if (value === null || typeof value !== "object" || !MODES.includes(value.mode) || typeof value.locked !== "boolean") return null;
+  return stateOf(value.mode, value.locked);
+}
+function foldMode(state, input) {
+  if (state.locked) return state;
+  if (input.turnStarted === true) return stateOf(state.mode, true);
+  return stateOf(isModeData(input.record) ? input.record.enabled ? "on" : "off" : "invalid", false);
+}
+
+// dsh/src/inner-mode.js
+var MODE_RECORD_TYPE = "plugin:session-watcher/inner-mode";
+var MODE_PROJECTION_KEY = "session-watcher/inner-mode";
+var messageOf4 = (error) => error instanceof Error ? error.message : String(error);
+var isModeInput = (event) => event.type === "turn/start" || event.type === MODE_RECORD_TYPE;
 var stateSchema = {
   parse(value) {
-    if (value === null || typeof value !== "object" || !MODES.includes(value.mode) || typeof value.locked !== "boolean") {
-      throw new Error("the inner mode state is not { mode, locked }");
-    }
-    return stateOf(value.mode, value.locked);
+    const state = modeStateOf(value);
+    if (state === null) throw new Error("the inner mode state is not { mode, locked }");
+    return state;
   }
 };
 function innerModeProjection({ pluginRecordOf: pluginRecordOf2 }) {
@@ -24792,13 +24929,12 @@ function innerModeProjection({ pluginRecordOf: pluginRecordOf2 }) {
     key: MODE_PROJECTION_KEY,
     stateVersion: 1,
     stateSchema,
-    init: () => stateOf("off", false),
+    init: () => INITIAL_MODE,
     apply(state, event) {
-      if (state.locked) return state;
-      if (event.type === "turn/start") return stateOf(state.mode, true);
+      if (event.type === "turn/start") return foldMode(state, { turnStarted: true });
       const record = pluginRecordOf2(event);
       if (record?.type !== MODE_RECORD_TYPE) return state;
-      return stateOf(isModeData(record.data) ? record.data.enabled ? "on" : "off" : "invalid", false);
+      return foldMode(state, { record: record.data });
     }
   };
 }
@@ -24859,7 +24995,235 @@ function createModeAccess({ sessionOf, readMode, select, readStored }) {
   return access;
 }
 
-// dsh/src/inner-quote.js
+// lib/inner-seal/source.js
+var stepKey = ({ turn, step }) => `${turn}:${step}`;
+function headerSeqIn(facts, { latest, above }) {
+  let found = null;
+  for (const [seq, fact] of facts) {
+    if (!fact.header || !latest && seq <= above) continue;
+    if (found === null || (latest ? seq > found : seq < found)) found = seq;
+  }
+  return found;
+}
+function initialPrefixLength(facts, nodes) {
+  let length = nodes.length > 0 && facts.get(nodes[0]).system ? 1 : 0;
+  let opened = -1;
+  nodes.forEach((seq, index) => {
+    if (facts.get(seq).epoch && seq > opened) {
+      opened = seq;
+      length = Math.max(length, index + 1);
+    }
+  });
+  const first = headerSeqIn(facts, { latest: false, above: opened });
+  if (first === null) return length;
+  while (length < nodes.length && nodes[length] > opened && nodes[length] < first) length += 1;
+  return length;
+}
+function innerSource(facts, nodes) {
+  const prefix = initialPrefixLength(facts, nodes);
+  let at = -1;
+  nodes.forEach((seq, index) => {
+    const { marker } = facts.get(seq);
+    if (marker !== null && (marker !== "payload" || index >= prefix) && (at < 0 || seq > nodes[at])) at = index;
+  });
+  const range = nodes.slice(Math.max(prefix, at + 1));
+  const steps = new Set(range.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey));
+  const lastCall = range.findLastIndex((seq) => facts.get(seq).skeletonCall);
+  const lastPayload = range.findLastIndex((seq) => facts.get(seq).marker === "payload");
+  return { frontier: at < 0 ? null : nodes[at], range, stepN: steps.size, paused: lastCall > lastPayload };
+}
+function skeletonSlots(facts, nodes, range) {
+  const selected = new Set(range);
+  const sources = nodes.filter((seq) => selected.has(seq));
+  const counted = new Set(sources.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey));
+  const slots = [];
+  const stepSlots = /* @__PURE__ */ new Map();
+  for (const seq of sources) {
+    const { owner, assistant, originals } = facts.get(seq);
+    const key = stepKey(owner);
+    const seqs = [...originals, seq];
+    if (!counted.has(key)) {
+      if (!assistant) slots.push({ seqs });
+    } else if (stepSlots.has(key)) {
+      stepSlots.get(key).seqs.push(...seqs);
+    } else {
+      const slot = { seqs, step: { turn: owner.turn, step: owner.step } };
+      stepSlots.set(key, slot);
+      slots.push(slot);
+    }
+  }
+  return slots;
+}
+
+// lib/inner-seal/git-state.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+var STATUS_COMMAND = ["status", "--short", "--branch"];
+var LOG_COMMAND = ["log", "-1", "--oneline"];
+var BRANCH_LINE_START = "## ";
+var GIT_SAFE_OPTIONS = ["-c", "core.fsmonitor=false"];
+function isGitStateCommand(command) {
+  if (typeof command !== "string") return false;
+  const [status, head, ...rest] = command.trim().split(/[ \t]*&&[ \t]*/u);
+  return rest.length === 0 && /^git[ \t]+status(?:[ \t]+--?[\w=-]+)*$/u.test(status) && (head === void 0 || head.split(/[ \t]+/u).join(" ") === `git ${LOG_COMMAND.join(" ")}`);
+}
+var STATUS_LISTING = "git status --short";
+var GIT_STATUS_LINE_LIMIT = 20;
+var GIT_READ_TIMEOUT_MS = 5e3;
+var linesOf = (text) => text.split("\n").filter((line, at, all) => line !== "" || at < all.length - 1);
+var leftNotice = (count) => `\u2026 and ${count} more not shown; \`${STATUS_LISTING}\` lists them all`;
+var GIT_ENV = { LC_ALL: "C", GIT_OPTIONAL_LOCKS: "0" };
+async function runGit(args2, { cwd, signal, timeoutMs }) {
+  try {
+    const { stdout } = await execFileAsync("git", [...GIT_SAFE_OPTIONS, ...args2], { cwd, signal, timeout: timeoutMs, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
+    return { stdout };
+  } catch (error) {
+    if (typeof error.code === "number") return { exit: error.stderr };
+    throw error;
+  }
+}
+async function readGitState({ cwd, signal, timeoutMs = GIT_READ_TIMEOUT_MS }) {
+  if (typeof cwd !== "string" || cwd === "") throw new Error("the git state has no working directory to be read in");
+  const options = { cwd, signal, timeoutMs };
+  const status = await runGit(STATUS_COMMAND, options);
+  if ("exit" in status) {
+    if (/not a git repository/i.test(status.exit)) return null;
+    throw new Error(`git ${STATUS_COMMAND.join(" ")} failed: ${status.exit.trim()}`);
+  }
+  const [branch, ...entries] = linesOf(status.stdout);
+  if (!branch?.startsWith(BRANCH_LINE_START)) throw new Error(`git ${STATUS_COMMAND.join(" ")} printed no branch line`);
+  const log = await runGit(LOG_COMMAND, options);
+  const heads = "exit" in log ? [] : linesOf(log.stdout);
+  if (heads.length > 1 || heads.length === 1 && heads[0] === "") throw new Error(`git ${LOG_COMMAND.join(" ")} did not print one line`);
+  const left = entries.length - GIT_STATUS_LINE_LIMIT;
+  return [branch, ...entries.slice(0, GIT_STATUS_LINE_LIMIT), ...left > 0 ? [leftNotice(left)] : [], ...heads].join("\n");
+}
+var GIT_STATE_ITEM = Object.freeze({
+  key: "git",
+  label: `Git, as \`git ${STATUS_COMMAND.join(" ")} && git ${LOG_COMMAND.join(" ")}\` would show:`,
+  multiline: true,
+  normalize: (value) => {
+    if (typeof value !== "string" || value === "") throw new Error("the git state is not a text");
+    return value;
+  },
+  isEmpty: () => false,
+  same: (a, b) => a === b,
+  text: (value) => value
+});
+
+// lib/harness/dsh/carrier-table.js
+var carriesEvidence = (source) => source?.kind === INNER_SEAL_KIND || source?.kind === LOAD_MESSAGE_KIND && Array.isArray(source.paths);
+var isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
+function todoItemsOf(value) {
+  if (value === null) return [];
+  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
+  return value.map(({ content, status }) => ({ content, status }));
+}
+function textEntriesOf(value, fields, what) {
+  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && fields.every((field) => typeof entry[field] === "string"))) {
+    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
+  }
+  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
+}
+var sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
+var entryList = (entries) => entries.map(({ id, label }) => `${id} \u2014 ${label}`).join("; ");
+var AGENT_FIELDS = ["id", "label"];
+var TODO_FIELDS = ["content", "status"];
+var stateItem = ({ tool, label, ...rest }) => Object.freeze({ ...rest, tool, label: label(tool) });
+function argumentsOf(call) {
+  try {
+    return JSON.parse(call.arguments);
+  } catch {
+    return void 0;
+  }
+}
+var CARRIER_TABLE = Object.freeze({
+  addresses: `These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
+  editGuard: "The reads behind this file text still count in this session, so edit a file without reading it again.",
+  imageReadTool: "read_image",
+  stateItems: Object.freeze([
+    stateItem({
+      key: "workingDirectory",
+      tool: "working_directory",
+      label: (tool) => `Working directory, as ${tool} would show:`,
+      operation: (call) => typeof argumentsOf(call)?.cd === "string" ? "write" : "read",
+      normalize: (value) => {
+        if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
+        return value;
+      },
+      isEmpty: () => false,
+      same: (a, b) => a === b,
+      text: (value) => value
+    }),
+    stateItem({
+      key: "subagents",
+      tool: "list_agents",
+      label: (tool) => `Running subagents, as ${tool} would show:`,
+      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
+      isEmpty: (entries) => entries.length === 0,
+      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+      text: entryList
+    }),
+    stateItem({
+      key: "jobs",
+      tool: "job_list",
+      label: (tool) => `Running jobs, as ${tool} would show:`,
+      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
+      isEmpty: (entries) => entries.length === 0,
+      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+      text: entryList
+    }),
+    stateItem({
+      key: "todos",
+      tool: "todo_write",
+      operation: "write",
+      label: (tool) => `Todo list, as ${tool} last left it:`,
+      normalize: todoItemsOf,
+      isEmpty: (items) => items.length === 0,
+      same: (a, b) => sameEntries(TODO_FIELDS, a, b),
+      text: (items) => JSON.stringify(items)
+    }),
+    Object.freeze({ ...GIT_STATE_ITEM, matchesCall: (call) => call.name === "bash" && isGitStateCommand(argumentsOf(call)?.command) })
+  ])
+});
+function stateOperationOf(call) {
+  if (typeof call?.name !== "string") return void 0;
+  const item = CARRIER_TABLE.stateItems.find((item2) => item2.matchesCall?.(call) ?? item2.tool === call.name);
+  if (item === void 0) return void 0;
+  return typeof item.operation === "function" ? item.operation(call) : item.operation ?? "read";
+}
+
+// lib/harness/dsh/message-blocks.js
+var blockText = (block) => block.type === "text" || block.type === "reasoning" ? block.text : block.type === "tool-call" ? `${block.name}${block.arguments}` : JSON.stringify(block);
+var requestTextOf = (message) => message.content.map(blockText).join("");
+var blocksOf2 = (message) => Array.isArray(message?.content) ? message.content : [];
+var textOf2 = (messages) => messages.flatMap(blocksOf2).filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+function slotFactsOf(slot, messages) {
+  const [first] = messages;
+  const text = textOf2(messages);
+  if (slot.step === void 0) {
+    if (first?.role === "tool") return { own: false, kind: "result", text, toolCallId: first.toolCallId };
+    return { own: first?.role === "user" && first.source?.kind === "user", kind: "other", text };
+  }
+  const failed2 = new Set(messages.filter((message) => message.role === "tool" && message.isError === true).map((message) => message.toolCallId));
+  const assistant = messages.filter((message) => message.role === "assistant");
+  const calls = assistant.flatMap(blocksOf2).filter((block) => block?.type === "tool-call").map((call) => ({ id: call.id, name: call.name, arguments: call.arguments, failed: failed2.has(call.id) }));
+  return { own: false, kind: "step", text, assistantText: textOf2(assistant), calls };
+}
+
+// lib/inner-seal/touched.js
+function touchedOf({ paths, skills, effects }, seqs) {
+  const replaced = new Set(seqs);
+  const touched = { path: /* @__PURE__ */ new Set(), skill: /* @__PURE__ */ new Set() };
+  for (const { seq, kind, key } of effects) if (replaced.has(seq)) touched[kind].add(key);
+  return {
+    paths: new Map([...paths].filter(([key]) => touched.path.has(key))),
+    skills: new Map([...skills].filter(([name3]) => touched.skill.has(name3)))
+  };
+}
+
+// lib/inner-seal/quote.js
 var INNER_QUOTE = Object.freeze({ minSteps: 8, cPerStep: 200, fee: 1e4 });
 var KAPPA_PRICE_ANCHOR = 25;
 var KAPPA_WEIGHT_SHIFT = 23;
@@ -24882,22 +25246,16 @@ function kappaOf(n, cRatio, { p, alpha }) {
   const weight = (cRatio - KAPPA_PRICE_ANCHOR) / (cRatio + KAPPA_WEIGHT_SHIFT);
   return 1 + alpha * powInt(etaOf(n, cRatio), p) + weight * compensation;
 }
-var blockText = (block) => block.type === "text" || block.type === "reasoning" ? block.text : block.type === "tool-call" ? `${block.name}${block.arguments}` : JSON.stringify(block);
-var messageTokens = (message, ctp) => charsToTokens(message.content.map(blockText).join(""), ctp);
-var bTokens = (carried, ctp) => renderCarried(carried) === null ? 0 : charsToTokens(renderCarrier({ kind: INNER_SEAL_KIND, v: 1, slots: [], ...carried }).at(-1).text, ctp);
-function estimateInnerA({ n, range, messageOf: messageOf6, carried, ctp }) {
-  const lA = range.reduce((sum, seq) => {
-    const message = messageOf6(seq);
-    return message === null ? sum : sum + messageTokens(message, ctp);
-  }, 0);
-  const bEst = bTokens(carried, ctp);
+function estimateInnerA({ n, texts, bText, ctp }) {
+  const lA = texts.reduce((sum, text) => sum + charsToTokens(text, ctp), 0);
+  const bEst = charsToTokens(bText, ctp);
   const cEst = INNER_QUOTE.cPerStep * n;
   return { n, lA, bEst, cEst, sEst: lA - bEst - cEst };
 }
 var NO_RESULT = Object.freeze({ nRef: null, N: null, jRef: null, q: null, arm: null });
-function resultsOf(n, { bEst, cEst, sEst }, cRatio) {
-  const f0 = cRatio * INNER_QUOTE.fee + (cRatio - 1) * bEst;
-  const nRef = f0 / sEst;
+function resultsOf(n, { bEst, cEst, sEst }, cRatio, readCost) {
+  const fixed = cRatio * INNER_QUOTE.fee + (cRatio - 1) * bEst + readCost;
+  const nRef = fixed / sEst;
   const v = (cRatio - 1) * cEst / sEst;
   const N = nRef + v;
   const jRef = 2 * Math.sqrt(n * nRef) + v;
@@ -24905,22 +25263,14 @@ function resultsOf(n, { bEst, cEst, sEst }, cRatio) {
   if (![nRef, N, jRef, q].every(Number.isFinite) || !(jRef > 0)) return null;
   return { nRef, N, jRef, q, arm: n >= nRef ? "right" : "left" };
 }
-function missingOf(estimate, cRatio) {
-  if (estimate === null) return "estimate_failed";
-  if (!Number.isFinite(cRatio)) return "ratio_unavailable";
-  if (!(estimate.sEst > 0)) return "non_positive_savings";
-  return null;
-}
-function innerQuote({ n, estimate, cRatio, preset }) {
+function innerQuote({ n, estimate, cRatio, preset, summaryReadCost }) {
   const ratio = Number.isFinite(cRatio) ? cRatio : null;
   const priced2 = ratio === null ? NaN : kappaOf(n, ratio, KAPPA_PRESETS[preset]);
   const kappa = Number.isFinite(priced2) ? priced2 : null;
-  let missing = missingOf(estimate, ratio);
-  let results = missing === null ? resultsOf(n, estimate, ratio) : null;
-  if (missing === null && (results === null || kappa === null)) {
-    missing = "undefined_result";
-    results = null;
-  }
+  const priceable = estimate !== null && ratio !== null && estimate.sEst > 0;
+  const read = Number.isFinite(summaryReadCost) && summaryReadCost >= 0 ? summaryReadCost : null;
+  const found = priceable ? resultsOf(n, estimate, ratio, read ?? 0) : null;
+  const results = kappa === null ? null : found;
   const quoted2 = results !== null && n >= INNER_QUOTE.minSteps && (results.arm === "right" || results.q < kappa);
   return {
     n,
@@ -24933,54 +25283,78 @@ function innerQuote({ n, estimate, cRatio, preset }) {
     kappa,
     preset,
     ...results ?? NO_RESULT,
-    trigger: quoted2 ? "quote" : null,
-    missing
+    ...results !== null && read !== null ? { summaryReadCost: read } : {},
+    trigger: quoted2 ? "quote" : null
   };
 }
+var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq2 = (value) => Number.isSafeInteger(value) && value >= 0;
+var orNull = (holds) => (value) => value === null || holds(value);
+var QUOTE_QUANTITIES = ["lA", "bEst", "cEst", "sEst", "cRatio", "nRef", "N", "jRef", "q"];
+function isQuote(value) {
+  return isObject5(value) && isSeq2(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && value.trigger === "quote";
+}
 
-// dsh/src/inner-summary.js
-var SUMMARY_PURPOSE = "inner-compaction";
+// lib/inner-seal/attempt-record.js
+var ATTEMPT_RECORD_NAME = "inner-attempt";
+var isObject6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq3 = (value) => Number.isSafeInteger(value) && value >= 0;
+var attemptRecordOf = ({ range, request, quote }) => ({ v: 1, range, request, quote });
+var isAttemptRecord = (data) => isObject6(data) && data.v === 1 && isObject6(data.range) && isSeq3(data.range.first) && isSeq3(data.range.last) && isSeq3(data.range.count) && isObject6(data.request) && isObject6(data.request.messages) && isObject6(data.request.messages.tail);
+var attemptQuoteOf = (data) => isQuote(data.quote) ? data.quote : null;
+
+// lib/inner-seal/end-record.js
+var END_RECORD_NAME = "inner-end";
+var isObject7 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq4 = (value) => Number.isSafeInteger(value) && value >= 0;
+var isText4 = (value) => typeof value === "string";
+var endRecordOf = ({ attempt, outcome, reason }) => ({ v: 1, attempt, outcome, reason });
+var isEndRecord = (data) => isObject7(data) && data.v === 1 && isSeq4(data.attempt) && (data.outcome === "failed" || data.outcome === "cancelled") && isText4(data.reason);
+
+// lib/inner-seal/ladder.js
 var FORMAT_FAILURE = "format";
 var FILTER_FAILURE = "filtered";
-var FILTER_TEXT = "content_filtered";
-var DISPLAYED_OPTIONS = ["provider", "model", "reasoningEffort", "purpose", "sessionId"];
-var DISPLAYED_INPUT = ["throughSeq", "headerSeq"];
-var provided = (source, keys) => Object.fromEntries(keys.filter((key) => source[key] !== void 0).map((key) => [key, source[key]]));
-function requestDisplayOf(options, input) {
-  const { messages, tools, toolHistory } = options;
+var SUMMARY_MAX_REQUESTS = 3;
+var SUMMARY_FILTER_RETRIES = 1;
+function createRetryLadder({ selection, fallback }) {
+  const rungs = [selection, ...Array(SUMMARY_FILTER_RETRIES).fill(selection), ...fallback === null ? [] : [fallback]];
+  let rung = 0;
+  let requests = 1;
   return {
-    options: provided(options, DISPLAYED_OPTIONS),
-    messages: { count: messages.length - 1, tail: messages.at(-1) },
-    ...provided(input, DISPLAYED_INPUT),
-    ...tools === void 0 ? {} : { tools: { count: tools.length } },
-    ...toolHistory === void 0 ? {} : {
-      toolHistory: { updates: toolHistory.updates.map(({ messageId, additions }) => ({ messageId, additions: additions.map((tool) => tool.name) })) }
+    current: () => rungs[rung],
+    next(failure4) {
+      if (failure4 === FORMAT_FAILURE && requests < SUMMARY_MAX_REQUESTS) {
+        requests += 1;
+        return true;
+      }
+      if (failure4 === FILTER_FAILURE && rung < rungs.length - 1) {
+        rung += 1;
+        return true;
+      }
+      return false;
     }
   };
 }
+
+// lib/inner-seal/summary.js
 var C_CUE_TEXT_CHARS = 60;
-var blocksOf = (message) => Array.isArray(message?.content) ? message.content : [];
-var textOf2 = (messages) => messages.flatMap(blocksOf).filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
 function cueText(text) {
   const folded = text.replace(/\s+/gu, " ");
   const half = C_CUE_TEXT_CHARS / 2;
   return JSON.stringify(folded.length <= C_CUE_TEXT_CHARS ? folded : `${safePrefix(folded, half)}\u2026${safeSuffix(folded, half)}`);
 }
-function slotMessagesOf({ slots, session, events, range }) {
-  const bySeq = new Map(events.map((event) => [event.seq, event]));
-  const selected = new Set(range);
-  return slots.map((slot) => slot.seqs.filter((seq) => selected.has(seq)).map((seq) => session.deriveEventMessage(bySeq.get(seq))).filter((message) => message != null));
+function verbatimNoteOf(facts) {
+  if (!facts.own) return null;
+  const { uText, uOriginalChars } = storedUText(facts.text);
+  const truncated = uOriginalChars > uText.length;
+  const u = truncated ? `${uText}${truncationMarker(uOriginalChars)}` : uText;
+  return { text: `user: ${u}`, whole: !truncated && uText !== "" };
 }
-function verbatimNoteOf(slot, messages) {
-  const [message] = messages;
-  if (slot.step !== void 0 || message?.role !== "user" || message.source?.kind !== "user") return null;
-  const { uText, uOriginalChars } = storedUText(textOf2(messages));
-  const u = uOriginalChars > uText.length ? `${uText}${truncationMarker(uOriginalChars)}` : uText;
-  return `user: ${u}`;
-}
-function stringsOf(value, found = []) {
+function valuesOf(value, key, found = []) {
   if (typeof value === "string") found.push(value);
-  else if (value !== null && typeof value === "object") Object.values(value).forEach((item) => stringsOf(item, found));
+  else if (typeof value === "number" || typeof value === "boolean") found.push(key === void 0 ? String(value) : `${key} ${value}`);
+  else if (Array.isArray(value)) value.forEach((item) => valuesOf(item, key, found));
+  else if (value !== null && typeof value === "object") Object.entries(value).forEach(([name3, item]) => valuesOf(item, name3, found));
   return found;
 }
 function argumentsCueOf(call) {
@@ -24990,28 +25364,21 @@ function argumentsCueOf(call) {
   } catch {
     parsed = call.arguments;
   }
-  const text = stringsOf(parsed).join(" ").trim();
+  const text = valuesOf(parsed).join(" ").trim();
   return text === "" ? "" : `: ${cueText(text)}`;
 }
-function rowsOf(entries) {
+function rowsOf(slotFacts, verbatim) {
   let number = 0;
-  return entries.map(({ slot, messages, verbatim }) => {
-    if (verbatim !== null) return `user, no note: ${cueText(textOf2(messages))}`;
+  return slotFacts.map((facts, at) => {
+    if (verbatim[at] !== null) return `user, no note: ${cueText(facts.text)}`;
     number += 1;
     const label = `[${number}]`;
-    if (slot.step === void 0) {
-      const [message] = messages;
-      if (message?.role === "tool") return `${label} tool result of call ${message.toolCallId}`;
-      return `${label} harness: ${cueText(textOf2(messages))}`;
-    }
-    const failed2 = new Set(messages.filter((message) => message.role === "tool" && message.isError === true).map((message) => message.toolCallId));
-    const assistant = messages.filter((message) => message.role === "assistant");
-    const text = textOf2(assistant);
-    const calls = assistant.flatMap(blocksOf).filter((block) => block?.type === "tool-call");
+    if (facts.kind === "result") return `${label} tool result of call ${facts.toolCallId}`;
+    if (facts.kind !== "step") return `${label} harness: ${cueText(facts.text)}`;
     return [
       `${label} assistant step`,
-      `  text: ${text === "" ? "none" : cueText(text)}`,
-      ...calls.map((call) => `  call ${call.id} ${call.name} \u2192 ${failed2.has(call.id) ? "error" : "ok"}${argumentsCueOf(call)}`)
+      `  text: ${facts.assistantText === "" ? "none" : cueText(facts.assistantText)}`,
+      ...facts.calls.map((call) => `  call ${call.id} ${call.name} \u2192 ${call.failed ? "error" : "ok"}${argumentsCueOf(call)}`)
     ].join("\n");
   }).join("\n");
 }
@@ -25041,21 +25408,21 @@ Held, beside the notes:
 {held}
 
 Name an identifier, path, command, version, number or error text only when the next step needs it and the held text does not give it. Copy exactly whatever a note names. Take a number from the slot; never recount it. Keep every scope word: not, never, only, except, unless, if; \u4E0D, \u6CA1, \u53EA, \u9664, \u82E5. Write each note in the dominant language of its slot. Fragments are fine, as in a commit message body; write a full sentence where a fragment would leave order, cause or scope unclear. Notes speak about the task's work, not about slots, notes or this request.`;
-var tailMessage = ({ entries, asked, held }) => {
-  const rows = rowsOf(entries);
+function planSummary(slotFacts, held) {
+  const notes = slotFacts.map(verbatimNoteOf);
+  const verbatim = notes.map((note) => note?.text ?? null);
+  const wholeUserSlots = notes.flatMap((note, at) => note?.whole ? [at] : []);
+  const askedCount = verbatim.filter((note) => note === null).length;
   const heldList = [...[...held.paths.keys()].map((key) => `- file ${key}`), ...[...held.skills.keys()].map((name3) => `- skill ${name3}`)].join("\n") || "none";
-  const values = { rows, N: String(asked.length), held: heldList };
-  return {
-    role: "user",
-    content: [{ type: "text", text: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]) }]
-  };
-};
+  const values = { rows: rowsOf(slotFacts, verbatim), N: String(askedCount), held: heldList };
+  return { tailText: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]), verbatim, wholeUserSlots, askedCount };
+}
 function notesOf(parsed, count) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || Object.keys(parsed).length !== count) return void 0;
   const notes = Array.from({ length: count }, (_, at) => parsed[String(at + 1)]);
   return notes.every((note) => typeof note === "string") ? notes : void 0;
 }
-function parseSummaries(text, count, loads2) {
+function parseNotes(text, askedCount, loads2) {
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -25066,7 +25433,35 @@ function parseSummaries(text, count, loads2) {
       return void 0;
     }
   }
-  return notesOf(parsed, count);
+  return notesOf(parsed, askedCount);
+}
+function mergeNotes(verbatim, notes) {
+  let next = 0;
+  return verbatim.map((note) => note ?? notes[next++]);
+}
+
+// dsh/src/inner-summary.js
+var SUMMARY_PURPOSE = "inner-compaction";
+var FILTER_TEXT = "content_filtered";
+var DISPLAYED_OPTIONS = ["provider", "model", "reasoningEffort", "purpose", "sessionId"];
+var DISPLAYED_INPUT = ["throughSeq", "headerSeq"];
+var provided = (source, keys) => Object.fromEntries(keys.filter((key) => source[key] !== void 0).map((key) => [key, source[key]]));
+function requestDisplayOf(options, input) {
+  const { messages, tools, toolHistory } = options;
+  return {
+    options: provided(options, DISPLAYED_OPTIONS),
+    messages: { count: messages.length - 1, tail: messages.at(-1) },
+    ...provided(input, DISPLAYED_INPUT),
+    ...tools === void 0 ? {} : { tools: { count: tools.length } },
+    ...toolHistory === void 0 ? {} : {
+      toolHistory: { updates: toolHistory.updates.map(({ messageId, additions }) => ({ messageId, additions: additions.map((tool) => tool.name) })) }
+    }
+  };
+}
+function slotMessagesOf({ slots, session, events, range }) {
+  const bySeq = new Map(events.map((event) => [event.seq, event]));
+  const selected = new Set(range);
+  return slots.map((slot) => slot.seqs.filter((seq) => selected.has(seq)).map((seq) => session.deriveEventMessage(bySeq.get(seq))).filter((message) => message != null));
 }
 var NO_OBSERVER = Object.freeze({ dispatch() {
 }, chunk() {
@@ -25077,11 +25472,9 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
   const chosen = { provider, model, ...reasoningEffort === void 0 ? {} : { reasoningEffort } };
   const tools = session.requestHeader()?.tools;
   const perSlot = slotMessagesOf({ slots, session, events, range });
-  const verbatim = slots.map((slot, index2) => verbatimNoteOf(slot, perSlot[index2]));
-  const entries = slots.map((slot, index2) => ({ slot, messages: perSlot[index2], verbatim: verbatim[index2], index: index2 }));
-  const asked = entries.filter((entry) => entry.verbatim === null);
-  const tail = tailMessage({ entries, asked, held });
-  const input = { throughSeq: session.seq - 1, headerSeq: headerSeqOf(index), tail };
+  const { tailText, verbatim, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
+  const tail = { role: "user", content: [{ type: "text", text: tailText }] };
+  const input = { throughSeq: session.seq - 1, headerSeq: headerSeqIn(index, { latest: true }), tail };
   const options = {
     ...chosen,
     messages: [...session.deriveMessages(), tail],
@@ -25118,7 +25511,7 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
   });
   const stream = accumulator.snapshot();
   const carrierCache = watching.evidence();
-  const call = { v: 1, purpose: SUMMARY_PURPOSE, selection: chosen, input, range, stream, endedAt, ...carrierCache === null ? {} : { carrierCache }, ...thrown === void 0 ? {} : { thrown } };
+  const call = callRecordOf({ purpose: SUMMARY_PURPOSE, selection: chosen, input, range, stream, endedAt, carrierCache, thrown });
   if (thrown !== void 0) return { ok: false, reason: `the summary stream threw: ${thrown.message}`, call };
   const finish = kit.lastAssistantStreamChunk(stream, "finish");
   if (finish === void 0) return { ok: false, reason: "the summary stream ended without a finish chunk", call };
@@ -25126,35 +25519,23 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
     const detail = finish.reason.failure === void 0 ? "" : `: ${finish.reason.failure.message}`;
     const reason = `the summary stream finished with ${finish.reason.kind}${detail}`;
     const filtered = finish.reason.kind === "error" && String(finish.reason.failure?.message).includes(FILTER_TEXT);
-    return { ok: false, ...filtered ? { failure: FILTER_FAILURE } : {}, reason, call };
+    const failure4 = filtered ? FILTER_FAILURE : finish.reason.kind === "tool-calls" ? FORMAT_FAILURE : void 0;
+    return { ok: false, ...failure4 === void 0 ? {} : { failure: failure4 }, reason, call };
   }
-  if (blocks.some((block) => block.type === "tool-call")) return { ok: false, reason: "the summary stream made a tool call", call };
+  if (blocks.some((block) => block.type === "tool-call")) return { ok: false, failure: FORMAT_FAILURE, reason: "the summary stream made a tool call", call };
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join("");
-  const notes = parseSummaries(text, asked.length, kit.loads);
+  const notes = parseNotes(text, askedCount, kit.loads);
   if (notes === void 0) {
-    return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${asked.length} strings keyed "1" to "${asked.length}"`, call };
+    return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${askedCount} strings keyed "1" to "${askedCount}"`, call };
   }
-  const answered = new Map(asked.map(({ index: index2 }, at) => [index2, notes[at]]));
-  const summaries = verbatim.map((note, index2) => note ?? answered.get(index2));
-  return { ok: true, summaries, call };
+  return { ok: true, summaries: mergeNotes(verbatim, notes), verbatimSeqs: wholeUserSlots.map((at) => slots[at].seqs[0]), call };
 }
 
 // dsh/src/inner-seal.js
-var INNER_CALL_RECORD_TYPE = "plugin:session-watcher/inner-call";
-var INNER_ATTEMPT_RECORD_TYPE = "plugin:session-watcher/inner-attempt";
-var INNER_END_RECORD_TYPE = "plugin:session-watcher/inner-end";
-var UNCACHED_SHARE_ALERT = 1 / 2;
-var SUMMARY_MAX_REQUESTS = 3;
-var SUMMARY_FILTER_RETRIES = 1;
-function rangesOf(lines) {
-  const ranges = [];
-  for (const line of [...lines].sort((a, b) => a - b)) {
-    const last = ranges.at(-1);
-    if (last !== void 0 && last.offset + last.limit === line) last.limit += 1;
-    else ranges.push({ offset: line, limit: 1 });
-  }
-  return ranges;
-}
+var PLUGIN_RECORD_NAMESPACE = "plugin:session-watcher/";
+var INNER_CALL_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${CALL_RECORD_NAME}`;
+var INNER_ATTEMPT_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${ATTEMPT_RECORD_NAME}`;
+var INNER_END_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${END_RECORD_NAME}`;
 var messageOf5 = (error) => error instanceof Error ? error.message : String(error);
 var USAGE_FIELDS = ["inputTokens", "cacheReadTokens", "cacheWriteTokens"];
 function diagnose({ session, recordSeq, call, range, kit }) {
@@ -25166,8 +25547,8 @@ function diagnose({ session, recordSeq, call, range, kit }) {
     writeDiagnostic(session.id, hostDiagnostic("inner_usage_gap", `${at}: the auxiliary call ${what}, so its uncached share is unknown`));
     return;
   }
-  const { inputTokens, cacheReadTokens, cacheWriteTokens } = usage;
-  const share = (inputTokens + cacheWriteTokens) / (inputTokens + cacheReadTokens + cacheWriteTokens);
+  const canonical = { input: usage.inputTokens, cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens };
+  const share = uncachedOf(canonical) / stockOf(canonical);
   if (!(share > UNCACHED_SHARE_ALERT)) return;
   const { provider, model, reasoningEffort } = call.selection;
   const selection = `${provider}/${model}${reasoningEffort === void 0 ? "" : ` ${reasoningEffort}`}`;
@@ -25207,27 +25588,20 @@ async function attachmentsOf({ slots, range, events, attachments, signal }) {
   return answer;
 }
 var textOfMessage = (message) => message.content.filter((block) => block.type === "text").map((block) => block.text).join("");
-var jsonOf = (text) => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return void 0;
-  }
-};
-function userTextOf(answer) {
-  const { selected, custom } = answer ?? {};
-  if (!Array.isArray(selected) || !selected.every((label) => typeof label === "string") || custom !== void 0 && typeof custom !== "string") return void 0;
-  const text = [...selected, ...custom ? [custom] : []].join("\n");
-  return text.trim() === "" ? void 0 : text;
-}
 function answeredOf(args2, result) {
   if (result === void 0 || result.isError === true) return [];
-  const asked = jsonOf(args2)?.questions;
-  const answered = jsonOf(textOfMessage(result))?.answers;
-  if (!Array.isArray(asked) || !Array.isArray(answered)) return [];
+  let asked;
+  try {
+    asked = JSON.parse(args2)?.questions;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(asked)) return [];
+  const answers = askAnswersOf(textOfMessage(result));
   return asked.flatMap((item) => {
-    const user = userTextOf(typeof item?.id === "string" ? answered.find((answer) => answer?.id === item.id) : void 0);
-    return typeof item?.question === "string" && user !== void 0 ? [{ question: item.question, user }] : [];
+    const answer = typeof item?.id === "string" ? answers.find((each) => each.id === item.id) : void 0;
+    const user = answer === void 0 ? "" : [...answer.selected, ...answer.custom ? [answer.custom] : []].join("\n");
+    return typeof item?.question === "string" && user.trim() !== "" ? [{ question: item.question, user }] : [];
   });
 }
 function questionsOf({ slots, bySeq }) {
@@ -25235,24 +25609,24 @@ function questionsOf({ slots, bySeq }) {
     try {
       const events = seqs.map((seq) => bySeq.get(seq));
       const results = /* @__PURE__ */ new Map();
-      for (const { type, data } of events) if (type === "tool/result" && !results.has(data.message.toolCallId)) results.set(data.message.toolCallId, data.message);
-      return events.filter((event) => event.type === "assistant/message").flatMap((event) => event.data.message.content).filter((block) => block.type === "tool-call" && block.name === ASK_TOOL_NAME).flatMap(({ id, arguments: args2 }) => answeredOf(args2, results.get(id)));
+      for (const event of events) {
+        if (event.type === "tool/result" && !results.has(event.data.message.toolCallId)) results.set(event.data.message.toolCallId, event);
+      }
+      return events.filter((event) => event.type === "assistant/message").flatMap(({ data }) => data.message.content.filter((block) => block.type === "tool-call" && block.name === ASK_TOOL_NAME).flatMap(({ id, arguments: args2 }) => {
+        const result = results.get(id);
+        if (result === void 0) return [];
+        return answeredOf(args2, result.data.message).map((pair) => ({ ...pair, seqs: [result.seq] }));
+      }));
     } catch {
       return [];
     }
   });
 }
 var holdsEvidence2 = (event) => event?.type === "user/message" && carriesEvidence(event.data?.source);
-function touchedOf({ paths, skills, touched }) {
-  return {
-    paths: new Map([...paths].filter(([key]) => touched.paths.has(key))),
-    skills: new Map([...skills].filter(([name3]) => touched.skills.has(name3)))
-  };
-}
 async function currentOf(held, read, agent, signal) {
   const current = { paths: /* @__PURE__ */ new Map(), skills: held.skills };
   for (const [key, lines] of held.paths) {
-    const { read: answer, displayPath } = await read(agent, key, rangesOf(lines), signal);
+    const { read: answer, displayPath } = await read(agent, key, runsOf(lines).map(([first, last]) => ({ offset: first, limit: last - first + 1 })), signal);
     current.paths.set(key, { displayPath, read: answer });
   }
   return current;
@@ -25261,11 +25635,23 @@ function retainedSources(session, range, bySeq) {
   const inside = new Set(range.map((seq) => bySeq.get(seq)).filter(holdsEvidence2).map((event) => event.data.id));
   return session.deriveMessages().filter((each) => each.role === "user" && carriesEvidence(each.source) && !inside.has(each.id)).map((each) => each.source);
 }
-var carriedOf = (earlier, current) => omitShown(carryChanges(foldCarried(earlier), current), earlier);
-function stateAt(session, readState, earlier) {
+async function gitAhead(readGit, session, signal) {
+  if (readGit === void 0) return void 0;
+  try {
+    const text = await readGit(session, signal);
+    return text === null ? void 0 : () => text;
+  } catch (error) {
+    return () => {
+      throw error;
+    };
+  }
+}
+function stateAt(session, readState, earlier, git) {
   try {
     const tools = new Set((session.requestHeader()?.tools ?? []).map(({ name: name3 }) => name3));
-    return carryState(readState(session), {
+    const state = readState(session);
+    return carryState({ ...state, items: { ...state.items, [GIT_STATE_ITEM.key]: git } }, {
+      stateItems: CARRIER_TABLE.stateItems,
       tools,
       earlier,
       failed: (item, error) => writeDiagnostic(session.id, hostDiagnostic("inner_state_failed", `${item.key}: ${messageOf5(error)}`))
@@ -25275,14 +25661,25 @@ function stateAt(session, readState, earlier) {
     return null;
   }
 }
-async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset }) {
+function historyReadOf(meter, session) {
+  try {
+    return { tokens: meter.measure(session).totalTokens };
+  } catch (error) {
+    return { error };
+  }
+}
+async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset, history }) {
   let estimate = null;
   try {
     const ctp = ctpOf(session.id);
     if (ctp === null) throw new Error(`session ${session.id} has no model policy to price its range under`);
     const current = await currentOf(held, readUnobserved2, agent, signal);
     const carried = carriedOf(retainedSources(session, range, bySeq), current);
-    estimate = estimateInnerA({ n: stepN, range, messageOf: (seq) => session.deriveEventMessage(bySeq.get(seq)), carried, ctp });
+    const texts = range.flatMap((seq) => {
+      const message = session.deriveEventMessage(bySeq.get(seq));
+      return message === null ? [] : [requestTextOf(message)];
+    });
+    estimate = estimateInnerA({ n: stepN, texts, bText: renderCarried(carried, CARRIER_TABLE), ctp });
   } catch (error) {
     writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", error));
   }
@@ -25292,20 +25689,20 @@ async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, read
   } catch (error) {
     writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", error));
   }
-  return innerQuote({ n: stepN, estimate, cRatio: ratio, preset });
+  if (history.error !== void 0) writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", history.error));
+  return innerQuote({ n: stepN, estimate, cRatio: ratio, preset, summaryReadCost: history.tokens });
 }
 async function requestSummary({ monitor, session, range, quote, llm, index, events, selection, fallback, slots, held, signal, kit, carrier }) {
-  const ladder = [selection, ...Array(SUMMARY_FILTER_RETRIES).fill(selection), ...fallback === null ? [] : [fallback]];
-  let rung = 0;
-  for (let request = 1; ; ) {
+  const ladder = createRetryLadder({ selection, fallback });
+  for (; ; ) {
     const attempt = monitor.begin(session, { range, quote });
     let again = false;
     try {
-      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder[rung], slots, range, held, signal, kit, observer: attempt, carrier });
+      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder.current(), slots, range, held, signal, kit, observer: attempt, carrier });
       attempt.responded({ endedAt: summary.call.endedAt });
       let recorded = false;
       const settle = () => {
-        const call = attempt.startSeq === null ? summary.call : { ...summary.call, attempt: attempt.startSeq };
+        const call = callRecordOf({ ...summary.call, attempt: attempt.startSeq });
         const recordSeq = kit.appendPluginRecord(session, INNER_CALL_RECORD_TYPE, call);
         diagnose({ session, recordSeq, call: summary.call, range, kit });
         recorded = true;
@@ -25328,13 +25725,7 @@ async function requestSummary({ monitor, session, range, quote, llm, index, even
       };
       if (summary.ok) return { attempt, summary, settle, failed: failed2 };
       const error = failed2(summary.reason);
-      if (recorded && summary.failure === FORMAT_FAILURE && request < SUMMARY_MAX_REQUESTS) {
-        again = true;
-        request += 1;
-      } else if (recorded && summary.failure === FILTER_FAILURE && rung < ladder.length - 1) {
-        again = true;
-        rung += 1;
-      }
+      again = recorded && ladder.next(summary.failure);
       throw error;
     } catch (error) {
       attempt.failed(error, { cancelled: signal.aborted, cancelReason: signal.reason });
@@ -25343,7 +25734,7 @@ async function requestSummary({ monitor, session, range, quote, llm, index, even
     }
   }
 }
-function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFile, readUnobserved: readUnobserved2, readState, cRatio, ctpOf, llm, attachments, meter, kit, monitor, readSettings, carrier }) {
+function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile, readUnobserved: readUnobserved2, readState, readGit, cRatio, ctpOf, llm, attachments, meter, kit, monitor, readSettings, carrier }) {
   const reportedInvalid = /* @__PURE__ */ new Set();
   return async (payload, next) => {
     const { agent, signal, modelSelection } = payload;
@@ -25354,22 +25745,24 @@ function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFil
       writeDiagnostic(session.id, hostDiagnostic("inner_mode_invalid", "the inner mode record does not read as a mode, so this session seals nothing"));
     }
     if (mode !== "on") return next();
-    const index = sourceFacts(session.id);
+    const index = eventFacts(session.id);
     if (index === null) return next();
     const cheap = innerSource(index, session.surface.nodes);
     if (cheap.paused || cheap.stepN < INNER_QUOTE.minSteps) return next();
     const { preset, fallbackModel } = readSettings();
     const nodes = [...session.surface.nodes];
+    const history = historyReadOf(meter, session);
     const reading = readSession(session.id);
     const { events } = await reading;
-    const facts = new Map(events.map((event) => [event.seq, sourceFactOf(event)]));
+    const facts = eventFactsOf(events);
     const { range, stepN, paused } = innerSource(facts, nodes);
     if (paused || stepN < INNER_QUOTE.minSteps) return next();
-    const slots = skeletonSlots(events, nodes, range);
+    const slots = skeletonSlots(facts, nodes, range);
     const bySeq = new Map(events.map((event) => [event.seq, event]));
-    const originals = prunedOriginals(events, range);
-    const held = heldView(session.id, events, [...range, ...originals]);
-    const quote = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset });
+    const originals = range.flatMap((seq) => facts.get(seq).originals);
+    const replaced = [...range, ...originals];
+    const held = heldView(session.id, events);
+    const quote = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset, history });
     if (signal.aborted) throw signal.reason;
     if (quote.trigger === null) return next();
     const { attempt, summary, settle, failed: failed2 } = await requestSummary({
@@ -25383,7 +25776,7 @@ function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFil
       selection: modelSelection,
       fallback: fallbackModel,
       slots,
-      held: touchedOf(held),
+      held: touchedOf(held, replaced),
       signal,
       kit,
       carrier
@@ -25391,9 +25784,11 @@ function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFil
     try {
       let slotAttachments;
       let current;
+      let git;
       try {
         slotAttachments = await attachmentsOf({ slots, range, events, attachments, signal });
         current = await currentOf(held, readFile, agent, signal);
+        git = await gitAhead(readGit, session, signal);
       } catch (error) {
         throw failed2(messageOf5(error));
       }
@@ -25409,21 +25804,16 @@ function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFil
       const shadowed = new Set(range);
       try {
         const earlier = retainedSources(session, range, bySeq);
-        const slotQuestions = questionsOf({ slots, bySeq });
-        const source = {
-          kind: INNER_SEAL_KIND,
-          v: 1,
-          slots: slots.map(({ seqs }, index2) => ({
-            seqs,
-            text: summary.summaries[index2],
-            ...slotQuestions[index2].length > 0 ? { questions: slotQuestions[index2] } : {},
-            ...slotAttachments[index2].length > 0 ? { attachments: slotAttachments[index2] } : {}
-          })),
-          ...carriedOf(earlier, current)
-        };
-        const state = stateAt(session, readState, earlier);
-        if (state !== null) source.state = state;
-        message = kit.createUserMessage({ content: renderCarrier(source), source });
+        const source = assembleCarrierSource({
+          slots,
+          summaries: summary.summaries,
+          questions: questionsOf({ slots, bySeq }),
+          attachments: slotAttachments,
+          verbatimSeqs: summary.verbatimSeqs,
+          changes: carriedOf(earlier, current),
+          state: stateAt(session, readState, earlier, git)
+        });
+        message = kit.createUserMessage({ content: renderCarrier(source, CARRIER_TABLE), source });
         shadowedTokenCount = meter.measure(session).nodes.filter((node) => shadowed.has(node.seq)).reduce((sum, node) => sum + node.heuristicTokens, 0);
       } catch (error) {
         throw failed2(messageOf5(error));
@@ -25436,7 +25826,7 @@ function createInnerSeal({ readMode, sourceFacts, readSession, heldView, readFil
       });
       session.append("user/message", message, {
         surfaceOp: { op: "replace", startSeq, endSeq },
-        sourceEventSeqs: [recordSeq, prune.seq, ...range, ...originals]
+        sourceEventSeqs: sourceEventSeqsOf({ callSeq: recordSeq, pruneSeq: prune.seq, replaced })
       });
     } catch (error) {
       attempt.failed(error, { cancelled: signal.aborted, cancelReason: signal.reason });
@@ -25474,7 +25864,7 @@ function createInnerMonitor({ appendPluginRecord: appendPluginRecord2, publish }
           guard("inner_monitor_start_failed", () => {
             const request = requestDisplayOf(options, input);
             const recorded = { first: range[0], last: range.at(-1), count: range.length };
-            attempt.startSeq = appendPluginRecord2(session, INNER_ATTEMPT_RECORD_TYPE, { v: 1, range: recorded, request, quote });
+            attempt.startSeq = appendPluginRecord2(session, INNER_ATTEMPT_RECORD_TYPE, attemptRecordOf({ range: recorded, request, quote }));
             owner = { sessionId, entry: { attempt: attempt.startSeq, phase: "generating", endedAt: null, request, tools: options.tools, stream } };
             active.add(owner);
           });
@@ -25497,12 +25887,11 @@ function createInnerMonitor({ appendPluginRecord: appendPluginRecord2, publish }
         failed(error, circumstances) {
           if (attempt.startSeq === null) return;
           guard("inner_monitor_end_failed", () => {
-            appendPluginRecord2(session, INNER_END_RECORD_TYPE, {
-              v: 1,
+            appendPluginRecord2(session, INNER_END_RECORD_TYPE, endRecordOf({
               attempt: attempt.startSeq,
               outcome: circumstances.cancelled ? "cancelled" : "failed",
               reason: reasonOf(error, circumstances)
-            });
+            }));
           });
           active.delete(owner);
           changed2();
@@ -25515,7 +25904,7 @@ function createInnerMonitor({ appendPluginRecord: appendPluginRecord2, publish }
 }
 
 // lib/harness/dsh/inner-monitor-source.js
-function blockOf(block) {
+function blockOf2(block) {
   switch (block?.type) {
     case "text":
       return { type: "text", text: block.text };
@@ -25533,9 +25922,23 @@ function blockOf(block) {
 }
 function sourceEventView(event, { visible }) {
   const message = event.data?.message ?? event.data;
-  const blocks = (Array.isArray(message?.content) ? message.content : []).map(blockOf);
+  const blocks = (Array.isArray(message?.content) ? message.content : []).map(blockOf2);
   const shown = event.type === "tool/result" ? [{ type: "tool-result", callId: message?.toolCallId, isError: message?.isError === true, blocks }] : blocks;
   return { seq: event.seq, type: event.type, visible, blocks: shown, raw: event };
+}
+var SOURCE_CATEGORIES = { "system/message": "system", "developer/message": "developer", "tool/result": "tool", "assistant/message": "assistant" };
+var HUMAN_SOURCE_KIND = "user";
+function sourceCategoryOf({ type, kind }) {
+  if (type === "user/message") {
+    if (typeof kind !== "string") return "other";
+    return kind === HUMAN_SOURCE_KIND ? "user" : "injected";
+  }
+  return SOURCE_CATEGORIES[type] ?? "other";
+}
+function slotSourceOf(event) {
+  const message = event.data?.message ?? event.data;
+  const source = { type: event.type, kind: message?.source?.kind ?? null };
+  return { ...source, category: sourceCategoryOf(source) };
 }
 var placeholderOf = ({ type, attachment }) => `[${type}${attachment?.name === void 0 ? "" : ` ${attachment.name}`}]`;
 function callLabel(block) {
@@ -25568,31 +25971,124 @@ function eventDisplayText(event) {
   return textOf3(sourceEventView(event, { visible: true }).blocks, displayCallText);
 }
 
+// dsh/src/monitor-settlement-recall.js
+var stepKey2 = ({ turn, step } = {}) => `${turn}:${step}`;
+var pureRecall = ({ tools, marked }) => marked.size > 0 && tools.every(({ id }) => marked.has(id));
+function reportPositions(seals, samples, tailCalls) {
+  const positions = /* @__PURE__ */ new Map();
+  let offset = 0;
+  for (const { attempt, range } of seals.values()) {
+    const steps = /* @__PURE__ */ new Map();
+    for (const seq of range) {
+      const sample = samples.get(seq);
+      if (sample?.counted) steps.set(stepKey2(sample.event.data), seq);
+    }
+    const n = attempt.quote?.n ?? 0;
+    if (steps.size === n) for (const seq of steps.values()) positions.set(seq, offset += 1);
+    else offset += n;
+  }
+  const lastCarrier = [...seals.keys()].at(-1);
+  const tail = [...samples.values()].filter(({ event, counted }) => counted && event.seq > lastCarrier);
+  if (tail.length === tailCalls) for (const { event } of tail) positions.set(event.seq, offset += 1);
+  return positions;
+}
+function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, sessionId, isNoise }) {
+  const seals = new Map(attempts.map((attempt) => {
+    const call = log.get(attempt.call?.seq)?.data;
+    return [attempt.carrier.seq, { attempt, range: isCallRecord(call) ? call.range : [] }];
+  }));
+  if (seals.size === 0) return void 0;
+  const starts = new Set(attempts.map(({ id }) => id));
+  const samples = /* @__PURE__ */ new Map();
+  const before = /* @__PURE__ */ new Map();
+  const active = /* @__PURE__ */ new Map();
+  let ctp;
+  let lastMeasured;
+  let seal;
+  let sample;
+  for (const event of events) {
+    const { seq, type, data } = event;
+    if (starts.has(seq)) before.set(seq, lastMeasured);
+    if (seals.has(seq)) {
+      seal = seals.get(seq);
+      for (const replaced of seal.range) active.delete(replaced);
+      lastMeasured = void 0;
+    }
+    if (isMainCall(event)) {
+      const usage = callUsageOf(data?.usage);
+      if (usage !== null) ctp ??= modelPolicyFor(data?.message?.source?.model).ctp;
+      const resident = [...active.values()].reduce((sum, tokens) => sum + tokens, 0);
+      const content = data?.message?.content;
+      const tools = Array.isArray(content) ? content.filter((block) => block?.type === "tool-call") : [];
+      sample = { event, counted: eventFactOf(event).step !== null, usage, resident, seal: seal?.attempt, tools, marked: /* @__PURE__ */ new Set() };
+      if (!isNoise(event)) lastMeasured = usage === null ? void 0 : sample;
+      samples.set(seq, sample);
+    }
+    if (seal === void 0 || sample === void 0) continue;
+    if (type === "tool/call" && stepKey2(data) === stepKey2(sample.event.data) && sample.tools.some(({ id }) => id === data.callId)) {
+      const target = eventReadTargetOf(data);
+      if (target && (target.sessionId === void 0 || target.sessionId === sessionId) && target.seq >= events[0].seq && target.seq < sample.event.seq && log.has(target.seq)) sample.marked.add(data.callId);
+    }
+    if (type === "tool/result") {
+      const op = event.surfaceOp;
+      const replaced = op?.op === "replace" && op.startSeq === op.endSeq && active.delete(op.startSeq);
+      const returned = op === "append" && data.message?.isError !== true && stepKey2(data) === stepKey2(sample.event.data) && sample.marked.has(data.message?.toolCallId);
+      if (!replaced && !returned) continue;
+      const content = data.message?.content;
+      const text = Array.isArray(content) ? content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("") : "";
+      const tokens = charsToTokens(text, ctp ?? modelPolicyFor().ctp);
+      if (tokens > 0) active.set(seq, tokens);
+    }
+  }
+  const cuts = attempts.flatMap(({ id }) => {
+    const pre = before.get(id);
+    const output = pre && pureRecall(pre) ? pre.usage.output : 0;
+    const tokens = (pre?.resident ?? 0) + output - (samples.get(postByAttempt.get(id))?.resident ?? 0);
+    return tokens === 0 ? [] : [{ id, tokens }];
+  });
+  const steps = [];
+  let partial = false;
+  const positions = reportPositions(seals, samples, tailCalls);
+  for (const sample2 of samples.values()) {
+    const { event, counted, usage, resident, seal: parent } = sample2;
+    const pure = pureRecall(sample2);
+    if (!counted || !pure && resident === 0) continue;
+    const { seq } = event;
+    const at = positions.get(seq);
+    if (at === void 0) {
+      partial = true;
+      continue;
+    }
+    if (pure) {
+      const ratio = parent?.quote?.cRatio ?? null;
+      const post = postByAttempt.get(parent?.id) === seq ? parent.id : void 0;
+      steps.push({ at, seq, usage, ratio, ...post === void 0 ? {} : { post } });
+    } else {
+      steps.push({ at, seq, resident });
+    }
+  }
+  return steps.length === 0 && cuts.length === 0 && !partial ? void 0 : { steps, cuts, ...partial ? { partial } : {} };
+}
+
 // dsh/src/inner-monitor-read.js
 var MONITOR_PROJECTION_KEY = "session-watcher/inner-monitor";
 var PREVIEW_SOURCE_CHARS = 500;
 var RECORD_TYPES = [INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE];
 var USAGE_FIELDS2 = ["input", "output", "cacheRead", "cacheWrite"];
 var isUserMessage = (event) => event.type === "user/message";
-var isCarrier2 = (event) => isUserMessage(event) && event.data?.source?.kind === INNER_SEAL_KIND;
-var isMainCall2 = (event) => event.type === "assistant/message";
+var isCarrier2 = (event) => eventFactOf(event).marker === "carrier";
 var firstTextOf = (message) => Array.isArray(message?.content) ? message.content.find((block) => block?.type === "text")?.text : void 0;
 var isHandoffPayload = (event) => isUserMessage(event) && isLoadPayload(event.data?.source);
 var isHandoffReads = (event) => isUserMessage(event) && event.data?.source?.kind === LOAD_MESSAGE_KIND && !isLoadPayload(event.data.source) && loadCallsOf(event.data) !== null;
 var isHandoffFollowUp = (event) => isUserMessage(event) && loadedTokenOf(firstTextOf(event.data)) !== null;
-var isCheckpoint = (event) => isUserMessage(event) && event.data?.source?.kind === CHECKPOINT_KIND;
+var isCheckpoint = (event) => eventFactOf(event).marker === "checkpoint";
 var isMonitorInput = (event) => RECORD_TYPES.includes(event.type) || isCarrier2(event) || isHandoffPayload(event) || isHandoffReads(event) || isHandoffFollowUp(event);
-var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var isSeq = (value) => Number.isSafeInteger(value) && value >= 0;
-var isText2 = (value) => typeof value === "string";
-var isMessage = (value) => isObject4(value) && Array.isArray(value.content);
-var orNull = (holds) => (value) => value === null || holds(value);
-var isStartData = (data) => isObject4(data) && data.v === 1 && isObject4(data.range) && isSeq(data.range.first) && isSeq(data.range.last) && isSeq(data.range.count) && isObject4(data.request) && isObject4(data.request.messages) && isMessage(data.request.messages.tail);
-var isCallData = (data) => isObject4(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq) && Array.isArray(data.stream) && isObject4(data.input) && isMessage(data.input.tail) && (data.thrown === void 0 || isObject4(data.thrown) && isText2(data.thrown.message));
-var isEndData = (data) => isObject4(data) && data.v === 1 && isSeq(data.attempt) && (data.outcome === "failed" || data.outcome === "cancelled") && isText2(data.reason);
-var QUOTE_QUANTITIES = ["lA", "bEst", "cEst", "sEst", "cRatio", "nRef", "N", "jRef", "q"];
-var isQuote = (value) => isObject4(value) && isSeq(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && (value.trigger === "quote" || value.trigger === "hard") && orNull(isText2)(value.missing);
-var isCarrierShape = (event) => Array.isArray(event.sourceEventSeqs) && isSeq(event.sourceEventSeqs[0]) && Array.isArray(event.data.source.slots);
+var isObject8 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq5 = (value) => Number.isSafeInteger(value) && value >= 0;
+var isText5 = (value) => typeof value === "string";
+var isMessage = (value) => isObject8(value) && Array.isArray(value.content);
+var orNull2 = (holds) => (value) => value === null || holds(value);
+var isCarrierShape = (event) => Array.isArray(event.sourceEventSeqs) && isSeq5(callSeqOf(event.sourceEventSeqs)) && Array.isArray(event.data.source.slots);
 var bounded = (text) => text.length > PREVIEW_SOURCE_CHARS ? text.slice(0, PREVIEW_SOURCE_CHARS) : text;
 var messageTextOf = (message) => bounded(message.content.filter((block) => block.type === "text").map((block) => block.text).join(""));
 function responseTextOf(stream, kit) {
@@ -25611,7 +26107,7 @@ function displayOf(text) {
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return text;
   const values = Object.values(parsed);
-  return values.every(isText2) ? values.join("\n") : text;
+  return values.every(isText5) ? values.join("\n") : text;
 }
 function streamSummaryOf(stream, kit) {
   const text = responseTextOf(stream, kit);
@@ -25623,78 +26119,127 @@ function streamSummaryOf(stream, kit) {
   };
 }
 var amended = (state, at, change) => at < 0 ? state : { ...state, attempts: state.attempts.map((each, index) => index === at ? { ...each, ...change } : each) };
-var stockOf2 = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
-var uncachedOf = ({ input, cacheWrite }) => input + cacheWrite;
-var beforeOf = ({ lastMainUsage }) => lastMainUsage ? stockOf2(lastMainUsage) + lastMainUsage.output : null;
+var contextOfUsage = (usage) => usage === null ? null : stockOf(usage) + usage.output;
+var beforeOf = ({ lastMainUsage }) => contextOfUsage(lastMainUsage);
+var isSettlementNoise = ({ data }) => data?.interrupted === true && data.usage === void 0;
 var amendedLast = (state, change) => ({ ...state, handoffs: state.handoffs.map((each, index) => index === state.handoffs.length - 1 ? { ...each, ...change } : each) });
-var stepsAfter = (steps, event) => sourceFactOf(event).step === null ? steps : steps + 1;
+var callsAfter = (calls, event) => eventFactOf(event).step === null ? calls : calls + 1;
 function foldMainCall(state, event) {
   const { seq, data } = event;
   const usage = callUsageOf(data?.usage);
-  const next = { ...state, lastMainUsage: usage, openSteps: stepsAfter(state.openSteps, event) };
+  const next = {
+    ...state,
+    lastMainUsage: usage,
+    openCalls: callsAfter(state.openCalls, event),
+    settlementBefore: isSettlementNoise(event) ? state.settlementBefore : contextOfUsage(usage)
+  };
   const last = state.handoffs.at(-1);
   if (last?.type !== "continue" || last.after !== null) return next;
-  return amendedLast(next, { after: { seq, stock: usage === null ? null : stockOf2(usage), miss: usage === null ? null : uncachedOf(usage) } });
+  return amendedLast(next, { after: { seq, stock: usage === null ? null : stockOf(usage), miss: usage === null ? null : uncachedOf(usage) } });
 }
 function afterOf({ carriers }, attempt) {
   if (attempt.carrier === null) return null;
   const post = carriers.find((each) => each.seq === attempt.carrier.seq)?.post ?? null;
-  return post === null ? null : { seq: post.seq, stock: post.usage === null ? null : stockOf2(post.usage), miss: post.usage === null ? null : uncachedOf(post.usage) };
+  return post === null ? null : { seq: post.seq, stock: post.usage === null ? null : stockOf(post.usage), miss: post.usage === null ? null : uncachedOf(post.usage) };
 }
 var withAfter = (state, attempt) => ({ ...attempt, after: afterOf(state.source, attempt) });
 function foldStart(state, { seq, time, data }) {
-  if (!isStartData(data)) return state;
+  if (!isAttemptRecord(data)) return state;
+  const { tail } = data.request.messages;
+  if (!isMessage(tail)) return state;
   const { first, last, count } = data.range;
+  const before = beforeOf(state);
   const attempt = {
     id: seq,
     startedAt: time,
     range: { first, last, count },
-    input: messageTextOf(data.request.messages.tail),
+    input: messageTextOf(tail),
     call: null,
     end: null,
     carrier: null,
-    before: beforeOf(state),
-    quote: isQuote(data.quote) ? data.quote : null,
-    epoch: state.source.epoch
+    before,
+    quote: attemptQuoteOf(data),
+    epoch: state.source.epoch,
+    ...before === null && state.settlementBefore !== null ? { estimatedBefore: state.settlementBefore } : {}
   };
   return { ...state, attempts: [...state.attempts, attempt] };
 }
 function foldCall(state, { seq, data }, kit) {
-  if (!isCallData(data)) return state;
+  if (!isCallRecord(data)) return state;
   const call = {
     seq,
     endedAt: Number.isFinite(data.endedAt) ? data.endedAt : null,
     thrown: data.thrown === void 0 ? null : bounded(data.thrown.message),
     ...streamSummaryOf(data.stream, kit),
-    // The field is the call's own only in the closed shape; a record that never held it, or holds anything else, reads as not observed.
-    ...isCarrierEvidence(data.carrierCache) ? { carrierCache: evidenceCopy(data.carrierCache) } : {}
+    // The field is the call's own only in the structure the call record checks (`isCarrierCache`); a record that never held it, or holds anything else, reads as not observed.
+    ...isCarrierCache(data.carrierCache) ? { carrierCache: evidenceCopy(data.carrierCache) } : {}
   };
-  const at = state.attempts.findIndex((each) => each.id === data.attempt);
-  if (at >= 0) return amended(state, at, { call });
-  const legacy = {
-    id: seq,
-    startedAt: null,
-    range: { first: data.range[0], last: data.range.at(-1), count: data.range.length },
-    input: messageTextOf(data.input.tail),
-    call,
-    end: null,
-    carrier: null,
-    before: beforeOf(state),
-    quote: null,
-    epoch: state.source.epoch
-  };
-  return { ...state, attempts: [...state.attempts, legacy] };
+  return amended(state, state.attempts.findIndex((each) => each.id === data.attempt), { call });
 }
 function foldEnd(state, { seq, time, data }) {
-  if (!isEndData(data)) return state;
+  if (!isEndRecord(data)) return state;
   const end = { seq, time, outcome: data.outcome, reason: bounded(data.reason) };
   return amended(state, state.attempts.findIndex((each) => each.id === data.attempt), { end });
 }
 function foldCarrier(state, event) {
-  const sealed = { ...state, openSteps: 0 };
+  const sealed = { ...state, openCalls: 0, settlementBefore: null, postSeal: null };
   if (!isCarrierShape(event)) return sealed;
-  const carrier = { seq: event.seq, time: event.time, slots: event.data.source.slots.length };
-  return amended(sealed, sealed.attempts.findIndex((each) => each.call?.seq === event.sourceEventSeqs[0]), { carrier });
+  const { slots, verbatimSeqs } = event.data.source;
+  if (event.surfaceOp?.op === "replace" && Array.isArray(verbatimSeqs)) {
+    sealed.verbatimSeqs = [...state.verbatimSeqs, ...verbatimSeqs.filter(isSeq5)];
+  }
+  const at = sealed.attempts.findIndex((each) => each.call?.seq === callSeqOf(event.sourceEventSeqs));
+  if (at < 0) return sealed;
+  const carrier = { seq: event.seq, time: event.time, slots: slots.length };
+  const slotWarnings = {};
+  const pending = state.postSeal?.pending;
+  if (pending !== void 0) {
+    for (const slot of slots) {
+      const seqs = slot?.seqs;
+      if (!Array.isArray(seqs) || seqs.length === 0 || !seqs.every(isSeq5)) continue;
+      const warnings = new Set(seqs.flatMap((seq) => pending[seq] ?? []));
+      if (warnings.size > 0) slotWarnings[seqs[0]] = [...warnings];
+    }
+  }
+  return amended({ ...sealed, postSeal: { first: true, request: null, pending: {} } }, at, {
+    carrier,
+    ...Object.keys(slotWarnings).length > 0 && { slotWarnings }
+  });
+}
+function foldPostSealRequest(state, event) {
+  const { postSeal } = state;
+  if (postSeal === null) return state;
+  const { turn, step, message } = event.data ?? {};
+  const count = Array.isArray(message?.content) ? message.content.filter((block) => block?.type === "tool-call").length : 0;
+  const request = isMainCall(event) && isSeq5(turn) && isSeq5(step) && count > 0 ? { seq: event.seq, turn, step, count, first: postSeal.first } : null;
+  if (!postSeal.first && request === null && postSeal.request === null) return state;
+  return { ...state, postSeal: { ...postSeal, first: false, request } };
+}
+function recallWarningOf(state, call) {
+  const target = eventReadTargetOf(call.data);
+  if (target === void 0 || target.sessionId !== void 0 && target.sessionId !== state.sessionId || target.seq >= call.seq) return;
+  if (state.handoffs.some((handoff) => handoff.id === target.seq)) return "handoff-recall";
+  if (state.source.carriers.some((carrier) => carrier.seq === target.seq)) return "carrier-recall";
+  if (state.verbatimSeqs.includes(target.seq)) return "verbatim-recall";
+}
+function heldInContext(state, seq) {
+  const { epoch } = state.source;
+  return state.verbatimSeqs.includes(seq) || state.source.carriers.some((carrier) => carrier.seq === seq && carrier.epoch === epoch) || state.handoffs.some((handoff) => handoff.epoch === epoch && (handoff.id === seq || handoff.readSeq === seq || handoff.followSeq === seq));
+}
+function stateWarningOf(request, call) {
+  if (!request.first) return;
+  const operation = stateOperationOf(call);
+  if (operation !== void 0) return operation === "write" ? "state-write" : request.count === 1 ? "state-check" : "state-mixed";
+}
+function foldToolCall(state, event) {
+  const { postSeal } = state;
+  const request = postSeal?.request;
+  if (!request || request.turn !== event.data?.turn || request.step !== event.data?.step) return state;
+  const warning = recallWarningOf(state, event) ?? stateWarningOf(request, event.data);
+  if (warning === void 0) return state;
+  const warnings = postSeal.pending[request.seq] ?? [];
+  if (warnings.includes(warning)) return state;
+  return { ...state, postSeal: { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...warnings, warning] } } };
 }
 function payloadOf(message) {
   let payload;
@@ -25703,12 +26248,12 @@ function payloadOf(message) {
   } catch {
     return null;
   }
-  return isObject4(payload) && isText2(payload.load_token) ? payload : null;
+  return isObject8(payload) && isText5(payload.load_token) ? payload : null;
 }
 var LABEL_POSITION = /^S(\d+)(?:-S(\d+))?$/;
 var positionOf2 = (entry) => {
-  const match = isText2(entry?.label) ? LABEL_POSITION.exec(entry.label) : null;
-  return match === null ? [] : [Number(match[2] ?? match[1])].filter(isSeq);
+  const match = isText5(entry?.label) ? LABEL_POSITION.exec(entry.label) : null;
+  return match === null ? [] : [Number(match[2] ?? match[1])].filter(isSeq5);
 };
 function lineageNumberOf(lineage) {
   const positions = Array.isArray(lineage) ? lineage.flatMap(positionOf2) : [];
@@ -25723,7 +26268,7 @@ function foldPayload(state, { seq, time, data }) {
     time,
     type,
     token: payload.load_token,
-    handoffId: isSeq(payload.handoff_id) ? payload.handoff_id : null,
+    handoffId: isSeq5(payload.handoff_id) ? payload.handoff_id : null,
     createdAt: Number.isFinite(payload.created_at) ? payload.created_at : null,
     epoch: state.source.epoch,
     kept: Array.isArray(payload.paths_to_keep) ? payload.paths_to_keep.length : null,
@@ -25734,7 +26279,7 @@ function foldPayload(state, { seq, time, data }) {
     followSeq: null,
     before: type === "continue" ? beforeOf(state) : null,
     after: null,
-    tailSteps: type === "continue" ? state.lastCheckpointSteps : null
+    tailCalls: type === "continue" ? state.lastCheckpointCalls : null
   };
   return { ...state, handoffs: [...state.handoffs, handoff] };
 }
@@ -25749,27 +26294,31 @@ function foldFollowUp(state, { seq, data }) {
   return amendedLast(state, { followSeq: seq });
 }
 function foldCheckpoint(state, { data }) {
-  return { ...state, lastCheckpointToken: checkpointTokenOf(firstTextOf(data)), lastCheckpointSteps: state.openSteps, openSteps: 0 };
+  return { ...state, lastCheckpointToken: checkpointTokenOf(firstTextOf(data)), lastCheckpointCalls: state.openCalls, openCalls: 0 };
 }
-var isRange = (value) => isObject4(value) && isSeq(value.first) && isSeq(value.last) && isSeq(value.count);
-var isUsageState = (value) => isObject4(value) && USAGE_FIELDS2.every((field) => Number.isFinite(value[field]));
-var isCallState = (value) => isObject4(value) && isSeq(value.seq) && orNull(Number.isFinite)(value.endedAt) && orNull(isText2)(value.thrown) && orNull(isText2)(value.output) && orNull(isText2)(value.outputDisplay) && orNull(isText2)(value.finish) && orNull(isUsageState)(value.usage) && (value.carrierCache === void 0 || isCarrierEvidence(value.carrierCache));
-var isEndState = (value) => isObject4(value) && isSeq(value.seq) && Number.isFinite(value.time) && (value.outcome === "failed" || value.outcome === "cancelled") && isText2(value.reason);
-var isCarrierState = (value) => isObject4(value) && isSeq(value.seq) && Number.isFinite(value.time) && isSeq(value.slots);
-var isAfterState = (value) => isObject4(value) && isSeq(value.seq) && orNull(Number.isFinite)(value.stock) && orNull(Number.isFinite)(value.miss);
-var isHandoffState = (value) => isObject4(value) && isSeq(value.id) && Number.isFinite(value.time) && (value.type === "load" || value.type === "continue") && isText2(value.token) && orNull(isSeq)(value.handoffId) && orNull(Number.isFinite)(value.createdAt) && isSeq(value.epoch) && orNull(isSeq)(value.kept) && isSeq(value.skills) && orNull(isSeq)(value.lineage) && orNull(isSeq)(value.read) && orNull(isSeq)(value.readSeq) && orNull(isSeq)(value.followSeq) && orNull(Number.isFinite)(value.before) && orNull(isAfterState)(value.after) && orNull(isSeq)(value.tailSteps);
-var isAttemptState = (value) => isObject4(value) && isSeq(value.id) && orNull(Number.isFinite)(value.startedAt) && isRange(value.range) && isText2(value.input) && orNull(isCallState)(value.call) && orNull(isEndState)(value.end) && orNull(isCarrierState)(value.carrier) && orNull(Number.isFinite)(value.before) && orNull(isQuote)(value.quote) && isSeq(value.epoch);
+var isRange = (value) => isObject8(value) && isSeq5(value.first) && isSeq5(value.last) && isSeq5(value.count);
+var isUsageState = (value) => isObject8(value) && USAGE_FIELDS2.every((field) => Number.isFinite(value[field]));
+var isCallState = (value) => isObject8(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.endedAt) && orNull2(isText5)(value.thrown) && orNull2(isText5)(value.output) && orNull2(isText5)(value.outputDisplay) && orNull2(isText5)(value.finish) && orNull2(isUsageState)(value.usage) && (value.carrierCache === void 0 || isCarrierCache(value.carrierCache));
+var isEndState = (value) => isObject8(value) && isSeq5(value.seq) && Number.isFinite(value.time) && (value.outcome === "failed" || value.outcome === "cancelled") && isText5(value.reason);
+var isCarrierState = (value) => isObject8(value) && isSeq5(value.seq) && Number.isFinite(value.time) && isSeq5(value.slots);
+var isAfterState = (value) => isObject8(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.stock) && orNull2(Number.isFinite)(value.miss);
+var isHandoffState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.time) && (value.type === "load" || value.type === "continue") && isText5(value.token) && orNull2(isSeq5)(value.handoffId) && orNull2(Number.isFinite)(value.createdAt) && isSeq5(value.epoch) && orNull2(isSeq5)(value.kept) && isSeq5(value.skills) && orNull2(isSeq5)(value.lineage) && orNull2(isSeq5)(value.read) && orNull2(isSeq5)(value.readSeq) && orNull2(isSeq5)(value.followSeq) && orNull2(Number.isFinite)(value.before) && orNull2(isAfterState)(value.after) && orNull2(isSeq5)(value.tailCalls);
+var isWarningsBySeq = (value) => isObject8(value) && Object.entries(value).every(([seq, warnings]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(warnings) && warnings.length > 0 && warnings.every(isText5));
+var isAttemptState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.startedAt) && isRange(value.range) && isText5(value.input) && orNull2(isCallState)(value.call) && orNull2(isEndState)(value.end) && orNull2(isCarrierState)(value.carrier) && orNull2(Number.isFinite)(value.before) && (value.estimatedBefore === void 0 || Number.isFinite(value.estimatedBefore)) && orNull2(isQuote)(value.quote) && isSeq5(value.epoch) && (value.slotWarnings === void 0 || isWarningsBySeq(value.slotWarnings));
+var isPostSealRequest = orNull2((value) => isObject8(value) && isSeq5(value.seq) && isSeq5(value.turn) && isSeq5(value.step) && isSeq5(value.count) && typeof value.first === "boolean");
+var isPostSeal = orNull2((value) => isObject8(value) && typeof value.first === "boolean" && isPostSealRequest(value.request) && isWarningsBySeq(value.pending));
 var stateSchema2 = {
   parse(value) {
-    if (!isObject4(value) || !Array.isArray(value.attempts) || !value.attempts.every(isAttemptState) || !orNull(isUsageState)(value.lastMainUsage) || !isSourceFacts(value.source) || !Array.isArray(value.handoffs) || !value.handoffs.every(isHandoffState) || !orNull(isText2)(value.lastCheckpointToken) || !isSeq(value.lastCheckpointSteps) || !isSeq(value.openSteps)) {
-      throw new Error("the inner monitor state is not { attempts, lastMainUsage, source, handoffs, lastCheckpointToken, lastCheckpointSteps, openSteps } of attempt summaries, the usage of the last main call, the source facts, handoff summaries, the token of the last /sw-continue checkpoint, the steps it ended and the steps since the last carrier or checkpoint");
+    if (!isObject8(value) || !Array.isArray(value.attempts) || !value.attempts.every(isAttemptState) || !orNull2(isUsageState)(value.lastMainUsage) || !isSourceFacts(value.source) || !Array.isArray(value.handoffs) || !value.handoffs.every(isHandoffState) || !orNull2(isText5)(value.lastCheckpointToken) || !isSeq5(value.lastCheckpointCalls) || !isSeq5(value.openCalls) || !orNull2(Number.isFinite)(value.settlementBefore) || !isPostSeal(value.postSeal) || !orNull2(isText5)(value.sessionId) || !Array.isArray(value.verbatimSeqs) || !value.verbatimSeqs.every(isSeq5)) {
+      throw new Error("invalid inner monitor state");
     }
     return value;
   }
 };
 function innerMonitorProjection(kit) {
   const fold = (state, event) => {
-    if (isMainCall2(event)) return foldMainCall(state, event);
+    if (isMainCall(event)) return foldMainCall(foldPostSealRequest(state, event), event);
+    if (event.type === "assistant/attempt") return foldPostSealRequest(state, event);
     if (isCarrier2(event)) return foldCarrier(state, event);
     if (isHandoffPayload(event)) return foldPayload(state, event);
     if (isHandoffReads(event)) return foldReads(state, event);
@@ -25789,15 +26338,17 @@ function innerMonitorProjection(kit) {
   };
   return {
     key: MONITOR_PROJECTION_KEY,
-    stateVersion: 10,
+    stateVersion: 16,
     stateSchema: stateSchema2,
-    init: () => ({ attempts: [], lastMainUsage: null, source: initialSourceFacts(), handoffs: [], lastCheckpointToken: null, lastCheckpointSteps: 0, openSteps: 0 }),
+    init: (header) => ({ attempts: [], lastMainUsage: null, settlementBefore: null, source: initialSourceFacts(), handoffs: [], lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: header?.id ?? null }),
     apply(state, event) {
-      if (!isSeq(event.seq) || !Number.isFinite(event.time)) return state;
+      if (!isSeq5(event.seq) || !Number.isFinite(event.time)) return state;
       try {
-        const source = foldSourceFacts(state.source, event);
-        const folded = isMonitorInput(event) || isMainCall2(event) || isCheckpoint(event) ? fold(state, event) : state;
-        return source === state.source ? folded : { ...folded, source };
+        if (event.type === "tool/call") return foldToolCall(state, event);
+        const source = foldSourceFacts(state.source, foldInputOf(event));
+        const folded = isMonitorInput(event) || isMainCall(event) || event.type === "assistant/attempt" || isCheckpoint(event) ? fold(state, event) : state;
+        if (source === state.source) return folded;
+        return source.epoch === state.source.epoch ? { ...folded, source } : { ...folded, source, settlementBefore: null, postSeal: null, verbatimSeqs: [] };
       } catch {
         return state;
       }
@@ -25843,7 +26394,6 @@ function rowOf2(attempt, entry, kit) {
     id: attempt.id,
     revision: Math.max(attempt.id, attempt.call?.seq ?? 0, attempt.end?.seq ?? 0, attempt.carrier?.seq ?? 0, attempt.after?.seq ?? 0),
     status: attempt.carrier !== null ? "committed" : attempt.end?.outcome ?? entry?.phase ?? "unknown",
-    legacy: attempt.startedAt === null,
     startedAt: attempt.startedAt,
     endedAt: (attempt.carrier ?? attempt.end)?.time ?? null,
     range: { ...attempt.range },
@@ -25858,7 +26408,12 @@ function rowOf2(attempt, entry, kit) {
   };
 }
 function rowsOf2(state, live2, kit) {
-  return state.attempts.map((attempt) => rowOf2(withAfter(state, attempt), live2.find((entry) => entry.attempt === attempt.id), kit));
+  return state.attempts.map((attempt) => {
+    const row = rowOf2(withAfter(state, attempt), live2.find((entry) => entry.attempt === attempt.id), kit);
+    if (row.status === "committed" && attempt.estimatedBefore !== void 0) row.estimatedBefore = attempt.estimatedBefore;
+    if (attempt.slotWarnings !== void 0) row.slotWarnings = Object.fromEntries(Object.entries(attempt.slotWarnings).map(([key, warnings]) => [key, [...warnings]]));
+    return row;
+  });
 }
 function handoffRowOf(handoff, nextTaskOf) {
   const nextTask = handoff.handoffId === null ? null : nextTaskOf(handoff.handoffId);
@@ -25875,8 +26430,8 @@ function handoffRowOf(handoff, nextTaskOf) {
     skills: handoff.skills,
     lineage: handoff.lineage,
     contextChange: handoff.type === "continue" ? contextChangeOf(handoff) : null,
-    tailSteps: handoff.tailSteps,
-    nextTask: isText2(nextTask) ? bounded(nextTask) : null
+    tailCalls: handoff.tailCalls,
+    nextTask: isText5(nextTask) ? bounded(nextTask) : null
   };
 }
 function handoffRowsOf(state, nextTaskOf) {
@@ -25898,21 +26453,14 @@ function recordOf(log, seq, type, kit) {
   if (record?.type !== type) throw new Error(`the session log holds no ${type} record at seq ${seq}`);
   return record.data;
 }
-function definitionsOf(log, headerSeq2) {
-  if (!isSeq(headerSeq2)) return { definitions: null, reason: "the request names no request header" };
-  const event = log.get(headerSeq2);
-  if (event?.type !== "request/header") return { definitions: null, reason: `the log holds no request header at seq ${headerSeq2}` };
+function definitionsOf(log, headerSeq) {
+  if (!isSeq5(headerSeq)) return { definitions: null, reason: "the request names no request header" };
+  const event = log.get(headerSeq);
+  if (event?.type !== "request/header") return { definitions: null, reason: `the log holds no request header at seq ${headerSeq}` };
   const tools = event.data?.header?.tools;
-  return Array.isArray(tools) ? { definitions: tools } : { definitions: null, reason: `the request header at seq ${headerSeq2} defines no tools` };
+  return Array.isArray(tools) ? { definitions: tools } : { definitions: null, reason: `the request header at seq ${headerSeq} defines no tools` };
 }
 var requestOf = (display, tools) => display.tools === void 0 ? display : { ...display, tools: { ...display.tools, ...tools() } };
-var partialRequestOf = ({ selection, input }) => ({
-  recorded: "partial",
-  selection,
-  tail: input.tail,
-  throughSeq: input.throughSeq,
-  headerSeq: input.headerSeq
-});
 var detailRowOf = ({ call: { outputDisplay, ...call }, ...row }) => ({ ...row, call });
 var wholeRow = (row, end, call) => detailRowOf({
   ...row,
@@ -25935,8 +26483,8 @@ function usageOfStream(stream, kit) {
   const chunk = kit.lastAssistantStreamChunk(stream, "usage") ?? null;
   return { folded: callUsageOf(chunk?.usage), raw: chunk };
 }
-var idsOf = (attempt, row) => ({
-  start: row.legacy ? null : attempt.id,
+var idsOf = (attempt) => ({
+  start: attempt.id,
   call: attempt.call?.seq ?? null,
   end: attempt.end?.seq ?? null,
   carrier: attempt.carrier?.seq ?? null
@@ -25948,7 +26496,7 @@ function liveCall(attempt, entry, kit) {
   const row = rowOf2(attempt, { ...entry, stream: () => stream }, kit);
   return {
     row: detailRowOf(row),
-    ids: idsOf(attempt, row),
+    ids: idsOf(attempt),
     request: requestOf(entry.request, () => ({ definitions: entry.tools })),
     response: responseOf(stream, kit, true),
     usage: usageOfStream(stream, kit),
@@ -25959,14 +26507,14 @@ function liveCall(attempt, entry, kit) {
 }
 function recordedCall(attempt, log, kit) {
   const row = rowOf2(attempt, void 0, kit);
-  const start2 = row.legacy ? null : recordOf(log, attempt.id, INNER_ATTEMPT_RECORD_TYPE, kit);
+  const start2 = recordOf(log, attempt.id, INNER_ATTEMPT_RECORD_TYPE, kit);
   const call = attempt.call === null ? null : recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit);
   const end = row.reason === null ? null : recordOf(log, attempt.end.seq, INNER_END_RECORD_TYPE, kit);
-  const ids = idsOf(attempt, row);
+  const ids = idsOf(attempt);
   return {
     row: wholeRow(row, end, call),
     ids,
-    request: start2 === null ? partialRequestOf(call) : requestOf(start2.request, () => definitionsOf(log, start2.request.headerSeq)),
+    request: requestOf(start2.request, () => definitionsOf(log, start2.request.headerSeq)),
     response: call === null ? null : responseOf(call.stream, kit, false),
     usage: call === null ? null : usageOfStream(call.stream, kit),
     timing: timingOf(row),
@@ -25976,7 +26524,7 @@ function recordedCall(attempt, log, kit) {
 }
 function carriedDetailOf(source) {
   const evidence = carriedEvidence(source);
-  return evidence === null ? null : { text: renderCarried(source), note: CARRIER_WORDING.carried, ...evidence };
+  return evidence === null ? null : { text: renderCarried(source, CARRIER_TABLE), note: carriedNote(CARRIER_TABLE), ...evidence };
 }
 function carrierAt(log, seq) {
   const carrier = log.get(seq);
@@ -25989,9 +26537,8 @@ function committedOf(attempt, log, kit) {
 }
 function placeOf(slot, log) {
   const events = slot.seqs.map((seq) => loggedEvent(log, seq));
-  const step = events.map((event) => sourceFactOf(event).step).find((counted) => counted !== null) ?? null;
-  const { type, kind } = sourceFactOf(events[0]);
-  return { key: slot.seqs[0], seqs: slot.seqs, turn: step?.turn ?? null, step: step?.step ?? null, source: { type, kind }, events };
+  const step = events.map((event) => eventFactOf(event).step).find((counted) => counted !== null) ?? null;
+  return { key: slot.seqs[0], seqs: slot.seqs, turn: step?.turn ?? null, step: step?.step ?? null, source: slotSourceOf(events[0]), events };
 }
 var NOT_COMMITTED = Object.freeze({ kind: "not_committed" });
 function handoffOf(state, id) {
@@ -25999,17 +26546,49 @@ function handoffOf(state, id) {
   if (handoff === void 0) throw new Error(`the inner monitor holds no handoff ${id}`);
   return handoff;
 }
+function clearingOf(state, id) {
+  const handoff = handoffOf(state, id);
+  if (handoff.type !== "continue") throw new Error(`the handoff ${id} is no /sw-continue clear`);
+  return handoff;
+}
+function settlementEvidenceOf(state, log, sessionId, segment, tailCalls) {
+  const attempts = state.attempts.filter((attempt) => attempt.epoch === segment && attempt.carrier !== null);
+  const postByAttempt = new Map(attempts.map((attempt) => [attempt.id, afterOf(state.source, attempt)?.seq]));
+  const posts = new Set(postByAttempt.values());
+  const calls = [];
+  const events = [];
+  let epoch = 0;
+  let pendingPost = false;
+  let countedTail = 0;
+  const lastCarrier = attempts.at(-1)?.carrier.seq ?? -1;
+  for (const event of log.values()) {
+    if (startsEpoch(foldInputOf(event))) epoch += 1;
+    if (epoch > segment) break;
+    if (epoch !== segment) continue;
+    events.push(event);
+    if (isCarrier2(event)) pendingPost = false;
+    if (!isMainCall(event)) continue;
+    if (tailCalls === void 0 && event.seq > lastCarrier) countedTail = callsAfter(countedTail, event);
+    pendingPost ||= posts.has(event.seq);
+    if (isSettlementNoise(event)) continue;
+    const usage = callUsageOf(event.data?.usage);
+    calls.push({ seq: event.seq, stock: usage === null ? null : stockOf(usage), post: pendingPost });
+    pendingPost = false;
+  }
+  const recall = settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls: tailCalls ?? countedTail, sessionId, isNoise: isSettlementNoise });
+  return { calls, ...recall === void 0 ? {} : { recall }, ...tailCalls === void 0 ? { tailCalls: countedTail } : {} };
+}
 function filesOf(message) {
+  if (carriesEvidence(message.source)) return (carriedEvidence(message.source)?.files ?? []).map(({ path: path3, total, state, runs }) => ({ path: path3, total: state === "empty" ? 0 : total, runs }));
   return loadCallsOf(message).filter((call) => call.name === "read").map((call) => {
     const { file_path: path3 } = JSON.parse(call.arguments);
     if (typeof path3 !== "string") throw new Error(`the read call ${call.id} of the load read message names no file`);
-    const rendering = parseFileEvidence(call.text);
-    return { path: path3, total: rendering?.totalLines ?? null, runs: rendering?.runs ?? [] };
+    return { path: path3, total: null, runs: [] };
   });
 }
 function followUpAt(log, seq) {
   const text = firstTextOf(loggedEvent(log, seq).data);
-  if (!isText2(text)) throw new Error(`the session log holds no follow-up text at seq ${seq}`);
+  if (!isText5(text)) throw new Error(`the session log holds no follow-up text at seq ${seq}`);
   return text;
 }
 function handoffDetailOf(handoff, row, log) {
@@ -26021,7 +26600,7 @@ function handoffDetailOf(handoff, row, log) {
     if (loadCallsOf(reads) === null) throw new Error(`the session log holds no load read message at seq ${handoff.readSeq}`);
     files = filesOf(reads);
   }
-  const turnPage = isText2(payload.turn_page) ? payload.turn_page : null;
+  const turnPage = isText5(payload.turn_page) ? payload.turn_page : null;
   return {
     row,
     summary: payload.summary,
@@ -26051,6 +26630,20 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
       if (facts === void 0) return void 0;
       const handoff = handoffOf(facts.state, id);
       return handoffDetailOf(handoff, handoffRowOf(handoff, nextTaskOf), await facts.log());
+    },
+    async settlement(sessionId, id) {
+      const facts = await factsOf(sessionId);
+      if (facts === void 0) return void 0;
+      const handoff = clearingOf(facts.state, id);
+      return settlementEvidenceOf(facts.state, await facts.log(), sessionId, handoff.epoch - 1, handoff.tailCalls);
+    },
+    async currentSettlement(sessionId) {
+      const snapshot = await readStored(sessionId);
+      if (snapshot === void 0) return void 0;
+      const { state } = snapshot;
+      const segment = state.source.epoch;
+      const attempts = rowsOf2({ ...state, attempts: state.attempts.filter((attempt) => attempt.epoch === segment) }, [], kit).map(({ id, status, epoch, contextChange, estimatedBefore, call, stepN, cRatio }) => ({ id, status, epoch, contextChange, estimatedBefore, call: { usage: call.usage }, stepN, cRatio }));
+      return { epoch: segment + 1, attempts, ...settlementEvidenceOf(state, logOf(snapshot), sessionId, segment) };
     },
     async call(sessionId, id) {
       const facts = await factsOf(sessionId);
@@ -26095,7 +26688,7 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
 var HOST_INJECT = ["sessions", "sessionQuery", "tools", "skills", "llm"];
 var INNER_INJECT = ["sessionProjections", "agents", "fs", "attachments", "tokenMeter"];
 var SESSION_NOT_FOUND = "SESSION_QUERY_SESSION_NOT_FOUND";
-function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir, commandKit, innerKit, readSettings, carrierInstallTarget }) {
+function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored2, defineTool: defineTool2, skillsDir, commandKit, queryKit, innerKit, readSettings, carrierInstallTarget }) {
   initStore(storePath);
   ctx.effect(() => () => {
     try {
@@ -26151,8 +26744,9 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
     if (record !== null) table.ensure({ id: record.header.id, header: record.header });
     return record;
   };
-  const carrierEvidence = createCarrierEvidence({ responsesBreakpoint: () => readSettings?.().carrierResponsesBreakpoint === true });
+  const carrierEvidence = createCarrierEvidence();
   ctx.provide(CARRIER_EVIDENCE_SERVICE, carrierEvidence.service);
+  ctx.provide(CARRIER_SETTINGS_SERVICE, { responsesBreakpoint: () => readSettings?.().carrierResponsesBreakpoint === true });
   const hub = createSignalHub();
   table.onChange((sessionId) => hub.publish(sessionId));
   ctx.on("agent/pre-step", createEpochModelName({
@@ -26181,6 +26775,17 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
   ctx.on("session/disposed", (session) => guarded(session.id, () => table.dispose(session.id)));
   const sessionTitle = () => ctx.get("sessionTitle");
   for (const definition of createTools({ defineTool: defineTool2, table, store: getStore(), resolvePersisted })) ctx.tools.register(definition);
+  let heldOf = null;
+  if (queryKit !== void 0) {
+    ctx.tools.register(createEventReadTool({ defineTool: defineTool2, ctx, ...queryKit, heldInContext: (sessionId, seq) => heldOf?.(sessionId, seq) === true }));
+    ctx.inject(["systemPrompt"], (child) => {
+      child.systemPrompt.section({
+        name: `tool:${EVENT_READ_TOOL}`,
+        order: child.systemPrompt.getSectionOrder("TOOL_SESSION_QUERY"),
+        text: ({ scope, toolSet }) => ctx.tools.get(EVENT_READ_TOOL, scope, toolSet) === void 0 ? "" : EVENT_READ_GUIDANCE
+      });
+    });
+  }
   const deliver = createHandoffDelivery({ table, store: getStore(), sessionTitle });
   registerSkills(ctx, { skillsDir });
   const readFileThrough = (fs3) => (agent, key, ranges, signal) => readObserved({
@@ -26216,6 +26821,10 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
         todos: projected("todos")
       }
     };
+  };
+  const gitStateOf = async (session, signal) => {
+    const workingDirectory = ctx.get("workingDirectory");
+    return workingDirectory === void 0 ? null : readGitState({ cwd: workingDirectory.get(session), signal });
   };
   const ratioOf = (sessionId) => {
     const entry = table.get(sessionId);
@@ -26274,12 +26883,13 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
       const monitor = createInnerMonitor({ appendPluginRecord: innerKit.appendPluginRecord, publish: hub.publish });
       child.on("agent/pre-step", createInnerSeal({
         readMode: (session) => handle2.stateOf(session),
-        sourceFacts: (sessionId) => table.sourceFacts(sessionId),
+        eventFacts: (sessionId) => table.eventFacts(sessionId),
         readSession,
-        heldView: (sessionId, events, range) => table.heldView(sessionId, events, range),
+        heldView: (sessionId, events) => table.heldView(sessionId, events),
         readFile: readFileThrough(child.fs),
         readUnobserved: readUnobservedThrough(child.fs),
         readState: stateOf2(child),
+        readGit: gitStateOf,
         cRatio: ratioOf,
         ctpOf,
         readSettings,
@@ -26309,6 +26919,10 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
           // The store answers null for an id it holds no row of, so an absent handoff reads as no next task.
           nextTaskOf: (handoffId) => getStore().getHandoff(handoffId)?.nextTask ?? null
         });
+        heldOf = (sessionId, seq) => {
+          const session = sessionOf(sessionId);
+          return session !== void 0 && heldInContext(monitorHandle.stateOf(session), seq);
+        };
       } catch (error) {
         writeDiagnostic(null, hostDiagnostic("inner_monitor_register", error));
       }
@@ -26316,6 +26930,7 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
       return () => {
         modeAccess = null;
         monitorAccess = null;
+        heldOf = null;
         publishListed();
       };
     });
@@ -26329,6 +26944,7 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
     child.extend({ webServer: child.webServer }).connection.rpc.handle("/session-watcher", createRpcHandler({
       table,
       store: getStore(),
+      workingTree,
       publish: hub.publish,
       resolvePersisted,
       innerMode: () => modeAccess,
@@ -26371,6 +26987,7 @@ function apply(ctx, config) {
   applyHost(ctx, {
     defineTool,
     commandKit: { CompactionId, compactCheckpointSource, createUserMessage },
+    queryKit: { extractSessionEventText, HarnessError },
     innerKit: {
       appendPluginRecord,
       pluginRecordOf,

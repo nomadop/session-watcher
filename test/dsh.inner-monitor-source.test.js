@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { eventPreviewText, sourceEventView } from '../lib/harness/dsh/inner-monitor-source.js';
+import { eventPreviewText, slotSourceOf, sourceEventView } from '../lib/harness/dsh/inner-monitor-source.js';
 import { assistantMessage, prunedResult, toolResult, userMessage } from './helpers/dsh-events.js';
 
 // The same event with its message's content replaced: a surface message keeps it under `data.message`, a user message in `data` itself.
@@ -116,4 +116,18 @@ test('a pruner replacement reads as its own content: neither its blocks nor its 
   assert.deepEqual(last.raw.sourceEventSeqs, [once.seq], 'the citation stays in the raw event and brings nothing into the reading');
   assert.equal(eventPreviewText(twice), 'pruned twice');
   assert.equal(eventPreviewText(original), 'the whole file body');
+});
+
+test('the source of a slot\'s event is its type, the kind of its message\'s source (null where the message records none) and the category those fall into: a human\'s user message is the user, any other recorded kind of a user message an injection, the other known types their own, and anything missing or unknown is other', () => {
+  assert.deepEqual(slotSourceOf(userMessage({ text: 'hello' })), { type: 'user/message', kind: 'user', category: 'user' });
+  assert.deepEqual(slotSourceOf(assistantMessage({ text: 'done' })), { type: 'assistant/message', kind: 'model', category: 'assistant' });
+  assert.deepEqual(slotSourceOf(toolResult({ callId: 'c1', text: 'ok' })), { type: 'tool/result', kind: 'tool', category: 'tool' });
+  assert.deepEqual(slotSourceOf({ type: 'step/start', seq: 9, time: 1, data: { turn: 1, step: 1 } }), { type: 'step/start', kind: null, category: 'other' });
+  assert.deepEqual(slotSourceOf({ type: 'user/message', seq: 9, time: 1 }), { type: 'user/message', kind: null, category: 'other' }, 'no data at all: a user message that records no source');
+  const withSource = (type, kind) => ({ type, seq: 9, time: 1, data: { message: { source: { kind } } } });
+  assert.equal(slotSourceOf(withSource('user/message', 'runtime-context')).category, 'injected');
+  assert.equal(slotSourceOf(withSource('user/message', 'a-kind-no-list-names')).category, 'injected', 'no list of producers decides it');
+  assert.equal(slotSourceOf(withSource('developer/message', 'user')).category, 'developer', 'the type decides first');
+  assert.equal(slotSourceOf(withSource('system/message', 'system-prompt')).category, 'system');
+  assert.equal(slotSourceOf(withSource('plugin:x/y', null)).category, 'other');
 });

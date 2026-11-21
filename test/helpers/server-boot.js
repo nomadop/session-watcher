@@ -43,7 +43,7 @@ export const MEASURED_CONTENT = 'export const touched = 1;\n'.repeat(12);
 // nothing else. Host wiring and the tests below are held to exactly this list.
 export const WATCHER_OPERATIONS = [
   'applyHarnessFrame', 'closeCurrentSegment',
-  'getStatus', 'getHistory', 'getBucketData', 'getTerminalSnapshot',
+  'getStatus', 'getHistory', 'getBucketData', 'getHeldLines', 'getTerminalSnapshot',
   'getCurrentModel', 'getEpochModel', 'getCurrentCtp',
   'prepareHandoff', 'searchHandoffs', 'deliverHandoff',
   'getTurnSkeleton', 'submitTurnNotes',

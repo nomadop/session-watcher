@@ -1,10 +1,11 @@
 // public/elements/bucketPanel.js — Bucket panel element (v3): keep/discard checkboxes
-// + compact-instruction generator. Replaces bucketTree.js placeholder.
+// + compact-instruction generator; a file row opens the drawer of the lines the session holds of it. Replaces bucketTree.js placeholder.
 // Element contract: mount(root, ctx) → { update(snapshot), destroy() }
 
 import { OTHERS_DRIFT_WARN_PCT, DONUT_CIRCUMFERENCE, COPY_FEEDBACK_MS } from '../lib/uiConstants.js';
 import { churnTier, maxChildTier } from '../lib/churnTier.js';
 import { redactCmd } from '../lib/redaction.js';
+import { createFileDrawer } from './fileDrawer.js';
 export { redactCmd };
 
 // ─── buildTree helpers ────────────────────────────────────────────────────────
@@ -856,6 +857,13 @@ export function mount(root, ctx) {
 
   let _hoveredNodeId = null; // track currently hovered row across re-renders
 
+  // A file row opens the drawer of the lines the session holds of it. The tree is rebuilt on each poll, so the
+  // drawer is told how to find the row again when it closes, not which element it was.
+  const fileDrawer = createFileDrawer(ctx);
+  function openFile(node) {
+    fileDrawer.open(node.label, () => [...treeEl.querySelectorAll('.bucket-row')].find(row => row.dataset.id === node.id) ?? null);
+  }
+
   function dispatchHover(detail) {
     ctx.bus.dispatchEvent(new CustomEvent('sw-bucket-hover', { detail }));
   }
@@ -866,6 +874,7 @@ export function mount(root, ctx) {
     const row = document.createElement('div');
     row.className = 'bucket-row';
     if (node.kind === 'dir') row.classList.add('is-dir');
+    if (node.kind === 'file') row.classList.add('is-file');
     if (node.indent) {
       row.dataset.indent = String(node.indent);
       row.style.setProperty('--indent', String(node.indent));
@@ -1503,13 +1512,14 @@ export function mount(root, ctx) {
     refreshDerived();
   });
 
-  // ── Directory fold (click dir row body, NOT checkbox) ─────────────────────
+  // ── Row body click (NOT checkbox): a directory folds, a file opens its drawer ─
   treeEl.addEventListener('click', (e) => {
     if (e.target.closest('.bucket-cb')) return; // checkbox handled above
     const row = e.target.closest('.bucket-row');
     if (!row) return;
     const id = row.dataset.id;
     const node = findNodeById(state.tree, id);
+    if (node?.kind === 'file') { openFile(node); return; }
     if (!node || node.kind !== 'dir') return;
 
     node.collapsed = !node.collapsed;
@@ -1703,6 +1713,8 @@ export function mount(root, ctx) {
     const node = findNodeById(state.tree, id);
     if (!node || node.locked || !node.selectable) return;
     e.preventDefault();
+    // Enter opens a file's drawer; Space keeps toggling its check.
+    if (e.key === 'Enter' && node.kind === 'file') { openFile(node); return; }
     if (node.kind === 'dir') {
       const dirState = deriveDirState(node);
       const target = dirState !== 'checked';
@@ -1730,6 +1742,7 @@ export function mount(root, ctx) {
     if (unsubBucketState) unsubBucketState();
     dispatchHover(null);
     dispatchPreview(true);
+    fileDrawer.destroy();
     card.remove();
   }
 

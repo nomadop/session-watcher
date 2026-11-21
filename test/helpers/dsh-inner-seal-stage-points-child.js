@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { INNER_QUOTE } from '../../dsh/src/inner-quote.js';
+import { INNER_QUOTE } from '../../lib/inner-seal/quote.js';
 import { standingUsages } from './dsh-selection-oracle.js';
 import { CARRIER_KIND, INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, mountShippedLoop, REPLY_PADDING, SEAL_STEPS, slotNotes, turnOf } from './dsh-shipped-loop.js';
 

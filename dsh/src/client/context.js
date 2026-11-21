@@ -7,11 +7,12 @@ const ENDPOINTS = {
   'DELETE /api/pricing': 'pricing/delete',
   'POST /api/user-overrides': 'user-overrides',
   'POST /api/preview': 'preview',
+  'POST /api/bucket/file': 'bucket/file',
   'GET /api/turn/browse': 'turn/browse',
 };
 
 /** The HTTP status of each failure code: `server.js`'s status for its route codes, and 404 for `rpc.js`'s `unknown_endpoint`. */
-const FAILURE_STATUS = { invalid_body: 400, invalid_input: 400, no_model: 409, unknown_endpoint: 404 };
+const FAILURE_STATUS = { invalid_body: 400, invalid_input: 400, no_model: 409, not_held: 404, unknown_endpoint: 404 };
 
 const response = (ok, status, body) => ({ ok, status, json: async () => body });
 

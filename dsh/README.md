@@ -18,7 +18,7 @@ dsh plugin --profile web add @nomadop/session-watcher-dsh
 
 `dsh web` 启动的是 `web` profile；请把插件加到你实际运行的 profile。需要 DSH 0.2.2-rc.1 或更高版本。
 
-本包的 bundle 还会挂载 DSH 自带的 `@deepseek-ai/dsh-tool-session-query`，它提供 `session_event_read` 工具。DSH 可选的 Session search bundle 注册了同一个 prompt section，两者同时开启时其中一个会激活失败；处理方法见 [DSH 插件文档](https://nomadop.github.io/session-watcher/docs/dsh/#install)。
+本包自带 `sw_event_read` 工具，把调用方所在目录下某个会话的一个事件中的消息、工具调用与工具结果按原文读回；无需另外挂载。原始事件记录仍由 DSH 可选的原生 `session_event_read` 读取。
 
 可选的 pi-ai 适配器入口 `@nomadop/session-watcher-dsh/pi-ai` 会为 provider 的 prompt cache 标记最后一个 inner compaction carrier 的末尾。只有 profile 用它替换 Harness 的 `llm-pi-ai` 插件时才生效。它没有自己的配置：启动时读取一次已关闭的 `llm-pi-ai` 行经 Loader 组合后的 provider 字典，字典因此只维护在一处，修改在下次启动时生效；无法使用该行时，Session Watcher 的设置页会给出提示。挂载期间，模型页既不能提交对其路由的修改，也不能声明自定义 provider；应使用的 patch 层和届时如何管理路由见 [DSH 插件文档](https://nomadop.github.io/session-watcher/docs/dsh/)，`vendor/dsh-llm-pi-ai/UPSTREAM.md` 记录了它 vendor 了什么以及如何移除。若 profile 已把这一激活作为已安装的 bundle 持有，即官方的 `@nomadop/session-watcher-dsh-carrier-cache`（仓库中的 `carrier-cache/`）或本地的 `@local/sw-carrier-cache-web`，就可以在 Session Watcher 设置中切换（仅限 owner）。两者都未安装时，首次开启会在确认后安装官方 bundle。该开关之下另有一个 OpenAI Responses 缓存断点开关，开启前保持关闭，端点也可能拒绝它。SW事件（monitor）的调用概览会记录该入口对每次摘要请求做了什么。这两点同样见上述文档。
 

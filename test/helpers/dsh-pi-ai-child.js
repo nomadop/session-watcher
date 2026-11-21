@@ -8,8 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
 import { applyHost } from '../../dsh/src/host.js';
-import { CARRIER_EVIDENCE_SERVICE, PI_AI_SERVICE } from '../../dsh/src/pi-ai-integration.js';
-import { createCarrierEvidence, MAX_CARRIER_EVIDENCE } from '../../dsh/src/carrier-evidence.js';
+import { CARRIER_EVIDENCE_SERVICE, CARRIER_SETTINGS_SERVICE, PI_AI_SERVICE } from '../../dsh/src/pi-ai-integration.js';
+import { createCarrierEvidence } from '../../dsh/src/carrier-evidence.js';
+import { MAX_CARRIER_EVIDENCE } from '../../lib/inner-seal/call-record.js';
 import { LOCAL_CARRIER_BUNDLE, OFFICIAL_CARRIER_BUNDLE, carrierCacheDepsOf, createCarrierCacheSwitch } from '../../dsh/src/carrier-cache-switch.js';
 import { createCarrierCacheStore } from '../../dsh/src/client/settings.js';
 import { createRpcHandler } from '../../dsh/src/rpc.js';
@@ -21,7 +22,7 @@ import { reusedCallIdAcrossSteps } from './dsh-events.js';
 
 import { channelOn, CHECKOUT, DSH_HOME, fromCheckout, INNER_CALL_RECORD_TYPE, loaderOf, loaderWith, mountShippedLoop, ORIGINAL_ROW, REPLY_PADDING, SEAL_STEPS, SLOT_COUNT, slotNotes, turnOf } from './dsh-shipped-loop.js';
 import {
-  activation, addOffline, BUNDLE_PACKAGE, CARRIER_WORDING, carrierOf, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, REPLACEMENT_SPECIFIER, send, SW_PACKAGE, waitFor,
+  activation, addOffline, BUNDLE_PACKAGE, CARRIER_TABLE, carriedNote, carrierOf, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, REPLACEMENT_SPECIFIER, send, STATE_WORDING, SW_PACKAGE, waitFor,
 } from './dsh-pi-ai-fixture.js';
 
 const [scenario] = process.argv.slice(2);
@@ -54,13 +55,16 @@ const COMPLETIONS = { provider: 'sw-completions', model: 'fixture-chat' };
 
 const BEDROCK = { provider: 'amazon-bedrock', model: 'anthropic.claude-sonnet-4-5-20250929-v1:0' };
 
-// What the host provides the replacement entry's hook with, over the real producer: the Responses breakpoint switch as `on` says.
-const hostWith = on => createCarrierEvidence({ responsesBreakpoint: () => on }).service;
+// What the host provides the replacement entry's hook with, each service under its name: the evidence service over the real producer, and the settings service answering the Responses breakpoint switch as `on` says.
+const hostWith = on => ({ [CARRIER_EVIDENCE_SERVICE]: createCarrierEvidence().service, [CARRIER_SETTINGS_SERVICE]: { responsesBreakpoint: () => on } });
 
-// Mounts the adapter plugin `entry` over the routes `providers` and sends `messages` once on `route`; `service` is what the host provides under `CARRIER_EVIDENCE_SERVICE`, none where the host is not mounted.
-async function requestOver(entry, providers, route, messages, extra = {}, service = undefined) {
+// Provides each of `services`, by name, on `ctx`.
+const provideAll = (ctx, services) => { for (const [name, service] of Object.entries(services)) ctx.provide(name, service); };
+
+// Mounts the adapter plugin `entry` over the routes `providers` and sends `messages` once on `route`; `services` is what the host provides, by service name, none where the host is not mounted.
+async function requestOver(entry, providers, route, messages, extra = {}, services = {}) {
   const { ctx, llm } = await mountPiAi({ entry, config: { providers } });
-  if (service !== undefined) ctx.provide(CARRIER_EVIDENCE_SERVICE, service);
+  provideAll(ctx, services);
   const finish = await send(ctx, { ...route, ...extra, messages: messages(llm, route) });
   const warnings = ctx.logger.buffer.filter(entryOf => entryOf.type === 'warn').map(entryOf => entryOf.args.map(String).join(' '));
   await ctx.fiber.dispose();
@@ -68,12 +72,12 @@ async function requestOver(entry, providers, route, messages, extra = {}, servic
 }
 
 // The body one request leaves through each adapter plugin over the same routes, conversation and endpoint reply; the original adapter's is what the request is without the carrier cache point.
-async function bodiesOf({ providers, route, messages, protocol, extra, service }) {
+async function bodiesOf({ providers, route, messages, protocol, extra, host }) {
   const bodies = {};
   const warnings = {};
   for (const entry of ['original', 'replacement']) {
     const served = await endpoints();
-    const result = await requestOver(entry, providers(served.origin), route, messages, extra, entry === 'replacement' ? service : undefined);
+    const result = await requestOver(entry, providers(served.origin), route, messages, extra, entry === 'replacement' ? host : undefined);
     assert.notEqual(result.finish, undefined, `${entry}: the request finished`);
     warnings[entry] = result.warnings;
     const [recorded, ...more] = served.requests;
@@ -85,10 +89,10 @@ async function bodiesOf({ providers, route, messages, protocol, extra, service }
   return { ...bodies, warnings };
 }
 
-// The one body a request over `providers` leaves through `entry`, the host providing `service`.
-async function bodyOver({ entry, providers, route, messages, service }) {
+// The one body a request over `providers` leaves through `entry`, the host providing `host`.
+async function bodyOver({ entry, providers, route, messages, host }) {
   const served = await endpoints();
-  const { finish } = await requestOver(entry, providers(served.origin), route, messages, {}, service);
+  const { finish } = await requestOver(entry, providers(served.origin), route, messages, {}, host);
   assert.equal(finish?.kind, 'stop', JSON.stringify(finish));
   const [{ body }, ...more] = served.requests;
   assert.deepEqual(more, [], 'one request');
@@ -97,7 +101,7 @@ async function bodyOver({ entry, providers, route, messages, service }) {
 }
 
 // The index of each message of a recorded body whose top-level text opens with the carrier wording.
-const carrierAt = (messages, textOf) => messages.flatMap((message, index) => (message.role === 'user' && textOf(message).startsWith(CARRIER_WORDING.addresses) ? [index] : []));
+const carrierAt = (messages, textOf) => messages.flatMap((message, index) => (message.role === 'user' && textOf(message).startsWith(CARRIER_TABLE.addresses) ? [index] : []));
 
 // What a body keeps once its message `index` is set aside: the rest of the request, which the carrier cache point leaves exactly as the original adapter writes it.
 const withoutMessage = (body, index, key = 'messages') => ({ ...body, [key]: body[key].filter((_, at) => at !== index) });
@@ -201,7 +205,7 @@ const SCENARIOS = {
     const last = carriers.at(-1);
     const text = original.messages[last].content;
     assert.equal(typeof text, 'string', 'the native serializer writes a carrier as one string');
-    assert.ok(text.includes(CARRIER_WORDING.carried) && text.includes('C3 line two') && text.includes(CARRIER_WORDING.stateHeading(9)) && text.includes('C3 item'), 'the carrier is whole: its summary, its evidence and its state');
+    assert.ok(text.includes(carriedNote(CARRIER_TABLE)) && text.includes('C3 line two') && text.includes(STATE_WORDING.heading(9)) && text.includes('C3 item'), 'the carrier is whole: its summary, its evidence and its state');
     assert.deepEqual(replacement.messages[last], { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
     assert.deepEqual(withoutMessage(replacement, last), withoutMessage(original, last));
     assert.deepEqual(replacement.messages.at(-1).content.at(-1).cache_control, { type: 'ephemeral' }, 'the native tail point stays');
@@ -340,7 +344,7 @@ const SCENARIOS = {
     assert.equal(carriers.length, 3, 'the request holds three carriers');
     const last = carriers.at(-1);
     assert.deepEqual(original.messages[last].content.map(block => Object.keys(block)), [['text']], 'the native serializer writes the carrier as one text block');
-    assert.ok(original.messages[last].content[0].text.includes(CARRIER_WORDING.stateHeading(9)), 'the carrier is whole');
+    assert.ok(original.messages[last].content[0].text.includes(STATE_WORDING.heading(9)), 'the carrier is whole');
     assert.deepEqual(replacement.messages[last].content, [...original.messages[last].content, { cachePoint: { type: 'default' } }]);
     assert.deepEqual(withoutMessage(replacement, last), withoutMessage(original, last));
     assert.equal(replacement.messages.at(-1).content.at(-1).cachePoint?.type, 'default', 'the native tail point stays');
@@ -388,7 +392,7 @@ const SCENARIOS = {
   // `H C1 C2 C3 A` on Responses with a model that takes explicit breakpoints and the owner's switch on: the last carrier's final `input_text` block carries one, and the top-level mode, key and options the serializer writes, every other block and every earlier carrier are the original adapter's.
   async 'responses-carrier-point'() {
     const { original, replacement } = await bodiesOf({
-      providers: origin => ({ openai: openaiRoute(origin) }), route: RESPONSES, protocol: 'responses', service: hostWith(true),
+      providers: origin => ({ openai: openaiRoute(origin) }), route: RESPONSES, protocol: 'responses', host: hostWith(true),
       messages: (llm, route) => conversationOf(llm, route, { carriers: 3, tail: 2 }),
     });
     const textOf = item => (item.role === 'user' && Array.isArray(item.content) ? item.content.map(part => part.text ?? '').join('') : '');
@@ -396,7 +400,7 @@ const SCENARIOS = {
     assert.equal(carriers.length, 3, 'the request holds three carriers');
     const last = carriers.at(-1);
     assert.deepEqual(original.input[last].content.map(part => Object.keys(part)), [['type', 'text']], 'the native serializer writes the carrier as one input_text block');
-    assert.ok(original.input[last].content[0].text.includes(CARRIER_WORDING.stateHeading(9)), 'the carrier is whole');
+    assert.ok(original.input[last].content[0].text.includes(STATE_WORDING.heading(9)), 'the carrier is whole');
     assert.deepEqual(replacement.input[last].content, [{ ...original.input[last].content[0], prompt_cache_breakpoint: { mode: 'explicit' } }]);
     assert.deepEqual(withoutMessage(replacement, last, 'input'), withoutMessage(original, last, 'input'));
     assert.equal(original.prompt_cache_options, undefined, 'the serializer leaves the default implicit mode');
@@ -405,7 +409,7 @@ const SCENARIOS = {
   // A route whose profile turns caching off is sent explicit-only mode with no breakpoint, which means no caching at all: with the switch on the request stays the original adapter's, with no breakpoint for the carrier.
   async 'responses-caching-off'() {
     const { original, replacement } = await bodiesOf({
-      providers: origin => ({ openai: openaiRoute(origin, { cacheRetention: 'none' }) }), route: RESPONSES, protocol: 'responses', service: hostWith(true),
+      providers: origin => ({ openai: openaiRoute(origin, { cacheRetention: 'none' }) }), route: RESPONSES, protocol: 'responses', host: hostWith(true),
       messages: (llm, route) => conversationOf(llm, route, { carriers: 2, tail: 2 }),
     });
     assert.deepEqual(original.prompt_cache_options, { mode: 'explicit' }, 'the serializer sends explicit-only mode');
@@ -415,7 +419,7 @@ const SCENARIOS = {
   // A long retention route is sent the request-level lifetime, and the carrier's breakpoint adds none of its own.
   async 'responses-long-retention'() {
     const { original, replacement } = await bodiesOf({
-      providers: origin => ({ openai: openaiRoute(origin, { cacheRetention: 'long' }) }), route: RESPONSES, protocol: 'responses', service: hostWith(true),
+      providers: origin => ({ openai: openaiRoute(origin, { cacheRetention: 'long' }) }), route: RESPONSES, protocol: 'responses', host: hostWith(true),
       messages: (llm, route) => conversationOf(llm, route, { carriers: 2, tail: 2 }),
     });
     assert.deepEqual(original.prompt_cache_options, { ttl: '30m' });
@@ -428,7 +432,7 @@ const SCENARIOS = {
   // The carrier a seal has just appended is the last input item: the implicit breakpoint of the latest message already ends it, so the request is the original adapter's.
   async 'responses-carrier-last'() {
     const { original, replacement } = await bodiesOf({
-      providers: origin => ({ openai: openaiRoute(origin) }), route: RESPONSES, protocol: 'responses', service: hostWith(true),
+      providers: origin => ({ openai: openaiRoute(origin) }), route: RESPONSES, protocol: 'responses', host: hostWith(true),
       messages: (llm, route) => [...conversationOf(llm, route, { carriers: 2, tail: 0 }).slice(0, -1), carrierOf(llm, 'C3')],
     });
     assert.deepEqual(replacement, original);
@@ -454,8 +458,8 @@ const SCENARIOS = {
     const textOf = item => (item.role === 'user' && Array.isArray(item.content) ? item.content.map(part => part.text ?? '').join('') : '');
     const breakpoints = body => body.input.flatMap((item, index) => (Array.isArray(item.content) && item.content.some(part => part.prompt_cache_breakpoint !== undefined) ? [index] : []));
     const sealed = (llm, route) => conversationOf(llm, route, { carriers: 3, tail: 2 });
-    const sent = (entry, profile, service) => bodyOver({
-      entry, providers: origin => ({ 'sw-responses': responsesRoute(origin, profile) }), route: SW_RESPONSES, messages: sealed, service,
+    const sent = (entry, profile, host) => bodyOver({
+      entry, providers: origin => ({ 'sw-responses': responsesRoute(origin, profile) }), route: SW_RESPONSES, messages: sealed, host,
     });
     // What each declaration a profile can make about the capability states: none, the capability itself for the oracle, and an explicit `false`, which is no control of its own.
     const cases = {
@@ -482,7 +486,7 @@ const SCENARIOS = {
     // A catalog model that already takes explicit breakpoints is sent what it always was with the switch on, the breakpoint added, kept for long or not.
     for (const [label, profile] of Object.entries({ 'default retention': {}, 'long retention': { cacheRetention: 'long' } })) {
       const { original, replacement } = await bodiesOf({
-        providers: origin => ({ openai: openaiRoute(origin, profile) }), route: RESPONSES, protocol: 'responses', messages: sealed, service: hostWith(true),
+        providers: origin => ({ openai: openaiRoute(origin, profile) }), route: RESPONSES, protocol: 'responses', messages: sealed, host: hostWith(true),
       });
       const lastOf = carrierAt(original.input, textOf).at(-1);
       assert.deepEqual(breakpoints(replacement), [lastOf], `a catalog model, ${label}`);
@@ -510,7 +514,7 @@ const SCENARIOS = {
         const all = retentionLabel === 'caching off' ? { ...shapes, 'a carrier mid-conversation': sealed } : shapes;
         for (const [shapeLabel, messages] of Object.entries(all)) {
           const label = `${routeLabel}, ${retentionLabel}, ${shapeLabel}`;
-          const { original, replacement } = await bodiesOf({ providers: o => providers(o, profile), route, protocol: 'responses', messages, service: hostWith(true) });
+          const { original, replacement } = await bodiesOf({ providers: o => providers(o, profile), route, protocol: 'responses', messages, host: hostWith(true) });
           assert.ok(holdsNone(original), `${label}: the original request holds none`);
           if (!isDeepStrictEqual(replacement, original)) changed.push(label);
         }
@@ -525,8 +529,8 @@ const SCENARIOS = {
     // A profile that declares the capability false is no control of its own: the switch is, and a request that gets none is what the same route is sent with the switch off.
     for (const [retentionLabel, profile] of Object.entries(retentions)) {
       for (const [shapeLabel, messages] of Object.entries(shapes)) {
-        const send = service => bodyOver({
-          entry: 'replacement', providers: o => ({ 'sw-responses': responsesRoute(o, { ...profile, compat: { supportsExplicitPromptCacheMode: false } }) }), route: SW_RESPONSES, messages, service,
+        const send = host => bodyOver({
+          entry: 'replacement', providers: o => ({ 'sw-responses': responsesRoute(o, { ...profile, compat: { supportsExplicitPromptCacheMode: false } }) }), route: SW_RESPONSES, messages, host,
         });
         const label = `the capability declared false, ${retentionLabel}, ${shapeLabel}`;
         const off = await send(hostWith(false));
@@ -552,38 +556,39 @@ const SCENARIOS = {
       'a hand-declared route that declares it and keeps prompts for long': { profile: { cacheRetention: 'long' }, options: { ttl: '30m' } },
       'a hand-declared route that declares it and turns caching off': { profile: { cacheRetention: 'none' }, options: { mode: 'explicit' } },
     };
-    for (const [host, service] of Object.entries(hosts)) {
+    for (const [hostLabel, host] of Object.entries(hosts)) {
       for (const [label, { providers, route }] of Object.entries(accepted)) {
-        const { original, replacement } = await bodiesOf({ providers, route, protocol: 'responses', messages, service });
-        assert.ok(!JSON.stringify(original).includes('prompt_cache_breakpoint'), `${host}, ${label}: the original request holds none`);
-        assert.deepEqual(replacement, original, `${host}, ${label}`);
+        const { original, replacement } = await bodiesOf({ providers, route, protocol: 'responses', messages, host });
+        assert.ok(!JSON.stringify(original).includes('prompt_cache_breakpoint'), `${hostLabel}, ${label}: the original request holds none`);
+        assert.deepEqual(replacement, original, `${hostLabel}, ${label}`);
       }
       for (const [label, { profile, options }] of Object.entries(declaring)) {
         const body = await bodyOver({
-          entry: 'replacement', providers: o => ({ 'sw-responses': responsesRoute(o, { ...profile, compat: { supportsExplicitPromptCacheMode: true } }) }), route: SW_RESPONSES, messages, service,
+          entry: 'replacement', providers: o => ({ 'sw-responses': responsesRoute(o, { ...profile, compat: { supportsExplicitPromptCacheMode: true } }) }), route: SW_RESPONSES, messages, host,
         });
-        assert.ok(!JSON.stringify(body).includes('prompt_cache_breakpoint'), `${host}, ${label}: no breakpoint`);
-        assert.deepEqual(body.prompt_cache_options, options, `${host}, ${label}: the serializer's own options for the declared route`);
-        assert.equal(body.prompt_cache_retention, undefined, `${host}, ${label}`);
+        assert.ok(!JSON.stringify(body).includes('prompt_cache_breakpoint'), `${hostLabel}, ${label}: no breakpoint`);
+        assert.deepEqual(body.prompt_cache_options, options, `${hostLabel}, ${label}: the serializer's own options for the declared route`);
+        assert.equal(body.prompt_cache_retention, undefined, `${hostLabel}, ${label}`);
       }
     }
   },
 
-  // The switch is read once for each Responses request; a host whose service has no such member and one that cannot answer both leave the request the original adapter's, the second with one warning.
+  // The switch is read once for each Responses request; a host with no settings service, one whose service has no such member, one whose answer is not true and one that cannot answer each leave the request the original adapter's, the last with one warning.
   async 'responses-switch-unreadable'() {
     const sealed = (llm, route) => conversationOf(llm, route, { carriers: 3, tail: 2 });
     const providers = origin => ({ openai: openaiRoute(origin) });
     const warningsOf = ctx => ctx.logger.buffer.filter(each => each.type === 'warn').map(each => each.args.map(String).join(' '));
     const { original } = await bodiesOf({ providers, route: RESPONSES, protocol: 'responses', messages: sealed });
     const cases = {
-      'a service with no such member': { service: { record() {} }, warnings: 0 },
-      'a service whose answer is not true': { service: { record() {}, responsesBreakpoint: () => 'yes' }, warnings: 0 },
-      'a service that cannot answer': { service: { record() {}, responsesBreakpoint() { throw new Error('the settings are gone'); } }, warnings: 1 },
+      'no settings service': { settings: undefined, warnings: 0 },
+      'a settings service with no such member': { settings: {}, warnings: 0 },
+      'a settings service whose answer is not true': { settings: { responsesBreakpoint: () => 'yes' }, warnings: 0 },
+      'a settings service that cannot answer': { settings: { responsesBreakpoint() { throw new Error('the settings are gone'); } }, warnings: 1 },
     };
-    for (const [label, { service, warnings }] of Object.entries(cases)) {
+    for (const [label, { settings, warnings }] of Object.entries(cases)) {
       const served = await endpoints();
       const { ctx, llm } = await mountPiAi({ entry: 'replacement', config: { providers: providers(served.origin) } });
-      ctx.provide(CARRIER_EVIDENCE_SERVICE, service);
+      provideAll(ctx, { [CARRIER_EVIDENCE_SERVICE]: { record() {} }, ...(settings === undefined ? {} : { [CARRIER_SETTINGS_SERVICE]: settings }) });
       const finish = await send(ctx, { ...RESPONSES, messages: sealed(llm, RESPONSES) });
       assert.equal(finish?.kind, 'stop', label);
       assert.deepEqual(served.requests.at(-1).body, original, `${label}: the original adapter's request`);
@@ -595,7 +600,7 @@ const SCENARIOS = {
     let reads = 0;
     const served = await endpoints();
     const { ctx, llm } = await mountPiAi({ entry: 'replacement', config: { providers: providers(served.origin) } });
-    ctx.provide(CARRIER_EVIDENCE_SERVICE, { record() {}, responsesBreakpoint: () => { reads += 1; return true; } });
+    provideAll(ctx, { [CARRIER_EVIDENCE_SERVICE]: { record() {} }, [CARRIER_SETTINGS_SERVICE]: { responsesBreakpoint: () => { reads += 1; return true; } } });
     assert.equal((await send(ctx, { ...RESPONSES, messages: sealed(llm, RESPONSES) }))?.kind, 'stop');
     assert.equal(reads, 1);
     assert.equal((await send(ctx, { ...RESPONSES, messages: sealed(llm, RESPONSES) }))?.kind, 'stop');
@@ -633,15 +638,15 @@ const SCENARIOS = {
     };
     for (const [label, { providers, route, protocol }] of Object.entries(cases)) {
       const messages = (llm, over) => conversationOf(llm, over, { carriers: 3, tail: 2 });
-      const off = await bodiesOf({ providers, route, protocol, messages, service: hostWith(false) });
-      const on = await bodiesOf({ providers, route, protocol, messages, service: hostWith(true) });
+      const off = await bodiesOf({ providers, route, protocol, messages, host: hostWith(false) });
+      const on = await bodiesOf({ providers, route, protocol, messages, host: hostWith(true) });
       assert.notDeepEqual(off.replacement, off.original, `${label}: the entry's point is there with the switch off`);
       assert.deepEqual(on.replacement, off.replacement, `${label}: the switch changes nothing`);
       assert.deepEqual(on.original, off.original, label);
       // A request of another protocol does not consult the Responses switch at all, so an unreadable one cannot warn about it.
       let reads = 0;
-      const counting = { record() {}, responsesBreakpoint() { reads += 1; throw new Error('the settings are gone'); } };
-      const unread = await bodiesOf({ providers, route, protocol, messages, service: counting });
+      const counting = { [CARRIER_EVIDENCE_SERVICE]: { record() {} }, [CARRIER_SETTINGS_SERVICE]: { responsesBreakpoint() { reads += 1; throw new Error('the settings are gone'); } } };
+      const unread = await bodiesOf({ providers, route, protocol, messages, host: counting });
       assert.equal(reads, 0, `${label}: the switch is not read`);
       assert.deepEqual(unread.warnings.replacement, [], `${label}: no warning about it`);
       assert.deepEqual(unread.replacement, off.replacement, label);
@@ -660,7 +665,7 @@ const SCENARIOS = {
     const last = carriers.at(-1);
     const text = original.messages[last].content;
     assert.equal(typeof text, 'string', 'the native serializer writes a carrier as one string');
-    assert.ok(text.includes(CARRIER_WORDING.stateHeading(9)), 'the carrier is whole');
+    assert.ok(text.includes(STATE_WORDING.heading(9)), 'the carrier is whole');
     assert.deepEqual(replacement.messages[last], { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
     assert.deepEqual(withoutMessage(replacement, last), withoutMessage(original, last));
     assert.equal(replacement.messages.at(-1).content.at(-1).cache_control?.type, 'ephemeral', 'the native tail marker stays');
@@ -889,8 +894,8 @@ const SCENARIOS = {
   async 'carrier-identification'() {
     const say = (llm, text) => llm.createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
     const turn = (llm, text) => llm.createAssistantMessage({ content: [{ type: 'text', text }], source: ANTHROPIC });
-    const quoted = (llm, route) => [say(llm, 'the opening request'), say(llm, `Quoted from the log: ${CARRIER_WORDING.addresses}`), turn(llm, 'a step'), say(llm, `A line first.\n${CARRIER_WORDING.addresses}`), turn(llm, 'another step'), say(llm, 'follow-up')];
-    const typed = (llm, route) => [say(llm, 'the opening request'), say(llm, `${CARRIER_WORDING.addresses} Typed by the user, not a seal.`), turn(llm, 'a step'), say(llm, 'follow-up')];
+    const quoted = (llm, route) => [say(llm, 'the opening request'), say(llm, `Quoted from the log: ${CARRIER_TABLE.addresses}`), turn(llm, 'a step'), say(llm, `A line first.\n${CARRIER_TABLE.addresses}`), turn(llm, 'another step'), say(llm, 'follow-up')];
+    const typed = (llm, route) => [say(llm, 'the opening request'), say(llm, `${CARRIER_TABLE.addresses} Typed by the user, not a seal.`), turn(llm, 'a step'), say(llm, 'follow-up')];
     const quotedBodies = await bodiesOf({ providers: origin => ({ 'sw-anthropic': anthropicRoute(origin) }), route: ANTHROPIC, protocol: 'anthropic', messages: quoted });
     assert.deepEqual(quotedBodies.replacement, quotedBodies.original, 'the wording elsewhere than at the start is no carrier');
     const typedBodies = await bodiesOf({ providers: origin => ({ 'sw-anthropic': anthropicRoute(origin) }), route: ANTHROPIC, protocol: 'anthropic', messages: typed });
@@ -980,8 +985,8 @@ const SCENARIOS = {
     for (const [label, { providers, route, messages, extra, responses = false, expected }] of Object.entries(cases)) {
       const served = await endpoints();
       const { ctx, llm } = await mountPiAi({ entry: 'replacement', config: { providers: providers(served.origin) } });
-      const evidence = createCarrierEvidence({ responsesBreakpoint: () => responses });
-      ctx.provide(CARRIER_EVIDENCE_SERVICE, evidence.service);
+      const evidence = createCarrierEvidence();
+      provideAll(ctx, { [CARRIER_EVIDENCE_SERVICE]: evidence.service, [CARRIER_SETTINGS_SERVICE]: { responsesBreakpoint: () => responses } });
       const scope = evidence.scope();
       await scope.run(() => send(ctx, { ...route, ...extra, messages: messages(llm, route) }));
       assert.deepEqual(scope.evidence(), { results: [expected], omitted: 0 }, label);

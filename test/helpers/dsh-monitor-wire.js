@@ -23,7 +23,6 @@ export function attemptRow(id, overrides = {}) {
     id,
     revision: id + 2,
     status: 'committed',
-    legacy: false,
     startedAt: 1_000 + id,
     endedAt: 1_900 + id,
     range: { first: 1, last: 4, count: 4 },
@@ -67,10 +66,30 @@ export const handoffRow = (id, overrides = {}) => ({
   skills: 2,
   lineage: 4,
   contextChange: null,
-  tailSteps: null,
+  tailCalls: null,
   nextTask: 'ship the handoff rows',
   ...overrides,
 });
+
+/** A failed attempt row, which has no slots and ends with the reason. */
+export const failedRow = id => attemptRow(id, { status: 'failed', reason: 'the response has no finish chunk', slots: null, endedAt: 1_800 + id });
+
+/** An attempt row still in `status`, its call generating. */
+export const progressRow = (id, status) => attemptRow(id, {
+  status, endedAt: null, slots: null, call: { state: 'generating', endedAt: null, finish: null, output: null, usage: null },
+});
+
+// A compaction that cut 74000 tokens at a rebuild of 8000 tokens, its summary call having read 48000 tokens from the cache and taken 1000 more (400 uncached and 600 written to it), under a write-to-read price ratio of 12, pays back (12 − 1) × 8000 + 48000 + 12 × 1000 = 148000 read-price tokens, which two later steps of 74000 each cover exactly.
+export const CUT = { before: 100_000, after: 26_000, delta: -74_000, miss: 8_000 };
+export const SUMMARY = { input: 400, output: 2_400, cacheRead: 48_000, cacheWrite: 600 };
+export const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+export const paying = (id, overrides = {}) => attemptRow(id, { contextChange: CUT, cRatio: 12, call: { usage: SUMMARY }, stepN: 8, epoch: 0, ...overrides });
+
+/** A committed compaction whose first call after it saw `after` tokens of context and rebuilt `miss` of them in the cache. */
+export const rebuilt = (id, after, miss, overrides = {}) => attemptRow(id, { contextChange: { before: after + 1_000, after, delta: -1_000, miss }, epoch: 0, ...overrides });
+
+/** The continue row of the clear of segment `epoch - 1`, which cut `tailCalls` steps off after the segment's last carrier or checkpoint. */
+export const clearing = (id, epoch, tailCalls, overrides = {}) => handoffRow(id, { type: 'continue', epoch, tailCalls, ...overrides });
 
 /**
  * The `inner-monitor/handoff` answer's value for `row`.
@@ -121,7 +140,7 @@ export function callPayload(row, overrides = {}) {
  * @param {object} [overrides]
  */
 export const slotRow = (key, overrides = {}) => ({
-  key, turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model' }, input: 'the source events the call saw', output: 'a note for the slot', ...overrides,
+  key, turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model', category: 'assistant' }, input: 'the source events the call saw', output: 'a note for the slot', ...overrides,
 });
 
 /** The `inner-monitor/slots` answer's value for `slots`. */
@@ -133,7 +152,7 @@ export const slotsValue = slots => ({ slots });
  * @param {object} [overrides]
  */
 export const slotValue = (key, overrides = {}) => ({
-  key, number: 1, seqs: [key, key + 1], turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model' }, c: 'a note for the slot',
+  key, number: 1, seqs: [key, key + 1], turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model', category: 'assistant' }, c: 'a note for the slot',
   events: [{ seq: key, type: 'user/message', visible: true, blocks: [{ type: 'text', text: 'the source' }], raw: { seq: key, type: 'user/message' } }],
   ...overrides,
 });

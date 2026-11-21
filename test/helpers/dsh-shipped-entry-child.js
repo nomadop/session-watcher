@@ -840,8 +840,8 @@ const SCENARIOS = {
     const [failedRow, ...otherRows] = await rowsNow();
     assert.deepEqual(otherRows, []);
     assert.deepEqual(
-      [failedRow.id, failedRow.revision, failedRow.status, failedRow.legacy, failedRow.startedAt, failedRow.endedAt, failedRow.slots],
-      [failedStart.seq, failedEnd.seq, 'failed', false, failedStart.time, failedEnd.time, null],
+      [failedRow.id, failedRow.revision, failedRow.status, failedRow.startedAt, failedRow.endedAt, failedRow.slots],
+      [failedStart.seq, failedEnd.seq, 'failed', failedStart.time, failedEnd.time, null],
       'a call without a carrier is no commit',
     );
     assert.equal(failedRow.reason, failedEnd.data.reason);
@@ -865,7 +865,7 @@ const SCENARIOS = {
     const quoted = { trigger: { q: quote.q, kappa: quote.kappa }, stepN: quote.n, cRatio: quote.cRatio, epoch: 0 };
     const prompt = start.data.request.messages.tail.content.filter(block => block.type === 'text').map(block => block.text).join('');
     assert.deepEqual(inFlight, {
-      id: start.seq, revision: start.seq, status: 'generating', legacy: false, startedAt: start.time, endedAt: null,
+      id: start.seq, revision: start.seq, status: 'generating', startedAt: start.time, endedAt: null,
       range: start.data.range, reason: null, slots: null,
       call: { state: 'generating', endedAt: null, finish: null, thrown: null, input: prompt.slice(0, 500), output: firstHalf(asked), outputDisplay: firstHalf(asked), usage: null },
       contextChange: null, ...quoted,
@@ -889,7 +889,7 @@ const SCENARIOS = {
     const firstAfter = session.snapshotEvents().find(event => event.type === 'assistant/message' && event.seq > carrier.seq);
     assert.ok(firstAfter !== undefined, 'a main call followed the seal');
     assert.deepEqual(rows[1], {
-      id: start.seq, revision: firstAfter.seq, status: 'committed', legacy: false, startedAt: start.time, endedAt: carrier.time,
+      id: start.seq, revision: firstAfter.seq, status: 'committed', startedAt: start.time, endedAt: carrier.time,
       range: start.data.range, reason: null, slots: carrier.data.source.slots.length,
       call: {
         state: 'received', endedAt: record.data.endedAt, finish: 'stop', thrown: null, input: prompt.slice(0, 500),

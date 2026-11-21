@@ -2,7 +2,7 @@
 // Observation batch in the shapes the Claude Code reducer emits, one case per reducer table row and contract.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { callUsageOf, reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
+import { callUsageOf, foldInputOf, isMainCall, reduceDshEvent, reduceDshSnapshot } from '../lib/harness/dsh/transcript-observation.js';
 import {
   userMessage, assistantMessage, toolCall, toolResult, attempt, requestHeader, requestContext,
   turnStart, turnEnd, stepStart, stepEnd, compactionStart, compactionSummary, compactCheckpoint, compactionEnd,
@@ -70,24 +70,73 @@ test('any other user/message kind yields nothing and no diagnostic', () => {
 
 // --- Inner seals ---
 
-test('an inner-seal carrier yields no observation and withdraws the seqs it cites, whatever its surface op says', () => {
+test('an inner-seal carrier yields no observation and answers the seqs it cites as sealed, whatever its surface op says', () => {
   const carrier = innerSealCarrier({ sourceEventSeqs: [9, 3, 4, 5], startSeq: 3, endSeq: 5, text: 'C, then B.' });
-  assert.deepEqual(reduceDshEvent(carrier), { observations: [], diagnostics: [], withdraws: [9, 3, 4, 5] });
+  assert.deepEqual(reduceDshEvent(carrier), { observations: [], diagnostics: [], sealed: [9, 3, 4, 5] });
   for (const surfaceOp of [undefined, 'append', { op: 'replace', endSeq: 4 }]) {
-    assert.deepEqual(reduceDshEvent({ ...carrier, surfaceOp }), { observations: [], diagnostics: [], withdraws: [9, 3, 4, 5] }, JSON.stringify(surfaceOp));
+    assert.deepEqual(reduceDshEvent({ ...carrier, surfaceOp }), { observations: [], diagnostics: [], sealed: [9, 3, 4, 5] }, JSON.stringify(surfaceOp));
   }
 });
 
-test('an inner-seal carrier with malformed seqs yields one shape-violation and withdraws nothing', () => {
+test('an inner-seal carrier with malformed seqs yields one shape-violation and seals nothing', () => {
   const valid = innerSealCarrier({ sourceEventSeqs: [3, 4] });
   for (const sourceEventSeqs of [undefined, 'all', [3, -1], [3, 1.5], [3, '4']]) {
-    const { withdraws, observations, diagnostics } = reduceDshEvent({ ...valid, sourceEventSeqs });
+    const { sealed, observations, diagnostics } = reduceDshEvent({ ...valid, sourceEventSeqs });
     assert.deepEqual(observations, [], String(sourceEventSeqs));
-    assert.equal(withdraws, undefined, String(sourceEventSeqs));
+    assert.equal(sealed, undefined, String(sourceEventSeqs));
     assert.deepEqual(diagnostics.map(({ scope, code }) => [scope, code]),
       [['dsh-transcript-observation', 'shape-violation']], String(sourceEventSeqs));
     assert.match(diagnostics[0].message, new RegExp(`\\bseq ${valid.seq}\\b.*sourceEventSeqs`));
   }
+});
+
+// --- The measurement source fold's input ---
+
+test('a main call is a committed assistant message with a seq that is an index, whatever its usage holds', () => {
+  const message = assistantMessage({ step: 1, text: 'Counted.', usage: USAGE });
+  assert.equal(isMainCall(message), true);
+  assert.equal(isMainCall(assistantMessage({ step: 1, text: 'No count reported.' })), true, 'no usage');
+  assert.equal(isMainCall(assistantMessage({ step: 1, usage: { inputTokens: 'many', outputTokens: 1 } })), true, 'a malformed usage');
+  for (const seq of [undefined, null, -1, 1.5, '3', Number.MAX_SAFE_INTEGER + 1]) assert.equal(isMainCall({ ...message, seq }), false, String(seq));
+  for (const event of [
+    attempt({ usageChunk: USAGE, finish: 'error' }), toolResult({ step: 1, callId: 'call_read', text: 'a' }), userMessage({ text: 'Question.' }), turnStart(),
+    innerSealCarrier({ sourceEventSeqs: [1] }),
+  ]) assert.equal(isMainCall(event), false, event.type);
+});
+
+test('the input of the source fold is the reducer\'s answer with the event\'s seq and whether it is a main call', () => {
+  const read = [{ id: 'call_read', name: 'read', arguments: '{"file_path":"src/a.js"}' }];
+  const call = assistantMessage({ step: 1, toolCalls: read, usage: USAGE });
+  assert.deepEqual(foldInputOf(call), { ...reduceDshEvent(call), seq: call.seq, mainCall: true });
+  assert.deepEqual(typesOf(foldInputOf(call).observations), ['tool-use', 'usage']);
+
+  const result = toolResult({ step: 1, callId: 'call_read', text: 'a' });
+  assert.deepEqual(foldInputOf(result), { ...reduceDshEvent(result), seq: result.seq, mainCall: false });
+
+  const checkpoint = compactCheckpoint({ startSeq: 0, endSeq: 1 });
+  assert.deepEqual(typesOf(foldInputOf(checkpoint).observations), ['epoch-boundary']);
+  assert.equal(foldInputOf(checkpoint).mainCall, false);
+
+  const batchless = foldInputOf(turnStart());
+  assert.deepEqual(batchless, { observations: [], diagnostics: [], seq: batchless.seq, mainCall: false });
+  assert.equal('sealed' in batchless, false, 'only a carrier answers a sealed list');
+});
+
+test('a carrier\'s input lists the seqs it seals and is no main call; a malformed carrier gives its diagnostic and no list', () => {
+  const carrier = innerSealCarrier({ sourceEventSeqs: [9, 3, 4, 5] });
+  assert.deepEqual(foldInputOf(carrier), { observations: [], diagnostics: [], sealed: [9, 3, 4, 5], seq: carrier.seq, mainCall: false });
+  const malformed = foldInputOf({ ...carrier, sourceEventSeqs: 'all' });
+  assert.deepEqual(malformed.diagnostics.map(({ code }) => code), ['shape-violation']);
+  assert.equal('sealed' in malformed, false);
+});
+
+test('a main call whose message the reducer rejects is still a main call, and a message with no seq is none; the diagnostic stays with the input', () => {
+  const malformed = assistantMessage({ step: 1, usage: { inputTokens: 'many', outputTokens: 1 } });
+  assert.deepEqual(foldInputOf(malformed), { ...reduceDshEvent(malformed), seq: malformed.seq, mainCall: true });
+  assert.deepEqual(foldInputOf(malformed).diagnostics.map(({ code }) => code), ['shape-violation']);
+  const seqless = { ...assistantMessage({ step: 2, text: 'No seq.', usage: USAGE }), seq: 'x' };
+  assert.deepEqual(foldInputOf(seqless), { ...reduceDshEvent(seqless), seq: 'x', mainCall: false });
+  assert.deepEqual(foldInputOf(seqless).diagnostics.map(({ code }) => code), ['shape-violation']);
 });
 
 test('the Dialogue snapshot ignores a carrier: a log with one reduces as the log without it', () => {

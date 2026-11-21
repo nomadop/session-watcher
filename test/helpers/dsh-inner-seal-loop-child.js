@@ -5,12 +5,14 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { join } from 'node:path';
 
 import { composeWatcher } from '../../dsh/src/composition.js';
-import { INNER_QUOTE } from '../../dsh/src/inner-quote.js';
-import { SUMMARY_FILTER_RETRIES } from '../../dsh/src/inner-seal.js';
+import { INNER_QUOTE } from '../../lib/inner-seal/quote.js';
+import { SUMMARY_FILTER_RETRIES, SUMMARY_MAX_REQUESTS } from '../../lib/inner-seal/ladder.js';
 import { COALESCED_PERSIST_MS } from '../../lib/constants.js';
 import { modelPolicyFor } from '../../lib/model-policy.js';
 import { createDshSourceDriver } from '../../lib/harness/dsh/source-driver.js';
-import { CARRIER_WORDING, foldCarried } from '../../lib/harness/dsh/inner-seal-message.js';
+import { STATE_WORDING } from '../../lib/inner-seal/state-block.js';
+import { CARRIER_TABLE } from '../../lib/harness/dsh/carrier-table.js';
+import { foldCarried } from '../../lib/carried-evidence.js';
 import { closeStore, openStore } from '../../lib/store.js';
 import { splitLines } from '../../lib/line-align.js';
 import { watchedTree } from './attribution-fixtures.js';
@@ -225,6 +227,9 @@ function* overflowChunks() {
 // Whether the stock cases' main replies carry `REPLY_PADDING`: only the turns that wait for a seal are padded, so over the plain turns between them the retained tail stays the small share of the surface that a case's retention ratio and threshold are fixed against.
 let paddingOn = false;
 const stockPadding = () => (paddingOn ? REPLY_PADDING : undefined);
+
+// The user's text after the second `/sw-load`, in the range the recount seals: enough text that the quote still passes at the minimum count of steps with the summary call's read of the surface in its fixed load.
+const LOAD_FOLLOW_UP = `after the load ${'y'.repeat(4_000)}`;
 
 // One session of a stock case under `model`, mode on, in its own directory holding the files the case reads.
 async function stockSession(rig, name, model) {
@@ -739,7 +744,7 @@ const SCENARIOS = {
       const skeletonCall = session.snapshotEvents().findLast(event => event.type === 'assistant/message'
         && event.data.message.content.some(block => block.type === 'tool-call' && block.name === 'get_turn_skeleton'));
       assert.ok(payload1.seq > skeletonCall.seq);
-      await cap.turn('after the load');
+      await cap.turn(LOAD_FOLLOW_UP);
       const { window } = windowKeeping(ctx, session, second.carrier.seq, RETAIN_RATIO);
       contextWindows['cap-model'] = window;
       const triggered = await cap.turn('the capacity turn');
@@ -759,9 +764,10 @@ const SCENARIOS = {
       const statusBefore = (await call('status', { sessionId: session.id })).value.payload;
       const deadBefore = (await call('buckets', { sessionId: session.id })).value.payload.dead;
       const third = await cap.untilSeal('after the checkpoint');
-      // The kept tail's old carrier, payload and answered call weigh enough, priced under the pair of the session's epoch model, that the quote seals at the minimum, priced at the C ratio the session's watcher reads.
+      // The recount's quote seals at the minimum, priced at the C ratio the session's watcher reads and with the history read of the host's own token meter.
       const { quote } = third.attempt.data;
-      assert.deepEqual([quote.trigger, quote.n, quote.missing], ['quote', INNER_QUOTE.minSteps, null], JSON.stringify(quote));
+      assert.deepEqual([quote.trigger, quote.n], ['quote', INNER_QUOTE.minSteps], JSON.stringify(quote));
+      assert.ok(Number.isFinite(quote.summaryReadCost) && quote.summaryReadCost > 0, `the quote paid the history read the host's meter measured: ${JSON.stringify(quote)}`);
       assert.equal(quote.cRatio, statusBefore.cRatio, 'the ratio the host\'s status answers');
       assert.equal(third.range[0], second.carrier.seq, 'the checkpoint is the frontier and its kept tail enters the range');
       assert.ok([payload1.seq, skeletonCall.seq, second.carrier.seq].every(seq => third.range.includes(seq)), 'the old carrier, the payload and the answered skeleton call are ordinary source');
@@ -905,7 +911,7 @@ const SCENARIOS = {
   // The same with main usage growing fast enough that the interval the post closes passes bill cycles.
   'loop-lamp-counters': () => lampCase({ growth: COUNTER_GROWTH, counters: true }),
 
-  // Consecutive user-triggered attempts through the real loop and the shipped entry, each a fresh dispatch. The first is filtered on every rung of the ladder (the session's model, its repeat and the saved backup model), so one user-triggered attempt dispatches one request per rung and its turn fails; the next attempt's stream ends in tool calls, and the third succeeds. Each failed request is its own recorded consumed stream; neither failed turn prunes, replaces, executes the tool call the second emitted, or changes the mode or the range.
+  // Consecutive user-triggered attempts through the real loop and the shipped entry, each a fresh dispatch. The first is filtered on every rung of the ladder (the session's model, its repeat and the saved backup model), so one user-triggered attempt dispatches one request per rung and its turn fails; every request of the next ends in tool calls, which the seal asks again up to the bound of `SUMMARY_MAX_REQUESTS` before its turn fails, and the third succeeds. Each failed request is its own recorded consumed stream; neither failed turn prunes, replaces, executes the tool call the second emitted, or changes the mode or the range.
   async 'loop-repeated-failures'() {
     const dispatches = [];
     const usage = { inputTokens: 4, outputTokens: 17, cacheReadTokens: 130, cacheWriteTokens: 7 };
@@ -922,7 +928,7 @@ const SCENARIOS = {
           yield { type: 'text-delta', index: 0, text: '["a partial' };
           yield { type: 'usage', usage };
           yield { type: 'finish', reason: { kind: 'error', failure: { message: 'Provider stopped with: content_filtered', code: 'PI_AI_ERROR' } } };
-        } else if (request === rungs) {
+        } else if (request < rungs + SUMMARY_MAX_REQUESTS) {
           yield { type: 'block-start', index: 0, blockType: 'tool-call' };
           yield { type: 'tool-call-delta', index: 0, id: 'toolu_filtered', name: 'get_bucket_summary', argumentsDelta: '{}' };
           yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'toolu_filtered', name: 'get_bucket_summary', arguments: '{}' } };
@@ -951,7 +957,7 @@ const SCENARIOS = {
     const mainsOf = () => adapter.requests.filter(request => request.kind === 'main' && request.sessionId === session.id).length;
     const failed = [];
     let requested = 0;
-    for (const [attempt, requests, expected] of [[1, rungs, /finished with error: Provider stopped with: content_filtered/], [2, 1, /finished with tool-calls/]]) {
+    for (const [attempt, requests, expected] of [[1, rungs, /finished with error: Provider stopped with: content_filtered/], [2, SUMMARY_MAX_REQUESTS, /finished with tool-calls/]]) {
       const nodesBefore = [...session.surface.nodes];
       const at0 = session.seq;
       const mainsBefore = mainsOf();
@@ -974,7 +980,8 @@ const SCENARIOS = {
       assert.deepEqual(await call('inner-mode', { sessionId: session.id }), { ok: true, value: { mode: 'on', locked: true } }, `attempt ${attempt}: the mode is unchanged`);
       failed.push(records);
     }
-    const [filteredRecords, [toolCalled]] = failed;
+    const [filteredRecords, toolCalledRecords] = failed;
+    const [toolCalled] = toolCalledRecords;
     const [filtered] = filteredRecords;
     const own = { provider: 'mock', model: 'loop-model' };
     assert.deepEqual(dispatches.slice(0, rungs).map(dispatch => `${dispatch.route.provider}/${dispatch.route.model}`),
@@ -989,8 +996,10 @@ const SCENARIOS = {
       assert.deepEqual(finishOf(record).reason, { kind: 'error', failure: { message: 'Provider stopped with: content_filtered', code: 'PI_AI_ERROR' } }, 'every record of the first attempt keeps the provider\'s stop');
       assert.equal(record.data.thrown, undefined);
     }
-    assert.equal(finishOf(toolCalled).reason.kind, 'tool-calls', 'the second record keeps the finish');
-    assert.ok(JSON.stringify(toolCalled.data.stream).includes('get_bucket_summary'), 'and the tool call it emitted, which nothing executed');
+    for (const record of toolCalledRecords) {
+      assert.equal(finishOf(record).reason.kind, 'tool-calls', 'every record of the second attempt keeps the finish');
+      assert.ok(JSON.stringify(record.data.stream).includes('get_bucket_summary'), 'and the tool call it emitted, which nothing executed');
+    }
     assert.notDeepEqual(filtered.data.stream, toolCalled.data.stream, 'two distinct consumed streams');
     assert.deepEqual(toolCalled.data.range, filtered.data.range, 'the target range is the same');
     assert.ok(toolCalled.data.input.throughSeq > filteredRecords.at(-1).data.input.throughSeq, 'each call is cut at its own preparation');
@@ -1318,7 +1327,7 @@ const SCENARIOS = {
     const logged = await finish();
     assert.equal(logged.answer.isError, true, 'the real tool runtime refused the call');
     const { slots } = logged.carrier.data.source;
-    assert.ok(slots.every(slot => slot.questions === undefined && slot.asks === undefined), 'no slot has a supplement');
+    assert.ok(slots.every(slot => slot.questions === undefined), 'no slot has a supplement');
     for (const body of [textsIn(logged.carrier.data), textsIn(logged.message)]) {
       assert.ok(!body.includes(JSON.stringify(QUESTIONS)) && !body.includes(textsIn(logged.answer)), 'no raw call or result stands in the body');
     }
@@ -1346,10 +1355,11 @@ const SCENARIOS = {
       return events.slice(events.findLastIndex(isCarrierEvent) + 1).filter(event => event.type === 'assistant/message' && event.data.message.content.length > 0).length;
     };
     const sealedIn = done => done.appended.some(event => event.type === INNER_CALL_RECORD_TYPE);
-    const W = CARRIER_WORDING;
-    const directoryLine = tail => `${W.stateLabels.workingDirectory('working_directory')} ${tail}`;
-    const todoLine = tail => `${W.stateLabels.todos('todo_write')} ${tail}`;
-    const blockOf = (asOfSeq, directoryTail, todoTail) => `${W.stateHeading(asOfSeq)}\n${directoryLine(directoryTail)}\n${todoLine(todoTail)}`;
+    const W = STATE_WORDING;
+    const labelOf = key => CARRIER_TABLE.stateItems.find(item => item.key === key).label;
+    const directoryLine = tail => `${labelOf('workingDirectory')} ${tail}`;
+    const todoLine = tail => `${labelOf('todos')} ${tail}`;
+    const blockOf = (asOfSeq, directoryTail, todoTail) => `${W.heading(asOfSeq)}\n${directoryLine(directoryTail)}\n${todoLine(todoTail)}`;
     const DIRECTORY = ctx.workingDirectory.get(session);
     const carriersText = request => requestCarriers(request).map(textsIn).join('\n');
     const evidence = {};
@@ -1381,7 +1391,7 @@ const SCENARIOS = {
     const secondRecord = second.appended.find(event => event.type === INNER_CALL_RECORD_TYPE);
     assert.ok(second.appended.findIndex(event => event.type === 'turn/start') < second.appended.indexOf(secondRecord), 'the turn started before the seal read the state');
     assert.deepEqual(secondCarrier.data.source.state, { asOfSeq: secondRecord.seq - 1, items: { workingDirectory: { value: DIRECTORY, unchanged: true }, todos: { value: [] } } }, 'the reset is a state of its own: the empty list, beside the directory as unchanged');
-    const secondBlock = blockOf(secondCarrier.data.source.state.asOfSeq, W.stateUnchanged, W.stateEmpty);
+    const secondBlock = blockOf(secondCarrier.data.source.state.asOfSeq, W.unchanged, W.empty);
     assert.equal(secondCarrier.data.content.at(-1).text, `\n\n${secondBlock}`);
     assert.ok(carriersText(second.requests.at(-1)).includes(secondBlock));
     assert.ok(carriersText(second.requests.at(-1)).includes(shown), 'the first carrier still stands on the request');
@@ -1396,7 +1406,7 @@ const SCENARIOS = {
     const thirdCarrier = third.appended.find(isCarrierEvent);
     const thirdRecord = third.appended.find(event => event.type === INNER_CALL_RECORD_TYPE);
     assert.deepEqual(thirdCarrier.data.source.state, { asOfSeq: thirdRecord.seq - 1, items: { workingDirectory: { value: DIRECTORY, unchanged: true }, todos: { value: [] } } }, 'the directory is shown as unchanged, the empty list as empty');
-    assert.equal(thirdCarrier.data.content.at(-1).text, `\n\n${blockOf(thirdCarrier.data.source.state.asOfSeq, W.stateUnchanged, W.stateEmpty)}`);
+    assert.equal(thirdCarrier.data.content.at(-1).text, `\n\n${blockOf(thirdCarrier.data.source.state.asOfSeq, W.unchanged, W.empty)}`);
     assert.deepEqual(stderrLines.filter(line => line.includes('inner_')), [], 'no inner diagnostic');
     console.log(JSON.stringify(evidence));
     await ctx.fiber.dispose();

@@ -6,6 +6,9 @@ import { join } from 'node:path';
 
 let proc, base, tmp;
 
+// The page holds the file drawer's shell beside this one, so the History drawer is told apart by its name.
+const HISTORY_DRAWER = '.sw-drawer[aria-label="History"]';
+
 const SNAPSHOT = {
   sections: [
     { label: 'S1',
@@ -84,7 +87,7 @@ async function setupPage(page, overrides = {}) {
 
 const openDrawer = async (page) => {
   await page.click('.sw-history-trigger');
-  await expect(page.locator('.sw-history-drawer.sw-history-drawer-open')).toBeVisible();
+  await expect(page.locator(`${HISTORY_DRAWER}.sw-drawer-open`)).toBeVisible();
 };
 
 // Sections open collapsed, so every case that asserts on rows opens each section first.
@@ -562,7 +565,7 @@ test('200 但 body 无 sections 数组时也是不可用态，不是空历史', 
 test('几何与 a11y：desktop 440px、窄屏满宽、打开设 .sw-wrap inert 并聚焦搜索、Escape/scrim/关闭键都能关', async ({ page }) => {
   await setupPage(page);
   await openDrawer(page);
-  const box = await page.locator('.sw-history-drawer').boundingBox();
+  const box = await page.locator(HISTORY_DRAWER).boundingBox();
   expect(Math.round(box.width)).toBe(440);
   // base.css derives the horizon marker from the divider — the same rule-line treatment — so at the
   // desktop width the two stand the same height. Pinned here because the divider's own typography
@@ -577,17 +580,17 @@ test('几何与 a11y：desktop 440px、窄屏满宽、打开设 .sw-wrap inert �
   await expect(page.locator('.sw-history-search input')).toBeFocused();
   await expect(page.locator('.sw-history-search input')).toHaveAccessibleName('Search history');
   await page.keyboard.press('Escape');
-  await expect(page.locator('.sw-history-drawer.sw-history-drawer-open')).toHaveCount(0);
+  await expect(page.locator(`${HISTORY_DRAWER}.sw-drawer-open`)).toHaveCount(0);
   await expect(page.locator('.sw-wrap')).not.toHaveAttribute('inert', '');
   await expect(page.locator('.sw-history-trigger')).toBeFocused();
   await openDrawer(page);
-  await page.locator('.sw-history-scrim').click({ position: { x: 5, y: 5 } });
-  await expect(page.locator('.sw-history-drawer.sw-history-drawer-open')).toHaveCount(0);
+  await page.locator('.sw-drawer-scrim.sw-drawer-scrim-visible').click({ position: { x: 5, y: 5 } });
+  await expect(page.locator(`${HISTORY_DRAWER}.sw-drawer-open`)).toHaveCount(0);
   await openDrawer(page);
-  await page.locator('.sw-history-close').click();
-  await expect(page.locator('.sw-history-drawer.sw-history-drawer-open')).toHaveCount(0);
+  await page.locator(`${HISTORY_DRAWER} .sw-drawer-close`).click();
+  await expect(page.locator(`${HISTORY_DRAWER}.sw-drawer-open`)).toHaveCount(0);
   await page.setViewportSize({ width: 700, height: 900 });
   await openDrawer(page);
-  const narrow = await page.locator('.sw-history-drawer').boundingBox();
+  const narrow = await page.locator(HISTORY_DRAWER).boundingBox();
   expect(Math.round(narrow.width)).toBe(700);
 });

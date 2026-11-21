@@ -1,5 +1,3 @@
 - insert:
     - id: session-watcher
       name: '@nomadop/session-watcher-dsh'
-    - id: tool-session-query
-      name: '@deepseek-ai/dsh-tool-session-query'

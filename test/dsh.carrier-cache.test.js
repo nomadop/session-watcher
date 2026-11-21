@@ -1,8 +1,9 @@
-// The provider wrapper of the carrier cache (`dsh/src/carrier-cache.js`) driven through its public method, `decorateProfiles`, over a pi-ai provider double that records what `streamSimple` is called with: the contract of the wrapper itself and the one rule no loopback endpoint can show, the ChatGPT sign-in lane, which exists only at `api.openai.com`. The payload shapes the writers read are exercised over the real pi-ai serializers in `dsh.pi-ai-carrier-cache.test.js`.
+// The provider wrapper of the carrier cache (`dsh/src/carrier-cache.js`), the pi-ai injection of the carrier point writer (`lib/llm-adapter/carrier-point.js`), driven through its public method, `decorateProfiles`, over a pi-ai provider double that records what `streamSimple` is called with: how a provider is wrapped, the order of the caller's `onPayload` hook, the writer and `observe`, what the hook answers and what `observe` is told. The payload shapes the writers read are `llm-adapter.carrier-point.test.js`'s, and the same writers over the real pi-ai serializers are exercised in `dsh.pi-ai-carrier-cache.test.js`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createCarrierCache } from '../dsh/src/carrier-cache.js';
+import { isCarrierResult } from '../lib/llm-adapter/carrier-results.js';
 
 const PREFIX = 'These summaries stand in for the earlier turns.';
 
@@ -15,9 +16,9 @@ function providerDouble() {
   return provider;
 }
 
-// `responsesBreakpoint` is the owner's switch the wrapper reads at each request, on unless a test says otherwise.
-const decorated = (provider, report = () => {}, responsesBreakpoint = () => true) => {
-  const { decorateProfiles } = createCarrierCache({ carrierPrefix: PREFIX, report, responsesBreakpoint });
+// `responsesBreakpoint` is the owner's switch the wrapper hands the writer, on unless a test says otherwise; `observe` is told each result.
+const decorated = (provider, { report = () => {}, observe = () => {}, responsesBreakpoint = () => true } = {}) => {
+  const { decorateProfiles } = createCarrierCache({ carrierPrefix: PREFIX, report, observe, responsesBreakpoint });
   return decorateProfiles(new Map([['openai', { displayName: 'OpenAI', piProvider: provider }], ['bare', { displayName: 'Bare' }]]));
 };
 
@@ -30,6 +31,7 @@ const responsesPayload = () => ({
   ],
 });
 const EXPLICIT_MODEL = { api: 'openai-responses', provider: 'openai', id: 'gpt-fixture', baseUrl: 'https://api.openai.com/v1', compat: { supportsExplicitPromptCacheMode: true } };
+const KEYED = { apiKey: 'sk-fixture' };
 
 // The hook the wrapped provider hands pi-ai for one request with `options`.
 function hookFor(wrapped, options) {
@@ -62,100 +64,77 @@ test('the original provider runs the call as its own receiver, handed the model,
   assert.deepEqual(rest, options);
 });
 
-test('a hook the caller set runs first: its replacement payload is the one the breakpoint is written to, and a request with no carrier answers what the hook answered', async () => {
+test('a hook the caller set runs first: its replacement payload is the one the point is written to and the one the hook answers, and a request given none answers what the caller\'s hook answered', async () => {
   const wrapped = decorated(providerDouble()).get('openai').piProvider;
   const seen = [];
   const replacement = responsesPayload();
   const earlier = (payload, model) => { seen.push([payload, model]); return replacement; };
   const original = responsesPayload();
-  const hook = hookFor(wrapped, { apiKey: 'sk-fixture', onPayload: earlier });
+  const hook = hookFor(wrapped, { ...KEYED, onPayload: earlier });
   assert.equal(await hook(original, EXPLICIT_MODEL), replacement);
   assert.deepEqual(seen, [[original, EXPLICIT_MODEL]]);
   assert.deepEqual(replacement.input[0].content[0].prompt_cache_breakpoint, { mode: 'explicit' });
   assert.equal(original.input[0].content[0].prompt_cache_breakpoint, undefined);
 
-  const none = { input: [{ role: 'user', content: [{ type: 'input_text', text: 'no carrier here' }] }, { role: 'assistant', content: [] }] };
-  assert.equal(await hookFor(wrapped, { apiKey: 'sk-fixture', onPayload: () => undefined })(none, EXPLICIT_MODEL), undefined);
-  assert.equal(await hookFor(wrapped, { apiKey: 'sk-fixture' })(none, EXPLICIT_MODEL), undefined);
+  const none = () => ({ input: [{ role: 'user', content: [{ type: 'input_text', text: 'no carrier here' }] }, { role: 'assistant', content: [] }] });
+  assert.equal(await hookFor(wrapped, { ...KEYED, onPayload: () => undefined })(none(), EXPLICIT_MODEL), undefined);
+  assert.equal(await hookFor(wrapped, KEYED)(none(), EXPLICIT_MODEL), undefined);
+  const kept = none();
+  assert.equal(await hookFor(wrapped, { ...KEYED, onPayload: () => kept })(none(), EXPLICIT_MODEL), kept);
 });
 
 test('a throw from the caller\'s hook reaches pi-ai as it is', async () => {
   const wrapped = decorated(providerDouble()).get('openai').piProvider;
-  const hook = hookFor(wrapped, { apiKey: 'sk-fixture', onPayload: () => { throw new Error('the caller\'s hook failed'); } });
+  const hook = hookFor(wrapped, { ...KEYED, onPayload: () => { throw new Error('the caller\'s hook failed'); } });
   await assert.rejects(async () => hook(responsesPayload(), EXPLICIT_MODEL), /the caller's hook failed/);
 });
 
-test('the ChatGPT sign-in lane, an official OpenAI endpoint reached with a key that is no `sk-` key, gets no breakpoint and none of the options that go with one, with the switch on and whatever its model declares, where the same request under an API key does', async () => {
-  const wrapped = decorated(providerDouble()).get('openai').piProvider;
-  const signedIn = responsesPayload();
-  assert.equal(await hookFor(wrapped, { apiKey: 'chatgpt-session-token' })(signedIn, EXPLICIT_MODEL), undefined);
-  assert.deepEqual(signedIn, responsesPayload());
-  const plain = { ...EXPLICIT_MODEL, compat: undefined };
-  const retained = { ...responsesPayload(), prompt_cache_retention: '24h' };
-  assert.equal(await hookFor(wrapped, { apiKey: 'chatgpt-session-token' })(retained, plain), undefined);
-  assert.deepEqual(retained, { ...responsesPayload(), prompt_cache_retention: '24h' });
-  const keyed = responsesPayload();
-  assert.equal(await hookFor(wrapped, { apiKey: 'sk-fixture' })(keyed, EXPLICIT_MODEL), keyed);
-  assert.deepEqual(keyed.input[0].content[0].prompt_cache_breakpoint, { mode: 'explicit' });
-  // Another endpoint with such a key is not that lane.
-  const gateway = responsesPayload();
-  assert.equal(await hookFor(wrapped, { apiKey: 'gateway-token' })(gateway, { ...EXPLICIT_MODEL, baseUrl: 'https://gateway.example/v1' }), gateway);
+test('`observe` is told the closed result of each hook call after the caller\'s hook and the writer ran, and only an `added` result gives the payload back', async () => {
+  const log = [];
+  const wrapped = decorated(providerDouble(), { observe: result => log.push(result) }).get('openai').piProvider;
+  const earlier = () => { log.push('earlier'); };
+  const onlyCarrier = { ...responsesPayload(), input: responsesPayload().input.slice(0, 1) };
+  const noCarrier = { ...responsesPayload(), input: responsesPayload().input.slice(1) };
+  const added = responsesPayload();
+  assert.equal(await hookFor(wrapped, { ...KEYED, onPayload: earlier })(added, EXPLICIT_MODEL), added);
+  assert.equal(await hookFor(wrapped, KEYED)(onlyCarrier, EXPLICIT_MODEL), undefined);
+  assert.equal(await hookFor(wrapped, KEYED)(noCarrier, EXPLICIT_MODEL), undefined);
+  assert.equal(await hookFor(wrapped, KEYED)(responsesPayload(), { ...EXPLICIT_MODEL, api: 'google-generative-ai' }), undefined);
+  assert.deepEqual(log, [
+    'earlier', { result: 'added' },
+    { result: 'native' },
+    { result: 'skipped', reason: 'no-carrier' },
+    { result: 'skipped', reason: 'unsupported' },
+  ]);
+  assert.ok(log.filter(entry => typeof entry === 'object').every(isCarrierResult));
 });
 
-test('a Responses request is given its breakpoint whatever its model declares about explicit prompt-cache mode, nothing or `false` as well, and the model reaches pi-ai as the caller made it', async () => {
-  const wrapped = decorated(providerDouble()).get('openai').piProvider;
-  for (const compat of [undefined, { supportsExplicitPromptCacheMode: false }]) {
-    const model = { ...EXPLICIT_MODEL, compat };
-    const payload = responsesPayload();
-    assert.equal(await hookFor(wrapped, { apiKey: 'sk-fixture' })(payload, model), payload, JSON.stringify(compat));
-    assert.deepEqual(payload.input[0].content[0].prompt_cache_breakpoint, { mode: 'explicit' }, JSON.stringify(compat));
-    const { args: [handed] } = wrapped.streamSimple(model, { messages: [] }, { apiKey: 'sk-fixture' });
-    assert.equal(handed, model, JSON.stringify(compat));
-  }
+test('an `observe` that throws is one report and leaves the request as the writer made it', async () => {
+  const reports = [];
+  const wrapped = decorated(providerDouble(), { report: message => reports.push(message), observe: () => { throw new Error('the evidence store is gone'); } }).get('openai').piProvider;
+  const added = responsesPayload();
+  assert.equal(await hookFor(wrapped, KEYED)(added, EXPLICIT_MODEL), added);
+  assert.deepEqual(added.input[0].content[0].prompt_cache_breakpoint, { mode: 'explicit' });
+  assert.equal(reports.length, 1);
+  assert.match(reports[0], /cache evidence of a request could not be recorded/);
+  const unchanged = responsesPayload();
+  assert.equal(await hookFor(wrapped, { ...KEYED, cacheRetention: 'none' })(unchanged, EXPLICIT_MODEL), undefined);
+  assert.deepEqual(unchanged, responsesPayload());
+  assert.equal(reports.length, 2);
 });
 
-test('the options that go with the breakpoint are written in the same step as the breakpoint and in no other: a long route\'s retention gives way to its lifetime option when the request gets the breakpoint, and a request that gets none keeps its payload whole whatever its retention', async () => {
-  const wrapped = decorated(providerDouble()).get('openai').piProvider;
-  const long = () => ({ ...responsesPayload(), prompt_cache_retention: '24h' });
-  const keyed = { apiKey: 'sk-fixture' };
-  const given = long();
-  assert.equal(await hookFor(wrapped, keyed)(given, EXPLICIT_MODEL), given);
-  assert.deepEqual(given.input[0].content[0].prompt_cache_breakpoint, { mode: 'explicit' });
-  assert.equal(Object.hasOwn(given, 'prompt_cache_retention'), false);
-  assert.deepEqual(given.prompt_cache_options, { ttl: '30m' });
-  // A short route has neither to give way, and the options of a payload that already holds them stay.
-  const short = responsesPayload();
-  await hookFor(wrapped, keyed)(short, EXPLICIT_MODEL);
-  assert.deepEqual(Object.keys(short).sort(), ['input', 'model']);
-  const declared = { ...responsesPayload(), prompt_cache_options: { ttl: '30m' } };
-  await hookFor(wrapped, keyed)(declared, EXPLICIT_MODEL);
-  assert.deepEqual(declared.prompt_cache_options, { ttl: '30m' });
-  // Each way a request is left without a breakpoint leaves its payload as it came: the carrier ends the request, none is in it, caching is off, the switch is off.
-  const tail = { ...long(), input: responsesPayload().input.slice(0, 1) };
-  const noCarrier = { ...long(), input: responsesPayload().input.slice(1) };
-  const off = decorated(providerDouble(), () => {}, () => false).get('openai').piProvider;
-  const cases = [
-    ['the carrier is the last item', tail, hookFor(wrapped, keyed)],
-    ['no carrier', noCarrier, hookFor(wrapped, keyed)],
-    ['caching off', long(), hookFor(wrapped, { ...keyed, cacheRetention: 'none' })],
-    ['the switch off', long(), hookFor(off, keyed)],
-  ];
-  for (const [label, payload, hook] of cases) {
-    const before = structuredClone(payload);
-    assert.equal(await hook(payload, EXPLICIT_MODEL), undefined, label);
-    assert.deepEqual(payload, before, label);
-  }
-});
-
-test('a request whose protocol no writer serves, the other Responses protocols and the Codex lane among them, reaches pi-ai unchanged whatever its payload holds', async () => {
-  const wrapped = decorated(providerDouble()).get('openai').piProvider;
-  for (const api of ['azure-openai-responses', 'openai-codex-responses', 'mistral-conversations', 'google-generative-ai']) {
-    const payload = responsesPayload();
-    const model = { ...EXPLICIT_MODEL, api, compat: undefined };
-    assert.equal(await hookFor(wrapped, { apiKey: 'sk-fixture' })(payload, { ...EXPLICIT_MODEL, api }), undefined, api);
-    assert.deepEqual(payload, responsesPayload(), api);
-    // With the switch on, the model of such a request reaches pi-ai as the caller made it.
-    const { args: [handed] } = wrapped.streamSimple(model, { messages: [] }, { apiKey: 'sk-fixture' });
-    assert.equal(handed, model, api);
-  }
+test('the owner\'s switch and the diagnostic sink are the writer\'s: an off switch is `responses-off` and an unreadable one is off with one report', async () => {
+  const results = [];
+  const reports = [];
+  const observe = result => results.push(result);
+  const report = message => reports.push(message);
+  const off = decorated(providerDouble(), { observe, report, responsesBreakpoint: () => false }).get('openai').piProvider;
+  const payload = responsesPayload();
+  assert.equal(await hookFor(off, KEYED)(payload, EXPLICIT_MODEL), undefined);
+  assert.deepEqual(payload, responsesPayload());
+  const unreadable = decorated(providerDouble(), { observe, report, responsesBreakpoint: () => { throw new Error('the settings are gone'); } }).get('openai').piProvider;
+  assert.equal(await hookFor(unreadable, KEYED)(responsesPayload(), EXPLICIT_MODEL), undefined);
+  assert.deepEqual(results, [{ result: 'skipped', reason: 'responses-off' }, { result: 'skipped', reason: 'responses-off' }]);
+  assert.equal(reports.length, 1);
+  assert.match(reports[0], /Responses breakpoint setting could not be read/);
 });

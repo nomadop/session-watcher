@@ -1,85 +1,84 @@
-// The unsealed source of an inner-compaction session: the facts one event gives the trigger, the frontier, range, step count and pause they decide over the surface's node order, and the slots the frozen raw slice gives the summary.
+// The unsealed source of an inner-compaction session (`lib/inner-seal/source.js`): the frontier, range, step count and pause the semantic event facts decide over the surface's node order, the request header they name, and the slots of a range; first over hand-written fact Maps, then end to end over DSH logs through `eventFactsOf`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sourceFactOf, innerSource, headerSeqOf, skeletonSlots, TURN_SKELETON_TOOL } from '../lib/harness/dsh/inner-source.js';
-import { createTools } from '../dsh/src/tools.js';
+import { headerSeqIn, innerSource, skeletonSlots } from '../lib/inner-seal/source.js';
+import { eventFactOf, eventFactsOf } from '../lib/harness/dsh/event-facts.js';
 import {
   userMessage, assistantMessage, toolResult, loadMessage, compactCheckpoint, innerSealCarrier, systemMessage, turnStart,
   attempt, toolCall, sessionLog, stepStart, stepEnd, unknownEvent, turnEnd, compactionPrune, prunedResult, requestHeader,
 } from './helpers/dsh-events.js';
 
-const fact = (type, kind, rest = {}) => ({ type, kind, payload: false, epoch: false, step: null, skeletonCall: false, ...rest });
+// ── Hand-written facts ───────────────────────────────────────────────────────────────────────────────────────
 
-test('sourceFactOf gives the type and the source kind of the messages the frontier and the trigger read', () => {
-  assert.deepEqual(sourceFactOf(userMessage({ text: 'hello' })), fact('user/message', 'user'));
-  assert.deepEqual(sourceFactOf(toolResult({ callId: 'c1', text: 'ok' })), fact('tool/result', 'tool'));
-  assert.deepEqual(sourceFactOf(systemMessage()), fact('system/message', 'system-prompt'));
-  assert.deepEqual(sourceFactOf(compactCheckpoint({ startSeq: 1, endSeq: 2 })), fact('user/message', 'compact-checkpoint', { epoch: true }));
-  assert.deepEqual(sourceFactOf(innerSealCarrier({ sourceEventSeqs: [1, 2] })), fact('user/message', 'session-watcher-inner-seal'));
-  assert.deepEqual(sourceFactOf(turnStart({ turn: 4 })), fact('turn/start', null));
+// The facts of one event that is none of the kinds a fact names, with `rest` set.
+const F = (rest = {}) => ({
+  system: false, header: false, marker: null, epoch: false, step: null, owner: { turn: 0, step: 0 }, assistant: false, skeletonCall: false, originals: [], ...rest,
+});
+// A step's completing assistant message and a node it owns.
+const reply = (turn, step, rest = {}) => F({ assistant: true, step: { turn, step }, owner: { turn, step }, ...rest });
+const owned = (turn, step, rest = {}) => F({ owner: { turn, step }, ...rest });
+
+test('headerSeqIn answers the greatest header seq when latest, else the least above `above`, whatever order the Map was filled in, and null when none is', () => {
+  const entries = [[0, F({ system: true })], [1, F({ header: true })], [2, F()], [3, F({ header: true })], [4, F({ header: true })], [5, F()]];
+  for (const order of [entries, [...entries].reverse(), [entries[4], entries[1], entries[5], entries[3], entries[0], entries[2]]]) {
+    const facts = new Map(order);
+    assert.equal(headerSeqIn(facts, { latest: true }), 4);
+    assert.equal(headerSeqIn(facts, { latest: false, above: -1 }), 1);
+    assert.equal(headerSeqIn(facts, { latest: false, above: 1 }), 3, 'strictly above');
+    assert.equal(headerSeqIn(facts, { latest: false, above: 2 }), 3);
+    assert.equal(headerSeqIn(facts, { latest: false, above: 4 }), null);
+  }
+  const headerless = new Map(entries.filter(([, fact]) => !fact.header));
+  assert.equal(headerSeqIn(headerless, { latest: true }), null);
+  assert.equal(headerSeqIn(headerless, { latest: false, above: -1 }), null);
+  assert.equal(headerSeqIn(new Map(), { latest: true }), null);
 });
 
-test('the request header seq is the greatest seq of a request/header fact, whatever order the Map was filled in, and null when there is none', () => {
-  const log = sessionLog([systemMessage(), requestHeader(), turnStart({ turn: 1 }), requestHeader({ reason: 'change' }), userMessage({ text: 'ask' })]);
-  const entries = log.map(event => [event.seq, sourceFactOf(event)]);
-  assert.equal(headerSeqOf(new Map(entries)), 3);
-  assert.equal(headerSeqOf(new Map([...entries].reverse())), 3, 'a later seq filled in first still wins');
-  assert.equal(headerSeqOf(new Map([entries[3], entries[0], entries[2], entries[1]])), 3);
-  assert.equal(headerSeqOf(new Map(entries.filter(([, entry]) => entry.type !== 'request/header'))), null);
-  assert.equal(headerSeqOf(new Map()), null);
+test('the initial prefix is the system head and the nodes before the first header, and the range opens behind it', () => {
+  const facts = new Map([[0, F({ system: true })], [1, F()], [2, F()], [3, F({ header: true })], [4, reply(1, 1)], [5, owned(1, 1)], [6, reply(1, 2)]]);
+
+  assert.deepEqual(innerSource(facts, [0, 1, 2, 4, 5, 6]), { frontier: null, range: [4, 5, 6], stepN: 2, paused: false });
+  assert.deepEqual(innerSource(new Map(), []), { frontier: null, range: [], stepN: 0, paused: false });
 });
+
+test('the frontier is the marker of greatest seq wherever it stands on the surface, and a payload in the initial prefix is none', () => {
+  const kept = new Map([[0, F({ system: true })], [3, F({ marker: 'carrier' })], [4, reply(1, 1)], [5, owned(1, 1)], [9, F({ marker: 'checkpoint' })]]);
+  assert.deepEqual(innerSource(kept, [0, 9, 3, 4, 5]), { frontier: 9, range: [3, 4, 5], stepN: 1, paused: false });
+
+  const loaded = new Map([[0, F({ system: true })], [1, F({ marker: 'payload' })], [2, F({ header: true })], [3, reply(1, 1)], [4, F({ marker: 'payload' })], [5, reply(2, 1)]]);
+  assert.deepEqual(innerSource(loaded, [0, 1, 3, 4, 5]), { frontier: 4, range: [5], stepN: 1, paused: false });
+});
+
+test('an epoch-opening checkpoint takes the prefix through itself and the nodes it admits before the epoch\'s first header; an earlier header moves nothing', () => {
+  const facts = new Map([
+    [0, F({ system: true })], [1, F({ header: true })], [6, F({ marker: 'checkpoint', epoch: true })], [7, F()], [8, F({ header: true })], [9, reply(2, 1)], [10, F()],
+  ]);
+
+  assert.deepEqual(innerSource(facts, [0, 6, 7, 9, 10]), { frontier: 6, range: [9, 10], stepN: 1, paused: false });
+});
+
+test('a skeleton call pauses the range unless a payload of the range follows it', () => {
+  const facts = new Map([[0, F({ system: true })], [3, reply(1, 1, { skeletonCall: true })], [4, F({ marker: 'payload' })], [9, F({ marker: 'checkpoint' })]]);
+
+  assert.equal(innerSource(facts, [0, 9, 3, 4]).paused, false);
+  assert.equal(innerSource(facts, [0, 9, 4, 3]).paused, true);
+});
+
+test('a counted step is one slot of the nodes it owns at its first node, an original before the replacement that stands for it; an uncounted node stands alone and an uncounted assistant message makes none', () => {
+  const facts = new Map([
+    [1, F({ owner: { turn: undefined, step: undefined } })], [2, owned(1, 1)], [3, reply(1, 1)], [4, owned(1, 1, { originals: [20] })], [5, F({ owner: { turn: undefined, step: undefined } })],
+    [6, owned(1, 2, { assistant: true })], [7, owned(1, 2, { originals: [21] })],
+  ]);
+  const nodes = [1, 2, 3, 5, 4, 6, 7];
+
+  assert.deepEqual(skeletonSlots(facts, nodes, nodes), [{ seqs: [1] }, { seqs: [2, 3, 20, 4], step: { turn: 1, step: 1 } }, { seqs: [5] }, { seqs: [21, 7] }]);
+  assert.deepEqual(skeletonSlots(facts, nodes, [6, 4]), [{ seqs: [20, 4] }], 'a range without the completing message counts no step');
+});
+
+// ── DSH logs through eventFactsOf ────────────────────────────────────────────────────────────────────────────
 
 const call = (name, id = `sw-load-${name}`) => ({ id, name, arguments: '{}', text: `${name} result` });
-const withSource = (event, source) => ({ ...event, data: { ...event.data, source } });
-
-test('a load message is a payload when its first call is the delivery, and a read message is not whatever the kind', () => {
-  const payload = loadMessage({ calls: [call('load_handoff')] });
-  const read = loadMessage({ calls: [call('read')] });
-  assert.deepEqual(sourceFactOf(payload), fact('user/message', 'session-watcher-load', { payload: true }));
-  assert.deepEqual(sourceFactOf(read), fact('user/message', 'session-watcher-load'), 'a read message carries the load kind and is no frontier');
-  // `isLoadPayload` reads the first call: a pre-split message holding the delivery then a read is still the payload, and a delivery that is not the first call is not.
-  assert.equal(sourceFactOf(loadMessage({ calls: [call('load_handoff'), call('read')] })).payload, true);
-  assert.equal(sourceFactOf(loadMessage({ calls: [call('read'), call('load_handoff')] })).payload, false);
-  assert.equal(sourceFactOf(withSource(payload, { kind: 'session-watcher-load' })).payload, false, 'no calls, no delivery');
-  assert.equal(sourceFactOf(withSource(payload, { ...payload.data.source, kind: 'user' })).payload, false, 'the delivery call outside the load kind');
-});
-
-test('only a non-empty assistant/message is a step, named by its turn and step; an attempt, an empty message and other events are not', () => {
-  assert.deepEqual(sourceFactOf(assistantMessage({ text: 'done', turn: 2, step: 3 })), fact('assistant/message', 'model', { step: { turn: 2, step: 3 } }));
-  const calling = sourceFactOf(assistantMessage({ toolCalls: [{ id: 'c1', name: 'read' }], turn: 5, step: 1 }));
-  assert.deepEqual(calling.step, { turn: 5, step: 1 }, 'a message holding only a tool call is a step');
-  const cut = sourceFactOf(assistantMessage({ text: 'partial', interrupted: true, turn: 1, step: 4 }));
-  assert.deepEqual(cut.step, { turn: 1, step: 4 }, 'an interrupted response keeps its prefix and is a step');
-  assert.equal(sourceFactOf(assistantMessage({ turn: 1, step: 2 })).step, null, 'a message with no block is no step');
-  assert.deepEqual(sourceFactOf(attempt({ turn: 1, step: 2 })), fact('assistant/attempt', null), 'a failed attempt appended no message');
-  assert.equal(sourceFactOf(toolResult({ callId: 'c1', text: 'ok', turn: 1, step: 2 })).step, null, 'a tool result is no step of its own');
-});
-
-test('only a tool-call block of an assistant/message naming get_turn_skeleton is a skeleton call', () => {
-  const skeleton = { id: 'c-skel', name: 'get_turn_skeleton' };
-  assert.equal(sourceFactOf(assistantMessage({ toolCalls: [skeleton] })).skeletonCall, true);
-  assert.equal(sourceFactOf(assistantMessage({ text: 'handing off', toolCalls: [{ id: 'c1', name: 'read' }, skeleton] })).skeletonCall, true, 'among other calls');
-  assert.equal(sourceFactOf(assistantMessage({ toolCalls: [{ id: 'c2', name: 'submit_turn_notes' }, { id: 'c3', name: 'read' }] })).skeletonCall, false);
-  assert.equal(sourceFactOf(assistantMessage({ text: 'I will call get_turn_skeleton' })).skeletonCall, false, 'the name in text is no call');
-  assert.equal(sourceFactOf(toolCall({ callId: 'c-skel', name: 'get_turn_skeleton' })).skeletonCall, false, 'the log-only tool/call is not on the surface');
-  assert.equal(sourceFactOf(userMessage({ text: 'get_turn_skeleton' })).skeletonCall, false);
-});
-
-test('a malformed assistant/message gives the facts of an event with no step and no call, and throws nothing', () => {
-  const messageWith = content => ({ role: 'assistant', content, source: { kind: 'model' } });
-  const absent = { type: 'assistant/message', seq: 4, time: 0, data: { turn: 1, step: 1 } };
-  const text = { type: 'assistant/message', seq: 5, time: 0, data: { turn: 1, step: 1, message: messageWith('text') } };
-  const hollow = { type: 'assistant/message', seq: 6, time: 0, data: { turn: 1, step: 1, message: messageWith([null, 3]) } };
-
-  for (const event of [absent, text]) assert.deepEqual(sourceFactOf(event), fact('assistant/message', event === absent ? null : 'model'));
-  assert.equal(sourceFactOf(hollow).skeletonCall, false, 'blocks that are no objects name no call');
-});
-
-// ── Logs, their fact index and their surface ─────────────────────────────────────────────────────────────────
-
-// The fact index the watcher table keeps: one fact per event of the log.
-const factsOf = log => new Map(log.map(event => [event.seq, sourceFactOf(event)]));
 
 // The surface DSH folds from a log: an append adds the node, a replace swaps the nodes from its start through its end for itself.
 function surfaceOf(log) {
@@ -108,7 +107,7 @@ function mainStep(turn, step, { text = `step ${step} of turn ${turn}`, toolCalls
 // The log the events make, and the seq each of them has in it.
 function logOf(events) {
   const log = sessionLog(events);
-  return { log, seqOf: event => events.indexOf(event), nodes: surfaceOf(log), facts: factsOf(log) };
+  return { log, seqOf: event => events.indexOf(event), nodes: surfaceOf(log), facts: eventFactsOf(log) };
 }
 
 test('the frontier is the inner-seal carrier, the stock checkpoint or the load payload, and the range is the nodes after it', async (t) => {
@@ -253,14 +252,6 @@ test('a log with no request header has no initial prefix to find: only its leadi
   assert.deepEqual(innerSource(facts, nodes).range, [...prefix.slice(1), first.assistant, first.result].map(seqOf));
 });
 
-test('only a replacing compact checkpoint opens a Context Epoch: an inner-seal carrier, a checkpoint that appends and a malformed replacement do not', () => {
-  const checkpoint = compactCheckpoint({ startSeq: 1, endSeq: 2 });
-  assert.equal(sourceFactOf(checkpoint).epoch, true);
-  assert.equal(sourceFactOf(innerSealCarrier({ sourceEventSeqs: [1, 2] })).epoch, false);
-  assert.equal(sourceFactOf({ ...checkpoint, surfaceOp: 'append' }).epoch, false, 'an append replaces nothing');
-  assert.equal(sourceFactOf({ ...checkpoint, time: undefined }).epoch, false, 'the reducer states no boundary for a malformed envelope');
-  assert.equal(sourceFactOf(userMessage({ text: 'hello' })).epoch, false);
-});
 
 // The log a session writes up to its first request in a fresh Context Epoch, new or cleared: the load's payload and read message, the follow-up that wakes the model, then the harness contexts, and the header of the epoch's first request.
 function epochStart({ header = requestHeader() } = {}) {
@@ -437,7 +428,7 @@ test('a skeleton call pauses the range until a payload message after it opens a 
   const facts = new Map();
   const surface = () => {
     const log = sessionLog(events);
-    for (const event of log) facts.set(event.seq, sourceFactOf(event));
+    for (const event of log) facts.set(event.seq, eventFactOf(event));
     return surfaceOf(log);
   };
 
@@ -488,7 +479,7 @@ test('stepN is computed afresh from the nodes of each call: a seal between two c
   const facts = new Map();
   const surface = () => {
     const log = sessionLog(events);
-    for (const event of log) facts.set(event.seq, sourceFactOf(event));
+    for (const event of log) facts.set(event.seq, eventFactOf(event));
     return surfaceOf(log);
   };
 
@@ -551,8 +542,8 @@ test('a pruner replace is no frontier and moves no step: its node keeps the posi
 // ── Slots ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 // The slots over the whole range `innerSource` answers, each as `{ seqs, step? }` in the events' own seqs.
-function slotsOf({ log, nodes, facts }) {
-  return skeletonSlots(log, nodes, innerSource(facts, nodes).range);
+function slotsOf({ nodes, facts }) {
+  return skeletonSlots(facts, nodes, innerSource(facts, nodes).range);
 }
 
 test('a counted step is one slot of its assistant message and settled tool results, and a user message is a slot of its own', () => {
@@ -604,11 +595,11 @@ test('an empty message makes no slot and no step, and a node whose step the rang
   const first = mainStep(1, 1);
   const empty = assistantMessage({ turn: 1, step: 2 });
   const session = logOf([systemMessage(), turnStart(), user, ...first.events, stepStart({ turn: 1, step: 2 }), empty, stepEnd({ turn: 1, step: 2 })]);
-  const { log, nodes, seqOf } = session;
+  const { facts, nodes, seqOf } = session;
 
   assert.deepEqual(slotsOf(session).map(slot => slot.seqs), [[seqOf(user)], [first.assistant, first.result].map(seqOf)], 'no slot for the empty message');
   // A range that starts at the result has not selected the step's assistant message.
-  assert.deepEqual(skeletonSlots(log, nodes, [first.result, empty].map(seqOf)), [{ seqs: [seqOf(first.result)] }]);
+  assert.deepEqual(skeletonSlots(facts, nodes, [first.result, empty].map(seqOf)), [{ seqs: [seqOf(first.result)] }]);
 });
 
 test('an empty message of a counted step stays with the step', () => {
@@ -689,13 +680,8 @@ test('a selected pruner replacement whose step is not counted is a slot of its o
   const step = mainStep(1, 1);
   const prune = [compactionPrune(step.result), prunedResult(step.result)];
   const session = logOf([systemMessage(), turnStart(), ...step.events, ...prune]);
-  const { log, nodes, seqOf } = session;
+  const { facts, nodes, seqOf } = session;
 
-  assert.deepEqual(skeletonSlots(log, nodes, [seqOf(prune[1])]), [{ seqs: [step.result, prune[1]].map(seqOf) }]);
+  assert.deepEqual(skeletonSlots(facts, nodes, [seqOf(prune[1])]), [{ seqs: [step.result, prune[1]].map(seqOf) }]);
 });
 
-test('the pause names the tool the host registers', () => {
-  const definitions = createTools({ defineTool: definition => definition, table: {}, store: {} });
-
-  assert.ok(definitions.some(definition => definition.name === TURN_SKELETON_TOOL));
-});

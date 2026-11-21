@@ -2,8 +2,8 @@
 // Each function is tested on its own, against expected values written out by hand; the translate is the key followed by its parameters, so a wrong key or a wrong parameter shows in the expected literal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parentMetaParts, handoffMetaParts, handoffTitle, settlementMetaParts, settlementTextOf, blockParts, blockListParts, quoteFactsOf, slotFactsOf, jsonText, stringOf, KAPPA_PRESET_IDS } from '../dsh/src/client/monitor-model.js';
-import { KAPPA_PRESETS } from '../dsh/src/inner-quote.js';
+import { parentMetaParts, handoffMetaParts, handoffTitle, settlementMetaParts, signedText, blockParts, blockListParts, quoteFactsOf, slotFactsOf, jsonText, stringOf } from '../dsh/src/client/monitor-model.js';
+import { PRESET_IDS } from '../public/lib/compactionSettings.js';
 import { handoffRow } from './helpers/dsh-monitor-wire.js';
 
 const t = (key, params) => (params === undefined ? key : `${key}(${Object.entries(params).map(([name, value]) => `${name}=${value}`).join(',')})`);
@@ -13,7 +13,6 @@ const attemptRow = (overrides = {}) => ({
   id: 7,
   revision: 9,
   status: 'committed',
-  legacy: false,
   startedAt: 1_000,
   endedAt: 1_900,
   range: { first: 1, last: 4, count: 4 },
@@ -45,7 +44,7 @@ test('a committed attempt\'s meta is its time, step count, estimate outcome, usa
 });
 
 test('what the row has none of reads as a dash, the usage with no title, and the time, step count, estimate outcome and context parts keep theirs', () => {
-  const bare = attemptRow({ startedAt: null, endedAt: null, contextChange: null, stepN: null, trigger: null, call: { ...attemptRow().call, usage: null } });
+  const bare = attemptRow({ endedAt: null, contextChange: null, stepN: null, trigger: null, call: { ...attemptRow().call, usage: null } });
   assert.deepEqual(parentMetaParts(bare, 9_999, t), [
     { part: 'time', text: '—', title: 'monitor.meta.time' },
     { part: 'step', text: '—', title: 'monitor.meta.step.title' },
@@ -185,7 +184,7 @@ const slotDetail = (overrides = {}) => ({
   seqs: [12, 13, 14],
   turn: 3,
   step: 2,
-  source: { type: 'assistant/message', kind: 'model' },
+  source: { type: 'assistant/message', kind: 'model', category: 'assistant' },
   c: 'a note',
   events: [
     { seq: 12, type: 'assistant/message', visible: true, blocks: [], raw: {} },
@@ -217,7 +216,7 @@ test('a slot that counted no turn or step lists neither, and a source the detail
     ['monitor.slot.sourceKind', null],
     ['monitor.slot.visibleCount', 'monitor.slot.visibleCountValue(visible=2,total=3)'],
   ]);
-  const user = slotFactsOf(slotDetail({ turn: 1, step: null, source: { type: 'user/message', kind: null } }), t);
+  const user = slotFactsOf(slotDetail({ turn: 1, step: null, source: { type: 'user/message', kind: null, category: 'other' } }), t);
   assert.deepEqual(user.filter(([term]) => term === 'monitor.slot.step'), []);
   assert.deepEqual(user.find(([term]) => term === 'monitor.slot.sourceKind'), ['monitor.slot.sourceKind', null]);
   assert.deepEqual(user.find(([term]) => term === 'monitor.slot.source'), ['monitor.slot.source', 'monitor.source.other']);
@@ -225,7 +224,7 @@ test('a slot that counted no turn or step lists neither, and a source the detail
 
 // ── quoteFactsOf ──────────────────────────────────────────────────────────────
 
-const QUOTE = { n: 8, lA: 12400, bEst: 300, cEst: 2400, sEst: 9580, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.87, q: 1.0377949146956498, arm: 'left', trigger: 'quote', missing: null };
+const QUOTE = { n: 8, lA: 12400, bEst: 300, cEst: 2400, sEst: 9580, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.87, q: 1.0377949146956498, arm: 'left', trigger: 'quote' };
 
 test('the quote\'s facts list the evidence estimate beside the summary estimate, a whole number as it is, and the preset the quote was priced under before its tolerance, in the order the page shows its inputs, with no trigger row', () => {
   assert.deepEqual(quoteFactsOf(QUOTE, t), [
@@ -233,22 +232,24 @@ test('the quote\'s facts list the evidence estimate beside the summary estimate,
     ['monitor.quote.cRatio', '30'], ['monitor.quote.fee', '5000'], ['monitor.quote.preset', 'monitor.quote.preset.E2'], ['monitor.quote.kappa', '1.1'],
     ['monitor.quote.q', '1.038'], ['monitor.quote.arm', 'monitor.quote.arm.left'],
   ]);
-  const missing = quoteFactsOf({ ...QUOTE, trigger: 'hard', missing: 'ratio_unavailable' }, t);
-  assert.deepEqual(missing.slice(0, 2), [['monitor.quote.missingReason', 'monitor.quote.missing.ratio_unavailable'], ['monitor.quote.n', '8']], 'the reason a quote has no result leads, and a quote with trigger `hard` adds no row');
+});
+
+test('a quote that used a summary read cost lists it after the fixed overhead, and one without it lists no row for it', () => {
+  const termsOf = quote => quoteFactsOf(quote, t).map(([term]) => term);
+  const fee = termsOf(QUOTE).indexOf('monitor.quote.fee');
+  assert.deepEqual(quoteFactsOf({ ...QUOTE, summaryReadCost: 4200 }, t)[fee + 1], ['monitor.quote.summaryReadCost', '4200']);
+  assert.deepEqual(termsOf({ ...QUOTE, summaryReadCost: 4200 }).filter(term => term !== 'monitor.quote.summaryReadCost'), termsOf(QUOTE));
+  assert.equal(termsOf(QUOTE).includes('monitor.quote.summaryReadCost'), false);
 });
 
 test('the preset is named by its id when the client knows it, and a quote with none recorded or one the client does not know has none to show', () => {
   const presetOf = quote => quoteFactsOf(quote, t).find(([term]) => term === 'monitor.quote.preset');
-  for (const id of KAPPA_PRESET_IDS) assert.deepEqual(presetOf({ ...QUOTE, preset: id }), ['monitor.quote.preset', `monitor.quote.preset.${id}`], id);
+  for (const id of PRESET_IDS) assert.deepEqual(presetOf({ ...QUOTE, preset: id }), ['monitor.quote.preset', `monitor.quote.preset.${id}`], id);
   const { preset, ...older } = QUOTE;
   assert.deepEqual(presetOf(older), ['monitor.quote.preset', null], 'a quote with no `preset` field');
   assert.deepEqual(presetOf({ ...QUOTE, preset: null }), ['monitor.quote.preset', null]);
   assert.deepEqual(presetOf({ ...QUOTE, preset: 'Z9' }), ['monitor.quote.preset', null], 'an id the client has no name for');
   for (const preset of ['toString', '__proto__', 7, {}]) assert.deepEqual(presetOf({ ...QUOTE, preset }), ['monitor.quote.preset', null], `${String(preset)} is no id`);
-});
-
-test('the client names exactly the presets the host prices a quote under', () => {
-  assert.deepEqual([...KAPPA_PRESET_IDS], Object.keys(KAPPA_PRESETS));
 });
 
 test('a record that still holds the todo estimate of an earlier seal lists no row for it: the facts are those of the same quote without it', () => {
@@ -330,7 +331,7 @@ test('a continued handoff whose first call after it has not arrived has dashes f
   assert.deepEqual([none.range, none.context], ['—', '—']);
 });
 
-// ── settlementMetaParts and settlementTextOf ─────────────────────────────────
+// ── settlementMetaParts and the figures it reads ─────────────────────────────
 
 /** The settlement of a segment of two compactions, the second of which has no figures. */
 const settlementOf = (overrides = {}) => ({
@@ -377,17 +378,20 @@ test('the figures are rounded before they are shown and before they are subtract
   assert.equal(textsOf({ saved: 999.6, cost: 1_000 }).net, 'monitor.settlement.net(count=0)');
 });
 
-test('the settlement\'s text lists each compaction on a line of its own with its figures as whole numbers, a dash for each figure of one that has none, then the total line, which alone has the compactions\' count and the steps of the segment, and the unit', () => {
-  assert.equal(settlementTextOf(settlementOf(), t), [
-    'monitor.object.attempt(epoch=1,ordinal=1) · monitor.settlement.saved(count=340212) · monitor.settlement.cost(count=120034) · monitor.settlement.net(count=+220178) · monitor.settlement.payback(percent=283%)',
-    'monitor.object.attempt(epoch=1,ordinal=2) · monitor.settlement.saved(count=—) · monitor.settlement.cost(count=—) · monitor.settlement.net(count=—) · monitor.settlement.payback(percent=—)',
-    'monitor.settlement.total · monitor.settlement.count(count=2) · monitor.settlement.steps(count=120) · monitor.settlement.saved(count=340212) · monitor.settlement.cost(count=120034) · monitor.settlement.net(count=+220178) · monitor.settlement.payback(percent=283%)',
-    'monitor.settlement.unit',
-  ].join('\n'));
+test('a settlement\'s figures read the whole numbers they round to in the format they are given, the meta\'s own parts carrying them whole where the format is String', () => {
+  const figuresOf = (saved, cost) => settlementMetaParts(settlementOf({ saved, cost }), t, String).slice(2).map(({ text }) => text);
+  assert.deepEqual(figuresOf(340_212.4, 120_033.6), ['monitor.settlement.saved(count=340212)', 'monitor.settlement.cost(count=120034)', 'monitor.settlement.net(count=+220178)', 'monitor.settlement.payback(percent=283%)']);
+  assert.deepEqual(figuresOf(100, 400), ['monitor.settlement.saved(count=100)', 'monitor.settlement.cost(count=400)', 'monitor.settlement.net(count=\u2212300)', 'monitor.settlement.payback(percent=25%)']);
+  assert.deepEqual(figuresOf(500, 500), ['monitor.settlement.saved(count=500)', 'monitor.settlement.cost(count=500)', 'monitor.settlement.net(count=0)', 'monitor.settlement.payback(percent=100%)']);
+  const parts = settlementMetaParts(settlementOf(), t, String);
+  assert.deepEqual(parts.map(({ part }) => part), PARTS);
+  assert.deepEqual(parts.map(({ text }) => text).slice(2), ['monitor.settlement.saved(count=340212)', 'monitor.settlement.cost(count=120034)', 'monitor.settlement.net(count=+220178)', 'monitor.settlement.payback(percent=283%)']);
+  assert.equal(settlementMetaParts(settlementOf(), t)[2].text, 'monitor.settlement.saved(count=340.2k)', 'the compact count is the default');
 });
 
-test('the text of a settlement whose compactions lose is signed with the minus sign, and its lines carry the segment of the settlement', () => {
-  const lines = settlementTextOf(settlementOf({ epoch: 4, saved: 100, cost: 400, rows: [{ id: 3, ordinal: 2, saved: 100, cost: 400 }] }), t).split('\n');
-  assert.equal(lines[0], 'monitor.object.attempt(epoch=4,ordinal=2) · monitor.settlement.saved(count=100) · monitor.settlement.cost(count=400) · monitor.settlement.net(count=\u2212300) · monitor.settlement.payback(percent=25%)');
-  assert.equal(lines.at(-2).endsWith('monitor.settlement.payback(percent=25%)'), true);
+test('a signed text has a plus before a gain, the minus sign before a loss and no sign at zero, its magnitude written by the format', () => {
+  assert.equal(signedText(12, String), '+12');
+  assert.equal(signedText(-12, String), '\u221212');
+  assert.equal(signedText(0, String), '0');
+  assert.equal(signedText(-1_500, count => `${count / 1_000}k`), '\u22121.5k');
 });

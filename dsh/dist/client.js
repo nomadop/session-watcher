@@ -162,6 +162,21 @@ var en = {
   "monitor.rows.unavailable": "The events of this session cannot be read right now. That does not mean it has none.",
   "monitor.rows.unreachable": "The event monitor cannot be reached: {message}",
   "monitor.rows.empty": "This session has no events yet.",
+  "monitor.toolbar.label": "Event controls",
+  "monitor.toolbar.currentSettlement": "Current segment settlement",
+  "monitor.filter.category": "Event category",
+  "monitor.filter.all": "All",
+  "monitor.filter.handoff": "Handoffs",
+  "monitor.filter.compaction": "Compactions",
+  "monitor.filter.warned": "Warnings only",
+  "monitor.warning.state-check": "First request after compaction: state check only",
+  "monitor.warning.state-mixed": "First request after compaction: includes state checks",
+  "monitor.warning.state-write": "First request after compaction: state write",
+  "monitor.warning.verbatim-recall": "Read target includes verbatim text carried by compaction",
+  "monitor.warning.handoff-recall": "Direct handoff payload read",
+  "monitor.warning.carrier-recall": "Direct compaction carrier read",
+  "monitor.filter.collapseAll": "Collapse all",
+  "monitor.filter.empty": "No events match the filter",
   "monitor.object.attempt": "Segment #{epoch} Compaction #{ordinal}",
   "monitor.object.call": "Call",
   "monitor.object.turn": "turn {turn}",
@@ -241,7 +256,6 @@ var en = {
   "monitor.block.image": "Image reference",
   "monitor.block.file": "File reference",
   "monitor.block.unknown": "Block of another kind",
-  "monitor.request.partial": "Partial record: this compaction has no start record, so only the selection and the tail its call record kept are shown.",
   "monitor.request.options": "Request options",
   "monitor.request.tail": "Tail of the request",
   "monitor.request.messages": "{count} earlier messages precede the tail.",
@@ -305,13 +319,8 @@ var en = {
   "monitor.files.wrap.off": "Wrap lines: off",
   "monitor.files.foot.note": "Note",
   "monitor.files.foot.text": "Original text",
-  "monitor.quote.missing.estimate_failed": "The estimate could not be made.",
-  "monitor.quote.missing.ratio_unavailable": "The cache write-to-read price ratio is unavailable.",
-  "monitor.quote.missing.non_positive_savings": "No savings are expected.",
-  "monitor.quote.missing.undefined_result": "The result cannot be computed.",
   "monitor.quote.none": "This compaction recorded no estimate.",
   "monitor.quote.note": "An estimate taken before the summary was requested; the evidence actually committed is on the Evidence page.",
-  "monitor.quote.missingReason": "No result because",
   "monitor.quote.n": "Steps",
   "monitor.quote.lA": "Tokens to compact",
   "monitor.quote.bEst": "Estimated evidence tokens",
@@ -319,6 +328,7 @@ var en = {
   "monitor.quote.sEst": "Estimated saved tokens",
   "monitor.quote.cRatio": "Cache write-to-read price ratio",
   "monitor.quote.fee": "Fixed overhead tokens",
+  "monitor.quote.summaryReadCost": "Summary read tokens",
   "monitor.quote.preset": "Compaction policy",
   "monitor.quote.preset.E2": "Most aggressive",
   "monitor.quote.preset.W2": "Aggressive",
@@ -387,7 +397,6 @@ var en = {
   "monitor.overview.slots": "Slots committed",
   "monitor.overview.endReason": "Recorded reason",
   "monitor.overview.thrown": "Error thrown by the call",
-  "monitor.overview.legacy": "This compaction has no start record, so its start time and request are not recorded.",
   "monitor.object.handoff": "Segment #{epoch} Handoff",
   "monitor.object.handoffContent": "Handoff content",
   "monitor.object.handoffTurn": "Turn {n}",
@@ -408,6 +417,11 @@ var en = {
   "monitor.drawer.handoffTurn": "Turn of segment #{epoch} handoff",
   "monitor.drawer.handoffId": "Handoff ID: {id}",
   "monitor.drawer.settlement": "Compaction settlement of segment #{epoch}",
+  "monitor.settlement.current.through": "Through step {step}",
+  "monitor.settlement.current.empty": "No compactions have committed in this segment.",
+  "monitor.settlement.current.pending": "Awaiting measurement: no compaction has complete readings yet.",
+  "monitor.settlement.current.partial": "Awaiting measurement: totals include only compactions with complete readings.",
+  "monitor.settlement.current.stockUnavailable": "This snapshot does not have enough call readings to draw the input stock chart.",
   "monitor.settlement.count": "Compactions {count}",
   "monitor.settlement.count.title": "Committed compactions of this segment",
   "monitor.settlement.steps": "Steps {count}",
@@ -420,13 +434,119 @@ var en = {
   "monitor.settlement.net.title": "Saved minus cost, in read-price tokens",
   "monitor.settlement.payback": "Payback {percent}",
   "monitor.settlement.payback.title": "Saved as a share of cost",
-  "monitor.settlement.total": "Total",
   "monitor.settlement.unit": "Unit: read-price tokens, converted at the cache write-to-read price ratio of this session; not a bill.",
+  "monitor.settlement.recall.pending": "Loading recall adjustments\u2026",
+  "monitor.settlement.recall.unavailable": "Could not load the settlement detail. Showing unadjusted estimates.",
+  "monitor.settlement.recall.partial": "Some recall adjustments could not be calculated.",
   "monitor.handoffPage.overview": "Overview",
   "monitor.handoffPage.summary": "Summary",
   "monitor.handoffPage.files": "Files",
   "monitor.handoffPage.turns": "Turns",
   "monitor.handoffPage.lineage": "Lineage",
+  "monitor.settlementPage.payback": "Payback",
+  "monitor.payback.lowest": "Lowest {value} (step {step})",
+  "monitor.payback.below": "Below 0: {ranges}",
+  "monitor.payback.range": "steps {from}\u2013{to}",
+  "monitor.payback.rangeToEnd": "from step {from} to the segment end",
+  "monitor.payback.rangeAt": "step {at}",
+  "monitor.payback.listSeparator": ", ",
+  "monitor.payback.median": "Median steps to pay back: {count}",
+  "monitor.payback.steps": "{count} steps",
+  "monitor.payback.curve": "Cumulative net",
+  "monitor.payback.axis.clipped": "Y axis: clipped",
+  "monitor.payback.axis.full": "Y axis: full",
+  "monitor.payback.clipNote": "Y axis clipped at {top}; the curve is above it from step {step}.",
+  "monitor.payback.lowestLabel": "Lowest {value}",
+  "monitor.payback.endLabel": "End {value}",
+  "monitor.payback.snapshotEndLabel": "So far {value}",
+  "monitor.payback.seal": "Seal",
+  "monitor.payback.stepUnit": "steps",
+  "monitor.payback.chart.separator": " ",
+  "monitor.payback.chart.lead": "Cumulative net curve.",
+  "monitor.payback.chart.lowest": "Lowest {value} (step {step}).",
+  "monitor.payback.chart.below": "Below 0: {ranges}.",
+  "monitor.payback.chart.end": "End {value}.",
+  "monitor.payback.chart.snapshotEnd": "Net through the snapshot: {value}.",
+  "monitor.payback.chart.tail": "Each compaction\u2019s cost is counted at its seal.",
+  "monitor.payback.chart.recallTail": "The curve includes adjustments on the steps affected by recall.",
+  "monitor.payback.formula.net": "Saved {saved} \u2212 Cost {cost}",
+  "monitor.payback.formula.saved": "Base savings {base} \u2212 Recall-step savings {withdrawn} \u2212 Resident recall results {residence} \u2212 Later-seal savings adjustment {cut}",
+  "monitor.payback.formula.cost": "Base cost {base} + Recall request cost {requests} \u2212 Cache rebuild already counted {overlap}",
+  "monitor.payback.legend.actual": "Steps taken",
+  "monitor.payback.legend.needed": "Steps needed",
+  "monitor.payback.legend.missing": "Steps still missing",
+  "monitor.payback.legend.surplus": "Steps beyond",
+  "monitor.payback.sort": "Sort",
+  "monitor.payback.sort.ordinal": "#k",
+  "monitor.payback.sort.gap": "Gap high\u2192low",
+  "monitor.payback.list": "Steps taken and steps needed by each compaction of segment #{epoch}",
+  "monitor.payback.col.ordinal": "#k",
+  "monitor.payback.col.sealAt": "Sealed at",
+  "monitor.payback.col.stock": "Context before \u2192 after",
+  "monitor.payback.col.cost": "Cost",
+  "monitor.payback.col.summary": "Summary call",
+  "monitor.payback.col.rebuild": "Cache rebuild",
+  "monitor.payback.col.perStep": "Saved per step",
+  "monitor.payback.col.perStep.adjusted": "{count} (recall-adjusted)",
+  "monitor.payback.col.actual": "Taken",
+  "monitor.payback.col.needed": "Needed",
+  "monitor.payback.col.gap": "Gap",
+  "monitor.payback.col.gap.title": "Gap = needed \u2212 taken",
+  "monitor.payback.col.net": "Cumulative net",
+  "monitor.payback.row.label": "Compaction #{ordinal}: {actual} taken, {needed} needed, gap {gap}",
+  "monitor.payback.row.labelNoGap": "Compaction #{ordinal}: {actual} taken, {needed} needed",
+  "monitor.payback.table": "Appendix: Full figures",
+  "monitor.payback.table.formula": "Settlement formula with full figures",
+  "monitor.payback.table.seals": "Compaction details",
+  "monitor.payback.table.label": "Compaction details, scrolls sideways",
+  "monitor.settlementPage.context": "Context",
+  "monitor.context.calls": "Main calls {count}",
+  "monitor.context.stock": "Input stock",
+  "monitor.context.seal": "Compaction",
+  "monitor.context.seal.prev": "Previous compaction",
+  "monitor.context.seal.next": "Next compaction",
+  "monitor.context.read.hint": "Hover over the input stock chart, or focus it and press \u2190 \u2192 (hold Shift for larger steps; PageUp/PageDown jump to a compaction).",
+  "monitor.context.read.call": "Call {at}/{total}",
+  "monitor.context.read.seal": "first after compaction #{ordinal}",
+  "monitor.context.read.actual": "Actual {value}",
+  "monitor.context.read.uncompressed": "Uncompressed {value}",
+  "monitor.context.line": "Deepening line {value}",
+  "monitor.context.facts.peak": "Actual peak {value}",
+  "monitor.context.facts.crossed": "Uncompressed crosses at call {n}",
+  "monitor.context.chart.kind": "Line chart",
+  "monitor.context.chart.y": "Input stock \u2191",
+  "monitor.context.chart.lead": "Input stock by call number: the solid line is actual, peak {peak}; the dashed line is uncompressed",
+  "monitor.context.chart.line": "; deepening line {value}",
+  "monitor.context.chart.crossUncompressed": ", uncompressed crosses at call {n}",
+  "monitor.context.chart.crossActual": ", actual crosses at call {n}",
+  "monitor.context.chart.keys": ". The left and right arrow keys move the cursor, PageUp/PageDown jump to the previous or next compaction.",
+  "monitor.context.mark.uncompressed": "Uncompressed: call {n}",
+  "monitor.context.mark.actual": "Actual: call {n}",
+  "monitor.context.unit.calls": "Call number \u2192",
+  "monitor.context.legend": "Legend",
+  "monitor.context.legend.actual": "Actual",
+  "monitor.context.legend.uncompressed": "Uncompressed",
+  "monitor.context.legend.assumption": "Assumes growth is unchanged apart from the seals",
+  "monitor.context.note": "Note",
+  "monitor.context.note.line": 'Deepening line: the input stock position fitted from the measurements at the end of this segment; once the actual stock passes it, the segment is in the "Deepening" zone.',
+  "monitor.context.cache": "Cache rebuild",
+  "monitor.context.cache.share": "Cache rebuild share of cost",
+  "monitor.context.cache.net": "Net",
+  "monitor.context.cache.slider": "Rebuild overpay",
+  "monitor.context.cache.read.actual": "Rebuild overpay counted as it is",
+  "monitor.context.cache.read.none": "Rebuild overpay not counted",
+  "monitor.context.cache.read.at": "Rebuild overpay counted at {percent}%",
+  "monitor.context.cache.read": "{lead} \u2192 net {net}",
+  "monitor.context.cache.crossing": "The net turns positive once the rebuild overpay falls below {percent}",
+  "monitor.context.cache.chart": "Net with no rebuild overpay counted {none}, with all of it counted {actual}.",
+  "monitor.context.cache.chart.crossing": "Net with no rebuild overpay counted {none}, with all of it counted {actual}. {sentence}.",
+  "monitor.context.cache.axis": "Share of the rebuild overpay counted",
+  "monitor.context.cache.rows": "Rebuild overpay of each compaction",
+  "monitor.context.cache.rows.ordinal": "#",
+  "monitor.context.cache.rows.rebuild": "Overpay",
+  "monitor.context.cache.rows.share": "Share",
+  "monitor.context.cache.row.label": "Compaction #{ordinal}, rebuild overpay {rebuild}, share {share}, go to call {at} on the chart",
+  "monitor.context.cache.row.labelNone": "Compaction #{ordinal}, no data, go to call {at} on the chart",
   "monitor.handoff.overview.type": "Type",
   "monitor.handoff.overview.token": "Handoff code",
   "monitor.handoff.overview.createdAt": "Prepared at",
@@ -561,6 +681,21 @@ var zh = {
   "monitor.rows.unavailable": "\u6682\u65F6\u65E0\u6CD5\u8BFB\u53D6\u6B64\u4F1A\u8BDD\u7684\u4E8B\u4EF6\uFF0C\u8FD9\u5E76\u4E0D\u8868\u793A\u5B83\u6CA1\u6709\u4E8B\u4EF6\u3002",
   "monitor.rows.unreachable": "\u65E0\u6CD5\u8FDE\u63A5\u4E8B\u4EF6\u76D1\u89C6\uFF1A{message}",
   "monitor.rows.empty": "\u6B64\u4F1A\u8BDD\u8FD8\u6CA1\u6709\u4E8B\u4EF6\u3002",
+  "monitor.toolbar.label": "\u4E8B\u4EF6\u64CD\u4F5C",
+  "monitor.toolbar.currentSettlement": "\u5F53\u524D\u5206\u6BB5\u7ED3\u7B97",
+  "monitor.filter.category": "\u4E8B\u4EF6\u7C7B\u522B",
+  "monitor.filter.all": "\u5168\u90E8",
+  "monitor.filter.handoff": "\u4EA4\u63A5",
+  "monitor.filter.compaction": "\u538B\u7F29",
+  "monitor.filter.warned": "\u4EC5\u8B66\u544A",
+  "monitor.warning.state-check": "\u5C01\u5B58\u540E\u9996\u6B65\u53EA\u67E5\u72B6\u6001",
+  "monitor.warning.state-mixed": "\u5C01\u5B58\u540E\u9996\u6B65\u542B\u72B6\u6001\u64CD\u4F5C",
+  "monitor.warning.state-write": "\u5C01\u5B58\u540E\u9996\u6B65\u5199\u5165\u72B6\u6001",
+  "monitor.warning.verbatim-recall": "\u56DE\u8BFB\u76EE\u6807\u542B\u5C01\u5B58\u5DF2\u643A\u5E26\u7684\u539F\u6587",
+  "monitor.warning.handoff-recall": "\u76F4\u8BFB\u4EA4\u63A5\u8F7D\u8377",
+  "monitor.warning.carrier-recall": "\u76F4\u8BFB\u538B\u7F29\u8F7D\u4F53",
+  "monitor.filter.collapseAll": "\u5168\u90E8\u6298\u53E0",
+  "monitor.filter.empty": "\u6CA1\u6709\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u4E8B\u4EF6",
   "monitor.object.attempt": "\u5206\u6BB5 #{epoch} \u538B\u7F29 #{ordinal}",
   "monitor.object.call": "\u8C03\u7528",
   "monitor.object.turn": "\u7B2C {turn} \u8F6E",
@@ -640,7 +775,6 @@ var zh = {
   "monitor.block.image": "\u56FE\u7247\u5F15\u7528",
   "monitor.block.file": "\u6587\u4EF6\u5F15\u7528",
   "monitor.block.unknown": "\u5176\u4ED6\u7C7B\u578B\u7684\u5757",
-  "monitor.request.partial": "\u90E8\u5206\u8BB0\u5F55\uFF1A\u6B64\u538B\u7F29\u6CA1\u6709\u5F00\u59CB\u8BB0\u5F55\uFF0C\u4EC5\u663E\u793A\u5176\u8C03\u7528\u8BB0\u5F55\u4FDD\u7559\u7684\u9009\u62E9\u4E0E\u5C3E\u90E8\u3002",
   "monitor.request.options": "\u8BF7\u6C42\u9009\u9879",
   "monitor.request.tail": "\u8BF7\u6C42\u5C3E\u90E8",
   "monitor.request.messages": "\u5C3E\u90E8\u4E4B\u524D\u6709 {count} \u6761\u5386\u53F2\u6D88\u606F\u3002",
@@ -704,13 +838,8 @@ var zh = {
   "monitor.files.wrap.off": "\u81EA\u52A8\u6362\u884C\uFF1A\u5173",
   "monitor.files.foot.note": "\u8BF4\u660E",
   "monitor.files.foot.text": "\u539F\u6587",
-  "monitor.quote.missing.estimate_failed": "\u4F30\u7B97\u5931\u8D25\u3002",
-  "monitor.quote.missing.ratio_unavailable": "\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4\u4E0D\u53EF\u7528\u3002",
-  "monitor.quote.missing.non_positive_savings": "\u9884\u8BA1\u6CA1\u6709\u8282\u7701\u3002",
-  "monitor.quote.missing.undefined_result": "\u7ED3\u679C\u65E0\u6CD5\u8BA1\u7B97\u3002",
   "monitor.quote.none": "\u6B64\u538B\u7F29\u6CA1\u6709\u8BB0\u5F55\u4F30\u7B97\u3002",
   "monitor.quote.note": "\u8BF7\u6C42\u6458\u8981\u524D\u7684\u4F30\u7B97\uFF1B\u5B9E\u9645\u63D0\u4EA4\u7684\u8BC1\u636E\u89C1\u300C\u8BC1\u636E\u300D\u9875\u3002",
-  "monitor.quote.missingReason": "\u65E0\u7ED3\u679C\u539F\u56E0",
   "monitor.quote.n": "\u6B65\u6570",
   "monitor.quote.lA": "\u5F85\u538B\u7F29 token",
   "monitor.quote.bEst": "\u4F30\u7B97\u8BC1\u636E token",
@@ -718,6 +847,7 @@ var zh = {
   "monitor.quote.sEst": "\u4F30\u7B97\u8282\u7701 token",
   "monitor.quote.cRatio": "\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4",
   "monitor.quote.fee": "\u56FA\u5B9A\u5F00\u9500 token",
+  "monitor.quote.summaryReadCost": "\u6458\u8981\u8BFB\u53D6 token",
   "monitor.quote.preset": "\u538B\u7F29\u7B56\u7565",
   "monitor.quote.preset.E2": "\u6781\u6FC0\u8FDB",
   "monitor.quote.preset.W2": "\u6FC0\u8FDB",
@@ -786,7 +916,6 @@ var zh = {
   "monitor.overview.slots": "\u5DF2\u63D0\u4EA4\u7684\u69FD\u4F4D\u6570",
   "monitor.overview.endReason": "\u8BB0\u5F55\u7684\u539F\u56E0",
   "monitor.overview.thrown": "\u8C03\u7528\u629B\u51FA\u7684\u9519\u8BEF",
-  "monitor.overview.legacy": "\u6B64\u538B\u7F29\u6CA1\u6709\u5F00\u59CB\u8BB0\u5F55\uFF0C\u5176\u5F00\u59CB\u65F6\u95F4\u548C\u8BF7\u6C42\u5747\u672A\u8BB0\u5F55\u3002",
   "monitor.object.handoff": "\u5206\u6BB5 #{epoch} \u4EA4\u63A5",
   "monitor.object.handoffContent": "\u4EA4\u63A5\u5185\u5BB9",
   "monitor.object.handoffTurn": "\u56DE\u5408 {n}",
@@ -807,6 +936,11 @@ var zh = {
   "monitor.drawer.handoffTurn": "\u5206\u6BB5#{epoch}\u4EA4\u63A5\u7684\u56DE\u5408",
   "monitor.drawer.handoffId": "\u4EA4\u63A5ID\uFF1A{id}",
   "monitor.drawer.settlement": "\u5206\u6BB5#{epoch}\u538B\u7F29\u7ED3\u7B97",
+  "monitor.settlement.current.through": "\u622A\u81F3\u7B2C {step} \u6B65",
+  "monitor.settlement.current.empty": "\u672C\u6BB5\u6682\u65E0\u5DF2\u63D0\u4EA4\u7684\u538B\u7F29",
+  "monitor.settlement.current.pending": "\u5F85\u6D4B\u91CF\uFF1A\u672C\u6BB5\u8FD8\u6CA1\u6709\u8BFB\u6570\u5B8C\u6574\u7684\u538B\u7F29\u3002",
+  "monitor.settlement.current.partial": "\u90E8\u5206\u538B\u7F29\u5F85\u6D4B\u91CF\uFF1B\u5408\u8BA1\u4EC5\u7EB3\u5165\u8BFB\u6570\u5B8C\u6574\u7684\u538B\u7F29\u3002",
+  "monitor.settlement.current.stockUnavailable": "\u6B64\u5FEB\u7167\u7684\u8C03\u7528\u8BFB\u6570\u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u7ED8\u5236\u8F93\u5165\u5B58\u91CF\u56FE\u3002",
   "monitor.settlement.count": "\u538B\u7F29 {count} \u6B21",
   "monitor.settlement.count.title": "\u8BE5\u6BB5\u5DF2\u63D0\u4EA4\u7684\u538B\u7F29\u6B21\u6570",
   "monitor.settlement.steps": "\u6B65\u6570 {count}",
@@ -819,13 +953,119 @@ var zh = {
   "monitor.settlement.net.title": "\u8282\u7701\u51CF\u6210\u672C\uFF0C\u8BFB\u4EF7 token",
   "monitor.settlement.payback": "\u56DE\u672C {percent}",
   "monitor.settlement.payback.title": "\u8282\u7701\u5360\u6210\u672C\u7684\u6BD4\u4F8B",
-  "monitor.settlement.total": "\u5408\u8BA1",
   "monitor.settlement.unit": "\u5355\u4F4D\uFF1A\u8BFB\u4EF7 token\uFF0C\u6309\u672C\u4F1A\u8BDD\u7684\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4\u6298\u7B97\uFF0C\u4E0D\u662F\u8D26\u5355\u3002",
+  "monitor.settlement.recall.pending": "\u6B63\u5728\u8BFB\u53D6\u53EC\u56DE\u4FEE\u6B63\u2026",
+  "monitor.settlement.recall.unavailable": "\u7ED3\u7B97\u660E\u7EC6\u8BFB\u53D6\u5931\u8D25\uFF0C\u5F53\u524D\u663E\u793A\u672A\u4FEE\u6B63\u7684\u4F30\u7B97\u3002",
+  "monitor.settlement.recall.partial": "\u90E8\u5206\u53EC\u56DE\u4FEE\u6B63\u7F3A\u5C11\u8BA1\u7B97\u4F9D\u636E\u3002",
   "monitor.handoffPage.overview": "\u6982\u89C8",
   "monitor.handoffPage.summary": "\u6458\u8981",
   "monitor.handoffPage.files": "\u6587\u4EF6",
   "monitor.handoffPage.turns": "\u56DE\u5408",
   "monitor.handoffPage.lineage": "\u8C31\u7CFB",
+  "monitor.settlementPage.payback": "\u56DE\u672C",
+  "monitor.payback.lowest": "\u6700\u4F4E {value}\uFF08\u7B2C {step} \u6B65\uFF09",
+  "monitor.payback.below": "\u4F4E\u4E8E 0\uFF1A{ranges}",
+  "monitor.payback.range": "\u7B2C {from}\u2013{to} \u6B65",
+  "monitor.payback.rangeToEnd": "\u7B2C {from} \u6B65\u8D77\u81F3\u6BB5\u672B",
+  "monitor.payback.rangeAt": "\u7B2C {at} \u6B65",
+  "monitor.payback.listSeparator": "\u3001",
+  "monitor.payback.median": "\u56DE\u672C\u6240\u9700\u6B65\u6570\u4E2D\u4F4D {count} \u6B65",
+  "monitor.payback.steps": "{count} \u6B65",
+  "monitor.payback.curve": "\u7D2F\u8BA1\u76C8\u4E8F",
+  "monitor.payback.axis.clipped": "\u7EB5\u8F74\uFF1A\u622A\u65AD",
+  "monitor.payback.axis.full": "\u7EB5\u8F74\uFF1A\u5B8C\u6574",
+  "monitor.payback.clipNote": "\u7EB5\u8F74\u622A\u65AD\u4E8E {top}\uFF0C\u66F2\u7EBF\u81EA\u7B2C {step} \u6B65\u8D77\u8D85\u51FA\u3002",
+  "monitor.payback.lowestLabel": "\u6700\u4F4E {value}",
+  "monitor.payback.endLabel": "\u6BB5\u672B {value}",
+  "monitor.payback.snapshotEndLabel": "\u622A\u81F3\u5F53\u524D {value}",
+  "monitor.payback.seal": "\u5C01\u5B58",
+  "monitor.payback.stepUnit": "\u6B65",
+  "monitor.payback.chart.separator": "",
+  "monitor.payback.chart.lead": "\u7D2F\u8BA1\u76C8\u4E8F\u66F2\u7EBF\u3002",
+  "monitor.payback.chart.lowest": "\u6700\u4F4E {value}\uFF08\u7B2C {step} \u6B65\uFF09\u3002",
+  "monitor.payback.chart.below": "\u4F4E\u4E8E 0\uFF1A{ranges}\u3002",
+  "monitor.payback.chart.end": "\u6BB5\u672B {value}\u3002",
+  "monitor.payback.chart.snapshotEnd": "\u622A\u81F3\u5FEB\u7167\uFF0C\u76C8\u4E8F {value}\u3002",
+  "monitor.payback.chart.tail": "\u538B\u7F29\u6210\u672C\u5728\u5C01\u5B58\u6B65\u8BA1\u5165\u3002",
+  "monitor.payback.chart.recallTail": "\u66F2\u7EBF\u5DF2\u5728\u53D7\u53EC\u56DE\u5F71\u54CD\u7684\u6B65\u9AA4\u8BA1\u5165\u4FEE\u6B63\u3002",
+  "monitor.payback.formula.net": "\u8282\u7701 {saved} \u2212 \u6210\u672C {cost}",
+  "monitor.payback.formula.saved": "\u539F\u538B\u7F29\u8282\u7701 {base} \u2212 \u53EC\u56DE\u6B65\u8282\u7701 {withdrawn} \u2212 \u7ED3\u679C\u9A7B\u7559\u51B2\u51CF {residence} \u2212 \u540E\u7EE7\u5C01\u5B58\u8282\u7701\u4FEE\u6B63 {cut}",
+  "monitor.payback.formula.cost": "\u539F\u538B\u7F29\u6210\u672C {base} + \u53EC\u56DE\u8BF7\u6C42\u6210\u672C {requests} \u2212 \u5DF2\u8BA1\u5165\u7684\u7F13\u5B58\u91CD\u5EFA {overlap}",
+  "monitor.payback.legend.actual": "\u5B9E\u9645\u6B65\u6570",
+  "monitor.payback.legend.needed": "\u9700\u8981\u6B65\u6570",
+  "monitor.payback.legend.missing": "\u5C1A\u7F3A\u7684\u6B65",
+  "monitor.payback.legend.surplus": "\u8D85\u51FA\u7684\u6B65",
+  "monitor.payback.sort": "\u6392\u5E8F",
+  "monitor.payback.sort.ordinal": "#k",
+  "monitor.payback.sort.gap": "\u76F8\u5DEE \u5927\u2192\u5C0F",
+  "monitor.payback.list": "\u5206\u6BB5 #{epoch} \u5404\u6B21\u538B\u7F29\u7684\u5B9E\u9645\u6B65\u6570\u4E0E\u9700\u8981\u6B65\u6570",
+  "monitor.payback.col.ordinal": "#k",
+  "monitor.payback.col.sealAt": "\u5C01\u5B58\u6B65",
+  "monitor.payback.col.stock": "\u538B\u7F29\u524D\u540E",
+  "monitor.payback.col.cost": "\u6210\u672C",
+  "monitor.payback.col.summary": "\u6458\u8981\u8C03\u7528",
+  "monitor.payback.col.rebuild": "\u7F13\u5B58\u91CD\u5EFA",
+  "monitor.payback.col.perStep": "\u6BCF\u6B65\u8282\u7701",
+  "monitor.payback.col.perStep.adjusted": "{count}\uFF08\u53EC\u56DE\u4FEE\u6B63\u540E\uFF09",
+  "monitor.payback.col.actual": "\u5B9E\u9645",
+  "monitor.payback.col.needed": "\u9700\u8981",
+  "monitor.payback.col.gap": "\u76F8\u5DEE",
+  "monitor.payback.col.gap.title": "\u76F8\u5DEE = \u9700\u8981 \u2212 \u5B9E\u9645",
+  "monitor.payback.col.net": "\u7D2F\u8BA1\u76C8\u4E8F",
+  "monitor.payback.row.label": "\u538B\u7F29 #{ordinal}\uFF1A\u5B9E\u9645 {actual}\uFF0C\u9700\u8981 {needed}\uFF0C\u76F8\u5DEE {gap}",
+  "monitor.payback.row.labelNoGap": "\u538B\u7F29 #{ordinal}\uFF1A\u5B9E\u9645 {actual}\uFF0C\u9700\u8981 {needed}",
+  "monitor.payback.table": "\u9644\u5F55\uFF1A\u5B8C\u6574\u8BFB\u6570",
+  "monitor.payback.table.formula": "\u7ED3\u7B97\u516C\u5F0F\u5B8C\u6574\u8BFB\u6570",
+  "monitor.payback.table.seals": "\u9010\u6B21\u538B\u7F29\u660E\u7EC6",
+  "monitor.payback.table.label": "\u9010\u6B21\u538B\u7F29\u660E\u7EC6\uFF0C\u53EF\u6A2A\u5411\u6EDA\u52A8",
+  "monitor.settlementPage.context": "\u4E0A\u4E0B\u6587",
+  "monitor.context.calls": "\u4E3B\u8C03\u7528 {count} \u6B21",
+  "monitor.context.stock": "\u8F93\u5165\u5B58\u91CF",
+  "monitor.context.seal": "\u538B\u7F29",
+  "monitor.context.seal.prev": "\u4E0A\u4E00\u6B21\u538B\u7F29",
+  "monitor.context.seal.next": "\u4E0B\u4E00\u6B21\u538B\u7F29",
+  "monitor.context.read.hint": "\u60AC\u505C\u8F93\u5165\u5B58\u91CF\u56FE\uFF0C\u6216\u805A\u7126\u540E\u6309 \u2190 \u2192\uFF08\u6309\u4F4F Shift \u52A0\u5927\u6B65\u957F\uFF1BPageUp/PageDown \u8DF3\u5230\u538B\u7F29\u5904\uFF09\u3002",
+  "monitor.context.read.call": "\u7B2C {at}/{total} \u6B21\u8C03\u7528",
+  "monitor.context.read.seal": "\u538B\u7F29 #{ordinal} \u540E\u9996\u6B21",
+  "monitor.context.read.actual": "\u5B9E\u9645 {value}",
+  "monitor.context.read.uncompressed": "\u672A\u538B\u7F29 {value}",
+  "monitor.context.line": "\u6E10\u6DF1\u7EBF {value}",
+  "monitor.context.facts.peak": "\u5B9E\u9645\u6700\u9AD8 {value}",
+  "monitor.context.facts.crossed": "\u672A\u538B\u7F29\u7B2C {n} \u6B21\u8C03\u7528\u8D8A\u7EBF",
+  "monitor.context.chart.kind": "\u6298\u7EBF\u56FE",
+  "monitor.context.chart.y": "\u8F93\u5165\u5B58\u91CF \u2191",
+  "monitor.context.chart.lead": "\u8F93\u5165\u5B58\u91CF\u968F\u7B2C N \u6B21\u8C03\u7528\u53D8\u5316\uFF1A\u5B9E\u7EBF\u662F\u5B9E\u9645\uFF0C\u6700\u9AD8 {peak}\uFF1B\u865A\u7EBF\u662F\u672A\u538B\u7F29",
+  "monitor.context.chart.line": "\uFF1B\u6E10\u6DF1\u7EBF {value}",
+  "monitor.context.chart.crossUncompressed": "\uFF0C\u672A\u538B\u7F29\u7B2C {n} \u6B21\u8C03\u7528\u8D8A\u7EBF",
+  "monitor.context.chart.crossActual": "\uFF0C\u5B9E\u9645\u7B2C {n} \u6B21\u8C03\u7528\u8D8A\u7EBF",
+  "monitor.context.chart.keys": "\u3002\u5DE6\u53F3\u65B9\u5411\u952E\u79FB\u52A8\u6E38\u6807\uFF0CPageUp/PageDown \u8DF3\u5230\u4E0A/\u4E0B\u4E00\u6B21\u538B\u7F29\u3002",
+  "monitor.context.mark.uncompressed": "\u672A\u538B\u7F29\uFF1A\u7B2C {n} \u6B21\u8D8A\u7EBF",
+  "monitor.context.mark.actual": "\u5B9E\u9645\uFF1A\u7B2C {n} \u6B21\u8D8A\u7EBF",
+  "monitor.context.unit.calls": "\u7B2C N \u6B21\u8C03\u7528 \u2192",
+  "monitor.context.legend": "\u56FE\u4F8B",
+  "monitor.context.legend.actual": "\u5B9E\u9645",
+  "monitor.context.legend.uncompressed": "\u672A\u538B\u7F29",
+  "monitor.context.legend.assumption": "\u5047\u8BBE\uFF1A\u9664\u5C01\u5B58\u5916\u589E\u957F\u4E0D\u53D8",
+  "monitor.context.note": "\u8BF4\u660E",
+  "monitor.context.note.line": "\u6E10\u6DF1\u7EBF\uFF1A\u6309\u672C\u6BB5\u672B\u7684\u6D4B\u91CF\u62DF\u5408\u51FA\u7684\u8F93\u5165\u5B58\u91CF\u4F4D\u7F6E\uFF1B\u5B9E\u9645\u5B58\u91CF\u8D8A\u8FC7\u5B83\uFF0C\u5C31\u8FDB\u5165\u300C\u6E10\u6DF1\u300D\u533A\u3002",
+  "monitor.context.cache": "\u7F13\u5B58\u91CD\u5EFA",
+  "monitor.context.cache.share": "\u7F13\u5B58\u91CD\u5EFA\u5360\u6210\u672C",
+  "monitor.context.cache.net": "\u76C8\u4E8F",
+  "monitor.context.cache.slider": "\u91CD\u5EFA\u591A\u4ED8",
+  "monitor.context.cache.read.actual": "\u91CD\u5EFA\u591A\u4ED8\u6309\u5B9E\u9645\u8BA1",
+  "monitor.context.cache.read.none": "\u91CD\u5EFA\u591A\u4ED8\u4E0D\u8BA1",
+  "monitor.context.cache.read.at": "\u91CD\u5EFA\u591A\u4ED8\u6309 {percent}% \u8BA1",
+  "monitor.context.cache.read": "{lead} \u2192 \u76C8\u4E8F {net}",
+  "monitor.context.cache.crossing": "\u91CD\u5EFA\u591A\u4ED8\u7684\u90E8\u5206\u53EA\u8981\u964D\u5230 {percent} \u4EE5\u4E0B\uFF0C\u672C\u6BB5\u51C0\u989D\u8F6C\u6B63",
+  "monitor.context.cache.chart": "\u91CD\u5EFA\u591A\u4ED8\u4E0D\u8BA1\u5165\u65F6\u76C8\u4E8F {none}\uFF0C\u6309\u5B9E\u9645\u8BA1\u5165\u65F6 {actual}\u3002",
+  "monitor.context.cache.chart.crossing": "\u91CD\u5EFA\u591A\u4ED8\u4E0D\u8BA1\u5165\u65F6\u76C8\u4E8F {none}\uFF0C\u6309\u5B9E\u9645\u8BA1\u5165\u65F6 {actual}\u3002{sentence}\u3002",
+  "monitor.context.cache.axis": "\u91CD\u5EFA\u591A\u4ED8\u8BA1\u5165\u7684\u6BD4\u4F8B",
+  "monitor.context.cache.rows": "\u5404\u6B21\u538B\u7F29\u7684\u91CD\u5EFA\u591A\u4ED8",
+  "monitor.context.cache.rows.ordinal": "#",
+  "monitor.context.cache.rows.rebuild": "\u91CD\u5EFA\u591A\u4ED8",
+  "monitor.context.cache.rows.share": "\u5360\u6BD4",
+  "monitor.context.cache.row.label": "\u538B\u7F29 #{ordinal}\uFF0C\u91CD\u5EFA\u591A\u4ED8 {rebuild}\uFF0C\u5360\u6BD4 {share}\uFF0C\u5B9A\u4F4D\u5230\u56FE\u4E0A\u7B2C {at} \u6B21\u8C03\u7528",
+  "monitor.context.cache.row.labelNone": "\u538B\u7F29 #{ordinal}\uFF0C\u65E0\u6570\u636E\uFF0C\u5B9A\u4F4D\u5230\u56FE\u4E0A\u7B2C {at} \u6B21\u8C03\u7528",
   "monitor.handoff.overview.type": "\u7C7B\u578B",
   "monitor.handoff.overview.token": "\u4EA4\u63A5\u7801",
   "monitor.handoff.overview.createdAt": "\u51C6\u5907\u65F6\u95F4",
@@ -859,9 +1099,10 @@ var ENDPOINTS = {
   "DELETE /api/pricing": "pricing/delete",
   "POST /api/user-overrides": "user-overrides",
   "POST /api/preview": "preview",
+  "POST /api/bucket/file": "bucket/file",
   "GET /api/turn/browse": "turn/browse"
 };
-var FAILURE_STATUS = { invalid_body: 400, invalid_input: 400, no_model: 409, unknown_endpoint: 404 };
+var FAILURE_STATUS = { invalid_body: 400, invalid_input: 400, no_model: 409, not_held: 404, unknown_endpoint: 404 };
 var response = (ok, status, body) => ({ ok, status, json: async () => body });
 function createTabContext({ call, root }) {
   async function request(path, init = {}) {
@@ -1233,7 +1474,7 @@ function mount(root, ctx) {
 function round(v) {
   return v + 0.5 | 0;
 }
-var lim = (v, l, h10) => Math.max(Math.min(v, h10), l);
+var lim = (v, l, h14) => Math.max(Math.min(v, h14), l);
 function p2b(v) {
   return lim(round(v * 2.55), 0, 255);
 }
@@ -1280,17 +1521,17 @@ function hexString(v) {
   return v ? "#" + f(v.r) + f(v.g) + f(v.b) + alpha(v.a, f) : void 0;
 }
 var HUE_RE = /^(hsla?|hwb|hsv)\(\s*([-+.e\d]+)(?:deg)?[\s,]+([-+.e\d]+)%[\s,]+([-+.e\d]+)%(?:[\s,]+([-+.e\d]+)(%)?)?\s*\)$/;
-function hsl2rgbn(h10, s, l) {
+function hsl2rgbn(h14, s, l) {
   const a = s * Math.min(l, 1 - l);
-  const f = (n, k = (n + h10 / 30) % 12) => l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  const f = (n, k = (n + h14 / 30) % 12) => l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
   return [f(0), f(8), f(4)];
 }
-function hsv2rgbn(h10, s, v) {
-  const f = (n, k = (n + h10 / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
+function hsv2rgbn(h14, s, v) {
+  const f = (n, k = (n + h14 / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
   return [f(5), f(3), f(1)];
 }
-function hwb2rgbn(h10, w, b) {
-  const rgb = hsl2rgbn(h10, 1, 0.5);
+function hwb2rgbn(h14, w, b) {
+  const rgb = hsl2rgbn(h14, 1, 0.5);
   let i;
   if (w + b > 1) {
     i = 1 / (w + b);
@@ -1320,29 +1561,29 @@ function rgb2hsl(v) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
-  let h10, s, d;
+  let h14, s, d;
   if (max !== min) {
     d = max - min;
     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    h10 = hueValue(r, g, b, d, max);
-    h10 = h10 * 60 + 0.5;
+    h14 = hueValue(r, g, b, d, max);
+    h14 = h14 * 60 + 0.5;
   }
-  return [h10 | 0, s || 0, l];
+  return [h14 | 0, s || 0, l];
 }
 function calln(f, a, b, c) {
   return (Array.isArray(a) ? f(a[0], a[1], a[2]) : f(a, b, c)).map(n2b);
 }
-function hsl2rgb(h10, s, l) {
-  return calln(hsl2rgbn, h10, s, l);
+function hsl2rgb(h14, s, l) {
+  return calln(hsl2rgbn, h14, s, l);
 }
-function hwb2rgb(h10, w, b) {
-  return calln(hwb2rgbn, h10, w, b);
+function hwb2rgb(h14, w, b) {
+  return calln(hwb2rgbn, h14, w, b);
 }
-function hsv2rgb(h10, s, v) {
-  return calln(hsv2rgbn, h10, s, v);
+function hsv2rgb(h14, s, v) {
+  return calln(hsv2rgbn, h14, s, v);
 }
-function hue(h10) {
-  return (h10 % 360 + 360) % 360;
+function hue(h14) {
+  return (h14 % 360 + 360) % 360;
 }
 function hueParse(str) {
   const m = HUE_RE.exec(str);
@@ -1354,15 +1595,15 @@ function hueParse(str) {
   if (m[5] !== v) {
     a = m[6] ? p2b(+m[5]) : n2b(+m[5]);
   }
-  const h10 = hue(+m[2]);
+  const h14 = hue(+m[2]);
   const p1 = +m[3] / 100;
   const p2 = +m[4] / 100;
   if (m[1] === "hwb") {
-    v = hwb2rgb(h10, p1, p2);
+    v = hwb2rgb(h14, p1, p2);
   } else if (m[1] === "hsv") {
-    v = hsv2rgb(h10, p1, p2);
+    v = hsv2rgb(h14, p1, p2);
   } else {
-    v = hsl2rgb(h10, p1, p2);
+    v = hsl2rgb(h14, p1, p2);
   }
   return {
     r: v[0],
@@ -1372,22 +1613,22 @@ function hueParse(str) {
   };
 }
 function rotate(v, deg) {
-  var h10 = rgb2hsl(v);
-  h10[0] = hue(h10[0] + deg);
-  h10 = hsl2rgb(h10);
-  v.r = h10[0];
-  v.g = h10[1];
-  v.b = h10[2];
+  var h14 = rgb2hsl(v);
+  h14[0] = hue(h14[0] + deg);
+  h14 = hsl2rgb(h14);
+  v.r = h14[0];
+  v.g = h14[1];
+  v.b = h14[2];
 }
 function hslString(v) {
   if (!v) {
     return;
   }
   const a = rgb2hsl(v);
-  const h10 = a[0];
+  const h14 = a[0];
   const s = n2p(a[1]);
   const l = n2p(a[2]);
-  return v.a < 255 ? `hsla(${h10}, ${s}%, ${l}%, ${b2n(v.a)})` : `hsl(${h10}, ${s}%, ${l}%)`;
+  return v.a < 255 ? `hsla(${h14}, ${s}%, ${l}%, ${b2n(v.a)})` : `hsl(${h14}, ${s}%, ${l}%)`;
 }
 var map = {
   x: "dark",
@@ -2263,7 +2504,7 @@ function _getStartAndCountOfVisiblePoints(meta, points, animationsDisabled) {
         animationsDisabled ? pointCount : _lookupByKey(points, axis, iScale.getPixelForValue(min)).lo
       );
       if (spanGaps) {
-        const distanceToDefinedLo = _parsed.slice(0, start + 1).reverse().findIndex((point) => !isNullOrUndef(point[vScale.axis]));
+        const distanceToDefinedLo = _parsed.slice(0, start + 1).reverse().findIndex((point2) => !isNullOrUndef(point2[vScale.axis]));
         start -= Math.max(0, distanceToDefinedLo);
       }
       start = _limitValue(start, 0, pointCount - 1);
@@ -2276,7 +2517,7 @@ function _getStartAndCountOfVisiblePoints(meta, points, animationsDisabled) {
         animationsDisabled ? 0 : _lookupByKey(points, axis, iScale.getPixelForValue(max), true).hi + 1
       );
       if (spanGaps) {
-        const distanceToDefinedHi = _parsed.slice(end - 1).findIndex((point) => !isNullOrUndef(point[vScale.axis]));
+        const distanceToDefinedHi = _parsed.slice(end - 1).findIndex((point2) => !isNullOrUndef(point2[vScale.axis]));
         end += Math.max(0, distanceToDefinedHi);
       }
       count = _limitValue(end, start, pointCount) - start;
@@ -2740,13 +2981,13 @@ function toFontString(font) {
   return (font.style ? font.style + " " : "") + (font.weight ? font.weight + " " : "") + font.size + "px " + font.family;
 }
 function _measureText(ctx, data, gc, longest, string) {
-  let textWidth = data[string];
-  if (!textWidth) {
-    textWidth = data[string] = ctx.measureText(string).width;
+  let textWidth3 = data[string];
+  if (!textWidth3) {
+    textWidth3 = data[string] = ctx.measureText(string).width;
     gc.push(string);
   }
-  if (textWidth > longest) {
-    longest = textWidth;
+  if (textWidth3 > longest) {
+    longest = textWidth3;
   }
   return longest;
 }
@@ -2929,9 +3170,9 @@ function drawPointLegend(ctx, options, x, y, w) {
     ctx.stroke();
   }
 }
-function _isPointInArea(point, area, margin) {
+function _isPointInArea(point2, area, margin) {
   margin = margin || 0.5;
-  return !area || point && point.x > area.left - margin && point.x < area.right + margin && point.y > area.top - margin && point.y < area.bottom + margin;
+  return !area || point2 && point2.x > area.left - margin && point2.x < area.right + margin && point2.y > area.top - margin && point2.y < area.bottom + margin;
 }
 function clipArea(ctx, area) {
   ctx.save();
@@ -3032,12 +3273,12 @@ function renderText(ctx, text, x, y, font, opts = {}) {
   ctx.restore();
 }
 function addRoundedRectPath(ctx, rect) {
-  const { x, y, w, h: h10, radius } = rect;
+  const { x, y, w, h: h14, radius } = rect;
   ctx.arc(x + radius.topLeft, y + radius.topLeft, radius.topLeft, 1.5 * PI, PI, true);
-  ctx.lineTo(x, y + h10 - radius.bottomLeft);
-  ctx.arc(x + radius.bottomLeft, y + h10 - radius.bottomLeft, radius.bottomLeft, PI, HALF_PI, true);
-  ctx.lineTo(x + w - radius.bottomRight, y + h10);
-  ctx.arc(x + w - radius.bottomRight, y + h10 - radius.bottomRight, radius.bottomRight, HALF_PI, 0, true);
+  ctx.lineTo(x, y + h14 - radius.bottomLeft);
+  ctx.arc(x + radius.bottomLeft, y + h14 - radius.bottomLeft, radius.bottomLeft, PI, HALF_PI, true);
+  ctx.lineTo(x + w - radius.bottomRight, y + h14);
+  ctx.arc(x + w - radius.bottomRight, y + h14 - radius.bottomRight, radius.bottomRight, HALF_PI, 0, true);
   ctx.lineTo(x + w, y + radius.topRight);
   ctx.arc(x + w - radius.topRight, y + radius.topRight, radius.topRight, 0, -HALF_PI, true);
   ctx.lineTo(x + radius.topLeft, y);
@@ -3564,7 +3805,7 @@ function capControlPoint(pt, min, max) {
   return Math.max(Math.min(pt, max), min);
 }
 function capBezierPoints(points, area) {
-  let i, ilen, point, inArea, inAreaPrev;
+  let i, ilen, point2, inArea, inAreaPrev;
   let inAreaNext = _isPointInArea(points[0], area);
   for (i = 0, ilen = points.length; i < ilen; ++i) {
     inAreaPrev = inArea;
@@ -3573,19 +3814,19 @@ function capBezierPoints(points, area) {
     if (!inArea) {
       continue;
     }
-    point = points[i];
+    point2 = points[i];
     if (inAreaPrev) {
-      point.cp1x = capControlPoint(point.cp1x, area.left, area.right);
-      point.cp1y = capControlPoint(point.cp1y, area.top, area.bottom);
+      point2.cp1x = capControlPoint(point2.cp1x, area.left, area.right);
+      point2.cp1y = capControlPoint(point2.cp1y, area.top, area.bottom);
     }
     if (inAreaNext) {
-      point.cp2x = capControlPoint(point.cp2x, area.left, area.right);
-      point.cp2y = capControlPoint(point.cp2y, area.top, area.bottom);
+      point2.cp2x = capControlPoint(point2.cp2x, area.left, area.right);
+      point2.cp2y = capControlPoint(point2.cp2y, area.top, area.bottom);
     }
   }
 }
 function _updateBezierControlPoints(points, options, area, loop, indexAxis) {
-  let i, ilen, point, controlPoints;
+  let i, ilen, point2, controlPoints;
   if (options.spanGaps) {
     points = points.filter((pt) => !pt.skip);
   }
@@ -3594,13 +3835,13 @@ function _updateBezierControlPoints(points, options, area, loop, indexAxis) {
   } else {
     let prev = loop ? points[points.length - 1] : points[0];
     for (i = 0, ilen = points.length; i < ilen; ++i) {
-      point = points[i];
-      controlPoints = splineCurve(prev, point, points[Math.min(i + 1, ilen - (loop ? 0 : 1)) % ilen], options.tension);
-      point.cp1x = controlPoints.previous.x;
-      point.cp1y = controlPoints.previous.y;
-      point.cp2x = controlPoints.next.x;
-      point.cp2y = controlPoints.next.y;
-      prev = point;
+      point2 = points[i];
+      controlPoints = splineCurve(prev, point2, points[Math.min(i + 1, ilen - (loop ? 0 : 1)) % ilen], options.tension);
+      point2.cp1x = controlPoints.previous.x;
+      point2.cp1y = controlPoints.previous.y;
+      point2.cp2x = controlPoints.next.x;
+      point2.cp2y = controlPoints.next.y;
+      prev = point2;
     }
   }
   if (options.capBezierPoints) {
@@ -3945,17 +4186,17 @@ function _boundSegment(segment, points, bounds) {
   const result = [];
   let inside = false;
   let subStart = null;
-  let value, point, prevValue;
+  let value, point2, prevValue;
   const startIsBefore = () => between(startBound, prevValue, value) && compare(startBound, prevValue) !== 0;
   const endIsBefore = () => compare(endBound, value) === 0 || between(endBound, prevValue, value);
   const shouldStart = () => inside || startIsBefore();
   const shouldStop = () => !inside || endIsBefore();
   for (let i = start, prev = start; i <= end; ++i) {
-    point = points[i % count];
-    if (point.skip) {
+    point2 = points[i % count];
+    if (point2.skip) {
       continue;
     }
-    value = normalize(point[property]);
+    value = normalize(point2[property]);
     if (value === prevValue) {
       continue;
     }
@@ -5414,15 +5655,15 @@ function computeFlexCategoryTraits(index2, ruler, options, stackCount) {
   const curr = pixels[index2];
   let prev = index2 > 0 ? pixels[index2 - 1] : null;
   let next = index2 < pixels.length - 1 ? pixels[index2 + 1] : null;
-  const percent = options.categoryPercentage;
+  const percent2 = options.categoryPercentage;
   if (prev === null) {
     prev = curr - (next === null ? ruler.end - ruler.start : next - curr);
   }
   if (next === null) {
     next = curr + curr - prev;
   }
-  const start = curr - (curr - Math.min(prev, next)) / 2 * percent;
-  const size = Math.abs(next - prev) / 2 * percent;
+  const start = curr - (curr - Math.min(prev, next)) / 2 * percent2;
+  const size = Math.abs(next - prev) / 2 * percent2;
   return {
     chunk: size / stackCount,
     ratio: options.barPercentage,
@@ -5937,19 +6178,19 @@ var BubbleController = class extends DatasetController {
     const iAxis = iScale.axis;
     const vAxis = vScale.axis;
     for (let i = start; i < start + count; i++) {
-      const point = points[i];
+      const point2 = points[i];
       const parsed = !reset && this.getParsed(i);
       const properties = {};
       const iPixel = properties[iAxis] = reset ? iScale.getPixelForDecimal(0.5) : iScale.getPixelForValue(parsed[iAxis]);
       const vPixel = properties[vAxis] = reset ? vScale.getBasePixel() : vScale.getPixelForValue(parsed[vAxis]);
       properties.skip = isNaN(iPixel) || isNaN(vPixel);
       if (includeOptions) {
-        properties.options = sharedOptions || this.resolveDataElementOptions(i, point.active ? "active" : mode);
+        properties.options = sharedOptions || this.resolveDataElementOptions(i, point2.active ? "active" : mode);
         if (reset) {
           properties.options.radius = 0;
         }
       }
-      this.updateElement(point, i, properties, mode);
+      this.updateElement(point2, i, properties, mode);
     }
   }
   resolveDataElementOptions(index2, mode) {
@@ -6334,8 +6575,8 @@ var LineController = class extends DatasetController {
     const pointsCount = points.length;
     let prevParsed = start > 0 && this.getParsed(start - 1);
     for (let i = 0; i < pointsCount; ++i) {
-      const point = points[i];
-      const properties = directUpdate ? point : {};
+      const point2 = points[i];
+      const properties = directUpdate ? point2 : {};
       if (i < start || i >= end) {
         properties.skip = true;
         continue;
@@ -6351,10 +6592,10 @@ var LineController = class extends DatasetController {
         properties.raw = _dataset.data[i];
       }
       if (includeOptions) {
-        properties.options = sharedOptions || this.resolveDataElementOptions(i, point.active ? "active" : mode);
+        properties.options = sharedOptions || this.resolveDataElementOptions(i, point2.active ? "active" : mode);
       }
       if (!directUpdate) {
-        this.updateElement(point, i, properties, mode);
+        this.updateElement(point2, i, properties, mode);
       }
       prevParsed = parsed;
     }
@@ -6624,8 +6865,8 @@ var RadarController = class extends DatasetController {
     const scale = this._cachedMeta.rScale;
     const reset = mode === "reset";
     for (let i = start; i < start + count; i++) {
-      const point = points[i];
-      const options = this.resolveDataElementOptions(i, point.active ? "active" : mode);
+      const point2 = points[i];
+      const options = this.resolveDataElementOptions(i, point2.active ? "active" : mode);
       const pointPosition = scale.getPointPositionForValue(i, this.getParsed(i).r);
       const x = reset ? scale.xCenter : pointPosition.x;
       const y = reset ? scale.yCenter : pointPosition.y;
@@ -6636,7 +6877,7 @@ var RadarController = class extends DatasetController {
         skip: isNaN(x) || isNaN(y),
         options
       };
-      this.updateElement(point, i, properties, mode);
+      this.updateElement(point2, i, properties, mode);
     }
   }
 };
@@ -6725,9 +6966,9 @@ var ScatterController = class extends DatasetController {
     const directUpdate = this.chart._animationsDisabled || reset || mode === "none";
     let prevParsed = start > 0 && this.getParsed(start - 1);
     for (let i = start; i < start + count; ++i) {
-      const point = points[i];
+      const point2 = points[i];
       const parsed = this.getParsed(i);
-      const properties = directUpdate ? point : {};
+      const properties = directUpdate ? point2 : {};
       const nullData = isNullOrUndef(parsed[vAxis]);
       const iPixel = properties[iAxis] = iScale.getPixelForValue(parsed[iAxis], i);
       const vPixel = properties[vAxis] = reset || nullData ? vScale.getBasePixel() : vScale.getPixelForValue(_stacked ? this.applyStack(vScale, parsed, _stacked) : parsed[vAxis], i);
@@ -6738,10 +6979,10 @@ var ScatterController = class extends DatasetController {
         properties.raw = _dataset.data[i];
       }
       if (includeOptions) {
-        properties.options = sharedOptions || this.resolveDataElementOptions(i, point.active ? "active" : mode);
+        properties.options = sharedOptions || this.resolveDataElementOptions(i, point2.active ? "active" : mode);
       }
       if (!directUpdate) {
-        this.updateElement(point, i, properties, mode);
+        this.updateElement(point2, i, properties, mode);
       }
       prevParsed = parsed;
     }
@@ -6838,9 +7079,9 @@ function binarySearch(metaset, axis, value, intersect) {
       if (spanGaps) {
         const { vScale } = controller._cachedMeta;
         const { _parsed } = metaset;
-        const distanceToDefinedLo = _parsed.slice(0, result.lo + 1).reverse().findIndex((point) => !isNullOrUndef(point[vScale.axis]));
+        const distanceToDefinedLo = _parsed.slice(0, result.lo + 1).reverse().findIndex((point2) => !isNullOrUndef(point2[vScale.axis]));
         result.lo -= Math.max(0, distanceToDefinedLo);
-        const distanceToDefinedHi = _parsed.slice(result.hi).findIndex((point) => !isNullOrUndef(point[vScale.axis]));
+        const distanceToDefinedHi = _parsed.slice(result.hi).findIndex((point2) => !isNullOrUndef(point2[vScale.axis]));
         result.hi += Math.max(0, distanceToDefinedHi);
       }
       return result;
@@ -8483,8 +8724,8 @@ var Scale = class _Scale extends Element {
     const labelSizes = this._getLabelSizes();
     const padding = optionTicks.autoSkipPadding || 0;
     const w = labelSizes ? labelSizes.widest.width + padding : 0;
-    const h10 = labelSizes ? labelSizes.highest.height + padding : 0;
-    return this.isHorizontal() ? h10 * cos > w * sin ? w / cos : h10 / sin : h10 * sin < w * cos ? h10 / cos : w / sin;
+    const h14 = labelSizes ? labelSizes.highest.height + padding : 0;
+    return this.isHorizontal() ? h14 * cos > w * sin ? w / cos : h14 / sin : h14 * sin < w * cos ? h14 / cos : w / sin;
   }
   _isVisible() {
     const display = this.options.display;
@@ -10313,8 +10554,8 @@ var Chart = class {
     args.cancelable = false;
     this.notifyPlugins("afterDatasetDraw", args);
   }
-  isPointInArea(point) {
-    return _isPointInArea(point, this.chartArea, this._minPadding);
+  isPointInArea(point2) {
+    return _isPointInArea(point2, this.chartArea, this._minPadding);
   }
   getElementsAtEventForMode(e, mode, options, useFinalPosition) {
     const method = Interaction.modes[mode];
@@ -10853,11 +11094,11 @@ var ArcElement = class extends Element {
     }
   }
   inRange(chartX, chartY, useFinalPosition) {
-    const point = this.getProps([
+    const point2 = this.getProps([
       "x",
       "y"
     ], useFinalPosition);
-    const { angle, distance } = getAngleFromPoint(point, {
+    const { angle, distance } = getAngleFromPoint(point2, {
       x: chartX,
       y: chartY
     });
@@ -10956,22 +11197,22 @@ function pathSegment(ctx, line, segment, params) {
   const { count, start, loop, ilen } = pathVars(points, segment, params);
   const lineMethod = getLineMethod(options);
   let { move = true, reverse } = params || {};
-  let i, point, prev;
+  let i, point2, prev;
   for (i = 0; i <= ilen; ++i) {
-    point = points[(start + (reverse ? ilen - i : i)) % count];
-    if (point.skip) {
+    point2 = points[(start + (reverse ? ilen - i : i)) % count];
+    if (point2.skip) {
       continue;
     } else if (move) {
-      ctx.moveTo(point.x, point.y);
+      ctx.moveTo(point2.x, point2.y);
       move = false;
     } else {
-      lineMethod(ctx, prev, point, reverse, options.stepped);
+      lineMethod(ctx, prev, point2, reverse, options.stepped);
     }
-    prev = point;
+    prev = point2;
   }
   if (loop) {
-    point = points[(start + (reverse ? ilen : 0)) % count];
-    lineMethod(ctx, prev, point, reverse, options.stepped);
+    point2 = points[(start + (reverse ? ilen : 0)) % count];
+    lineMethod(ctx, prev, point2, reverse, options.stepped);
   }
   return !!loop;
 }
@@ -10981,7 +11222,7 @@ function fastPathSegment(ctx, line, segment, params) {
   const { move = true, reverse } = params || {};
   let avgX = 0;
   let countX = 0;
-  let i, point, prevX, minY, maxY, lastY;
+  let i, point2, prevX, minY, maxY, lastY;
   const pointIndex = (index2) => (start + (reverse ? ilen - index2 : index2)) % count;
   const drawX = () => {
     if (minY !== maxY) {
@@ -10991,16 +11232,16 @@ function fastPathSegment(ctx, line, segment, params) {
     }
   };
   if (move) {
-    point = points[pointIndex(0)];
-    ctx.moveTo(point.x, point.y);
+    point2 = points[pointIndex(0)];
+    ctx.moveTo(point2.x, point2.y);
   }
   for (i = 0; i <= ilen; ++i) {
-    point = points[pointIndex(i)];
-    if (point.skip) {
+    point2 = points[pointIndex(i)];
+    if (point2.skip) {
       continue;
     }
-    const x = point.x;
-    const y = point.y;
+    const x = point2.x;
+    const y = point2.y;
     const truncX = x | 0;
     if (truncX === prevX) {
       if (y < minY) {
@@ -11140,9 +11381,9 @@ var LineElement = class extends Element {
     const count = segments.length;
     return count && points[segments[count - 1].end];
   }
-  interpolate(point, property) {
+  interpolate(point2, property) {
     const options = this.options;
-    const value = point[property];
+    const value = point2[property];
     const points = this.points;
     const segments = _boundSegments(this, {
       property,
@@ -11165,7 +11406,7 @@ var LineElement = class extends Element {
       }
       const t = Math.abs((value - p1[property]) / (p2[property] - p1[property]));
       const interpolated = _interpolate(p1, p2, t, options.stepped);
-      interpolated[property] = point[property];
+      interpolated[property] = point2[property];
       result.push(interpolated);
     }
     return result.length === 1 ? result[0] : result;
@@ -11393,12 +11634,12 @@ function inflateRect(rect, amount, refRect = {}) {
   const x = rect.x !== refRect.x ? -amount : 0;
   const y = rect.y !== refRect.y ? -amount : 0;
   const w = (rect.x + rect.w !== refRect.x + refRect.w ? amount : 0) - x;
-  const h10 = (rect.y + rect.h !== refRect.y + refRect.h ? amount : 0) - y;
+  const h14 = (rect.y + rect.h !== refRect.y + refRect.h ? amount : 0) - y;
   return {
     x: rect.x + x,
     y: rect.y + y,
     w: rect.w + w,
-    h: rect.h + h10,
+    h: rect.h + h14,
     radius: rect.radius
   };
 }
@@ -11602,16 +11843,16 @@ function lttbDecimation(data, start, count, availableWidth, options) {
 function minMaxDecimation(data, start, count, availableWidth) {
   let avgX = 0;
   let countX = 0;
-  let i, point, x, y, prevX, minIndex, maxIndex, startIndex, minY, maxY;
+  let i, point2, x, y, prevX, minIndex, maxIndex, startIndex, minY, maxY;
   const decimated = [];
   const endIndex = start + count - 1;
   const xMin = data[start].x;
   const xMax = data[endIndex].x;
   const dx = xMax - xMin;
   for (i = start; i < start + count; ++i) {
-    point = data[i];
-    x = (point.x - xMin) / dx * availableWidth;
-    y = point.y;
+    point2 = data[i];
+    x = (point2.x - xMin) / dx * availableWidth;
+    y = point2.y;
     const truncX = x | 0;
     if (truncX === prevX) {
       if (y < minY) {
@@ -11621,7 +11862,7 @@ function minMaxDecimation(data, start, count, availableWidth) {
         maxY = y;
         maxIndex = i;
       }
-      avgX = (countX * avgX + point.x) / ++countX;
+      avgX = (countX * avgX + point2.x) / ++countX;
     } else {
       const lastIndex = i - 1;
       if (!isNullOrUndef(minIndex) && !isNullOrUndef(maxIndex)) {
@@ -11643,7 +11884,7 @@ function minMaxDecimation(data, start, count, availableWidth) {
       if (i > 0 && lastIndex !== startIndex) {
         decimated.push(data[lastIndex]);
       }
-      decimated.push(point);
+      decimated.push(point2);
       prevX = truncX;
       countX = 0;
       minY = maxY = y;
@@ -11845,8 +12086,8 @@ function _pointsFromSegments(boundary, line) {
 }
 function _findSegmentEnd(start, end, points) {
   for (; end > start; end--) {
-    const point = points[end];
-    if (!isNaN(point.x) && !isNaN(point.y)) {
+    const point2 = points[end];
+    if (!isNaN(point2.x) && !isNaN(point2.y)) {
       break;
     }
   }
@@ -12011,14 +12252,14 @@ function addPointsBelow(points, sourcePoint, linesBelow) {
   const postponed = [];
   for (let j = 0; j < linesBelow.length; j++) {
     const line = linesBelow[j];
-    const { first, last, point } = findPoint(line, sourcePoint, "x");
-    if (!point || first && last) {
+    const { first, last, point: point2 } = findPoint(line, sourcePoint, "x");
+    if (!point2 || first && last) {
       continue;
     }
     if (first) {
-      postponed.unshift(point);
+      postponed.unshift(point2);
     } else {
-      points.push(point);
+      points.push(point2);
       if (!last) {
         break;
       }
@@ -12027,11 +12268,11 @@ function addPointsBelow(points, sourcePoint, linesBelow) {
   points.push(...postponed);
 }
 function findPoint(line, sourcePoint, property) {
-  const point = line.interpolate(sourcePoint, property);
-  if (!point) {
+  const point2 = line.interpolate(sourcePoint, property);
+  if (!point2) {
     return {};
   }
-  const pointValue = point[property];
+  const pointValue = point2[property];
   const segments = line.segments;
   const linePoints = line.points;
   let first = false;
@@ -12049,7 +12290,7 @@ function findPoint(line, sourcePoint, property) {
   return {
     first,
     last,
-    point
+    point: point2
   };
 }
 var simpleArc = class {
@@ -12067,9 +12308,9 @@ var simpleArc = class {
     ctx.arc(x, y, radius, bounds.end, bounds.start, true);
     return !opts.bounds;
   }
-  interpolate(point) {
+  interpolate(point2) {
     const { x, y, radius } = this;
-    const angle = point.angle;
+    const angle = point2.angle;
     return {
       x: x + Math.cos(angle) * radius,
       y: y + Math.sin(angle) * radius,
@@ -12324,8 +12565,8 @@ function clipBounds(ctx, scale, clip, bounds) {
     ctx.clip();
   }
 }
-function interpolatedLineTo(ctx, target, point, property) {
-  const interpolatedPoint = target.interpolate(point, property);
+function interpolatedLineTo(ctx, target, point2, property) {
+  const interpolatedPoint = target.interpolate(point2, property);
   if (interpolatedPoint) {
     ctx.lineTo(interpolatedPoint.x, interpolatedPoint.y);
   }
@@ -12701,9 +12942,9 @@ var Legend = class extends Element {
     this.legendItems.forEach((legendItem, i) => {
       ctx.strokeStyle = legendItem.fontColor;
       ctx.fillStyle = legendItem.fontColor;
-      const textWidth = ctx.measureText(legendItem.text).width;
+      const textWidth3 = ctx.measureText(legendItem.text).width;
       const textAlign = rtlHelper.textAlign(legendItem.textAlign || (legendItem.textAlign = labelOpts.textAlign));
-      const width = boxWidth + halfFontSize + textWidth;
+      const width = boxWidth + halfFontSize + textWidth3;
       let x = cursor.x;
       let y = cursor.y;
       rtlHelper.setWidth(this.width);
@@ -13872,15 +14113,15 @@ var Tooltip = class extends Element {
       const size = this._size = getTooltipSize(this, options);
       const positionAndSize = Object.assign({}, position, this._size);
       const alignment = determineAlignment(chart, options, positionAndSize);
-      const point = getBackgroundPoint(options, positionAndSize, alignment, chart);
-      if (animX._to !== point.x || animY._to !== point.y) {
+      const point2 = getBackgroundPoint(options, positionAndSize, alignment, chart);
+      if (animX._to !== point2.x || animY._to !== point2.y) {
         this.xAlign = alignment.xAlign;
         this.yAlign = alignment.yAlign;
         this.width = size.width;
         this.height = size.height;
         this.caretX = position.x;
         this.caretY = position.y;
-        this._resolveAnimations().update(this, point);
+        this._resolveAnimations().update(this, point2);
       }
     }
   }
@@ -14822,11 +15063,11 @@ function leftForTextAlign(x, w, align) {
   }
   return x;
 }
-function yForAngle(y, h10, angle) {
+function yForAngle(y, h14, angle) {
   if (angle === 90 || angle === 270) {
-    y -= h10 / 2;
+    y -= h14 / 2;
   } else if (angle > 270 || angle < 90) {
-    y -= h10;
+    y -= h14;
   }
   return y;
 }
@@ -14967,10 +15208,10 @@ var RadialLinearScale = class extends LinearScaleBase {
   setDimensions() {
     const padding = this._padding = toPadding(getTickBackdropHeight(this.options) / 2);
     const w = this.width = this.maxWidth - padding.width;
-    const h10 = this.height = this.maxHeight - padding.height;
+    const h14 = this.height = this.maxHeight - padding.height;
     this.xCenter = Math.floor(this.left + w / 2 + padding.left);
-    this.yCenter = Math.floor(this.top + h10 / 2 + padding.top);
-    this.drawingArea = Math.floor(Math.min(w, h10) / 2);
+    this.yCenter = Math.floor(this.top + h14 / 2 + padding.top);
+    this.drawingArea = Math.floor(Math.min(w, h14) / 2);
   }
   determineDataLimits() {
     const { min, max } = this.getMinMax(false);
@@ -17196,6 +17437,90 @@ function mount5(root, ctx) {
   return { update, destroy };
 }
 
+// public/lib/domH.js
+function appendAll(element, children) {
+  for (const child of children) {
+    if (child == null || child === false) continue;
+    if (Array.isArray(child)) appendAll(element, child);
+    else if (typeof child === "object") element.appendChild(child);
+    else element.appendChild(document.createTextNode(String(child)));
+  }
+}
+function domH(tag, props, ...children) {
+  const element = document.createElement(tag);
+  for (const [name, value] of Object.entries(props ?? {})) {
+    if (name === "key" || value == null || value === false) continue;
+    element.setAttribute(name === "className" ? "class" : name, String(value));
+  }
+  appendAll(element, children);
+  return element;
+}
+
+// public/lib/drawerShell.js
+function createDrawerShell({ overlayRoot, title, closeLabel, className = "" }) {
+  let isOpen2 = false;
+  let returnFocus = null;
+  const scrim = domH("div", { className: "sw-drawer-scrim", "aria-hidden": "true" });
+  const titleEl = domH("h2", { className: "sw-drawer-title" }, title);
+  const closeBtn = domH("button", { className: "sw-drawer-close", type: "button", "aria-label": closeLabel }, "\xD7");
+  const head = domH("header", { className: "sw-drawer-head" }, domH("div", { className: "sw-drawer-title-row" }, titleEl, closeBtn));
+  const body = domH("div", { className: "sw-drawer-body" });
+  const drawer = domH("aside", {
+    className: `sw-drawer ${className}`.trim(),
+    role: "dialog",
+    "aria-label": title,
+    "aria-modal": "true"
+  }, head, body);
+  overlayRoot.appendChild(scrim);
+  overlayRoot.appendChild(drawer);
+  function open({ focus = closeBtn, returnFocus: back = null } = {}) {
+    if (isOpen2) return;
+    isOpen2 = true;
+    returnFocus = back;
+    drawer.classList.add("sw-drawer-open");
+    scrim.classList.add("sw-drawer-scrim-visible");
+    scrim.setAttribute("aria-hidden", "false");
+    document.querySelector(".sw-wrap")?.setAttribute("inert", "");
+    focus.focus();
+  }
+  function close() {
+    if (!isOpen2) return;
+    isOpen2 = false;
+    drawer.classList.remove("sw-drawer-open");
+    scrim.classList.remove("sw-drawer-scrim-visible");
+    scrim.setAttribute("aria-hidden", "true");
+    document.querySelector(".sw-wrap")?.removeAttribute("inert");
+    const target = typeof returnFocus === "function" ? returnFocus() : returnFocus;
+    returnFocus = null;
+    target?.focus();
+  }
+  function onKeydown(event) {
+    if (event.key !== "Escape" || !isOpen2) return;
+    event.preventDefault();
+    close();
+  }
+  closeBtn.addEventListener("click", close);
+  scrim.addEventListener("click", close);
+  document.addEventListener("keydown", onKeydown);
+  return {
+    head,
+    body,
+    isOpen: () => isOpen2,
+    setTitle(text) {
+      titleEl.textContent = text;
+      drawer.setAttribute("aria-label", text);
+    },
+    open,
+    close,
+    destroy() {
+      document.removeEventListener("keydown", onKeydown);
+      if (isOpen2) document.querySelector(".sw-wrap")?.removeAttribute("inert");
+      scrim.remove();
+      drawer.remove();
+    }
+  };
+}
+
 // public/elements/historyDrawer.js
 var USER_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="4" r="2"/><path d="M2.5 10c.5-2 1.7-3 3.5-3s3 .9 3.5 3"/></svg>';
 var ASSISTANT_SVG = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.8v8.4M1.8 6h8.4"/></svg>';
@@ -17203,7 +17528,6 @@ var HISTORY_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h1
 var SEARCH_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
 var BROWSE_URL = "/api/turn/browse";
 function mount6(root, ctx) {
-  let isOpen2 = false;
   let sections = [];
   let unavailable = false;
   let snapshotGeneration = 0;
@@ -17230,33 +17554,18 @@ function mount6(root, ctx) {
     countEl.textContent = String(sections.length);
     trigger.appendChild(countEl);
   };
-  const scrim = document.createElement("div");
-  scrim.className = "sw-history-scrim";
-  scrim.setAttribute("aria-hidden", "true");
-  ctx.overlayRoot.appendChild(scrim);
-  const drawer = document.createElement("aside");
-  drawer.className = "sw-history-drawer";
-  drawer.setAttribute("role", "dialog");
-  drawer.setAttribute("aria-label", "History");
-  drawer.setAttribute("aria-modal", "true");
-  drawer.innerHTML = `
-    <header class="sw-history-head">
-      <div class="sw-history-title-row">
-        <h2 class="sw-history-title">History</h2>
-        <button class="sw-history-close" type="button" aria-label="Close history">\xD7</button>
-      </div>
-      <label class="sw-history-search">
-        ${SEARCH_SVG}
-        <input type="search" aria-label="Search history"
-               placeholder="Search turns and notes" autocomplete="off">
-      </label>
-    </header>
-    <div class="sw-history-list"></div>
+  const shell = createDrawerShell({ overlayRoot: ctx.overlayRoot, title: "History", closeLabel: "Close history" });
+  const searchLabel = document.createElement("label");
+  searchLabel.className = "sw-history-search";
+  searchLabel.innerHTML = `
+    ${SEARCH_SVG}
+    <input type="search" aria-label="Search history"
+           placeholder="Search turns and notes" autocomplete="off">
   `;
-  ctx.overlayRoot.appendChild(drawer);
-  const closeBtn = drawer.querySelector(".sw-history-close");
-  const listEl = drawer.querySelector(".sw-history-list");
-  const searchEl = drawer.querySelector(".sw-history-search input");
+  shell.head.appendChild(searchLabel);
+  const listEl = shell.body;
+  listEl.classList.add("sw-history-list");
+  const searchEl = searchLabel.querySelector("input");
   const rowKey = (label, index2, side) => `${label}:${index2}:${side}`;
   const isSectionOpen = (label) => query !== "" || expandedLabels.has(label);
   function matches(entry) {
@@ -17417,46 +17726,24 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     if (next) sections = next;
   }
   async function openDrawer() {
-    if (isOpen2) return;
-    isOpen2 = true;
-    drawer.classList.add("sw-history-drawer-open");
-    scrim.classList.add("sw-history-scrim-visible");
-    scrim.setAttribute("aria-hidden", "false");
-    document.querySelector(".sw-wrap")?.setAttribute("inert", "");
-    searchEl.focus();
+    if (shell.isOpen()) return;
+    shell.open({ focus: searchEl, returnFocus: trigger });
     await loadSnapshot();
     if (destroyed) return;
     paintCount();
-    if (!isOpen2) return;
+    if (!shell.isOpen()) return;
     const savedScrollTop = listEl.scrollTop;
     renderList();
     requestAnimationFrame(() => {
       listEl.scrollTop = savedScrollTop;
     });
   }
-  function closeDrawer() {
-    if (!isOpen2) return;
-    isOpen2 = false;
-    drawer.classList.remove("sw-history-drawer-open");
-    scrim.classList.remove("sw-history-scrim-visible");
-    scrim.setAttribute("aria-hidden", "true");
-    document.querySelector(".sw-wrap")?.removeAttribute("inert");
-    trigger.focus();
-  }
   trigger.addEventListener("click", openDrawer);
-  closeBtn.addEventListener("click", closeDrawer);
-  scrim.addEventListener("click", closeDrawer);
   searchEl.addEventListener("input", (event) => {
     query = event.target.value.trim();
     expandedKey = null;
     renderList();
   });
-  function onKeydown(event) {
-    if (event.key !== "Escape" || !isOpen2) return;
-    event.preventDefault();
-    closeDrawer();
-  }
-  document.addEventListener("keydown", onKeydown);
   loadSnapshot().then(() => {
     if (!destroyed) paintCount();
   });
@@ -17467,10 +17754,7 @@ ${entry.note ?? ""}`.toLowerCase().includes(needle);
     },
     destroy() {
       destroyed = true;
-      document.removeEventListener("keydown", onKeydown);
-      document.querySelector(".sw-wrap")?.removeAttribute("inert");
-      scrim.remove();
-      drawer.remove();
+      shell.destroy();
       anchor.textContent = "";
     }
   };
@@ -17498,6 +17782,128 @@ function maxChildTier(children) {
 // public/lib/redaction.js
 function redactCmd(cmd) {
   return String(cmd).replace(/\b[A-Za-z_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)\s*=\s*\S+/gi, (m) => m.split("=")[0] + "=***").replace(/(--?(?:token|api[-_]?key|password|pass|secret)[=\s]+)\S+/gi, "$1***").replace(/\b(Bearer)\s+\S+/gi, "$1 ***").replace(/(\bhttps?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1***:***@").replace(/\/(home|Users|root)\/[^/\s]+/g, "~").replace(/\b\w+@\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "***@<ip>");
+}
+
+// public/lib/fileRows.js
+var spanText = ([first, last]) => first === last ? String(first) : `${first}\u2013${last}`;
+function linesOf(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+function bodyRowsOf({ skill, text, total, runs, withdrawn }) {
+  if (skill) return linesOf(text).map((line) => ({ type: "line", number: null, text: line }));
+  const spans = [
+    ...runs.map((run) => ({ type: "run", run, first: run.offset, last: run.offset + run.lines.length - 1 })),
+    ...withdrawn.map(({ first, last }) => ({ type: "withdrawn", first, last }))
+  ].sort((a, b) => a.first - b.first);
+  const known = Number.isFinite(total);
+  const rows = [];
+  let next = 1;
+  const gap = (first, last) => {
+    const end = known ? Math.min(last, total) : last;
+    if (first <= end) rows.push({ type: "gap", first, last: end });
+  };
+  for (const span of spans) {
+    gap(next, span.first - 1);
+    if (span.type === "run") rows.push(...span.run.lines.map((line) => ({ type: "line", number: line.number, text: line.text })));
+    else rows.push({ type: "withdrawn", first: span.first, last: span.last });
+    next = Math.max(next, span.last + 1);
+  }
+  if (known) gap(next, total);
+  return rows;
+}
+function rowOf(h14, row2, key, words) {
+  switch (row2.type) {
+    case "gap":
+      return h14("div", { className: "sw-fl-sep", key }, h14("span", null, words.gap(spanText([row2.first, row2.last]))));
+    case "withdrawn":
+      return h14("div", { className: "sw-fl-wd", key }, h14("span", null, h14("b", { "aria-hidden": "true" }, "\u2212"), words.withdrawn(spanText([row2.first, row2.last]), row2.last - row2.first + 1)));
+    default:
+      return h14("div", { className: "sw-fl-row", key }, h14("div", { className: "sw-fl-n" }, row2.number), h14("div", { className: "sw-fl-t" }, row2.text));
+  }
+}
+function fileRows(h14, rows, words, wrap = true) {
+  return h14(
+    "div",
+    { className: "sw-fl-scroll", "data-wrap": wrap ? "on" : "off" },
+    h14("div", { className: "sw-fl-rows" }, rows.map((row2, at) => rowOf(h14, row2, at, words)))
+  );
+}
+
+// public/elements/fileDrawer.js
+var FILE_URL = "/api/bucket/file";
+var REASON_WORDS = /* @__PURE__ */ new Map([
+  ["missing", "Missing"],
+  ["not-file", "Not a file"],
+  ["too-large", "Too large"],
+  ["binary", "Binary"],
+  ["unreadable", "Cannot be read"]
+]);
+var notice = (text) => ({ kind: "notice", text });
+var LOADING = notice("Loading\u2026");
+var UNAVAILABLE = notice("This file is unavailable right now. Close and reopen the drawer to retry.");
+var NOT_HELD = notice("This path is no longer held in the current context.");
+var NO_LINES = notice("No lines of this file are held in the current context.");
+function fileViewOf(body) {
+  if (body === null || typeof body !== "object") return UNAVAILABLE;
+  if (body.error === "not_held") return NOT_HELD;
+  if (typeof body.reason === "string") return notice(`Unreadable: ${REASON_WORDS.get(body.reason) ?? body.reason}`);
+  const { total, runs } = body;
+  if (!Number.isFinite(total) || !Array.isArray(runs)) return UNAVAILABLE;
+  const held = runs.reduce((sum, run) => sum + run.lines.length, 0);
+  if (held === 0) return NO_LINES;
+  return { kind: "rows", held, total, rows: bodyRowsOf({ skill: false, total, runs, withdrawn: [] }) };
+}
+var WORDS = { gap: (range) => `\u22EF Lines ${range} not loaded` };
+function createFileDrawer(ctx) {
+  const shell = createDrawerShell({ overlayRoot: ctx.overlayRoot, title: "File", closeLabel: "Close file", className: "sw-filedrawer" });
+  let wrap = true;
+  let view = LOADING;
+  let latest = 0;
+  const heldEl = domH("span", { className: "sw-filedrawer-held" });
+  const wrapBtn = domH("button", { className: "sw-filedrawer-wrap", type: "button", "aria-pressed": "true" }, "Wrap lines");
+  shell.head.appendChild(domH("div", { className: "sw-filedrawer-meta" }, heldEl, wrapBtn));
+  function paint() {
+    shell.body.textContent = "";
+    wrapBtn.setAttribute("aria-pressed", String(wrap));
+    if (view.kind === "notice") {
+      heldEl.textContent = "";
+      shell.body.appendChild(domH("div", { className: "sw-filedrawer-notice" }, view.text));
+      return;
+    }
+    heldEl.textContent = `Holds ${view.held} of ${view.total} lines`;
+    shell.body.appendChild(domH("div", { className: "sw-filedrawer-rows" }, fileRows(domH, view.rows, WORDS, wrap)));
+    shell.body.appendChild(domH("div", { className: "sw-filedrawer-foot" }, "Line text is read from the disk now, so it can differ from what the session saw."));
+  }
+  async function answerOf(path) {
+    try {
+      const res = await ctx.request(FILE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+      return fileViewOf(await res.json());
+    } catch {
+      return UNAVAILABLE;
+    }
+  }
+  wrapBtn.addEventListener("click", () => {
+    wrap = !wrap;
+    paint();
+  });
+  return {
+    async open(path, returnFocus) {
+      const mine = ++latest;
+      shell.setTitle(path);
+      view = LOADING;
+      paint();
+      shell.open({ returnFocus });
+      const answer = await answerOf(path);
+      if (mine !== latest) return;
+      view = answer;
+      paint();
+    },
+    destroy() {
+      shell.destroy();
+    }
+  };
 }
 
 // public/elements/bucketPanel.js
@@ -18107,6 +18513,10 @@ function mount7(root, ctx) {
     overridesOf: () => buildOverridePayload(state.tree)
   });
   let _hoveredNodeId = null;
+  const fileDrawer = createFileDrawer(ctx);
+  function openFile(node) {
+    fileDrawer.open(node.label, () => [...treeEl.querySelectorAll(".bucket-row")].find((row2) => row2.dataset.id === node.id) ?? null);
+  }
   function dispatchHover(detail) {
     ctx.bus.dispatchEvent(new CustomEvent("sw-bucket-hover", { detail }));
   }
@@ -18114,6 +18524,7 @@ function mount7(root, ctx) {
     const row2 = document.createElement("div");
     row2.className = "bucket-row";
     if (node.kind === "dir") row2.classList.add("is-dir");
+    if (node.kind === "file") row2.classList.add("is-file");
     if (node.indent) {
       row2.dataset.indent = String(node.indent);
       row2.style.setProperty("--indent", String(node.indent));
@@ -18618,6 +19029,10 @@ function mount7(root, ctx) {
     if (!row2) return;
     const id = row2.dataset.id;
     const node = findNodeById(state.tree, id);
+    if (node?.kind === "file") {
+      openFile(node);
+      return;
+    }
     if (!node || node.kind !== "dir") return;
     node.collapsed = !node.collapsed;
     state.collapsedOverrides.set(node.id, node.collapsed);
@@ -18668,16 +19083,16 @@ function mount7(root, ctx) {
   });
   function showApplyNotice(msg) {
     if (_applyNoticeTimeout) clearTimeout(_applyNoticeTimeout);
-    let notice = footer.querySelector(".bucket-apply-notice");
-    if (!notice) {
-      notice = document.createElement("span");
-      notice.className = "bucket-apply-notice";
-      footer.insertBefore(notice, footer.firstChild);
+    let notice2 = footer.querySelector(".bucket-apply-notice");
+    if (!notice2) {
+      notice2 = document.createElement("span");
+      notice2.className = "bucket-apply-notice";
+      footer.insertBefore(notice2, footer.firstChild);
     }
-    notice.textContent = msg;
-    notice.style.display = "";
+    notice2.textContent = msg;
+    notice2.style.display = "";
     _applyNoticeTimeout = setTimeout(() => {
-      notice.style.display = "none";
+      notice2.style.display = "none";
       _applyNoticeTimeout = null;
     }, 4e3);
   }
@@ -18782,6 +19197,10 @@ function mount7(root, ctx) {
     const node = findNodeById(state.tree, id);
     if (!node || node.locked || !node.selectable) return;
     e.preventDefault();
+    if (e.key === "Enter" && node.kind === "file") {
+      openFile(node);
+      return;
+    }
     if (node.kind === "dir") {
       const dirState = deriveDirState(node);
       const target = dirState !== "checked";
@@ -18810,6 +19229,7 @@ function mount7(root, ctx) {
     if (unsubBucketState) unsubBucketState();
     dispatchHover(null);
     dispatchPreview(true);
+    fileDrawer.destroy();
     card.remove();
   }
   const unsubBucketState = ctx?.transport?.onBucketState?.(() => {
@@ -19107,11 +19527,11 @@ function createSessionStores({
 
 // dsh/src/client/mode-reader.js
 var MODES = ["off", "on", "invalid"];
-var UNAVAILABLE = Object.freeze({ kind: "unavailable" });
+var UNAVAILABLE2 = Object.freeze({ kind: "unavailable" });
 function fold2(reply) {
-  if (reply.ok !== true) return UNAVAILABLE;
+  if (reply.ok !== true) return UNAVAILABLE2;
   const { mode, locked } = reply.value ?? {};
-  return MODES.includes(mode) && typeof locked === "boolean" ? { kind: "ready", mode, locked } : UNAVAILABLE;
+  return MODES.includes(mode) && typeof locked === "boolean" ? { kind: "ready", mode, locked } : UNAVAILABLE2;
 }
 function createModeReaders({ call }) {
   const readers = /* @__PURE__ */ new Map();
@@ -19128,7 +19548,7 @@ function createModeReaders({ call }) {
           try {
             result = fold2(await call("inner-mode", { sessionId }));
           } catch {
-            result = UNAVAILABLE;
+            result = UNAVAILABLE2;
           }
           for (const listener of [...listeners]) listener(result);
         } while (dirty && listeners.size > 0);
@@ -19176,16 +19596,207 @@ function createModeReaders({ call }) {
   };
 }
 
+// public/lib/compactionEconomics.js
+var segmentOf = ({ epoch }) => epoch ?? 0;
+var countOf = (value) => Number.isFinite(value) ? value : 0;
+function ordinalsOf(attempts) {
+  const counts = /* @__PURE__ */ new Map();
+  return Object.fromEntries(attempts.map((attempt) => {
+    const { id } = attempt;
+    const segment = segmentOf(attempt) + 1;
+    const ordinal = (counts.get(segment) ?? 0) + 1;
+    counts.set(segment, ordinal);
+    return [id, { epoch: segment, ordinal }];
+  }));
+}
+var PAID_BACK_PERCENT = 100;
+var PERCENT = 100;
+var paybackPercent = (saved, cost) => Math.floor(saved * PERCENT / cost);
+function clearingsOf(handoffs) {
+  const seen = /* @__PURE__ */ new Set();
+  return [...handoffs].sort((a, b) => a.id - b.id).flatMap(({ id, type, epoch, tailCalls }) => {
+    const segment = epoch - 1;
+    if (type !== "continue" || seen.has(segment)) return [];
+    seen.add(segment);
+    return [{ id, epoch, segment, tailCalls: countOf(tailCalls) }];
+  });
+}
+function followOf(committed, at, tail) {
+  const segment = segmentOf(committed[at]);
+  const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
+  return later + tail;
+}
+function requestCostOf(usage, ratio) {
+  const { input, cacheRead, cacheWrite } = usage ?? {};
+  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
+  return cacheRead + ratio * (input + cacheWrite);
+}
+var neededOf = (cut, cost) => cost === null || cut === null ? null : cut > 0 ? Math.ceil(Math.round(cost) / cut) : Infinity;
+var gapOf = (needed, follow) => Number.isFinite(needed) ? needed - follow : null;
+function figuresOf({ contextChange, call, cRatio }, follow, cut) {
+  const { miss } = contextChange ?? {};
+  const summary = requestCostOf(call.usage, cRatio);
+  if (!Number.isFinite(cut) || !Number.isFinite(miss) || summary === null) return null;
+  const rebuild = (cRatio - 1) * miss;
+  const cost = summary + rebuild;
+  return cost > 0 ? { saved: Math.max(0, follow * cut), cost, rebuild } : null;
+}
+function paybackOf(attempts, handoffs = []) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const tails = new Map(clearingsOf(handoffs).map(({ segment, tailCalls }) => [segment, tailCalls]));
+  return new Map(committed.map((attempt, at) => {
+    const follow = followOf(committed, at, tails.get(segmentOf(attempt)) ?? 0);
+    const delta = attempt.contextChange?.delta;
+    const figures = figuresOf(attempt, follow, Number.isFinite(delta) ? -delta : null);
+    return [attempt.id, figures === null ? null : paybackPercent(figures.saved, figures.cost)];
+  }));
+}
+function settlementsOf(attempts, handoffs) {
+  const ordinals = ordinalsOf(attempts);
+  const settlements = /* @__PURE__ */ new Map();
+  for (const { id, epoch, tailCalls } of clearingsOf(handoffs)) {
+    const settlement = settlementForSegment(attempts, { epoch, tailCalls }, ordinals);
+    if (settlement.rows.some(({ saved }) => saved !== null)) settlements.set(id, settlement);
+  }
+  return settlements;
+}
+function settlementForSegment(attempts, { epoch, tailCalls }, ordinals = ordinalsOf(attempts)) {
+  const compactions = attempts.filter((attempt) => attempt.status === "committed" && segmentOf(attempt) === epoch - 1).sort((a, b) => a.id - b.id);
+  const steps2 = compactions.reduce((sum, { stepN }) => sum + countOf(stepN), tailCalls);
+  const rows = compactions.map((attempt, at) => {
+    const { before: rawBefore, after, delta } = attempt.contextChange ?? {};
+    const estimated = rawBefore === null && Number.isFinite(attempt.estimatedBefore);
+    const before = estimated ? attempt.estimatedBefore : rawBefore;
+    const cut = Number.isFinite(before) && Number.isFinite(after) ? before - after : null;
+    const follow = followOf(compactions, at, tailCalls);
+    const figures = figuresOf(attempt, follow, estimated ? cut : Number.isFinite(delta) ? -delta : null);
+    const needed = neededOf(cut, figures?.cost ?? null);
+    return {
+      id: attempt.id,
+      ordinal: ordinals[attempt.id].ordinal,
+      saved: figures?.saved ?? null,
+      cost: figures?.cost ?? null,
+      before: Number.isFinite(before) ? before : null,
+      after: Number.isFinite(after) ? after : null,
+      cut,
+      follow,
+      sealAt: steps2 - follow,
+      costRebuild: figures?.rebuild ?? null,
+      needed,
+      gap: gapOf(needed, follow)
+    };
+  });
+  const known = rows.filter(({ saved }) => saved !== null);
+  return { epoch, count: rows.length, steps: steps2, saved: known.reduce((sum, row2) => sum + row2.saved, 0), cost: known.reduce((sum, row2) => sum + row2.cost, 0), rows };
+}
+function settlementWithRecall(settlement, recall) {
+  if (recall === void 0) return settlement;
+  const cuts = new Map(recall.cuts.map(({ id, tokens }) => [id, tokens]));
+  let cutCredit = 0;
+  const rows = settlement.rows.map((row2) => {
+    if (!cuts.has(row2.id) || row2.cut === null) return row2;
+    const cut = row2.cut - cuts.get(row2.id);
+    const saved = row2.saved === null ? null : row2.follow * Math.max(0, cut);
+    cutCredit += (row2.saved ?? 0) - (saved ?? 0);
+    const needed = neededOf(cut, row2.cost);
+    return { ...row2, cut, saved, needed, gap: gapOf(needed, row2.follow) };
+  });
+  const known = rows.filter((row2) => row2.saved !== null);
+  const byId = new Map(known.map((row2) => [row2.id, row2]));
+  const adjustments = /* @__PURE__ */ new Map();
+  let requests = 0;
+  let overlap = 0;
+  let withdrawn = 0;
+  let residence = 0;
+  let partial = Boolean(recall.partial);
+  for (const step of recall.steps) {
+    if ("resident" in step) {
+      residence += step.resident;
+      adjustments.set(step.at, { saving: step.resident, cost: 0 });
+      continue;
+    }
+    const saving = known.reduce((sum, row2) => sum + (row2.sealAt < step.at ? Math.max(0, row2.cut ?? 0) : 0), 0);
+    const cost = requestCostOf(step.usage, step.ratio);
+    const rebuild = cost === null ? 0 : byId.get(step.post)?.costRebuild ?? 0;
+    if (cost === null) partial = true;
+    requests += cost ?? 0;
+    overlap += rebuild;
+    withdrawn += saving;
+    adjustments.set(step.at, { saving, cost: (cost ?? 0) - rebuild });
+  }
+  return {
+    ...settlement,
+    rows,
+    adjustments,
+    saved: settlement.saved - cutCredit - withdrawn - residence,
+    cost: settlement.cost + requests - overlap,
+    recall: { requests, overlap, withdrawn, residence, cutCredit, partial }
+  };
+}
+var MEDIAN_MIN_COUNT = 3;
+function paybackCurveOf({ steps: steps2, rows, adjustments }) {
+  const known = rows.filter(({ saved }) => saved !== null).sort((a, b) => a.sealAt - b.sealAt);
+  const net = [];
+  let earnedPerStep = 0;
+  let earned = 0;
+  let spent = 0;
+  let next = 0;
+  for (let step = 0; step <= steps2; step += 1) {
+    earned += earnedPerStep;
+    while (next < known.length && known[next].sealAt <= step) {
+      spent += known[next].cost;
+      earnedPerStep += Math.max(0, known[next].cut ?? 0);
+      next += 1;
+    }
+    const adjustment = adjustments?.get(step);
+    earned -= adjustment?.saving ?? 0;
+    spent += adjustment?.cost ?? 0;
+    net.push(earned - spent);
+  }
+  let lowest = { value: net[0], at: 0 };
+  const below = [];
+  let first = null;
+  net.forEach((value, step) => {
+    if (value < lowest.value) lowest = { value, at: step };
+    if (value < 0) first ??= step;
+    else if (first !== null) {
+      below.push([first, step - 1]);
+      first = null;
+    }
+  });
+  if (first !== null) below.push([first, steps2]);
+  const needed = rows.map((row2) => row2.needed).filter(Number.isFinite).sort((a, b) => a - b);
+  const middle = Math.floor(needed.length / 2);
+  const medianNeeded = needed.length < MEDIAN_MIN_COUNT ? null : needed.length % 2 === 1 ? needed[middle] : (needed[middle - 1] + needed[middle]) / 2;
+  return { steps: steps2, net, seals: rows.map((row2) => row2.sealAt).sort((a, b) => a - b), lowest, below, medianNeeded };
+}
+var UNEXPECTED_MISS_PERCENT = 30;
+function unexpectedMissOf(attempts) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const previousAfter = /* @__PURE__ */ new Map();
+  const unexpected = /* @__PURE__ */ new Set();
+  for (const attempt of committed) {
+    const { id, contextChange } = attempt;
+    const segment = segmentOf(attempt);
+    const { after, miss } = contextChange ?? {};
+    const previous = previousAfter.get(segment);
+    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
+    previousAfter.set(segment, Number.isFinite(after) ? after : null);
+  }
+  return unexpected;
+}
+var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
+
 // dsh/src/client/monitor-store.js
 var ACTIVE_STATUSES = ["generating", "validating"];
 var ROWS_ENDPOINT = "inner-monitor";
 var UNAVAILABLE_CODE = "inner_monitor_unavailable";
-var UNAVAILABLE2 = Object.freeze({ kind: "unavailable" });
+var UNAVAILABLE3 = Object.freeze({ kind: "unavailable" });
 var messageOf2 = (error) => String(error?.message ?? error);
 var sameFacts = (a, b) => a === b || a !== null && b !== null && a.status === b.status && a.revision === b.revision;
 function fold3(reply, ready) {
   if (reply.ok === true) return ready(reply.value);
-  return reply.error?.code === UNAVAILABLE_CODE ? UNAVAILABLE2 : { kind: "unreachable", message: messageOf2(reply.error) };
+  return reply.error?.code === UNAVAILABLE_CODE ? UNAVAILABLE3 : { kind: "unreachable", message: messageOf2(reply.error) };
 }
 function foldRows(reply) {
   return fold3(reply, (value) => {
@@ -19194,6 +19805,18 @@ function foldRows(reply) {
   });
 }
 var foldResource = (reply) => fold3(reply, (value) => ({ kind: "ready", value }));
+function foldCurrentSettlement(reply) {
+  return fold3(reply, (value) => {
+    const { epoch, tailCalls, attempts, calls, recall } = value ?? {};
+    if (!Number.isSafeInteger(epoch) || epoch < 1 || !Number.isSafeInteger(tailCalls) || tailCalls < 0 || !Array.isArray(attempts) || !Array.isArray(calls)) {
+      throw new Error("the inner monitor answered an incomplete settlement snapshot");
+    }
+    const base = settlementForSegment(attempts, { epoch, tailCalls });
+    const report = base.rows.some((row2) => row2.saved !== null) ? settlementWithRecall(base, recall) : null;
+    const curve = report === null ? null : paybackCurveOf(report);
+    return { kind: "ready", value: { snapshot: { kind: "ready", value: { calls } }, base, report, curve } };
+  });
+}
 async function settle(send, foldReply) {
   try {
     return foldReply(await send());
@@ -19321,6 +19944,9 @@ function createMonitorStores({ call }) {
               rowListeners.delete(listener);
             };
           }
+        },
+        readCurrentSettlement() {
+          return settle(() => call("inner-monitor/settlement/current", { sessionId }), foldCurrentSettlement);
         },
         resource({ endpoint, attempt, handoff, slot }) {
           const identity = JSON.stringify([endpoint, attempt ?? handoff, slot ?? null]);
@@ -19465,9 +20091,12 @@ var import_react3 = __toESM(require("react"), 1);
 
 // public/lib/format.js
 var PLACEHOLDER = "\u2014";
+function formatTokenCount(n) {
+  return Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : PLACEHOLDER;
+}
 function formatTokens(n) {
-  if (!Number.isFinite(n)) return PLACEHOLDER;
-  return `${Math.round(n).toLocaleString("en-US")} tok`;
+  const count = formatTokenCount(n);
+  return count === PLACEHOLDER ? count : `${count} tok`;
 }
 function formatBr(br) {
   if (!Number.isFinite(br) || br < 0) return PLACEHOLDER;
@@ -19702,15 +20331,17 @@ function registerHandoffPicker(child, { call, t }) {
 }
 
 // dsh/src/client/monitor-view.js
-var import_react6 = __toESM(require("react"), 1);
+var import_react10 = __toESM(require("react"), 1);
 
 // dsh/src/client/monitor-drawer.js
-var import_react5 = __toESM(require("react"), 1);
+var import_react9 = __toESM(require("react"), 1);
 
 // dsh/src/client/monitor-state.js
 var DRAWER_DEFAULT_WIDTH = 420;
 var DRAWER_MIN_WIDTH = 320;
 var DRAWER_MAX_WIDTH = 720;
+var DRAWER_BODY_PADDING_X = 14;
+var DEFAULT_CHART_WIDTH = DRAWER_DEFAULT_WIDTH - 2 * DRAWER_BODY_PADDING_X;
 var LIST_MIN_WIDTH = 280;
 var DRAWER_KEY_STEP = 16;
 var PREVIEW_CHARS = 160;
@@ -19718,84 +20349,10 @@ var NOT_AVAILABLE = "\u2014";
 var FAILED_STATUSES = ["failed", "cancelled"];
 var MS_PER_SECOND = 1e3;
 var MS_PER_MINUTE = 60 * MS_PER_SECOND;
+var FILTER_CATEGORIES = ["all", "handoff", "compaction"];
 function createViewState() {
-  return { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH };
+  return { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH, filter: { category: "all", warned: false } };
 }
-var segmentOf = ({ epoch }) => epoch ?? 0;
-var countOf = (value) => Number.isFinite(value) ? value : 0;
-function ordinalsOf(attempts) {
-  const counts = /* @__PURE__ */ new Map();
-  return Object.fromEntries(attempts.map((attempt) => {
-    const { id } = attempt;
-    const segment = segmentOf(attempt) + 1;
-    const ordinal = (counts.get(segment) ?? 0) + 1;
-    counts.set(segment, ordinal);
-    return [id, { epoch: segment, ordinal }];
-  }));
-}
-var PAID_BACK_PERCENT = 100;
-var PERCENT = 100;
-var paybackPercent = (saved, cost) => Math.floor(saved * PERCENT / cost);
-function clearingsOf(handoffs) {
-  const seen = /* @__PURE__ */ new Set();
-  return [...handoffs].sort((a, b) => a.id - b.id).flatMap(({ id, type, epoch, tailSteps }) => {
-    const segment = epoch - 1;
-    if (type !== "continue" || seen.has(segment)) return [];
-    seen.add(segment);
-    return [{ id, epoch, segment, tailSteps: countOf(tailSteps) }];
-  });
-}
-function economicsOf(attempts, handoffs) {
-  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
-  const tails = new Map(clearingsOf(handoffs).map(({ segment, tailSteps }) => [segment, tailSteps]));
-  return new Map(committed.map((attempt, at) => {
-    const { delta, miss } = attempt.contextChange ?? {};
-    const { input, cacheRead, cacheWrite } = attempt.call.usage ?? {};
-    const { cRatio } = attempt;
-    if (![delta, miss, cRatio, input, cacheRead, cacheWrite].every(Number.isFinite)) return [attempt.id, null];
-    const cost = cacheRead + cRatio * (input + cacheWrite) + (cRatio - 1) * miss;
-    if (!(cost > 0)) return [attempt.id, null];
-    const segment = segmentOf(attempt);
-    const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
-    return [attempt.id, { saved: Math.max(0, (later + (tails.get(segment) ?? 0)) * -delta), cost }];
-  }));
-}
-function paybackOf(attempts, handoffs = []) {
-  return new Map([...economicsOf(attempts, handoffs)].map(([id, figures]) => [id, figures === null ? null : paybackPercent(figures.saved, figures.cost)]));
-}
-function settlementsOf(attempts, handoffs) {
-  const economics = economicsOf(attempts, handoffs);
-  const ordinals = ordinalsOf(attempts);
-  const settlements = /* @__PURE__ */ new Map();
-  for (const { id, epoch, segment, tailSteps } of clearingsOf(handoffs)) {
-    const compactions = attempts.filter((attempt) => attempt.status === "committed" && segmentOf(attempt) === segment).sort((a, b) => a.id - b.id);
-    const rows = compactions.map((attempt) => {
-      const figures = economics.get(attempt.id);
-      return { id: attempt.id, ordinal: ordinals[attempt.id].ordinal, saved: figures?.saved ?? null, cost: figures?.cost ?? null };
-    });
-    const known = rows.filter(({ saved }) => saved !== null);
-    if (known.length === 0) continue;
-    const steps2 = compactions.reduce((sum, { stepN }) => sum + countOf(stepN), tailSteps);
-    settlements.set(id, { epoch, count: rows.length, steps: steps2, saved: known.reduce((sum, row2) => sum + row2.saved, 0), cost: known.reduce((sum, row2) => sum + row2.cost, 0), rows });
-  }
-  return settlements;
-}
-var UNEXPECTED_MISS_PERCENT = 30;
-function unexpectedMissOf(attempts) {
-  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
-  const previousAfter = /* @__PURE__ */ new Map();
-  const unexpected = /* @__PURE__ */ new Set();
-  for (const attempt of committed) {
-    const { id, contextChange } = attempt;
-    const segment = segmentOf(attempt);
-    const { after, miss } = contextChange ?? {};
-    const previous = previousAfter.get(segment);
-    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
-    previousAfter.set(segment, Number.isFinite(after) ? after : null);
-  }
-  return unexpected;
-}
-var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
 function isOpen(state, id) {
   return state.overrides[id] ?? false;
 }
@@ -19818,6 +20375,10 @@ function reduceView(state, action) {
   switch (action.type) {
     case "toggle":
       return { ...state, overrides: { ...state.overrides, [action.handoffId ?? action.attemptId]: !action.open } };
+    case "open-current-settlement":
+      return { ...state, selected: { identity: "current-settlement", kind: "current-settlement", request: action.request, result: null } };
+    case "current-settlement-result":
+      return state.selected?.request !== action.request ? state : { ...state, selected: { ...state.selected, result: action.result } };
     case "select": {
       const identity = rowIdentity(action);
       if (state.selected?.identity === identity) return state;
@@ -19827,6 +20388,12 @@ function reduceView(state, action) {
     }
     case "clear":
       return state.selected === null ? state : { ...state, selected: null };
+    case "category":
+      return action.category === state.filter.category ? state : { ...state, selected: null, filter: { ...state.filter, category: action.category } };
+    case "warned":
+      return action.warned === state.filter.warned ? state : { ...state, selected: null, filter: { ...state.filter, warned: action.warned } };
+    case "collapse":
+      return Object.values(state.overrides).includes(true) ? { ...state, overrides: {} } : state;
     case "resize":
       return { ...state, drawerWidth: clampDrawerWidth(action.width, action.containerWidth) };
     default:
@@ -19852,8 +20419,8 @@ function contextRangeText(change, t, key = "monitor.meta.range") {
 }
 var foldedOf = (text) => text.replace(/\s+/g, " ").trim();
 function previewOf(text) {
-  const compact = foldedOf(text);
-  return compact.length > PREVIEW_CHARS ? `${compact.slice(0, PREVIEW_CHARS).trimEnd()}\u2026` : compact;
+  const compact2 = foldedOf(text);
+  return compact2.length > PREVIEW_CHARS ? `${compact2.slice(0, PREVIEW_CHARS).trimEnd()}\u2026` : compact2;
 }
 var displayOf = (display, raw) => display === void 0 ? raw : display;
 function wholePreview(text) {
@@ -19863,34 +20430,42 @@ function wholePreview(text) {
 function callPreview({ status, reason, call }) {
   return wholePreview(FAILED_STATUSES.includes(status) && reason !== null ? reason : displayOf(call.outputDisplay, call.output));
 }
-var SOURCE_CATEGORIES = { "system/message": "system", "developer/message": "developer", "tool/result": "tool", "assistant/message": "assistant" };
-var HUMAN_SOURCE_KIND = "user";
-function sourceCategoryOf(source) {
-  if (source?.type === "user/message") {
-    if (typeof source.kind !== "string") return "other";
-    return source.kind === HUMAN_SOURCE_KIND ? "user" : "injected";
-  }
-  return SOURCE_CATEGORIES[source?.type] ?? "other";
-}
 var PART_SEPARATOR = " \xB7 ";
 function slotTitleOf({ turn, step, source }, t) {
   const parts = [turn === null ? null : t("monitor.object.turn", { turn }), step === null ? null : t("monitor.object.step", { step })].filter((part) => part !== null);
-  return parts.length === 0 ? t(`monitor.source.${sourceCategoryOf(source)}`) : parts.join(PART_SEPARATOR);
+  return parts.length === 0 ? t(`monitor.source.${source?.category ?? "other"}`) : parts.join(PART_SEPARATOR);
 }
 var LEAVES_LOADING = "loading";
 var LEAVES_FAILED = "failed";
 var placeholderRow = (id, owner, state) => ({ identity: rowIdentity({ kind: "placeholder", attemptId: id }), kind: "placeholder", ...owner, state });
-function leafRows(id, owner, list, leafOf) {
+function leafRows(id, owner, list, leafOf, include) {
   if (list === void 0) return [];
   if (list === LEAVES_LOADING || list === LEAVES_FAILED) return [placeholderRow(id, owner, list)];
-  return list.length === 0 ? [placeholderRow(id, owner, "empty")] : list.map(leafOf);
+  if (list.length === 0) return [placeholderRow(id, owner, "empty")];
+  return (include === void 0 ? list : list.filter(include)).map(leafOf);
+}
+function costWarningsOf({ contextChange }, missWarned) {
+  return {
+    ...contextChange?.delta > 0 && { context: "monitor.meta.context.grew" },
+    ...missWarned && { miss: "monitor.meta.miss.unexpected" }
+  };
+}
+var hasSlotWarnings = ({ slotWarnings }) => slotWarnings !== void 0 && Object.keys(slotWarnings).length > 0;
+function visibleGroups(attempts, handoffs, { category, warned }) {
+  const unexpectedMiss = unexpectedMissOf(attempts);
+  return {
+    attempts: category === "handoff" ? [] : attempts.filter((attempt) => !warned || hasSlotWarnings(attempt) || Object.keys(costWarningsOf(attempt, unexpectedMiss.has(attempt.id))).length > 0),
+    handoffs: category === "compaction" || warned ? [] : handoffs
+  };
 }
 function flattenRows(attempts, slotsByAttempt, state, handoffs = [], turnsByHandoff = {}) {
   const ordinals = ordinalsOf(attempts);
   const payback = paybackOf(attempts, handoffs);
   const settlements = settlementsOf(attempts, handoffs);
   const unexpectedMiss = unexpectedMissOf(attempts);
-  const groups = [...attempts.map((attempt) => ({ id: attempt.id, attempt })), ...handoffs.map((handoff) => ({ id: handoff.id, handoff }))].sort((a, b) => a.id - b.id);
+  const shown = visibleGroups(attempts, handoffs, state.filter);
+  const { warned } = state.filter;
+  const groups = [...shown.attempts.map((attempt) => ({ id: attempt.id, attempt })), ...shown.handoffs.map((handoff) => ({ id: handoff.id, handoff }))].sort((a, b) => a.id - b.id);
   const rows = [];
   for (const { id, attempt, handoff } of groups) {
     const open = isOpen(state, id);
@@ -19912,23 +20487,24 @@ function flattenRows(attempts, slotsByAttempt, state, handoffs = [], turnsByHand
       continue;
     }
     const preview = callPreview(attempt);
-    rows.push({ identity: rowIdentity({ kind: "attempt", attemptId: id }), kind: "attempt", attempt, ...ordinals[id], shownStatus: shownStatusOf(attempt, payback), missWarned: unexpectedMiss.has(id), open, preview });
+    const missWarned = unexpectedMiss.has(id);
+    rows.push({ identity: rowIdentity({ kind: "attempt", attemptId: id }), kind: "attempt", attempt, ...ordinals[id], shownStatus: shownStatusOf(attempt, payback), missWarned, open, preview });
     if (!open) continue;
-    rows.push({ identity: rowIdentity({ kind: "call", attemptId: id }), kind: "call", attempt, preview });
-    const slots = attempt.status === "committed" ? slotsByAttempt[id] : void 0;
+    const warningKeys = Object.values(costWarningsOf(attempt, missWarned));
+    if (!warned || warningKeys.length > 0) rows.push({ identity: rowIdentity({ kind: "call", attemptId: id }), kind: "call", attempt, preview, warningKeys });
+    const slots = attempt.status === "committed" && (!warned || hasSlotWarnings(attempt)) ? slotsByAttempt[id] : void 0;
     rows.push(...leafRows(id, { attempt }, slots, (slot) => ({
       identity: rowIdentity({ kind: "slot", attemptId: id, slotKey: slot.key }),
       kind: "slot",
       attempt,
       slot,
       preview: { input: previewOf(displayOf(slot.inputDisplay, slot.input)), output: previewOf(slot.output) }
-    })));
+    }), warned ? (slot) => attempt.slotWarnings?.[slot.key]?.length > 0 : void 0));
   }
   return rows;
 }
 function elapsedOf(attempt, part, now) {
   const { startedAt } = attempt;
-  if (startedAt === null) return null;
   const endedAt = part === "call" ? attempt.call.endedAt : attempt.endedAt;
   if (endedAt !== null) return endedAt - startedAt;
   const running = part === "call" ? attempt.call.state === "generating" : ACTIVE_STATUSES.includes(attempt.status);
@@ -20014,16 +20590,10 @@ function compactPath(path) {
 }
 var SHORT_REASON_COLUMNS = 16;
 var REASONS = Object.freeze(["missing", "not-file", "too-large", "binary", "unreadable"]);
-var spanText = ([first, last]) => first === last ? String(first) : `${first}\u2013${last}`;
 var spansText = (spans) => spans.map(spanText).join(SPAN_SEPARATOR);
 var runSpan = (run) => [run.offset, run.offset + run.lines.length - 1];
 var runLines = (runs) => runs.reduce((sum, run) => sum + run.lines.length, 0);
 var runChars = (runs) => runs.reduce((sum, run) => sum + run.lines.reduce((chars, line) => chars + line.text.length, 0), 0);
-function linesOf(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
 var withdrawnLines = (spans) => spans.reduce((sum, { first, last }) => sum + last - first + 1, 0);
 var plainItem = (id, path, why, tone, removed) => ({
   id,
@@ -20157,28 +20727,6 @@ function readFilesOf(files, t) {
     foot: []
   };
 }
-function bodyRowsOf({ skill, text, total, runs, withdrawn }) {
-  if (skill) return linesOf(text).map((line) => ({ type: "line", number: null, text: line }));
-  const spans = [
-    ...runs.map((run) => ({ type: "run", run, first: run.offset, last: run.offset + run.lines.length - 1 })),
-    ...withdrawn.map(({ first, last }) => ({ type: "withdrawn", first, last }))
-  ].sort((a, b) => a.first - b.first);
-  const known = Number.isFinite(total);
-  const rows = [];
-  let next = 1;
-  const gap = (first, last) => {
-    const end = known ? Math.min(last, total) : last;
-    if (first <= end) rows.push({ type: "gap", first, last: end });
-  };
-  for (const span of spans) {
-    gap(next, span.first - 1);
-    if (span.type === "run") rows.push(...span.run.lines.map((line) => ({ type: "line", number: line.number, text: line.text })));
-    else rows.push({ type: "withdrawn", first: span.first, last: span.last });
-    next = Math.max(next, span.last + 1);
-  }
-  if (known) gap(next, total);
-  return rows;
-}
 function createFilesState() {
   return { files: {}, groups: {}, foot: {}, wrap: true };
 }
@@ -20206,962 +20754,6 @@ function reduceFiles(state, action) {
 function controlsOf(state, ids) {
   return { expandDisabled: ids.every((id) => isFileOpen(state, id)), collapseDisabled: !ids.some((id) => isFileOpen(state, id)) };
 }
-
-// dsh/src/client/monitor-model.js
-var jsonText = (value) => JSON.stringify(value, null, 2) ?? String(value);
-var stringOf = (value) => typeof value === "string" ? value : jsonText(value);
-var stepPart = (attempt, t) => ({ part: "step", text: Number.isFinite(attempt.stepN) ? t("monitor.meta.step", { count: attempt.stepN }) : NOT_AVAILABLE, title: t("monitor.meta.step.title") });
-var DECIMALS = 2;
-function estimatePart({ trigger }, t) {
-  const q = trigger?.q;
-  const kappa = trigger?.kappa;
-  return {
-    part: "estimate",
-    text: Number.isFinite(q) ? t("monitor.meta.estimate", { q: q.toFixed(DECIMALS) }) : NOT_AVAILABLE,
-    title: Number.isFinite(kappa) ? t("monitor.meta.estimate.kappa.title", { kappa: kappa.toFixed(DECIMALS) }) : t("monitor.meta.estimate.title")
-  };
-}
-function parentMetaParts(attempt, now, t, missWarned = false) {
-  const elapsed = elapsedOf(attempt, "attempt", now);
-  const { usage } = attempt.call;
-  const grew = attempt.contextChange?.delta > 0;
-  return [
-    { part: "time", text: elapsed === null ? NOT_AVAILABLE : formatElapsed(elapsed), title: t("monitor.meta.time") },
-    stepPart(attempt, t),
-    estimatePart(attempt, t),
-    usage === null ? { part: "usage", text: NOT_AVAILABLE } : {
-      part: "usage",
-      text: t("monitor.usage.cell", { output: usage.output }),
-      title: t("monitor.usage.title", { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite })
-    },
-    { part: "range", text: contextRangeText(attempt.contextChange, t), title: t("monitor.meta.range.title") },
-    grew ? { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context.grew"), attention: true } : { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context") },
-    missWarned ? { part: "miss", text: contextMissText(attempt.contextChange, t), title: t("monitor.meta.miss.unexpected"), attention: true } : { part: "miss", text: contextMissText(attempt.contextChange, t), title: t("monitor.meta.miss.title") },
-    { part: "seq", text: t("monitor.overview.seq", { seq: attempt.id }) }
-  ];
-}
-var handoffTitle = (handoff, t) => t("monitor.object.handoff", { epoch: handoffSegmentOf(handoff) });
-function handoffMetaParts(handoff, t) {
-  const { type, token, read, kept, skills, lineage, contextChange } = handoff;
-  const known = (...values) => values.every(Number.isFinite);
-  return [
-    { part: "type", text: t(`monitor.handoff.type.${type}`), title: t("monitor.handoff.meta.type.title"), type },
-    { part: "token", text: token, title: t("monitor.handoff.meta.token.title") },
-    { part: "files", text: known(read, kept) ? t("monitor.handoff.meta.files", { read, kept }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.files.title") },
-    { part: "skills", text: t("monitor.handoff.meta.skills", { count: skills }), title: t("monitor.handoff.meta.skills.title") },
-    { part: "lineage", text: known(lineage) ? t("monitor.handoff.meta.lineage", { count: lineage }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.lineage.title") },
-    { part: "range", text: contextRangeText(contextChange, t, "monitor.handoff.meta.range"), title: t("monitor.handoff.meta.range.title") },
-    { part: "context", text: contextChangeText(contextChange, t), title: t("monitor.meta.context") },
-    { part: "seq", text: t("monitor.overview.seq", { seq: handoff.id }) }
-  ];
-}
-var MINUS = "\u2212";
-function settlementFigures(saved, cost, format) {
-  const net = Math.round(saved) - Math.round(cost);
-  return {
-    saved: format(Math.round(saved)),
-    cost: format(Math.round(cost)),
-    net: `${net > 0 ? "+" : net < 0 ? MINUS : ""}${format(Math.abs(net))}`,
-    payback: `${paybackPercent(saved, cost)}%`
-  };
-}
-function settlementMetaParts(settlement, t) {
-  const figures = settlementFigures(settlement.saved, settlement.cost, compactCount);
-  return [
-    { part: "count", text: t("monitor.settlement.count", { count: settlement.count }), title: t("monitor.settlement.count.title") },
-    { part: "steps", text: t("monitor.settlement.steps", { count: settlement.steps }), title: t("monitor.settlement.steps.title") },
-    { part: "saved", text: t("monitor.settlement.saved", { count: figures.saved }), title: t("monitor.settlement.saved.title") },
-    { part: "cost", text: t("monitor.settlement.cost", { count: figures.cost }), title: t("monitor.settlement.cost.title") },
-    { part: "net", text: t("monitor.settlement.net", { count: figures.net }), title: t("monitor.settlement.net.title") },
-    { part: "payback", text: t("monitor.settlement.payback", { percent: figures.payback }), title: t("monitor.settlement.payback.title") }
-  ];
-}
-var figureTexts = (figures, t) => [
-  t("monitor.settlement.saved", { count: figures.saved }),
-  t("monitor.settlement.cost", { count: figures.cost }),
-  t("monitor.settlement.net", { count: figures.net }),
-  t("monitor.settlement.payback", { percent: figures.payback })
-];
-var NO_FIGURES = { saved: NOT_AVAILABLE, cost: NOT_AVAILABLE, net: NOT_AVAILABLE, payback: NOT_AVAILABLE };
-function settlementTextOf(settlement, t) {
-  const { epoch, count, steps: steps2, saved, cost, rows } = settlement;
-  return [
-    ...rows.map((row2) => [
-      t("monitor.object.attempt", { epoch, ordinal: row2.ordinal }),
-      ...figureTexts(row2.saved === null ? NO_FIGURES : settlementFigures(row2.saved, row2.cost, String), t)
-    ].join(PART_SEPARATOR)),
-    [t("monitor.settlement.total"), t("monitor.settlement.count", { count }), t("monitor.settlement.steps", { count: steps2 }), ...figureTexts(settlementFigures(saved, cost, String), t)].join(PART_SEPARATOR),
-    t("monitor.settlement.unit")
-  ].join("\n");
-}
-var quantityText = (value) => value === null || value === void 0 ? null : Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
-var QUANTITIES_BEFORE_PRESET = ["n", "lA", "bEst", "cEst", "sEst", "cRatio", "fee"];
-var QUANTITIES_AFTER_PRESET = ["kappa", "q"];
-var KAPPA_PRESET_IDS = Object.freeze(["E2", "W2", "M2", "S3", "X3"]);
-function quoteFactsOf(quote, t) {
-  const quantity = (key) => [t(`monitor.quote.${key}`), quantityText(quote[key])];
-  return [
-    ...quote.missing === null ? [] : [[t("monitor.quote.missingReason"), t(`monitor.quote.missing.${quote.missing}`)]],
-    ...QUANTITIES_BEFORE_PRESET.map(quantity),
-    [t("monitor.quote.preset"), KAPPA_PRESET_IDS.includes(quote.preset) ? t(`monitor.quote.preset.${quote.preset}`) : null],
-    ...QUANTITIES_AFTER_PRESET.map(quantity),
-    [t("monitor.quote.arm"), quote.arm === null ? null : t(`monitor.quote.arm.${quote.arm}`)]
-  ];
-}
-function blockParts(block, t) {
-  switch (block?.type) {
-    case "text":
-      return { kind: "text", text: stringOf(block.text) };
-    case "reasoning":
-      return { kind: "reasoning", label: t("monitor.block.reasoning"), text: stringOf(block.text) };
-    case "tool-call":
-      return { kind: "tool-call", label: t("monitor.block.toolCall", { name: block.name }), text: stringOf(block.arguments) };
-    case "tool-result":
-      return {
-        kind: "tool-result",
-        label: t(block.isError === true ? "monitor.block.toolError" : "monitor.block.toolResult", { id: stringOf(block.callId ?? "") }),
-        ...block.isError === true ? { error: true } : {},
-        children: blockListParts(block.blocks, t)
-      };
-    case "image":
-    case "file":
-      return { kind: block.type, label: t(`monitor.block.${block.type}`), json: jsonText(block.attachment) };
-    case "unknown":
-      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block.raw) };
-    default:
-      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block) };
-  }
-}
-function blockListParts(blocks, t) {
-  return (Array.isArray(blocks) ? blocks : []).map((block) => blockParts(block, t));
-}
-function slotFactsOf(detail, t) {
-  const { number, seqs, turn, step, source, events } = detail;
-  return [
-    [t("monitor.slot.number"), number],
-    [t("monitor.slot.seqs"), seqs.join(", ")],
-    ...turn === null ? [] : [[t("monitor.slot.turn"), turn]],
-    ...step === null ? [] : [[t("monitor.slot.step"), step]],
-    [t("monitor.slot.source"), t(`monitor.source.${sourceCategoryOf(source)}`)],
-    [t("monitor.slot.sourceType"), source?.type ?? null],
-    [t("monitor.slot.sourceKind"), source?.kind ?? null],
-    [t("monitor.slot.visibleCount"), t("monitor.slot.visibleCountValue", { visible: events.filter((event) => event.visible).length, total: events.length })]
-  ];
-}
-
-// dsh/src/client/monitor-files.js
-var import_react4 = __toESM(require("react"), 1);
-var h5 = import_react4.default.createElement;
-var ICONS = {
-  expand: ["M4 6.5 8 3l4 3.5", "M4 9.5 8 13l4-3.5"],
-  collapse: ["M4 3 8 6.5 12 3", "M4 13 8 9.5 12 13"],
-  wrap: ["M2 3.5h12", "M2 7.5h9.5a2.25 2.25 0 0 1 0 4.5H7.5", "M9.3 10.2 7.3 12l2 1.8", "M2 12h3"]
-};
-var Icon = ({ name }) => h5("svg", { viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" }, ICONS[name].map((d) => h5("path", { key: d, d })));
-var Chevron = () => h5("i", { className: "sw-fl-chev", "aria-hidden": "true" });
-var toneOf = (tone) => tone ?? void 0;
-function Controls({ state, ids, dispatch, t }) {
-  const { expandDisabled, collapseDisabled } = controlsOf(state, ids);
-  const button = (name, label, { disabled = false, pressed, title = label, action }) => h5("button", {
-    type: "button",
-    className: "sw-fl-btn",
-    "data-act": name,
-    title,
-    "aria-label": label,
-    "aria-disabled": disabled ? "true" : void 0,
-    "aria-pressed": pressed,
-    onClick: () => {
-      if (!disabled) dispatch(action);
-    }
-  }, h5(Icon, { name }));
-  return h5(
-    "span",
-    { className: "sw-fl-ctl", role: "group", "aria-label": t("monitor.files.controls") },
-    button("expand", t("monitor.files.expandAll"), { disabled: expandDisabled, action: { type: "expand", ids } }),
-    button("collapse", t("monitor.files.collapseAll"), { disabled: collapseDisabled, action: { type: "collapse" } }),
-    button("wrap", t("monitor.files.wrap"), { pressed: state.wrap, title: t(state.wrap ? "monitor.files.wrap.on" : "monitor.files.wrap.off"), action: { type: "wrap" } })
-  );
-}
-function Path({ item }) {
-  const { dir, base } = item.name;
-  return h5(
-    "span",
-    { className: "sw-fl-path", title: item.path },
-    dir === "" ? null : h5("span", { className: "sw-fl-dir" }, dir),
-    h5("span", { className: "sw-fl-base" }, base)
-  );
-}
-function Preview({ item: { bar, stat } }) {
-  return h5(
-    "span",
-    { className: "sw-fl-pv", "data-nobar": bar === null ? "" : void 0 },
-    bar === null ? null : h5(
-      "span",
-      { className: "sw-fl-bar", title: bar.title, "aria-hidden": "true" },
-      bar.marks.map((mark, at) => h5("i", { key: at, "data-x": mark.withdrawn ? "" : void 0, style: { left: `${mark.left}%`, width: `${mark.width}%` } }))
-    ),
-    h5(
-      "span",
-      { className: "sw-fl-stat", "data-tone": toneOf(stat.empty?.tone) },
-      stat.empty === null ? [stat.segments === null ? null : h5("span", { key: "segments", className: "sw-fl-sg" }, `${stat.segments}${PART_SEPARATOR}`), stat.chars] : stat.empty.text
-    )
-  );
-}
-function Row({ row: row2, t }) {
-  const range = spanText([row2.first, row2.last]);
-  switch (row2.type) {
-    case "gap":
-      return h5("div", { className: "sw-fl-sep" }, h5("span", null, t("monitor.files.row.gap", { range })));
-    case "withdrawn":
-      return h5("div", { className: "sw-fl-wd" }, h5("span", null, h5("b", { "aria-hidden": "true" }, "\u2212"), t("monitor.files.row.withdrawn", { range, count: row2.last - row2.first + 1 })));
-    default:
-      return h5("div", { className: "sw-fl-row" }, h5("div", { className: "sw-fl-n" }, row2.number), h5("div", { className: "sw-fl-t" }, row2.text));
-  }
-}
-function FileBody({ item, id, t }) {
-  const rows = import_react4.default.useMemo(() => bodyRowsOf(item), [item]);
-  return h5(
-    "div",
-    { id },
-    item.name.cut || item.meta !== "" ? h5("div", { className: "sw-fl-meta" }, item.name.cut ? h5("div", { className: "sw-fl-full" }, item.path) : null, item.meta) : null,
-    h5("div", { className: "sw-fl-scroll" }, h5("div", { className: "sw-fl-rows" }, rows.map((row2, at) => h5(Row, { key: at, row: row2, t }))))
-  );
-}
-function FileItem({ item, open, bodyId, dispatch, t }) {
-  return h5(
-    "div",
-    { className: "sw-fl-item", "data-kind": "file", "data-open": open ? "" : void 0, "data-skill": item.skill ? "" : void 0 },
-    h5(
-      "h4",
-      { className: "sw-fl-fh" },
-      h5(
-        "button",
-        { type: "button", className: "sw-fl-fbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "toggle", id: item.id }) },
-        h5(Chevron),
-        h5(Path, { item }),
-        h5("span", { className: "sw-fl-cnt" }, item.count.map(({ text, tone }) => h5("span", { key: text, "data-tone": toneOf(tone) }, text))),
-        h5(Preview, { item })
-      )
-    ),
-    open ? h5(FileBody, { item, id: bodyId, t }) : null
-  );
-}
-function PlainItem({ item }) {
-  return h5(
-    "div",
-    { className: "sw-fl-item", "data-kind": "plain", "data-removed": item.removed ? "" : void 0 },
-    h5(
-      "div",
-      { className: "sw-fl-plain" },
-      h5(Path, { item }),
-      h5("span", { className: "sw-fl-why", "data-tone": toneOf(item.tone), "data-long": item.long ? "" : void 0 }, item.why)
-    )
-  );
-}
-function Group({ group, state, baseId, dispatch, t }) {
-  const open = isGroupOpen(state, group.id);
-  const bodyId = `${baseId}-group-${group.id}`;
-  return h5(
-    "section",
-    { className: "sw-fl-group", "data-group": group.id },
-    h5(
-      "h3",
-      { className: "sw-fl-gh" },
-      h5(
-        "button",
-        { type: "button", className: "sw-fl-gbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "group", id: group.id }) },
-        h5(Chevron),
-        h5("span", { className: "sw-fl-lbl" }, group.label),
-        h5("span", { className: "sw-fl-gcnt" }, group.items.length)
-      )
-    ),
-    open ? h5("div", { id: bodyId }, group.items.map((item) => item.kind === "file" ? h5(FileItem, { key: item.id, item, open: isFileOpen(state, item.id), bodyId: `${baseId}-file-${item.id}`, dispatch, t }) : h5(PlainItem, { key: item.id, item }))) : null
-  );
-}
-function Foot({ foot, state, baseId, dispatch }) {
-  return h5("div", { className: "sw-fl-foot" }, foot.map(({ key, label, text, pre }) => {
-    const open = isFootOpen(state, key);
-    const id = `${baseId}-foot-${key}`;
-    return h5(
-      "div",
-      { key, className: "sw-fl-fold" },
-      h5("button", { type: "button", className: "sw-fl-foldbtn", "aria-expanded": open, "aria-controls": open ? id : void 0, onClick: () => dispatch({ type: "fold", key }) }, h5(Chevron), label),
-      open ? h5("div", { id, className: "sw-fl-foldbody" }, pre ? h5("pre", { className: "sw-mon-pre" }, text) : h5("p", null, text)) : null
-    );
-  }));
-}
-function FilesView({ model, state, dispatch, baseId = "sw-files", t }) {
-  const ids = model.groups.flatMap((group) => group.items).filter((item) => item.kind === "file").map((item) => item.id);
-  return h5(
-    "div",
-    { className: "sw-fl", "data-sw-files": model.mode },
-    h5(
-      "div",
-      { className: "sw-fl-head" },
-      h5("p", { className: "sw-fl-sum" }, model.summary.flatMap(({ text, tone }, at) => [at > 0 ? PART_SEPARATOR : null, h5("span", { key: at, "data-tone": toneOf(tone) }, text)])),
-      h5(Controls, { state, ids, dispatch, t }),
-      model.sub === null ? null : h5("p", { className: "sw-fl-sub" }, model.sub)
-    ),
-    h5("div", { className: "sw-fl-list", "data-wrap": state.wrap ? "on" : "off" }, model.groups.map((group) => h5(Group, { key: group.id, group, state, baseId, dispatch, t }))),
-    model.foot.length === 0 ? null : h5(Foot, { foot: model.foot, state, baseId, dispatch })
-  );
-}
-function CarriedFiles({ carried, t }) {
-  const model = import_react4.default.useMemo(() => carriedFilesOf(carried, t), [carried, t]);
-  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
-  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
-}
-function ReadFiles({ files, t }) {
-  const model = import_react4.default.useMemo(() => readFilesOf(files, t), [files, t]);
-  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
-  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
-}
-
-// dsh/src/client/monitor-drawer.js
-var h6 = import_react5.default.createElement;
-function useResult(handle) {
-  return import_react5.default.useSyncExternalStore(handle.subscribe, () => handle.result, () => handle.result);
-}
-var SLOTS_ENDPOINT = "inner-monitor/slots";
-function Notice({ state, children }) {
-  return h6("p", { className: "sw-mon-notice", "data-sw-monitor-notice": state, role: "status" }, children);
-}
-function Missing({ t }) {
-  return h6("span", { className: "sw-mon-missing" }, t("monitor.notRecorded"));
-}
-function Facts({ entries }) {
-  return h6("dl", { className: "sw-mon-facts" }, entries.map(([term, description], at) => h6(import_react5.default.Fragment, { key: at }, h6("dt", null, term), h6("dd", null, description))));
-}
-var Pre = ({ children }) => h6("pre", { className: "sw-mon-pre" }, children);
-var Json = ({ value }) => h6(Pre, null, jsonText(value));
-var Section = ({ name, title, children, ...attributes }) => h6("section", { className: "sw-mon-section", "data-sw-section": name, ...attributes }, title === void 0 ? null : h6("h3", { className: "sw-mon-heading" }, title), children);
-var WholeText = ({ text, t }) => text === "" ? h6("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.slot.empty")) : h6(Pre, null, text);
-function Block({ part: { kind, label, text, json, error, children } }) {
-  return h6(
-    "div",
-    { className: "sw-mon-block", "data-block": kind, "data-error": error === true ? "" : void 0 },
-    label === void 0 ? null : h6("span", { className: "sw-mon-label" }, label),
-    text === void 0 ? null : h6(Pre, null, text),
-    json === void 0 ? null : h6(Pre, null, json),
-    children === void 0 ? null : children.map((child, at) => h6(Block, { key: at, part: child }))
-  );
-}
-function Blocks({ blocks, t }) {
-  return h6(import_react5.default.Fragment, null, blockListParts(blocks, t).map((part, at) => h6(Block, { key: at, part })));
-}
-function Message({ message, t }) {
-  return h6("div", { className: "sw-mon-message" }, h6("span", { className: "sw-mon-label" }, message?.role ?? t("monitor.notRecorded")), Array.isArray(message?.content) ? h6(Blocks, { blocks: message.content, t }) : h6(Json, { value: message }));
-}
-function CarrierCache({ evidence, t }) {
-  if (evidence === void 0 || evidence === null) return t("monitor.carrierCache.unobserved");
-  return h6(
-    "ol",
-    { className: "sw-mon-cache", "data-sw-carrier-cache": "" },
-    evidence.results.map(({ result, reason }, at) => h6(
-      "li",
-      { key: at, "data-result": result },
-      result === "skipped" ? t("monitor.carrierCache.skipped", { reason: t(`monitor.carrierCache.reason.${reason}`) }) : t(`monitor.carrierCache.${result}`)
-    )),
-    evidence.omitted > 0 ? h6("li", { key: "omitted", className: "sw-mon-note", "data-result": "omitted" }, t("monitor.carrierCache.omitted", { count: evidence.omitted })) : null
-  );
-}
-var seqText = (seq, t) => seq === null || seq === void 0 ? h6(Missing, { t }) : t("monitor.overview.seq", { seq });
-function selectionOf(request) {
-  return (request.recorded === "partial" ? request.selection : request.options) ?? {};
-}
-function OverviewPage({ detail, payback = /* @__PURE__ */ new Map(), t }) {
-  const { row: row2, ids, request } = detail;
-  const status = shownStatusOf(row2, payback);
-  const progress = payback.get(row2.id);
-  const { provider, model, reasoningEffort } = selectionOf(request);
-  const present = (value) => value === void 0 || value === null ? h6(Missing, { t }) : value;
-  const entries = [
-    [t("monitor.overview.status"), h6("span", { className: "sw-mon-status", "data-status": status }, t(`monitor.status.${status}`))],
-    ...row2.status === "committed" ? [[t("monitor.overview.payback"), Number.isFinite(progress) ? `${progress}%` : NOT_AVAILABLE]] : [],
-    [t("monitor.overview.callState"), t(`monitor.callState.${row2.call.state}`)],
-    [t("monitor.overview.carrierCache"), h6(CarrierCache, { evidence: row2.call.carrierCache, t })],
-    [t("monitor.overview.recordStart"), seqText(ids.start, t)],
-    [t("monitor.overview.recordCall"), seqText(ids.call, t)],
-    [t("monitor.overview.recordEnd"), seqText(ids.end, t)],
-    [t("monitor.overview.recordCarrier"), seqText(ids.carrier, t)],
-    ...row2.slots === null ? [] : [[t("monitor.overview.slots"), row2.slots]],
-    [t("monitor.overview.provider"), present(provider)],
-    [t("monitor.overview.model"), present(model)],
-    ...reasoningEffort === void 0 || reasoningEffort === null ? [] : [[t("monitor.overview.effort"), reasoningEffort]],
-    [t("monitor.overview.range"), t("monitor.overview.rangeValue", { first: row2.range.first, last: row2.range.last, count: row2.range.count })],
-    [t("monitor.overview.finish"), present(row2.call.finish)],
-    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h6(Pre, null, row2.reason)]],
-    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h6(Pre, null, row2.call.thrown)]]
-  ];
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    h6(Facts, { entries }),
-    row2.legacy ? h6("p", { className: "sw-mon-note" }, t("monitor.overview.legacy")) : null
-  );
-}
-function ToolsSection({ tools, t }) {
-  return h6(
-    Section,
-    { name: "tools", title: t("monitor.request.tools", { count: tools.count }) },
-    Array.isArray(tools.definitions) ? h6("details", { className: "sw-mon-fold" }, h6("summary", null, t("monitor.request.definitions")), h6(Json, { value: tools.definitions })) : h6("p", { className: "sw-mon-note" }, tools.reason)
-  );
-}
-function RequestPage({ detail, t }) {
-  const { request } = detail;
-  const partial = request.recorded === "partial";
-  const options = Object.entries(selectionOf(request)).map(([name, value]) => [name, stringOf(value)]);
-  const updates = request.toolHistory?.updates;
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    partial ? h6("p", { className: "sw-mon-note" }, t("monitor.request.partial")) : null,
-    h6(Section, { name: "options", title: t("monitor.request.options") }, h6(Facts, { entries: options })),
-    h6(
-      Section,
-      { name: "messages", title: t("monitor.request.tail") },
-      partial ? null : h6("p", { className: "sw-mon-note" }, t("monitor.request.messages", { count: request.messages.count })),
-      h6(Message, { message: partial ? request.tail : request.messages.tail, t })
-    ),
-    h6(Section, { name: "sequence", title: t("monitor.request.sequence") }, h6(Facts, { entries: [[t("monitor.request.throughSeq"), request.throughSeq ?? h6(Missing, { t })], [t("monitor.request.headerSeq"), request.headerSeq ?? h6(Missing, { t })]] })),
-    request.tools === void 0 ? null : h6(ToolsSection, { tools: request.tools, t }),
-    updates === void 0 ? null : h6(
-      Section,
-      { name: "toolHistory", title: t("monitor.request.toolHistory") },
-      h6(Facts, { entries: updates.map(({ messageId, additions }) => [messageId, additions.join(", ")]) })
-    )
-  );
-}
-function ResponsePage({ detail, t }) {
-  const { row: row2, response: response2 } = detail;
-  const outcome = [
-    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h6(Pre, null, row2.reason)]],
-    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h6(Pre, null, row2.call.thrown)]]
-  ];
-  const outcomeSection = outcome.length === 0 ? null : h6(Section, { name: "outcome", title: t("monitor.response.outcome") }, h6(Facts, { entries: outcome }));
-  const body = response2 === null ? h6("p", { className: "sw-mon-note" }, t("monitor.response.none")) : h6(
-    import_react5.default.Fragment,
-    null,
-    h6(
-      Section,
-      { name: "assembled", title: t("monitor.response.assembled") },
-      response2.blocks === null ? h6("p", { className: "sw-mon-note" }, t("monitor.response.assembleError", { message: response2.error })) : response2.blocks.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.response.noBlocks")) : h6(Blocks, { blocks: response2.blocks, t })
-    ),
-    h6(Section, { name: "finish", title: t("monitor.response.finish") }, response2.finish === null ? h6(Missing, { t }) : h6(Json, { value: response2.finish })),
-    h6(
-      Section,
-      { name: "raw", title: t("monitor.response.rawTitle") },
-      h6("details", { className: "sw-mon-fold" }, h6("summary", null, t("monitor.response.raw", { count: response2.stream.length })), h6(Json, { value: response2.stream }))
-    )
-  );
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    outcomeSection,
-    body
-  );
-}
-function UsagePage({ detail, t }) {
-  const usage = detail.usage;
-  const { folded, raw } = usage ?? {};
-  const change = detail.row?.contextChange;
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    h6(Section, { name: "folded", title: t("monitor.usage.folded") }, folded === void 0 || folded === null ? h6(Missing, { t }) : h6(Facts, { entries: [
-      [t("monitor.usage.input"), tokensOf(folded.input)],
-      [t("monitor.usage.output"), tokensOf(folded.output)],
-      [t("monitor.usage.cacheRead"), tokensOf(folded.cacheRead)],
-      [t("monitor.usage.cacheWrite"), tokensOf(folded.cacheWrite)]
-    ] })),
-    h6(Section, { name: "context", title: t("monitor.usage.context") }, h6(Facts, { entries: [
-      [t("monitor.context.before"), tokensOf(change?.before)],
-      [t("monitor.context.after"), tokensOf(change?.after)],
-      [t("monitor.context.change"), contextChangeText(change, t, TOKEN_UNIT)],
-      [t("monitor.context.miss"), tokensOf(change?.miss)]
-    ] })),
-    h6(Section, { name: "raw", title: t("monitor.usage.raw") }, raw === void 0 || raw === null ? h6(Missing, { t }) : h6(Json, { value: raw }))
-  );
-}
-function timeText(ms, t) {
-  if (ms === null || ms === void 0) return h6(Missing, { t });
-  const date = new Date(ms);
-  return Number.isNaN(date.getTime()) ? String(ms) : date.toISOString();
-}
-function TimingPage({ detail, now, t }) {
-  const { row: row2, timing, response: response2 } = detail;
-  const span = (part) => {
-    const ms = elapsedOf(row2, part, now);
-    return ms === null ? h6(Missing, { t }) : formatElapsed(ms);
-  };
-  return h6(Facts, { entries: [
-    [t("monitor.timing.attemptStart"), timeText(timing.attempt.startedAt, t)],
-    [t("monitor.timing.attemptEnd"), timeText(timing.attempt.endedAt, t)],
-    [t("monitor.timing.attemptElapsed"), span("attempt")],
-    [t("monitor.timing.callStart"), timeText(timing.call.startedAt, t)],
-    [t("monitor.timing.callEnd"), timeText(timing.call.endedAt, t)],
-    [t("monitor.timing.callElapsed"), span("call")],
-    [t("monitor.timing.firstChunk"), timeText(response2?.firstAt, t)]
-  ] });
-}
-function SlotSummary({ slot, number, t }) {
-  return h6(
-    Section,
-    { title: t("monitor.summaries.heading", { number, title: slotTitleOf(slot, t), seq: slot.key }), "data-sw-slot-summary": slot.key },
-    h6(WholeText, { text: slot.output, t })
-  );
-}
-function SlotSummaries({ monitor, attemptId, t }) {
-  const result = useResult(monitor.resource({ endpoint: SLOTS_ENDPOINT, attempt: attemptId }));
-  return h6(DetailBody, { result, t, render: ({ slots }) => h6(import_react5.default.Fragment, null, slots.map((slot, at) => h6(SlotSummary, { key: slot.key, slot, number: at + 1, t }))) });
-}
-function SummariesPage({ detail, monitor, attemptId, t }) {
-  if (detail.row.status !== "committed") return h6(Notice, { state: "summaries-pending" }, t("monitor.summaries.pending"));
-  return h6(SlotSummaries, { monitor, attemptId, t });
-}
-function CarriedPage({ detail, t }) {
-  if (detail.row.status !== "committed") return h6(Notice, { state: "carried-pending" }, t("monitor.carried.pending"));
-  if (detail.carried === null) return h6(Notice, { state: "carried-none" }, t("monitor.carried.none"));
-  return h6(CarriedFiles, { carried: detail.carried, t });
-}
-function QuotePage({ detail, t }) {
-  if (detail.quote === null || detail.quote === void 0) return h6(Notice, { state: "quote-none" }, t("monitor.quote.none"));
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    h6("p", { className: "sw-mon-note" }, t("monitor.quote.note")),
-    h6(Facts, { entries: quoteFactsOf(detail.quote, t).map(([term, value]) => [term, value ?? h6(Missing, { t })]) })
-  );
-}
-function SourceEvent({ event, t }) {
-  const { seq, type, visible, blocks, raw } = event;
-  return h6(
-    "details",
-    { className: "sw-mon-event", "data-sw-event": "", "data-seq": seq, "data-visible": String(visible), open: visible },
-    h6(
-      "summary",
-      null,
-      t("monitor.slot.event", { seq, type }),
-      h6("span", { className: "sw-mon-tag", "data-tag": visible ? "surface" : "earlier" }, t(visible ? "monitor.slot.surface" : "monitor.slot.earlier"))
-    ),
-    blocks.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.slot.noBlocks")) : h6(Blocks, { blocks, t }),
-    h6(
-      "details",
-      { className: "sw-mon-fold", "data-sw-raw": "" },
-      h6("summary", null, t("monitor.slot.raw")),
-      h6(Json, { value: raw })
-    )
-  );
-}
-function SlotOverviewPage({ detail, t }) {
-  return h6(Facts, { entries: slotFactsOf(detail, t).map(([term, value]) => [term, value ?? h6(Missing, { t })]) });
-}
-function SlotSummaryPage({ detail, t }) {
-  return h6(Section, { name: "c" }, h6(WholeText, { text: detail.c, t }));
-}
-function SlotSourcePage({ detail, t }) {
-  return h6(
-    Section,
-    { name: "sources", title: t("monitor.slot.sources") },
-    detail.events.map((event) => h6(SourceEvent, { key: event.seq, event, t }))
-  );
-}
-function HandoffOverviewPage({ detail, t }) {
-  const { row: row2 } = detail;
-  const present = (value) => value === void 0 || value === null ? h6(Missing, { t }) : value;
-  return h6(Facts, { entries: [
-    [t("monitor.handoff.overview.type"), h6("span", { "data-type": row2.type }, t(`monitor.handoff.type.${row2.type}`))],
-    [t("monitor.handoff.overview.token"), row2.token],
-    [t("monitor.handoff.overview.createdAt"), timeText(row2.createdAt, t)],
-    [t("monitor.handoff.overview.deliveredAt"), timeText(row2.time, t)],
-    [t("monitor.handoff.overview.seq"), seqText(row2.id, t)],
-    [t("monitor.handoff.overview.filesRead"), present(row2.read)],
-    [t("monitor.handoff.overview.filesKept"), present(row2.kept)],
-    [t("monitor.handoff.overview.skills"), row2.skills],
-    [t("monitor.handoff.overview.before"), tokensOf(row2.contextChange?.before)],
-    [t("monitor.handoff.overview.after"), tokensOf(row2.contextChange?.after)]
-  ] });
-}
-function HandoffSummaryPage({ detail, t }) {
-  return h6(Section, { name: "summary" }, h6(WholeText, { text: detail.summary, t }));
-}
-function HandoffFilesPage({ detail, t }) {
-  return detail.files.length === 0 ? h6("p", { className: "sw-mon-note" }, t("monitor.handoff.files.none")) : h6(ReadFiles, { files: detail.files, t });
-}
-function HandoffTurnsPage({ detail, t }) {
-  return h6(Section, { name: "turns" }, detail.turnPage === null ? h6(Missing, { t }) : h6(Pre, null, detail.turnPage));
-}
-function HandoffLineagePage({ detail, t }) {
-  if (detail.lineage === null) return h6(Missing, { t });
-  return h6(Facts, { entries: detail.lineage.map((member) => [member.label, member.omitted === true ? t("monitor.handoff.lineage.omitted") : member.headline]) });
-}
-function TurnDetail({ turn, t }) {
-  const { user, note } = turn;
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    h6(Section, { name: "user", title: t("monitor.handoff.turn.user") }, h6(WholeText, { text: user, t })),
-    h6(
-      Section,
-      { name: "note", title: t("monitor.handoff.turn.note") },
-      note === null ? h6("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.handoff.turn.noNote")) : h6(WholeText, { text: note, t })
-    )
-  );
-}
-function SettlementDetail({ settlement, t }) {
-  return settlement === void 0 ? null : h6(Pre, null, settlementTextOf(settlement, t));
-}
-var CALL_PAGES = { overview: OverviewPage, request: RequestPage, response: ResponsePage, summaries: SummariesPage, carried: CarriedPage, quote: QuotePage, usage: UsagePage, timing: TimingPage };
-var SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, source: SlotSourcePage };
-var HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
-function PagedDetail({ pages, first, labels, detail, monitor, attemptId, payback, now, t }) {
-  const [page, setPage] = import_react5.default.useState(first);
-  const Page = pages[page];
-  return h6(
-    import_react5.default.Fragment,
-    null,
-    h6("div", { className: "sw-mon-tabs", role: "tablist" }, Object.keys(pages).map((name) => h6("button", {
-      key: name,
-      type: "button",
-      role: "tab",
-      className: "sw-mon-tab",
-      "data-page": name,
-      "aria-selected": name === page,
-      onClick: () => {
-        setPage(name);
-      }
-    }, t(`${labels}.${name}`)))),
-    h6("div", { className: "sw-mon-page", role: "tabpanel", "data-page": page }, h6(Page, { detail, monitor, attemptId, payback, now, t }))
-  );
-}
-function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
-  return h6(PagedDetail, { pages: CALL_PAGES, first: "overview", labels: "monitor.page", detail, monitor, attemptId, payback, now, t });
-}
-function SlotDetail({ detail, t }) {
-  return h6(PagedDetail, { pages: SLOT_PAGES, first: "summary", labels: "monitor.slotPage", detail, t });
-}
-function HandoffDetail({ detail, t }) {
-  const pages = detail.row.type === "load" ? HANDOFF_PAGES : Object.fromEntries(Object.entries(HANDOFF_PAGES).filter(([name]) => name !== "lineage"));
-  return h6(PagedDetail, { pages, first: "overview", labels: "monitor.handoffPage", detail, t });
-}
-function DetailBody({ result, t, render }) {
-  if (result === null) return h6(Notice, { state: "detail-loading" }, t("monitor.detail.loading"));
-  if (result.kind === "unavailable") return h6(Notice, { state: "detail-unavailable" }, t("monitor.detail.unavailable"));
-  if (result.kind === "unreachable") return h6(Notice, { state: "detail-unreachable" }, t("monitor.detail.unreachable", { message: result.message }));
-  return render(result.value);
-}
-
-// dsh/src/client/monitor-view.js
-var h7 = import_react6.default.createElement;
-var CLOCK_TICK_MS = 1e3;
-var ROW_LEVELS = { attempt: 1, call: 2, slot: 2, handoff: 1, settlement: 1, content: 2, turn: 2, placeholder: 2 };
-function titleOf(row2, t) {
-  switch (row2.kind) {
-    case "attempt":
-      return t("monitor.object.attempt", { epoch: row2.epoch, ordinal: row2.ordinal });
-    case "call":
-      return t("monitor.object.call");
-    case "handoff":
-      return handoffTitle(row2.handoff, t);
-    case "settlement":
-      return t("monitor.object.settlement", { epoch: row2.settlement.epoch });
-    case "content":
-      return t("monitor.object.handoffContent");
-    case "turn":
-      return t("monitor.object.handoffTurn", { n: row2.at + 1 });
-    default:
-      return slotTitleOf(row2.slot, t);
-  }
-}
-function emptyMarkerOf(row2, t) {
-  if (row2.kind === "slot" && row2.slot.output === "") return t("monitor.slot.empty");
-  if (row2.kind === "turn" && row2.turn.note === null) return t("monitor.handoff.turn.noNote");
-  if (row2.kind === "turn" && row2.turn.note === "") return t("monitor.slot.empty");
-  return null;
-}
-function Preview2({ preview: { input, output }, empty }) {
-  const shown = empty ?? output;
-  if (input === void 0 && shown === null) return null;
-  const paired = input !== void 0;
-  return h7(
-    "div",
-    { className: "sw-mon-preview", title: paired ? shown === null ? input : `${input} \u2192 ${shown}` : shown },
-    paired ? h7("span", { className: "sw-mon-in" }, input) : null,
-    paired && shown !== null ? h7("span", { className: "sw-mon-arrow", "aria-hidden": "true" }, "\u2192") : null,
-    shown === null ? null : h7("span", empty === null ? { className: "sw-mon-out" } : { className: "sw-mon-out sw-mon-empty", "data-sw-empty": "" }, shown)
-  );
-}
-function Meta({ parts }) {
-  return h7(
-    "span",
-    { className: "sw-mon-meta" },
-    parts.map(({ part, text, title, attention, type }) => h7("span", { key: part, className: "sw-mon-meta-item", "data-part": part, "data-sw-attention": attention ? "" : void 0, "data-type": type, title }, text))
-  );
-}
-function MonitorRow({ row: row2, selected, now, dispatch, t }) {
-  const { kind, attempt, handoff } = row2;
-  const props = { className: "sw-mon-row", role: "treeitem", "data-sw-row": kind, "data-identity": row2.identity, "aria-level": ROW_LEVELS[kind] };
-  if (kind === "placeholder") {
-    const what = t(handoff === void 0 ? "monitor.leaves.summaries" : "monitor.leaves.turns");
-    return h7(
-      "div",
-      { ...props, "data-sw-placeholder": row2.state },
-      h7(
-        "div",
-        { className: "sw-mon-head" },
-        row2.state === "loading" ? h7("span", { className: "sw-mon-spinner", "aria-hidden": "true" }) : null,
-        h7("span", { "data-part": "text" }, t(`monitor.leaves.${row2.state}`, { what }))
-      )
-    );
-  }
-  const title = h7("span", { className: "sw-mon-title", "data-part": "title" }, titleOf(row2, t));
-  const preview = h7(Preview2, { preview: row2.preview, empty: emptyMarkerOf(row2, t) });
-  const toggle = h7("button", { type: "button", className: "sw-mon-toggle", "aria-expanded": row2.open }, h7("span", { className: "sw-mon-chevron", "aria-hidden": "true" }), title);
-  if (kind === "attempt") {
-    props["aria-expanded"] = row2.open;
-    props.onClick = () => dispatch({ type: "toggle", attemptId: attempt.id, open: row2.open });
-    const parts = parentMetaParts(attempt, now, t, row2.missWarned);
-    if (parts.some(({ attention }) => attention)) props["data-sw-attention"] = "";
-    return h7(
-      "div",
-      props,
-      h7(
-        "div",
-        { className: "sw-mon-head" },
-        toggle,
-        h7("span", { className: "sw-mon-status", "data-part": "status", "data-status": row2.shownStatus }, t(`monitor.status.${row2.shownStatus}`)),
-        h7(Meta, { parts })
-      ),
-      row2.open ? null : preview
-    );
-  }
-  if (kind === "handoff") {
-    props["aria-expanded"] = row2.open;
-    props.onClick = () => dispatch({ type: "toggle", handoffId: handoff.id, open: row2.open });
-    return h7("div", props, h7("div", { className: "sw-mon-head" }, toggle, h7(Meta, { parts: handoffMetaParts(handoff, t) })), row2.open ? null : preview);
-  }
-  const select = () => dispatch(handoff === void 0 ? { type: "select", kind, attemptId: attempt.id, slotKey: row2.slot?.key } : { type: "select", kind, handoffId: handoff.id, turn: row2.at });
-  props["aria-selected"] = selected;
-  props.tabIndex = 0;
-  props.onClick = select;
-  props.onKeyDown = (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    select();
-  };
-  if (kind === "settlement") return h7("div", props, h7("div", { className: "sw-mon-head" }, title, h7(Meta, { parts: settlementMetaParts(row2.settlement, t) })));
-  return h7("div", props, h7("div", { className: "sw-mon-head" }, title), preview);
-}
-function MonitorList({ rows, selected, now, dispatch, t }) {
-  return h7(
-    "div",
-    { className: "sw-mon-list", role: "tree" },
-    rows.map((row2) => h7(MonitorRow, { key: row2.identity, row: row2, selected: row2.identity === selected, now, dispatch, t }))
-  );
-}
-function ResizeHandle({ width, dispatch, t }) {
-  const drag = import_react6.default.useRef(null);
-  return h7("div", {
-    className: "sw-mon-handle",
-    role: "separator",
-    "aria-orientation": "vertical",
-    "aria-label": t("monitor.drawer.resize"),
-    "aria-valuenow": width,
-    "aria-valuemin": DRAWER_MIN_WIDTH,
-    "aria-valuemax": DRAWER_MAX_WIDTH,
-    tabIndex: 0,
-    onPointerDown(event) {
-      if (event.button !== 0) return;
-      const handle = event.currentTarget;
-      drag.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: handle.parentElement.getBoundingClientRect().width,
-        containerWidth: handle.closest("[data-sw-monitor-split]").getBoundingClientRect().width
-      };
-      handle.setPointerCapture(event.pointerId);
-      event.preventDefault();
-    },
-    onPointerMove(event) {
-      const current = drag.current;
-      if (current === null || current.pointerId !== event.pointerId) return;
-      dispatch({ type: "resize", width: current.startWidth + current.startX - event.clientX, containerWidth: current.containerWidth });
-    },
-    onPointerUp(event) {
-      if (drag.current?.pointerId !== event.pointerId) return;
-      drag.current = null;
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    },
-    onPointerCancel() {
-      drag.current = null;
-    },
-    onKeyDown(event) {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      event.preventDefault();
-      const containerWidth = event.currentTarget.closest("[data-sw-monitor-split]").getBoundingClientRect().width;
-      dispatch({ type: "resize", width: width + (event.key === "ArrowLeft" ? DRAWER_KEY_STEP : -DRAWER_KEY_STEP), containerWidth });
-    }
-  });
-}
-var CALL_ENDPOINT = "inner-monitor/call";
-var SLOT_ENDPOINT = "inner-monitor/slot";
-var HANDOFF_ENDPOINT = "inner-monitor/handoff";
-function CallDrawerBody({ monitor, attemptId, payback, now, t }) {
-  const result = useResult(monitor.resource({ endpoint: CALL_ENDPOINT, attempt: attemptId }));
-  return h7(DetailBody, { result, t, render: (detail) => h7(CallDetail, { detail, monitor, attemptId, payback, now, t }) });
-}
-function SlotDrawerBody({ monitor, attemptId, slotKey, t }) {
-  const result = useResult(monitor.resource({ endpoint: SLOT_ENDPOINT, attempt: attemptId, slot: slotKey }));
-  return h7(DetailBody, { result, t, render: (value) => h7(SlotDetail, { detail: value, t }) });
-}
-function HandoffDrawerBody({ monitor, handoffId, t }) {
-  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
-  return h7(DetailBody, { result, t, render: (detail) => h7(HandoffDetail, { detail, t }) });
-}
-function TurnDrawerBody({ monitor, handoffId, turn, t }) {
-  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
-  return h7(DetailBody, { result, t, render: (detail) => h7(TurnDetail, { turn: detail.turns[turn], t }) });
-}
-function TurnSubtitle({ monitor, handoffId, turn }) {
-  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
-  const address = result?.kind === "ready" ? result.value.turns[turn].address : null;
-  return address === null ? null : h7("p", { className: "sw-mon-drawer-sub" }, address);
-}
-function MonitorDrawer({ state, monitor, ordinals, payback, handoffs = [], settlements, now, dispatch, t }) {
-  const { selected, drawerWidth } = state;
-  if (selected === null) return null;
-  const { kind, identity, attemptId, slotKey, handoffId, turn } = selected;
-  let title;
-  let subtitle;
-  let body;
-  if (kind === "settlement") {
-    const settlement = settlements.get(handoffId);
-    title = t("monitor.drawer.settlement", { epoch: settlement === void 0 ? NOT_AVAILABLE : settlement.epoch });
-    subtitle = h7("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
-    body = h7(SettlementDetail, { settlement, t });
-  } else if (kind === "content" || kind === "turn") {
-    const listed = handoffs.find((handoff) => handoff.id === handoffId);
-    title = t(kind === "turn" ? "monitor.drawer.handoffTurn" : "monitor.drawer.handoff", { epoch: listed === void 0 ? NOT_AVAILABLE : handoffSegmentOf(listed) });
-    subtitle = kind === "turn" ? h7(TurnSubtitle, { key: identity, monitor, handoffId, turn }) : h7("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
-    body = kind === "turn" ? h7(TurnDrawerBody, { key: identity, monitor, handoffId, turn, t }) : h7(HandoffDrawerBody, { key: identity, monitor, handoffId, t });
-  } else {
-    const call = kind === "call";
-    const { epoch, ordinal } = ordinals[attemptId] ?? { epoch: NOT_AVAILABLE, ordinal: NOT_AVAILABLE };
-    title = t(call ? "monitor.drawer.call" : "monitor.drawer.slot", { epoch, ordinal });
-    subtitle = h7("p", { className: "sw-mon-drawer-sub" }, call ? t("monitor.drawer.attemptId", { id: attemptId }) : t("monitor.drawer.slotKey", { id: slotKey }));
-    body = call ? h7(CallDrawerBody, { key: identity, monitor, attemptId, payback, now, t }) : h7(SlotDrawerBody, { key: identity, monitor, attemptId, slotKey, t });
-  }
-  return h7(
-    "aside",
-    { className: "sw-mon-drawer", "data-sw-monitor-drawer": "", "data-kind": kind, "aria-label": t("monitor.drawer.label"), style: { width: drawerWidth } },
-    h7(ResizeHandle, { width: drawerWidth, dispatch, t }),
-    h7(
-      "div",
-      { className: "sw-mon-drawer-head" },
-      h7("h2", { className: "sw-mon-drawer-title" }, title),
-      subtitle,
-      h7("button", { type: "button", className: "sw-mon-close", "aria-label": t("monitor.drawer.close"), onClick: () => dispatch({ type: "clear" }) }, "\xD7")
-    ),
-    h7("div", { className: "sw-mon-drawer-body" }, body)
-  );
-}
-var leavesOf = (result, list) => result === null ? LEAVES_LOADING : result.kind === "ready" ? result.value[list] : LEAVES_FAILED;
-function listFeed(monitor, { endpoint, address, list }, ids) {
-  const handles = ids.map((id) => [id, monitor.resource({ endpoint, [address]: id })]);
-  let seen = null;
-  let lists = null;
-  return {
-    subscribe(listener) {
-      const unsubscribes = handles.map(([, handle]) => handle.subscribe(listener));
-      return () => {
-        for (const unsubscribe of unsubscribes) unsubscribe();
-      };
-    },
-    snapshot() {
-      const results = handles.map(([, handle]) => handle.result);
-      if (seen !== null && results.every((result, at) => result === seen[at])) return lists;
-      seen = results;
-      lists = Object.fromEntries(handles.map(([id], at) => [id, leavesOf(results[at], list)]));
-      return lists;
-    }
-  };
-}
-var SLOT_LISTS = { endpoint: SLOTS_ENDPOINT, address: "attempt", list: "slots" };
-var TURN_LISTS = { endpoint: HANDOFF_ENDPOINT, address: "handoff", list: "turns" };
-function useLists(monitor, source, ids) {
-  const feed = import_react6.default.useMemo(() => listFeed(monitor, source, ids), [monitor, source, ids.join()]);
-  return import_react6.default.useSyncExternalStore(feed.subscribe, feed.snapshot, feed.snapshot);
-}
-function MonitorSplit({ attempts, handoffs, monitor, state, dispatch, t }) {
-  const paneRef = import_react6.default.useRef(null);
-  const [now, setNow] = import_react6.default.useState(() => Date.now());
-  const running = attempts.some((attempt) => ACTIVE_STATUSES.includes(attempt.status));
-  import_react6.default.useEffect(() => {
-    if (!running) return void 0;
-    setNow(Date.now());
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, CLOCK_TICK_MS);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [running]);
-  import_react6.default.useLayoutEffect(() => {
-    const pane = paneRef.current;
-    pane.scrollTop = pane.scrollHeight;
-  }, []);
-  const expanded = attempts.filter((attempt) => attempt.status === "committed" && isOpen(state, attempt.id)).map((attempt) => attempt.id);
-  const expandedHandoffs = handoffs.filter((handoff) => isOpen(state, handoff.id)).map((handoff) => handoff.id);
-  const rows = flattenRows(attempts, useLists(monitor, SLOT_LISTS, expanded), state, handoffs, useLists(monitor, TURN_LISTS, expandedHandoffs));
-  return h7(
-    "div",
-    { className: "sw-mon-split", "data-sw-monitor-split": "" },
-    h7("div", {
-      className: "sw-mon-pane",
-      ref: paneRef,
-      role: "region",
-      "aria-label": t("monitor.region"),
-      tabIndex: 0,
-      onClick(event) {
-        if (event.target === event.currentTarget) dispatch({ type: "clear" });
-      }
-    }, h7(MonitorList, { rows, selected: state.selected?.identity ?? null, now, dispatch, t })),
-    h7(MonitorDrawer, { state, monitor, ordinals: ordinalsOf(attempts), payback: paybackOf(attempts, handoffs), handoffs, settlements: settlementsOf(attempts, handoffs), now, dispatch, t })
-  );
-}
-function MonitorContent({ monitor, state, dispatch, t }) {
-  const rows = useResult(monitor.rows);
-  if (rows === null) return h7(Notice, { state: "rows-loading" }, t("monitor.rows.loading"));
-  if (rows.kind === "unavailable") return h7(Notice, { state: "rows-unavailable" }, t("monitor.rows.unavailable"));
-  if (rows.kind === "unreachable") return h7(Notice, { state: "rows-unreachable" }, t("monitor.rows.unreachable", { message: rows.message }));
-  if (rows.attempts.length === 0 && rows.handoffs.length === 0) return h7(Notice, { state: "rows-empty" }, t("monitor.rows.empty"));
-  return h7(MonitorSplit, { attempts: rows.attempts, handoffs: rows.handoffs, monitor, state, dispatch, t });
-}
-function InnerCompactionView({ monitor, t }) {
-  const [state, dispatch] = import_react6.default.useReducer(reduceView, void 0, createViewState);
-  return h7(
-    "div",
-    { className: "sw-mon", "data-sw-monitor": "", "data-conversation-composer-overlay": "" },
-    h7(MonitorContent, { monitor, state, dispatch, t })
-  );
-}
-
-// dsh/src/client/monitor-register.js
-var MONITOR_VIEW_ID = "session-watcher.inner-compaction";
-var MONITOR_VIEW_ORDER = 30;
-function registerMonitorView(child, { monitors, t }) {
-  child.slots.inject("conversation.view", () => child.slots.register({
-    name: "conversation.view",
-    id: MONITOR_VIEW_ID,
-    order: MONITOR_VIEW_ORDER,
-    locale: NS,
-    label: () => t("monitor.label"),
-    inject: (sessionId) => ({ monitor: monitors.for(sessionId) })
-  }, InnerCompactionView));
-}
-
-// dsh/src/client/settings.js
-var import_react8 = __toESM(require("react"), 1);
 
 // public/lib/compactionSettings.js
 var PRESET_IDS = Object.freeze(["E2", "W2", "M2", "S3", "X3"]);
@@ -21297,11 +20889,2032 @@ function createSettingsDraft({ settings, models }) {
   };
 }
 
-// dsh/src/client/switch.js
+// dsh/src/client/monitor-model.js
+var jsonText = (value) => JSON.stringify(value, null, 2) ?? String(value);
+var stringOf = (value) => typeof value === "string" ? value : jsonText(value);
+var stepPart = (attempt, t) => ({ part: "step", text: Number.isFinite(attempt.stepN) ? t("monitor.meta.step", { count: attempt.stepN }) : NOT_AVAILABLE, title: t("monitor.meta.step.title") });
+var DECIMALS = 2;
+function estimatePart({ trigger }, t) {
+  const q = trigger?.q;
+  const kappa = trigger?.kappa;
+  return {
+    part: "estimate",
+    text: Number.isFinite(q) ? t("monitor.meta.estimate", { q: q.toFixed(DECIMALS) }) : NOT_AVAILABLE,
+    title: Number.isFinite(kappa) ? t("monitor.meta.estimate.kappa.title", { kappa: kappa.toFixed(DECIMALS) }) : t("monitor.meta.estimate.title")
+  };
+}
+function parentMetaParts(attempt, now, t, missWarned = false) {
+  const elapsed = elapsedOf(attempt, "attempt", now);
+  const { usage } = attempt.call;
+  const warnings = costWarningsOf(attempt, missWarned);
+  return [
+    { part: "time", text: elapsed === null ? NOT_AVAILABLE : formatElapsed(elapsed), title: t("monitor.meta.time") },
+    stepPart(attempt, t),
+    estimatePart(attempt, t),
+    usage === null ? { part: "usage", text: NOT_AVAILABLE } : {
+      part: "usage",
+      text: t("monitor.usage.cell", { output: usage.output }),
+      title: t("monitor.usage.title", { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite })
+    },
+    { part: "range", text: contextRangeText(attempt.contextChange, t), title: t("monitor.meta.range.title") },
+    warnings.context ? { part: "context", text: contextChangeText(attempt.contextChange, t), title: t(warnings.context), attention: true } : { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context") },
+    warnings.miss ? { part: "miss", text: contextMissText(attempt.contextChange, t), title: t(warnings.miss), attention: true } : { part: "miss", text: contextMissText(attempt.contextChange, t), title: t("monitor.meta.miss.title") },
+    { part: "seq", text: t("monitor.overview.seq", { seq: attempt.id }) }
+  ];
+}
+var handoffTitle = (handoff, t) => t("monitor.object.handoff", { epoch: handoffSegmentOf(handoff) });
+function handoffMetaParts(handoff, t) {
+  const { type, token, read, kept, skills, lineage, contextChange } = handoff;
+  const known = (...values) => values.every(Number.isFinite);
+  return [
+    { part: "type", text: t(`monitor.handoff.type.${type}`), title: t("monitor.handoff.meta.type.title"), type },
+    { part: "token", text: token, title: t("monitor.handoff.meta.token.title") },
+    { part: "files", text: known(read, kept) ? t("monitor.handoff.meta.files", { read, kept }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.files.title") },
+    { part: "skills", text: t("monitor.handoff.meta.skills", { count: skills }), title: t("monitor.handoff.meta.skills.title") },
+    { part: "lineage", text: known(lineage) ? t("monitor.handoff.meta.lineage", { count: lineage }) : NOT_AVAILABLE, title: t("monitor.handoff.meta.lineage.title") },
+    { part: "range", text: contextRangeText(contextChange, t, "monitor.handoff.meta.range"), title: t("monitor.handoff.meta.range.title") },
+    { part: "context", text: contextChangeText(contextChange, t), title: t("monitor.meta.context") },
+    { part: "seq", text: t("monitor.overview.seq", { seq: handoff.id }) }
+  ];
+}
+var MINUS = "\u2212";
+var signedText = (value, format) => `${value > 0 ? "+" : value < 0 ? MINUS : ""}${format(Math.abs(value))}`;
+function settlementFigures(saved, cost, format) {
+  return {
+    saved: format(Math.round(saved)),
+    cost: format(Math.round(cost)),
+    net: signedText(Math.round(saved) - Math.round(cost), format),
+    payback: `${paybackPercent(saved, cost)}%`
+  };
+}
+function settlementMetaParts(settlement, t, format = compactCount) {
+  const figures = settlementFigures(settlement.saved, settlement.cost, format);
+  return [
+    { part: "count", text: t("monitor.settlement.count", { count: settlement.count }), title: t("monitor.settlement.count.title") },
+    { part: "steps", text: t("monitor.settlement.steps", { count: settlement.steps }), title: t("monitor.settlement.steps.title") },
+    { part: "saved", text: t("monitor.settlement.saved", { count: figures.saved }), title: t("monitor.settlement.saved.title") },
+    { part: "cost", text: t("monitor.settlement.cost", { count: figures.cost }), title: t("monitor.settlement.cost.title") },
+    { part: "net", text: t("monitor.settlement.net", { count: figures.net }), title: t("monitor.settlement.net.title") },
+    { part: "payback", text: t("monitor.settlement.payback", { percent: figures.payback }), title: t("monitor.settlement.payback.title") }
+  ];
+}
+var quantityText = (value) => value === null || value === void 0 ? null : Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
+var QUANTITIES_BEFORE_PRESET = ["n", "lA", "bEst", "cEst", "sEst", "cRatio", "fee", "summaryReadCost"];
+var QUANTITIES_AFTER_PRESET = ["kappa", "q"];
+function quoteFactsOf(quote, t) {
+  const quantity = (key) => [t(`monitor.quote.${key}`), quantityText(quote[key])];
+  return [
+    ...QUANTITIES_BEFORE_PRESET.filter((key) => key !== "summaryReadCost" || quote.summaryReadCost !== void 0).map(quantity),
+    [t("monitor.quote.preset"), PRESET_IDS.includes(quote.preset) ? t(`monitor.quote.preset.${quote.preset}`) : null],
+    ...QUANTITIES_AFTER_PRESET.map(quantity),
+    [t("monitor.quote.arm"), quote.arm === null ? null : t(`monitor.quote.arm.${quote.arm}`)]
+  ];
+}
+function blockParts(block, t) {
+  switch (block?.type) {
+    case "text":
+      return { kind: "text", text: stringOf(block.text) };
+    case "reasoning":
+      return { kind: "reasoning", label: t("monitor.block.reasoning"), text: stringOf(block.text) };
+    case "tool-call":
+      return { kind: "tool-call", label: t("monitor.block.toolCall", { name: block.name }), text: stringOf(block.arguments) };
+    case "tool-result":
+      return {
+        kind: "tool-result",
+        label: t(block.isError === true ? "monitor.block.toolError" : "monitor.block.toolResult", { id: stringOf(block.callId ?? "") }),
+        ...block.isError === true ? { error: true } : {},
+        children: blockListParts(block.blocks, t)
+      };
+    case "image":
+    case "file":
+      return { kind: block.type, label: t(`monitor.block.${block.type}`), json: jsonText(block.attachment) };
+    case "unknown":
+      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block.raw) };
+    default:
+      return { kind: "unknown", label: t("monitor.block.unknown"), json: jsonText(block) };
+  }
+}
+function blockListParts(blocks, t) {
+  return (Array.isArray(blocks) ? blocks : []).map((block) => blockParts(block, t));
+}
+function slotFactsOf(detail, t) {
+  const { number, seqs, turn, step, source, events } = detail;
+  return [
+    [t("monitor.slot.number"), number],
+    [t("monitor.slot.seqs"), seqs.join(", ")],
+    ...turn === null ? [] : [[t("monitor.slot.turn"), turn]],
+    ...step === null ? [] : [[t("monitor.slot.step"), step]],
+    [t("monitor.slot.source"), t(`monitor.source.${source?.category ?? "other"}`)],
+    [t("monitor.slot.sourceType"), source?.type ?? null],
+    [t("monitor.slot.sourceKind"), source?.kind ?? null],
+    [t("monitor.slot.visibleCount"), t("monitor.slot.visibleCountValue", { visible: events.filter((event) => event.visible).length, total: events.length })]
+  ];
+}
+
+// dsh/src/client/monitor-files.js
+var import_react4 = __toESM(require("react"), 1);
+var h5 = import_react4.default.createElement;
+var ICONS = {
+  expand: ["M4 6.5 8 3l4 3.5", "M4 9.5 8 13l4-3.5"],
+  collapse: ["M4 3 8 6.5 12 3", "M4 13 8 9.5 12 13"],
+  wrap: ["M2 3.5h12", "M2 7.5h9.5a2.25 2.25 0 0 1 0 4.5H7.5", "M9.3 10.2 7.3 12l2 1.8", "M2 12h3"]
+};
+var Icon = ({ name }) => h5("svg", { viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" }, ICONS[name].map((d) => h5("path", { key: d, d })));
+var Chevron = () => h5("i", { className: "sw-fl-chev", "aria-hidden": "true" });
+var toneOf = (tone) => tone ?? void 0;
+function Controls({ state, ids, dispatch, t }) {
+  const { expandDisabled, collapseDisabled } = controlsOf(state, ids);
+  const button = (name, label, { disabled = false, pressed, title = label, action }) => h5("button", {
+    type: "button",
+    className: "sw-fl-btn",
+    "data-act": name,
+    title,
+    "aria-label": label,
+    "aria-disabled": disabled ? "true" : void 0,
+    "aria-pressed": pressed,
+    onClick: () => {
+      if (!disabled) dispatch(action);
+    }
+  }, h5(Icon, { name }));
+  return h5(
+    "span",
+    { className: "sw-fl-ctl", role: "group", "aria-label": t("monitor.files.controls") },
+    button("expand", t("monitor.files.expandAll"), { disabled: expandDisabled, action: { type: "expand", ids } }),
+    button("collapse", t("monitor.files.collapseAll"), { disabled: collapseDisabled, action: { type: "collapse" } }),
+    button("wrap", t("monitor.files.wrap"), { pressed: state.wrap, title: t(state.wrap ? "monitor.files.wrap.on" : "monitor.files.wrap.off"), action: { type: "wrap" } })
+  );
+}
+function Path({ item }) {
+  const { dir, base } = item.name;
+  return h5(
+    "span",
+    { className: "sw-fl-path", title: item.path },
+    dir === "" ? null : h5("span", { className: "sw-fl-dir" }, dir),
+    h5("span", { className: "sw-fl-base" }, base)
+  );
+}
+function Preview({ item: { bar, stat } }) {
+  return h5(
+    "span",
+    { className: "sw-fl-pv", "data-nobar": bar === null ? "" : void 0 },
+    bar === null ? null : h5(
+      "span",
+      { className: "sw-fl-bar", title: bar.title, "aria-hidden": "true" },
+      bar.marks.map((mark, at) => h5("i", { key: at, "data-x": mark.withdrawn ? "" : void 0, style: { left: `${mark.left}%`, width: `${mark.width}%` } }))
+    ),
+    h5(
+      "span",
+      { className: "sw-fl-stat", "data-tone": toneOf(stat.empty?.tone) },
+      stat.empty === null ? [stat.segments === null ? null : h5("span", { key: "segments", className: "sw-fl-sg" }, `${stat.segments}${PART_SEPARATOR}`), stat.chars] : stat.empty.text
+    )
+  );
+}
+function FileBody({ item, id, wrap, t }) {
+  const rows = import_react4.default.useMemo(() => bodyRowsOf(item), [item]);
+  const words = {
+    gap: (range) => t("monitor.files.row.gap", { range }),
+    withdrawn: (range, count) => t("monitor.files.row.withdrawn", { range, count })
+  };
+  return h5(
+    "div",
+    { id },
+    item.name.cut || item.meta !== "" ? h5("div", { className: "sw-fl-meta" }, item.name.cut ? h5("div", { className: "sw-fl-full" }, item.path) : null, item.meta) : null,
+    fileRows(h5, rows, words, wrap)
+  );
+}
+function FileItem({ item, open, bodyId, wrap, dispatch, t }) {
+  return h5(
+    "div",
+    { className: "sw-fl-item", "data-kind": "file", "data-open": open ? "" : void 0, "data-skill": item.skill ? "" : void 0 },
+    h5(
+      "h4",
+      { className: "sw-fl-fh" },
+      h5(
+        "button",
+        { type: "button", className: "sw-fl-fbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "toggle", id: item.id }) },
+        h5(Chevron),
+        h5(Path, { item }),
+        h5("span", { className: "sw-fl-cnt" }, item.count.map(({ text, tone }) => h5("span", { key: text, "data-tone": toneOf(tone) }, text))),
+        h5(Preview, { item })
+      )
+    ),
+    open ? h5(FileBody, { item, id: bodyId, wrap, t }) : null
+  );
+}
+function PlainItem({ item }) {
+  return h5(
+    "div",
+    { className: "sw-fl-item", "data-kind": "plain", "data-removed": item.removed ? "" : void 0 },
+    h5(
+      "div",
+      { className: "sw-fl-plain" },
+      h5(Path, { item }),
+      h5("span", { className: "sw-fl-why", "data-tone": toneOf(item.tone), "data-long": item.long ? "" : void 0 }, item.why)
+    )
+  );
+}
+function Group({ group, state, baseId, dispatch, t }) {
+  const open = isGroupOpen(state, group.id);
+  const bodyId = `${baseId}-group-${group.id}`;
+  return h5(
+    "section",
+    { className: "sw-fl-group", "data-group": group.id },
+    h5(
+      "h3",
+      { className: "sw-fl-gh" },
+      h5(
+        "button",
+        { type: "button", className: "sw-fl-gbtn", "aria-expanded": open, "aria-controls": open ? bodyId : void 0, onClick: () => dispatch({ type: "group", id: group.id }) },
+        h5(Chevron),
+        h5("span", { className: "sw-fl-lbl" }, group.label),
+        h5("span", { className: "sw-fl-gcnt" }, group.items.length)
+      )
+    ),
+    open ? h5("div", { id: bodyId }, group.items.map((item) => item.kind === "file" ? h5(FileItem, { key: item.id, item, open: isFileOpen(state, item.id), bodyId: `${baseId}-file-${item.id}`, wrap: state.wrap, dispatch, t }) : h5(PlainItem, { key: item.id, item }))) : null
+  );
+}
+function Foot({ foot, state, baseId, dispatch }) {
+  return h5("div", { className: "sw-fl-foot" }, foot.map(({ key, label, text, pre }) => {
+    const open = isFootOpen(state, key);
+    const id = `${baseId}-foot-${key}`;
+    return h5(
+      "div",
+      { key, className: "sw-fl-fold" },
+      h5("button", { type: "button", className: "sw-fl-foldbtn", "aria-expanded": open, "aria-controls": open ? id : void 0, onClick: () => dispatch({ type: "fold", key }) }, h5(Chevron), label),
+      open ? h5("div", { id, className: "sw-fl-foldbody" }, pre ? h5("pre", { className: "sw-mon-pre" }, text) : h5("p", null, text)) : null
+    );
+  }));
+}
+function FilesView({ model, state, dispatch, baseId = "sw-files", t }) {
+  const ids = model.groups.flatMap((group) => group.items).filter((item) => item.kind === "file").map((item) => item.id);
+  return h5(
+    "div",
+    { className: "sw-fl", "data-sw-files": model.mode },
+    h5(
+      "div",
+      { className: "sw-fl-head" },
+      h5("p", { className: "sw-fl-sum" }, model.summary.flatMap(({ text, tone }, at) => [at > 0 ? PART_SEPARATOR : null, h5("span", { key: at, "data-tone": toneOf(tone) }, text)])),
+      h5(Controls, { state, ids, dispatch, t }),
+      model.sub === null ? null : h5("p", { className: "sw-fl-sub" }, model.sub)
+    ),
+    h5("div", { className: "sw-fl-list" }, model.groups.map((group) => h5(Group, { key: group.id, group, state, baseId, dispatch, t }))),
+    model.foot.length === 0 ? null : h5(Foot, { foot: model.foot, state, baseId, dispatch })
+  );
+}
+function CarriedFiles({ carried, t }) {
+  const model = import_react4.default.useMemo(() => carriedFilesOf(carried, t), [carried, t]);
+  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
+  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
+}
+function ReadFiles({ files, t }) {
+  const model = import_react4.default.useMemo(() => readFilesOf(files, t), [files, t]);
+  const [state, dispatch] = import_react4.default.useReducer(reduceFiles, void 0, createFilesState);
+  return h5(FilesView, { model, state, dispatch, baseId: import_react4.default.useId(), t });
+}
+
+// dsh/src/client/monitor-settlement.js
 var import_react7 = __toESM(require("react"), 1);
+
+// dsh/src/client/monitor-handle.js
+var import_react5 = __toESM(require("react"), 1);
+function useResult(handle) {
+  return import_react5.default.useSyncExternalStore(handle.subscribe, () => handle.result, () => handle.result);
+}
+function useSettlementResult(monitor, handoffId) {
+  return useResult(monitor.resource({ endpoint: "inner-monitor/settlement", handoff: handoffId }));
+}
+var h6 = import_react5.default.createElement;
+function Notice({ state, children }) {
+  return h6("p", { className: "sw-mon-notice", "data-sw-monitor-notice": state, role: "status" }, children);
+}
+function RecallNotice({ result, partial, pending = false, t }) {
+  const state = result === null ? pending ? "pending" : null : result.kind !== "ready" ? "unavailable" : partial ? "partial" : null;
+  return state === null ? null : h6(Notice, { state: `recall-${state}` }, t(`monitor.settlement.recall.${state}`));
+}
+
+// dsh/src/client/monitor-chart.js
+var import_react6 = __toESM(require("react"), 1);
+var h7 = import_react6.default.createElement;
+var Label = ({ x, y, anchor, className, children }) => h7("text", { className, x, y, textAnchor: anchor }, children);
+function useElementWidth() {
+  const [width, setWidth] = import_react6.default.useState(DEFAULT_CHART_WIDTH);
+  const observer = import_react6.default.useRef(null);
+  const ref = import_react6.default.useCallback((element) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (element === null) return;
+    setWidth(element.clientWidth);
+    observer.current = new ResizeObserver(() => {
+      setWidth(element.clientWidth);
+    });
+    observer.current.observe(element);
+  }, []);
+  return [ref, width];
+}
+
+// dsh/src/client/monitor-settlement-model.js
+var PERCENT3 = 100;
+var UNBOUNDED = "\u221E";
+var ARROW = "\u2192";
+var UP = "\u2191";
+var roundTo = (value, places) => Math.round(value * 10 ** places) / 10 ** places;
+var round12 = (value) => roundTo(value, 1);
+var compactSigned = (value) => signedText(Math.round(value), compactCount);
+var compactTokens = (value) => {
+  const whole = Math.round(value);
+  return whole < 0 ? `-${compactCount(-whole)}` : compactCount(whole);
+};
+var CLIP_DEPTH_RATIO = 4;
+var CLIP_TOP_RATIO = 2.5;
+var topOf = (net) => net.reduce((top, value) => Math.max(top, value), 0);
+function rangeText([from2, to2], steps2, t, current) {
+  if (!current && to2 === steps2 && from2 < to2) return t("monitor.payback.rangeToEnd", { from: from2 });
+  return from2 === to2 ? t("monitor.payback.rangeAt", { at: from2 }) : t("monitor.payback.range", { from: from2, to: to2 });
+}
+function chartLabelOf({ steps: steps2, net, lowest, below }, recall, t, current) {
+  const ranges = () => below.map((range) => rangeText(range, steps2, t, current)).join(t("monitor.payback.listSeparator"));
+  return [
+    t("monitor.payback.chart.lead"),
+    ...lowest.value < 0 ? [t("monitor.payback.chart.lowest", { value: compactSigned(lowest.value), step: lowest.at })] : [],
+    ...below.length > 0 ? [t("monitor.payback.chart.below", { ranges: ranges() })] : [],
+    t(current ? "monitor.payback.chart.snapshotEnd" : "monitor.payback.chart.end", { value: compactSigned(net[steps2]) }),
+    t(recall === void 0 ? "monitor.payback.chart.tail" : "monitor.payback.chart.recallTail")
+  ].join(t("monitor.payback.chart.separator"));
+}
+function plotOf(row2, steps2) {
+  const share = (value) => roundTo(Math.min(value, steps2) / steps2 * PERCENT3, 3);
+  const end = share(row2.follow);
+  const plot = { end, diamond: null, surplus: null, missing: null, beyond: null, unbounded: false };
+  const { needed } = row2;
+  if (needed === null) return plot;
+  if (needed === Infinity) return { ...plot, unbounded: true };
+  if (needed > steps2) return { ...plot, beyond: { left: end, label: String(needed) } };
+  const diamond = share(needed);
+  if (needed < row2.follow) return { ...plot, diamond, surplus: { left: diamond, width: roundTo(end - diamond, 3) } };
+  return { ...plot, diamond, missing: needed > row2.follow ? { left: end, width: roundTo(diamond - end, 3) } : null };
+}
+var neededText = (row2) => row2.needed === null ? NOT_AVAILABLE : row2.needed === Infinity ? UNBOUNDED : String(row2.needed);
+var gapText = (row2) => row2.gap === null ? NOT_AVAILABLE : signedText(row2.gap, String);
+function shownCostOf(row2) {
+  const cost = Math.round(row2.cost);
+  const rebuild = Math.round(row2.costRebuild);
+  return { cost, summary: cost - rebuild, rebuild };
+}
+function labelOf(row2, t) {
+  const params = { ordinal: row2.ordinal, actual: t("monitor.payback.steps", { count: row2.follow }), needed: row2.needed === null || row2.needed === Infinity ? neededText(row2) : t("monitor.payback.steps", { count: row2.needed }) };
+  return row2.gap === null ? t("monitor.payback.row.labelNoGap", params) : t("monitor.payback.row.label", { ...params, gap: signedText(row2.gap, String) });
+}
+function rowOf2(row2, steps2, t) {
+  return {
+    ordinal: row2.ordinal,
+    unknown: row2.saved === null,
+    gap: row2.gap,
+    label: labelOf(row2, t),
+    cells: { actual: String(row2.follow), needed: neededText(row2), gap: gapText(row2) },
+    plot: plotOf(row2, Math.max(1, steps2))
+  };
+}
+var TABLE_COLUMNS = ["ordinal", "sealAt", "stock", "cost", "summary", "rebuild", "perStep", "actual", "needed", "gap", "net"];
+function tableRowOf(row2, net, t) {
+  const known = row2.saved !== null;
+  const { cost, summary, rebuild } = known ? shownCostOf(row2) : {};
+  const cut = known && row2.cut !== null ? formatTokenCount(Math.max(0, row2.cut)) : NOT_AVAILABLE;
+  return {
+    unknown: !known,
+    cells: [
+      `#${row2.ordinal}`,
+      String(row2.sealAt),
+      row2.cut === null ? NOT_AVAILABLE : `${formatTokenCount(row2.before)} ${ARROW} ${formatTokenCount(row2.after)}`,
+      known ? formatTokenCount(cost) : NOT_AVAILABLE,
+      known ? formatTokenCount(summary) : NOT_AVAILABLE,
+      known ? formatTokenCount(rebuild) : NOT_AVAILABLE,
+      known && row2.cut !== null && row2.cut !== row2.before - row2.after ? t("monitor.payback.col.perStep.adjusted", { count: cut }) : cut,
+      String(row2.follow),
+      neededText(row2),
+      gapText(row2),
+      known ? signedText(Math.round(net[row2.sealAt]), formatTokenCount) : NOT_AVAILABLE
+    ]
+  };
+}
+function formulaRowsOf(base, { saved, cost, recall }, t, format) {
+  const { saved: shownSaved, cost: shownCost, net } = settlementFigures(saved, cost, format);
+  const line = (key, count, terms, unrounded = []) => [
+    t(`monitor.settlement.${key}`, { count }),
+    unrounded.every(Number.isInteger) ? "=" : "\u2248",
+    t(`monitor.payback.formula.${key}`, terms)
+  ];
+  const rows = [line("net", net, { saved: shownSaved, cost: shownCost })];
+  if (recall === void 0) return rows;
+  const { withdrawn, residence, cutCredit, requests, overlap } = recall;
+  const cut = Math.round(cutCredit);
+  rows.push(
+    line("saved", shownSaved, {
+      base: format(base.saved),
+      withdrawn: format(withdrawn),
+      residence: format(residence),
+      cut: cut < 0 ? `(${signedText(cut, format)})` : format(Math.abs(cut))
+    }, [base.saved, withdrawn, residence, cutCredit]),
+    line("cost", shownCost, {
+      base: format(base.cost),
+      requests: format(requests),
+      overlap: format(overlap)
+    }, [base.cost, requests, overlap])
+  );
+  return rows;
+}
+function settlementPageOf(base, t, evidence) {
+  const report = settlementWithRecall(base, evidence);
+  return paybackModelOf(base, report, paybackCurveOf(report), t);
+}
+function paybackModelOf(base, settlement, curve, t, current = false) {
+  const { steps: steps2, net, lowest, below, medianNeeded } = curve;
+  const { recall } = settlement;
+  const equations = formulaRowsOf(base, settlement, t, formatTokenCount);
+  const formula = formulaRowsOf(base, settlement, t, compactTokens).map(([left, sign2, right], at) => {
+    const [wholeLeft, , wholeRight] = equations[at];
+    return `${left} ${left === wholeLeft && right === wholeRight ? sign2 : "\u2248"} ${right}`;
+  });
+  return {
+    epoch: settlement.epoch,
+    curve,
+    current,
+    header: settlementMetaParts(settlement, t, compactTokens).map(({ text }) => text),
+    recallPartial: recall?.partial,
+    facts: [
+      ...formula,
+      ...lowest.value < 0 ? [t("monitor.payback.lowest", { value: compactSigned(lowest.value), step: lowest.at })] : [],
+      ...below.length > 0 ? [t("monitor.payback.below", { ranges: below.map((range) => rangeText(range, steps2, t, current)).join(t("monitor.payback.listSeparator")) })] : [],
+      ...medianNeeded === null ? [] : [t("monitor.payback.median", { count: medianNeeded })]
+    ],
+    chart: { label: chartLabelOf(curve, recall, t, current), clippable: lowest.value < 0 && topOf(net) > CLIP_DEPTH_RATIO * -lowest.value },
+    axis: { mid: String(Math.round(steps2 / 2)), end: t("monitor.payback.steps", { count: steps2 }) },
+    rows: settlement.rows.map((row2) => rowOf2(row2, steps2, t)),
+    appendix: {
+      equations,
+      head: TABLE_COLUMNS.map((column) => t(`monitor.payback.col.${column}`)),
+      rows: settlement.rows.map((row2) => tableRowOf(row2, net, t))
+    }
+  };
+}
+function sortRows(rows, sort) {
+  if (sort !== "gap") return [...rows];
+  return [...rows.filter((row2) => row2.gap !== null).sort((a, b) => b.gap - a.gap || a.ordinal - b.ordinal), ...rows.filter((row2) => row2.gap === null)];
+}
+var GUTTER_MIN = 34;
+var RIGHT_MARGIN = 6;
+var LABEL_GAP = 5;
+var CHAR_PX = 6.2;
+var LABEL_PAD = 4;
+var PLOT_TOP = 16;
+var PLOT_BOTTOM = 8;
+var PLOT_HEIGHTS = [[620, 200], [380, 170]];
+var PLOT_HEIGHT_MIN = 150;
+var LANE_GAP = 4;
+var LANE_HEIGHT = 12;
+var LANE_BELOW = 4;
+var STEPS_ROW = 16;
+var STEPS_BASELINE = 12;
+var STEP_SIZES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500];
+var TICK_MIN_PX = 34;
+var END_TICK_MIN_PX = 30;
+var plotHeightOf = (width) => PLOT_HEIGHTS.find(([from2]) => width >= from2)?.[1] ?? PLOT_HEIGHT_MIN;
+var textWidth = (text) => text.length * CHAR_PX + LABEL_PAD;
+var point = (x, y) => `${x.toFixed(1)},${y.toFixed(1)}`;
+function curveGeometryOf(curve, width, clipped, t, current = false) {
+  const { steps: steps2, net, lowest: lowestNet, seals } = curve;
+  const span = Math.max(1, steps2);
+  const low = Math.min(0, lowestNet.value);
+  const high = topOf(net);
+  const top = clipped ? CLIP_TOP_RATIO * -low : high === low ? low + 1 : high;
+  const values = [.../* @__PURE__ */ new Set([0, low, top])];
+  const labels = values.map(compactSigned);
+  const gutter = Math.max(GUTTER_MIN, Math.ceil(Math.max(...labels.map((label2) => label2.length)) * CHAR_PX) + LABEL_GAP);
+  const plotWidth = Math.max(0, width - gutter - RIGHT_MARGIN);
+  const plotHeight = plotHeightOf(width);
+  const y = (value) => PLOT_TOP + (top - value) / (top - low) * (plotHeight - PLOT_TOP - PLOT_BOTTOM);
+  const x = (step) => gutter + step / span * plotWidth;
+  const zeroY = round12(y(0));
+  const line = net.map((value, step) => `${step === 0 ? "M" : "L"}${point(x(step), y(value))}`).join("");
+  const laneY = plotHeight + LANE_GAP;
+  const stepsY = laneY + LANE_HEIGHT + LANE_BELOW;
+  const boxes = [];
+  const label = (text, at, atY, anchor) => {
+    const w = textWidth(text);
+    let x0 = anchor === "end" ? at - w : at;
+    if (x0 < gutter) x0 = gutter;
+    if (x0 + w > width) x0 = width - w;
+    const box = { x0, x1: x0 + w, y0: atY - 10, y1: atY + 3 };
+    if (boxes.some((other) => !(box.x1 < other.x0 || box.x0 > other.x1 || box.y1 < other.y0 || box.y0 > other.y1))) return null;
+    boxes.push(box);
+    return { text, x: round12(anchor === "end" ? x0 + w : x0), y: round12(atY), anchor };
+  };
+  const lowestX = x(lowestNet.at);
+  const lowestY = y(lowestNet.value);
+  const lowRight = lowestX > gutter + plotWidth * 0.5;
+  const lowest = {
+    x: round12(lowestX),
+    y: round12(lowestY),
+    label: label(t("monitor.payback.lowestLabel", { value: compactSigned(lowestNet.value) }), lowRight ? lowestX - 7 : lowestX + 7, Math.min(lowestY + 4, plotHeight), lowRight ? "end" : "start")
+  };
+  const final = net[steps2];
+  const endText = t(current ? "monitor.payback.snapshotEndLabel" : "monitor.payback.endLabel", { value: compactSigned(final) });
+  const endX = x(steps2);
+  const end = final <= top ? { x: round12(endX), y: round12(y(final)), above: false, label: label(endText, endX - 7, final >= net[Math.max(0, steps2 - 1)] ? Math.max(y(final) - 7, 11) : Math.min(y(final) + 14, plotHeight - 2), "end") } : { x: round12(endX), y: null, above: true, arrow: `M${round12(endX - 4)},${PLOT_TOP + 5}h8l-4,-7z`, label: label(`${endText} ${UP}`, endX - 7, PLOT_TOP + 10, "end") };
+  const tickStep = STEP_SIZES.find((size) => size / span * plotWidth >= TICK_MIN_PX) ?? STEP_SIZES.at(-1);
+  const marks = [];
+  for (let step = 0; step <= steps2; step += tickStep) marks.push(step);
+  if (steps2 % tickStep !== 0 && (steps2 - Math.floor(steps2 / tickStep) * tickStep) / span * plotWidth >= END_TICK_MIN_PX) marks.push(steps2);
+  const over = clipped ? net.findIndex((value) => value > top) : -1;
+  return {
+    width,
+    height: stepsY + STEPS_ROW,
+    gutter,
+    labelX: gutter - LABEL_GAP,
+    plotWidth,
+    plotHeight,
+    zeroY,
+    line,
+    area: `${line}L${point(x(steps2), y(0))}L${point(x(0), y(0))}Z`,
+    clips: {
+      plot: { x: gutter, y: 0, width: plotWidth, height: plotHeight },
+      above: { x: 0, y: 0, width, height: zeroY },
+      below: { x: 0, y: zeroY, width, height: round12(plotHeight - zeroY) }
+    },
+    ticks: values.map((value, at) => ({ value, label: labels[at], y: round12(y(value)), grid: value !== 0, clip: clipped && value === top })),
+    lane: { y: laneY, height: LANE_HEIGHT, label: t("monitor.payback.seal"), labelY: laneY + 9, seals: seals.map((step) => round12(x(step))) },
+    lowest,
+    end,
+    steps: { unit: t("monitor.payback.stepUnit"), unitX: 0, y: stepsY + STEPS_BASELINE, ticks: marks.map((step) => ({ x: round12(x(step)), label: String(step) })) },
+    clipNote: over < 0 ? null : t("monitor.payback.clipNote", { top: compactSigned(top), step: over })
+  };
+}
+var createPaybackState = () => ({ sort: "ordinal", full: false });
+function reducePayback(state, action) {
+  switch (action.type) {
+    case "sort":
+      return { ...state, sort: action.sort };
+    case "axis":
+      return { ...state, full: !state.full };
+    default:
+      return state;
+  }
+}
+
+// dsh/src/client/monitor-settlement.js
 var h8 = import_react7.default.createElement;
+var KEYS = ["actual", "needed", "missing", "surplus"];
+var percent = (value) => `${value}%`;
+var MarkLabel = ({ label }) => label === null ? null : h8(Label, { className: "sw-pb-lbl sw-pb-halo sw-pb-strong", x: label.x, y: label.y, anchor: label.anchor }, label.text);
+function CurveImage({ geometry: g, label }) {
+  const clip = (id, { x, y, width, height }) => h8("clipPath", { id }, h8("rect", { x, y, width, height }));
+  return h8(
+    "svg",
+    { viewBox: `0 0 ${g.width} ${g.height}`, width: g.width, height: g.height, role: "img", "aria-label": label },
+    h8(
+      "defs",
+      null,
+      h8("pattern", { id: "sw-pb-hatch", width: 5, height: 5, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, h8("line", { className: "sw-pb-hatch-line", x1: 0, y1: 0, x2: 0, y2: 5 })),
+      clip("sw-pb-plot-clip", g.clips.plot),
+      clip("sw-pb-above-clip", g.clips.above),
+      clip("sw-pb-below-clip", g.clips.below)
+    ),
+    g.ticks.map((tick) => h8(
+      import_react7.default.Fragment,
+      { key: tick.value },
+      tick.grid ? h8("line", { className: "sw-pb-grid", x1: g.gutter, x2: g.gutter + g.plotWidth, y1: tick.y, y2: tick.y }) : null,
+      tick.clip ? h8("line", { className: "sw-pb-clipline", x1: g.gutter, x2: g.gutter + g.plotWidth, y1: tick.y, y2: tick.y }) : null,
+      h8(Label, { className: "sw-pb-lbl", x: g.labelX, y: tick.y + 4, anchor: "end" }, tick.label)
+    )),
+    h8(
+      "g",
+      { clipPath: "url(#sw-pb-plot-clip)" },
+      h8("path", { className: "sw-pb-gain", clipPath: "url(#sw-pb-above-clip)", d: g.area }),
+      h8("path", { className: "sw-pb-loss", fill: "url(#sw-pb-hatch)", clipPath: "url(#sw-pb-below-clip)", d: g.area }),
+      h8("path", { className: "sw-pb-curve", d: g.line })
+    ),
+    h8("line", { className: "sw-pb-zero", x1: g.gutter, x2: g.gutter + g.plotWidth, y1: g.zeroY, y2: g.zeroY }),
+    h8(Label, { className: "sw-pb-lbl", x: g.labelX, y: g.lane.labelY, anchor: "end" }, g.lane.label),
+    h8("rect", { className: "sw-pb-lane", x: g.gutter, y: g.lane.y, width: g.plotWidth, height: g.lane.height }),
+    g.lane.seals.map((x, at) => h8("line", { key: at, className: "sw-pb-seal", x1: x, x2: x, y1: g.lane.y + 1, y2: g.lane.y + g.lane.height - 1 })),
+    h8("circle", { className: "sw-pb-pt", cx: g.lowest.x, cy: g.lowest.y, r: 3 }),
+    h8(MarkLabel, { label: g.lowest.label }),
+    g.end.above ? h8("path", { className: "sw-pb-pt", d: g.end.arrow }) : h8("circle", { className: "sw-pb-pt", cx: g.end.x, cy: g.end.y, r: 3 }),
+    h8(MarkLabel, { label: g.end.label }),
+    h8(Label, { className: "sw-pb-lbl sw-pb-xlbl", x: g.steps.unitX, y: g.steps.y }, g.steps.unit),
+    g.steps.ticks.map((tick) => h8(Label, { key: tick.label, className: "sw-pb-lbl sw-pb-xlbl", x: tick.x, y: g.steps.y, anchor: "middle" }, tick.label))
+  );
+}
+function Curve({ model, geometry, state, dispatch, chartRef, t }) {
+  return h8(
+    import_react7.default.Fragment,
+    null,
+    h8(
+      "div",
+      { className: "sw-pb-cap" },
+      h8("span", { className: "sw-pb-cap-k" }, t("monitor.payback.curve")),
+      model.chart.clippable ? h8("button", { type: "button", className: "sw-pb-axisbtn", "aria-pressed": state.full, onClick: () => dispatch({ type: "axis" }) }, t(state.full ? "monitor.payback.axis.full" : "monitor.payback.axis.clipped")) : null
+    ),
+    h8("div", { className: "sw-pb-chart", ref: chartRef }, h8(CurveImage, { geometry, label: model.chart.label })),
+    geometry.clipNote === null ? null : h8("p", { className: "sw-pb-note" }, geometry.clipNote)
+  );
+}
+function Plot({ plot }) {
+  return h8(
+    "span",
+    { className: "sw-pb-plot", "aria-hidden": "true" },
+    h8("i", { className: "sw-pb-line", style: { width: percent(plot.end) } }),
+    plot.surplus === null ? null : h8("i", { className: "sw-pb-surplus", style: { left: percent(plot.surplus.left), width: percent(plot.surplus.width) } }),
+    h8("b", { className: "sw-pb-end", style: { left: percent(plot.end) } }),
+    plot.missing === null ? null : h8("i", { className: "sw-pb-missing", style: { left: percent(plot.missing.left), width: percent(plot.missing.width) } }),
+    plot.beyond === null ? null : [
+      h8("i", { key: "run", className: "sw-pb-missing", style: { left: percent(plot.beyond.left), right: "7px" } }),
+      h8("b", { key: "arrow", className: "sw-pb-arrow" }),
+      h8("em", { key: "number", className: "sw-pb-over" }, plot.beyond.label)
+    ],
+    plot.diamond === null ? null : h8("b", { className: "sw-pb-dia", style: { left: percent(plot.diamond) } }),
+    plot.unbounded ? h8("em", { className: "sw-pb-inf", style: { left: percent(plot.end) } }, UNBOUNDED) : null
+  );
+}
+function Row({ row: row2, t }) {
+  const number = (key) => h8("span", { className: "sw-pb-num", "data-muted": row2.unknown ? "" : void 0 }, h8("small", null, t(`monitor.payback.col.${key}`)), row2.cells[key]);
+  return h8(
+    "li",
+    { className: "sw-pb-li", "data-unknown": row2.unknown ? "" : void 0, "aria-label": row2.label },
+    h8("span", { className: "sw-pb-id" }, `#${row2.ordinal}`),
+    h8(Plot, { plot: row2.plot }),
+    number("actual"),
+    number("needed"),
+    number("gap")
+  );
+}
+function Rows({ model, state, dispatch, t }) {
+  const { mid, end } = model.axis;
+  return h8(
+    "div",
+    { className: "sw-pb-rows" },
+    h8("div", { className: "sw-pb-keys", "aria-hidden": "true" }, KEYS.map((key) => h8("span", { key }, h8("i", { className: "sw-pb-key", "data-key": key }), t(`monitor.payback.legend.${key}`)))),
+    h8(
+      "div",
+      { className: "sw-pb-sort" },
+      h8("span", null, t("monitor.payback.sort")),
+      ["ordinal", "gap"].map((sort) => h8("button", { key: sort, type: "button", className: "sw-pb-sortbtn", "aria-pressed": state.sort === sort, onClick: () => dispatch({ type: "sort", sort }) }, t(`monitor.payback.sort.${sort}`)))
+    ),
+    h8(
+      "div",
+      { className: "sw-pb-axis", role: "presentation" },
+      h8("span", { className: "sw-pb-idh" }, t("monitor.payback.col.ordinal")),
+      h8(
+        "span",
+        { className: "sw-pb-ax", "aria-hidden": "true" },
+        h8("span", { className: "sw-pb-tick sw-pb-t0" }, "0"),
+        h8("span", { className: "sw-pb-tick sw-pb-t1" }, mid),
+        h8("span", { className: "sw-pb-tick sw-pb-t2" }, end)
+      ),
+      h8("span", { className: "sw-pb-num" }, t("monitor.payback.col.actual")),
+      h8("span", { className: "sw-pb-num" }, t("monitor.payback.col.needed")),
+      h8("span", { className: "sw-pb-num", title: t("monitor.payback.col.gap.title") }, t("monitor.payback.col.gap"))
+    ),
+    h8(
+      "ul",
+      { className: "sw-pb-list", role: "list", "aria-label": t("monitor.payback.list", { epoch: model.epoch }) },
+      sortRows(model.rows, state.sort).map((row2) => h8(Row, { key: row2.ordinal, row: row2, t }))
+    )
+  );
+}
+function Appendix({ appendix: { equations, head, rows }, t }) {
+  return h8(
+    "details",
+    { className: "sw-pb-table" },
+    h8("summary", null, t("monitor.payback.table")),
+    h8(
+      "table",
+      { className: "sw-pb-equations", "aria-label": t("monitor.payback.table.formula") },
+      h8("tbody", null, equations.map(([left, sign2, right]) => h8(
+        "tr",
+        { key: left },
+        h8("th", { scope: "row" }, left),
+        h8("td", null, sign2),
+        h8("td", null, right)
+      )))
+    ),
+    h8(
+      "div",
+      { className: "sw-pb-scroll", role: "region", tabIndex: 0, "aria-label": t("monitor.payback.table.label") },
+      h8(
+        "table",
+        { className: "sw-pb-tbl", "aria-label": t("monitor.payback.table.seals") },
+        h8("thead", null, h8("tr", null, head.map((text) => h8("th", { key: text, scope: "col" }, text)))),
+        h8("tbody", null, rows.map(({ cells: [seal, ...figures], unknown }) => h8(
+          "tr",
+          { key: seal, "data-unknown": unknown ? "" : void 0 },
+          h8("th", { scope: "row" }, seal),
+          figures.map((text, at) => h8("td", { key: at }, text))
+        )))
+      )
+    )
+  );
+}
+function PaybackView({ model, state, dispatch, width, chartRef, notice: notice2, t }) {
+  const geometry = curveGeometryOf(model.curve, width, model.chart.clippable && !state.full, t, model.current);
+  return h8(
+    "div",
+    { className: "sw-pb" },
+    h8("p", { className: "sw-pb-head" }, model.header.map((text, at) => h8("span", { key: at }, at < model.header.length - 1 ? `${text}${PART_SEPARATOR.trimEnd()}` : text))),
+    notice2,
+    h8("div", { className: "sw-pb-facts" }, model.facts.map((text, at) => h8("p", { key: at }, text))),
+    h8(Curve, { model, geometry, state, dispatch, chartRef, t }),
+    h8(Rows, { model, state, dispatch, t }),
+    h8(Appendix, { appendix: model.appendix, t }),
+    h8("div", { className: "sw-pb-pin" }, h8("p", { className: "sw-pb-unit" }, t("monitor.settlement.unit")))
+  );
+}
+function PaybackPage({ settlement, monitor, handoffId, t }) {
+  const result = useSettlementResult(monitor, handoffId);
+  const model = settlementPageOf(settlement, t, result?.kind === "ready" ? result.value.recall : void 0);
+  return h8(PaybackReport, { model, result, t });
+}
+function PaybackReport({ model, result, t }) {
+  const [state, dispatch] = import_react7.default.useReducer(reducePayback, void 0, createPaybackState);
+  const [chartRef, width] = useElementWidth();
+  const notice2 = h8(RecallNotice, { result, partial: model.recallPartial, pending: true, t });
+  return h8(PaybackView, { model, state, dispatch, width, chartRef, notice: notice2, t });
+}
+
+// dsh/src/client/monitor-context.js
+var import_react8 = __toESM(require("react"), 1);
+
+// dsh/src/client/monitor-context-model.js
+var PERCENT4 = 100;
+var round13 = (value) => Math.round(value * 10) / 10;
+var compact = (value) => compactCount(Math.round(value));
+var signedWhole = (value) => signedText(Math.round(value), formatTokenCount);
+var signedCompact = (value) => signedText(Math.round(value), compactCount);
+var percentText = (ratio) => `${(Math.round(ratio * PERCENT4 * 10) / 10).toFixed(1)}%`;
+function amberLineOf(result, epoch) {
+  if (result?.kind !== "live") return null;
+  const history = result.snapshot.history ?? [];
+  const point2 = history.find((each2) => each2.segment === epoch - 1 && Object.hasOwn(each2, "amberStockL"));
+  return Number.isFinite(point2?.amberStockL) ? point2.amberStockL : null;
+}
+function seriesOf(rows, calls) {
+  if (calls.filter(({ post }) => post).length !== rows.length) return null;
+  let mark = 0;
+  let uncut = 0;
+  const list = calls.map(({ seq, stock, post }, index2) => {
+    const compaction = post ? rows[mark++] : null;
+    if (compaction !== null && compaction.cut !== null) uncut += Math.max(0, compaction.cut);
+    return { at: index2 + 1, seq, stock, post, ordinal: compaction?.ordinal ?? null, uncompressed: stock === null ? null : stock + uncut };
+  });
+  const drawn = list.filter(({ stock }) => stock !== null);
+  if (drawn.length === 0) return null;
+  const landing = (at) => (drawn.find((each2) => each2.at >= at) ?? drawn.at(-1)).at;
+  return {
+    count: list.length,
+    calls: list,
+    drawn,
+    peak: drawn.reduce((best, each2) => each2.stock > best.stock ? each2 : best),
+    seals: list.filter(({ post }) => post).map(({ ordinal, at }) => ({ ordinal, at, land: landing(at) }))
+  };
+}
+function crossingsOf(series, line) {
+  const over = (key) => line === null ? null : series.drawn.find((each2) => each2[key] > line) ?? null;
+  return { uncompressed: over("uncompressed"), actual: over("stock") };
+}
+var STEP_REACH = 0.9999999;
+function niceStep(value) {
+  if (value <= 0) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const step = [1, 2, 5, 10].map((mantissa) => mantissa * 10 ** exponent).find((candidate) => candidate >= value * STEP_REACH);
+  return step ?? 10 ** (exponent + 1);
+}
+var HEADROOM = 1.06;
+var SCALE_DIVISIONS = 4;
+function stockScaleOf(series) {
+  const room = series.peak.stock * HEADROOM;
+  const step = niceStep(room / SCALE_DIVISIONS);
+  const top = Math.max(step, Math.ceil(room / step - 1e-9) * step);
+  return { step, top, ticks: Array.from({ length: Math.round(top / step) + 1 }, (_, at) => at * step) };
+}
+var LEFT = 40;
+var RIGHT = 10;
+var TOP = 14;
+var FOOT = 30;
+var PLOT_WIDTH_MIN = 150;
+var NARROW_BELOW = 340;
+var WIDE_FROM = 600;
+var PLOT_HEIGHTS2 = { narrow: 150, normal: 180, wide: 210 };
+var WIDE_CHAR_PX = 11;
+var CHAR_PX2 = 6.2;
+var WIDE_FROM_CODE_POINT = 11904;
+var SEAL_TICK = 11;
+var SEAL_HIT = { width: 7, height: 14 };
+var X_AXIS = { tick: 3, label: 14, unit: 25 };
+var X_TICK_TARGET = 7;
+var MARK_RADIUS = 5;
+var textWidth2 = (text) => [...text].reduce((sum, char) => sum + (char.codePointAt(0) >= WIDE_FROM_CODE_POINT ? WIDE_CHAR_PX : CHAR_PX2), 0);
+function stockGeometryOf(series, line, width, t) {
+  const scale = stockScaleOf(series);
+  const plotWidth = Math.max(PLOT_WIDTH_MIN, width - LEFT - RIGHT);
+  const total = LEFT + plotWidth + RIGHT;
+  const plotHeight = width < NARROW_BELOW ? PLOT_HEIGHTS2.narrow : width >= WIDE_FROM ? PLOT_HEIGHTS2.wide : PLOT_HEIGHTS2.normal;
+  const foot = TOP + plotHeight;
+  const xOf = (at) => LEFT + (series.count > 1 ? (at - 1) / (series.count - 1) * plotWidth : plotWidth / 2);
+  const yOf = (value) => TOP + plotHeight - value / scale.top * plotHeight;
+  const inPlot = (value) => value >= 0 && value <= scale.top;
+  const plotLine = line !== null && inPlot(line) ? line : null;
+  const crossings = crossingsOf(series, plotLine);
+  const label = (text, x, y, prefer) => {
+    const reach = textWidth2(text);
+    let anchor = prefer;
+    if (prefer === "end" && x - reach < LEFT + 2) anchor = "start";
+    else if (prefer === "start" && x + reach > total - 2) anchor = "end";
+    return { text, x: round13(x), y: round13(y), anchor };
+  };
+  const points = series.drawn.map(({ at, stock, uncompressed }) => ({
+    at,
+    x: round13(xOf(at)),
+    y: round13(yOf(stock)),
+    uncompressedY: yOf(uncompressed)
+  }));
+  const pathOf = (key) => `M${points.map((point2) => `${point2.x.toFixed(1)},${round13(point2[key]).toFixed(1)}`).join(" L")}`;
+  const crossing = (call, kind) => {
+    if (call === null || !inPlot(call[kind])) return null;
+    const x = round13(xOf(call.at));
+    const y = round13(yOf(call[kind]));
+    if (kind === "uncompressed") {
+      const d = `M${x},${round13(y - MARK_RADIUS)} L${round13(x + MARK_RADIUS)},${y} L${x},${round13(y + MARK_RADIUS)} L${round13(x - MARK_RADIUS)},${y} Z`;
+      return { at: call.at, x, y, d, label: label(t("monitor.context.mark.uncompressed", { n: call.at }), x + 8, y - 7, "start") };
+    }
+    return { at: call.at, x, y, label: label(t("monitor.context.mark.actual", { n: call.at }), x - 6, y + 20, "end") };
+  };
+  const step = Math.max(1, niceStep(series.count / X_TICK_TARGET));
+  const xTicks = [];
+  for (let at = step; at <= series.count; at += step) xTicks.push({ x: round13(xOf(at)), label: String(at) });
+  return {
+    width: total,
+    height: foot + FOOT,
+    left: LEFT,
+    plotWidth,
+    plotTop: TOP,
+    plotHeight,
+    ticks: scale.ticks.map((value) => ({ value, label: value === 0 ? "0" : compact(value), y: round13(yOf(value)) })),
+    seals: series.seals.map(({ at, ordinal, land }) => ({ at, x: round13(xOf(at)), ordinal, land })),
+    line: plotLine === null ? null : { y: round13(yOf(plotLine)), label: { text: t("monitor.context.line", { value: compact(plotLine) }), x: LEFT + 4, y: round13(yOf(plotLine) + 13), anchor: "start" } },
+    actual: pathOf("y"),
+    uncompressed: pathOf("uncompressedY"),
+    uncompressedCross: crossing(crossings.uncompressed, "uncompressed"),
+    actualCross: crossing(crossings.actual, "stock"),
+    xTicks,
+    xUnit: { x: LEFT + plotWidth, y: foot + X_AXIS.unit, text: t("monitor.context.unit.calls") },
+    axisPath: `M${LEFT},${TOP} V${foot} H${LEFT + plotWidth}`,
+    hit: { x: LEFT, y: TOP, width: plotWidth, height: plotHeight - SEAL_HIT.height },
+    points,
+    foot,
+    sealTickTop: foot - SEAL_TICK,
+    sealHit: { ...SEAL_HIT, y: foot - SEAL_HIT.height },
+    xAxis: { tickEnd: foot + X_AXIS.tick, labelY: foot + X_AXIS.label }
+  };
+}
+var nearestDrawn = (series, at) => series.drawn.reduce((best, each2) => Math.abs(each2.at - at) < Math.abs(best.at - at) ? each2 : best).at;
+function callAtX(geometry, series, x) {
+  const share = series.count > 1 ? (x - geometry.left) / geometry.plotWidth * (series.count - 1) : 0;
+  return nearestDrawn(series, Math.round(share) + 1);
+}
+function cursorOf(geometry, at) {
+  const point2 = geometry.points.find((each2) => each2.at === at);
+  if (point2 === void 0) return null;
+  const { x, y, uncompressedY } = point2;
+  return { x, y, uncompressedY: uncompressedY >= geometry.plotTop && uncompressedY <= geometry.foot ? round13(uncompressedY) : null };
+}
+function sealStepAt(series, current, direction) {
+  const lands = series.seals.map(({ land }) => land);
+  const from2 = current ?? (direction > 0 ? 0 : series.count + 1);
+  const next = direction > 0 ? lands.find((land) => land > from2) : lands.findLast((land) => land < from2);
+  return next ?? (direction > 0 ? lands[0] : lands.at(-1));
+}
+var KEY_STRIDE = 10;
+function cursorKeyAt(series, cursor, key, shift, shown = cursor) {
+  const { drawn } = series;
+  if (key === "Home") return drawn[0].at;
+  if (key === "End") return drawn.at(-1).at;
+  if (key === "PageDown") return sealStepAt(series, shown, 1);
+  if (key === "PageUp") return sealStepAt(series, shown, -1);
+  if (key !== "ArrowLeft" && key !== "ArrowRight") return null;
+  if (cursor === null) return drawn[0].at;
+  const stride = (shift ? KEY_STRIDE : 1) * (key === "ArrowLeft" ? -1 : 1);
+  return drawn[Math.max(0, Math.min(drawn.length - 1, drawn.findIndex(({ at }) => at === cursor) + stride))].at;
+}
+function readoutOf(series, line, at, t) {
+  if (at === null) return null;
+  const call = series.calls[at - 1];
+  const where = [t("monitor.context.read.call", { at, total: series.count }), t("monitor.overview.seq", { seq: call.seq }), ...call.post ? [t("monitor.context.read.seal", { ordinal: call.ordinal })] : []];
+  const stock = [
+    t("monitor.context.read.actual", { value: formatTokenCount(call.stock) }),
+    t("monitor.context.read.uncompressed", { value: formatTokenCount(call.uncompressed) }),
+    ...line === null ? [] : [t("monitor.context.line", { value: formatTokenCount(line) })]
+  ];
+  return [where.join(PART_SEPARATOR), stock.join(PART_SEPARATOR)];
+}
+function cacheOf(rows, totals) {
+  const known = rows.filter(({ saved: saved2, cost: cost2 }) => saved2 !== null && cost2 !== null);
+  const sum = (key) => known.reduce((total, each2) => total + each2[key], 0);
+  const cost = totals?.cost ?? sum("cost");
+  const rebuild = sum("costRebuild");
+  const saved = totals?.saved ?? sum("saved");
+  const net = saved - cost;
+  const ranked = [...known].sort((a, b) => b.costRebuild - a.costRebuild);
+  return {
+    rebuild,
+    net0: net + rebuild,
+    net1: net,
+    share: rebuild / cost,
+    rows: [
+      ...ranked.map((each2) => ({ ordinal: each2.ordinal, known: true, rebuild: each2.costRebuild, share: each2.costRebuild / rebuild })),
+      ...rows.filter((each2) => !known.includes(each2)).map((each2) => ({ ordinal: each2.ordinal, known: false, rebuild: null, share: null }))
+    ],
+    max: Math.max(...ranked.map((each2) => each2.costRebuild))
+  };
+}
+var netAt = (cache, share) => cache.net0 - share * cache.rebuild;
+var crossingShareOf = (cache) => cache.rebuild > 0 && cache.net0 > 0 && cache.net1 < 0 ? cache.net0 / cache.rebuild : null;
+function shareReadoutOf(cache, share, t) {
+  const lead = share >= 1 ? t("monitor.context.cache.read.actual") : share <= 0 ? t("monitor.context.cache.read.none") : t("monitor.context.cache.read.at", { percent: Math.round(share * PERCENT4) });
+  return t("monitor.context.cache.read", { lead, net: signedWhole(netAt(cache, share)) });
+}
+var LAM = { height: 156, left: 10, right: 10, top: 14, foot: 34, plotMin: 60, headroom: 0.2, gridShares: [0, 0.25, 0.5, 0.75, 1], cursorFrom: 4e-3, cursorTo: 0.996 };
+function lamGeometryOf(cache, share, width) {
+  const { height, left, right, top, foot } = LAM;
+  const plotWidth = Math.max(LAM.plotMin, width - left - right);
+  const plotHeight = height - top - foot;
+  let low = Math.min(0, cache.net0, cache.net1);
+  let high = Math.max(0, cache.net0, cache.net1);
+  const span = high - low;
+  if (high > 0) high += LAM.headroom * span;
+  if (low < 0) low -= LAM.headroom * span;
+  const xOf = (at) => left + at * plotWidth;
+  const yOf = (value) => top + (high - value) / (high - low) * plotHeight;
+  const zeroY = yOf(0);
+  const crossShare = crossingShareOf(cache);
+  const pointOf = (at) => `${xOf(at).toFixed(1)},${yOf(netAt(cache, at)).toFixed(1)}`;
+  const segment = (from2, to2, tone) => ({ tone, points: `${pointOf(from2)} ${pointOf(to2)}` });
+  const end = (kind, at, anchor, radius) => {
+    const value = netAt(cache, at);
+    return { kind, x: round13(xOf(at)), y: round13(yOf(value)), r: radius, label: { text: signedCompact(value), x: round13(xOf(at)), y: round13(value < 0 ? yOf(value) + 16 : yOf(value) - 8), anchor } };
+  };
+  const x = round13(xOf(crossShare ?? 0));
+  const y0 = round13(zeroY);
+  return {
+    width: left + plotWidth + right,
+    height,
+    grid: LAM.gridShares.map((at) => ({ x: round13(xOf(at)), label: `${Math.round(at * PERCENT4)}%`, anchor: at === 0 ? "start" : at === 1 ? "end" : "middle" })),
+    title: { x: round13(left + plotWidth / 2), y: height - 2 },
+    zero: { x1: left, x2: left + plotWidth, y: y0, labelX: left + 2, labelY: round13(zeroY + (cache.net0 >= 0 && cache.net1 >= 0 ? -3 : 11)) },
+    segments: crossShare === null ? [segment(0, 1, (cache.net0 + cache.net1) / 2 < 0 ? "neg" : "pos")] : [segment(0, crossShare, "pos"), segment(crossShare, 1, "neg")],
+    crossing: crossShare === null ? null : { x, y: y0, d: `M${x} ${round13(y0 - 5)}l5 5l-5 5l-5-5z` },
+    ends: [end("none", 0, "start", 4), end("all", 1, "end", 4.5)],
+    cursor: share > LAM.cursorFrom && share < LAM.cursorTo ? { x: round13(xOf(share)), y: round13(yOf(netAt(cache, share))) } : null,
+    guide: { top, bottom: top + plotHeight }
+  };
+}
+function factsOf(series, line, crossings, t) {
+  return [
+    t("monitor.context.facts.peak", { value: compact(series.peak.stock) }),
+    ...line === null ? [] : [t("monitor.context.line", { value: compact(line) })],
+    ...crossings.uncompressed === null ? [] : [t("monitor.context.facts.crossed", { n: crossings.uncompressed.at })]
+  ].join(PART_SEPARATOR);
+}
+function chartLabelOf2(series, line, crossings, t) {
+  return [
+    t("monitor.context.chart.lead", { peak: compact(series.peak.stock) }),
+    ...line === null ? [] : [t("monitor.context.chart.line", { value: compact(line) })],
+    ...crossings.uncompressed === null ? [] : [t("monitor.context.chart.crossUncompressed", { n: crossings.uncompressed.at })],
+    ...crossings.actual === null ? [] : [t("monitor.context.chart.crossActual", { n: crossings.actual.at })],
+    t("monitor.context.chart.keys")
+  ].join("");
+}
+function cacheTextsOf(sums, series, t) {
+  const crossShare = crossingShareOf(sums);
+  const crossing = crossShare === null ? null : t("monitor.context.cache.crossing", { percent: percentText(crossShare) });
+  const net = Math.round(sums.net1);
+  const sealOf = (ordinal) => series?.seals.find((seal) => seal.ordinal === ordinal);
+  return {
+    sums,
+    share: percentText(sums.share),
+    net: { text: net === 0 ? "0" : `${signedCompact(net)} ${net > 0 ? "\u25B2" : "\u25BC"}`, tone: net > 0 ? "pos" : net < 0 ? "neg" : "zero" },
+    crossing,
+    chart: sums.rebuild > 0 ? { label: t(crossing === null ? "monitor.context.cache.chart" : "monitor.context.cache.chart.crossing", { none: signedCompact(sums.net0), actual: signedCompact(sums.net1), sentence: crossing }) } : null,
+    list: sums.rebuild > 0 ? sums.rows.map(({ ordinal, known, rebuild, share }) => {
+      const jump = sealOf(ordinal)?.land ?? null;
+      const text = known ? { rebuild: formatTokenCount(rebuild), share: { text: percentText(share), title: percentText(share) } } : { rebuild: null, share: null };
+      const params = { ordinal, at: jump, ...known ? { rebuild: text.rebuild, share: text.share.text } : {} };
+      return {
+        ordinal,
+        known,
+        bar: known ? (rebuild / sums.max * PERCENT4).toFixed(2) : null,
+        ...text,
+        jump,
+        label: jump === null ? null : t(known ? "monitor.context.cache.row.label" : "monitor.context.cache.row.labelNone", params)
+      };
+    }) : null
+  };
+}
+function contextPageOf(settlement, result, line, t) {
+  const recall = result?.kind === "ready" ? result.value.recall : void 0;
+  return contextModelOf(settlement, settlementWithRecall(settlement, recall), result, line, t);
+}
+function contextModelOf(settlement, report, result, line, t) {
+  const series = result?.kind === "ready" ? seriesOf(settlement.rows, result.value.calls) : null;
+  const crossings = series === null ? null : crossingsOf(series, line);
+  return {
+    count: t("monitor.settlement.count", { count: settlement.count }),
+    calls: series === null ? null : t("monitor.context.calls", { count: series.count }),
+    loading: result === null,
+    stock: series === null ? null : { series, line, facts: factsOf(series, line, crossings, t), label: chartLabelOf2(series, line, crossings, t) },
+    cache: cacheTextsOf(cacheOf(settlement.rows, report === settlement ? void 0 : report), series, t),
+    recallPartial: report.recall?.partial
+  };
+}
+var createContextState = () => ({ cursor: null, hover: null, share: 1, folds: { rows: false, note: false } });
+var isFoldOpen = (state, name) => state.folds[name];
+function reduceContext(state, action) {
+  switch (action.type) {
+    case "hover":
+      return action.at === state.hover ? state : { ...state, hover: action.at };
+    case "leave":
+      return state.hover === null ? state : { ...state, hover: null };
+    case "cursor":
+      return { ...state, cursor: action.at, hover: null };
+    case "share":
+      return { ...state, share: action.value };
+    case "fold":
+      return { ...state, folds: { ...state.folds, [action.name]: action.open } };
+    default:
+      return state;
+  }
+}
+
+// dsh/src/client/monitor-context.js
+var h9 = import_react8.default.createElement;
+var SHARE_INPUT_ID = "sw-cx-share";
+var MarkLabel2 = ({ label, className }) => h9(Label, { className: `sw-cx-halo ${className}`, x: label.x, y: label.y, anchor: label.anchor }, label.text);
+function StockChart({ stock, geometry: g, cursor, shown, dispatch, t }) {
+  const { series } = stock;
+  const place = (event) => {
+    const box = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    return callAtX(g, series, (event.clientX - box.left) * g.width / box.width);
+  };
+  const marker = cursorOf(g, shown);
+  return h9(
+    "svg",
+    {
+      className: "sw-cx-svg",
+      width: g.width,
+      height: g.height,
+      viewBox: `0 0 ${g.width} ${g.height}`,
+      tabIndex: 0,
+      role: "group",
+      "aria-roledescription": t("monitor.context.chart.kind"),
+      "aria-label": stock.label,
+      onFocus() {
+        if (cursor === null) dispatch({ type: "cursor", at: series.drawn[0].at });
+      },
+      onKeyDown(event) {
+        const at = cursorKeyAt(series, cursor, event.key, event.shiftKey, shown);
+        if (at === null) return;
+        event.preventDefault();
+        dispatch({ type: "cursor", at });
+      },
+      onPointerLeave() {
+        dispatch({ type: "leave" });
+      }
+    },
+    h9("rect", { className: "sw-cx-plotbg", x: g.left, y: g.plotTop, width: g.plotWidth, height: g.plotHeight }),
+    g.ticks.map((tick) => h9(
+      import_react8.default.Fragment,
+      { key: tick.value },
+      h9("line", { className: "sw-cx-grid", x1: g.left, y1: tick.y, x2: g.left + g.plotWidth, y2: tick.y }),
+      h9(Label, { className: "sw-cx-lbl", x: g.left - 4, y: tick.y + 4, anchor: "end" }, tick.label)
+    )),
+    h9(Label, { className: "sw-cx-lbl", x: g.left, y: g.plotTop - 4 }, t("monitor.context.chart.y")),
+    g.seals.map((seal) => h9(
+      import_react8.default.Fragment,
+      { key: seal.at },
+      h9("line", { className: "sw-cx-sealline", x1: seal.x, y1: g.plotTop, x2: seal.x, y2: g.foot }),
+      h9("line", { className: "sw-cx-seal", x1: seal.x, y1: g.foot, x2: seal.x, y2: g.sealTickTop })
+    )),
+    g.line === null ? null : h9(
+      import_react8.default.Fragment,
+      null,
+      h9("line", { className: "sw-cx-warnline", x1: g.left, y1: g.line.y, x2: g.left + g.plotWidth, y2: g.line.y }),
+      h9(MarkLabel2, { label: g.line.label, className: "sw-cx-warn" })
+    ),
+    h9("path", { className: "sw-cx-actual", d: g.actual }),
+    h9(
+      "svg",
+      { x: g.left, y: g.plotTop, width: g.plotWidth, height: g.plotHeight, viewBox: `${g.left} ${g.plotTop} ${g.plotWidth} ${g.plotHeight}`, overflow: "hidden", "aria-hidden": "true" },
+      h9("path", { className: "sw-cx-uncompressed", d: g.uncompressed })
+    ),
+    g.uncompressedCross === null ? null : h9(
+      import_react8.default.Fragment,
+      null,
+      h9("path", { className: "sw-cx-xmark", d: g.uncompressedCross.d }),
+      h9(MarkLabel2, { label: g.uncompressedCross.label, className: "sw-cx-biz" })
+    ),
+    g.actualCross === null ? null : h9(
+      import_react8.default.Fragment,
+      null,
+      h9("circle", { className: "sw-cx-actualcross", cx: g.actualCross.x, cy: g.actualCross.y, r: 3.5 }),
+      h9(MarkLabel2, { label: g.actualCross.label, className: "sw-cx-ink" })
+    ),
+    h9("path", { className: "sw-cx-axis", d: g.axisPath }),
+    g.xTicks.map((tick) => h9(
+      import_react8.default.Fragment,
+      { key: tick.label },
+      h9("line", { className: "sw-cx-grid", x1: tick.x, y1: g.foot, x2: tick.x, y2: g.xAxis.tickEnd }),
+      h9(Label, { className: "sw-cx-lbl", x: tick.x, y: g.xAxis.labelY, anchor: "middle" }, tick.label)
+    )),
+    h9(Label, { className: "sw-cx-lbl", x: g.xUnit.x, y: g.xUnit.y, anchor: "end" }, g.xUnit.text),
+    g.seals.map((seal) => h9("rect", { key: seal.at, className: "sw-cx-sealhit", x: seal.x - g.sealHit.width / 2, y: g.sealHit.y, width: g.sealHit.width, height: g.sealHit.height, onClick: () => dispatch({ type: "cursor", at: seal.land }) })),
+    h9("rect", {
+      className: "sw-cx-hit",
+      x: g.hit.x,
+      y: g.hit.y,
+      width: g.hit.width,
+      height: g.hit.height,
+      onPointerMove: (event) => dispatch({ type: "hover", at: place(event) }),
+      onClick: (event) => dispatch({ type: "cursor", at: place(event) })
+    }),
+    marker === null ? null : h9(
+      "g",
+      { className: "sw-cx-curg", pointerEvents: "none" },
+      h9("line", { className: "sw-cx-cur", x1: marker.x, y1: g.plotTop, x2: marker.x, y2: g.foot }),
+      marker.uncompressedY === null ? null : h9("circle", { className: "sw-cx-curdot sw-cx-curp", cx: marker.x, cy: marker.uncompressedY, r: 3.2 }),
+      h9("circle", { className: "sw-cx-curdot", cx: marker.x, cy: marker.y, r: 3.2 })
+    )
+  );
+}
+function Legend2({ t }) {
+  const swatch = (width, height, className, d) => h9("svg", { width, height, "aria-hidden": "true" }, h9("path", { className: `sw-cx-sw ${className}`, d }));
+  return h9(
+    "ul",
+    { className: "sw-cx-legend", "aria-label": t("monitor.context.legend") },
+    h9("li", null, swatch(20, 8, "sw-cx-sw-actual", "M0 4 H20"), t("monitor.context.legend.actual")),
+    h9("li", null, swatch(20, 8, "sw-cx-sw-uncompressed", "M0 4 H20"), t("monitor.context.legend.uncompressed"), " ", h9("span", { className: "sw-cx-assume" }, t("monitor.context.legend.assumption"))),
+    h9("li", null, swatch(14, 12, "sw-cx-sw-seal", "M7 0 V10"), t("monitor.context.seal"))
+  );
+}
+function Readout({ lines, t }) {
+  return h9("div", { className: "sw-cx-read", "aria-live": "polite" }, lines === null ? h9("span", { className: "sw-cx-r sw-cx-hint" }, t("monitor.context.read.hint")) : [h9("span", { key: "where", className: "sw-cx-r sw-cx-r1" }, lines[0]), h9("span", { key: "stock", className: "sw-cx-r" }, lines[1])]);
+}
+function StockBlock({ stock, geometry, state, shown, chartRef, dispatch, t }) {
+  const step = (direction) => () => {
+    dispatch({ type: "cursor", at: sealStepAt(stock.series, shown, direction) });
+  };
+  const button = (direction, label, text) => h9("button", { type: "button", className: "sw-cx-btn", "aria-label": t(label), onClick: step(direction) }, text);
+  return h9(
+    import_react8.default.Fragment,
+    null,
+    h9("div", { className: "sw-cx-h" }, h9("h3", null, t("monitor.context.stock")), h9("span", { className: "sw-cx-tag" }, button(-1, "monitor.context.seal.prev", "\u2039"), ` ${t("monitor.context.seal")} `, button(1, "monitor.context.seal.next", "\u203A"))),
+    h9("div", { className: "sw-cx-facts" }, h9("span", null, stock.facts)),
+    h9("div", { className: "sw-cx-chartbox", ref: chartRef }, h9(StockChart, { stock, geometry, cursor: state.cursor, shown, dispatch, t })),
+    h9(Legend2, { t })
+  );
+}
+function LamChart({ geometry: g, t }) {
+  return h9(
+    "svg",
+    { width: g.width, height: g.height, viewBox: `0 0 ${g.width} ${g.height}`, "aria-hidden": "true" },
+    g.grid.map((tick) => h9(
+      import_react8.default.Fragment,
+      { key: tick.label },
+      h9("line", { className: "sw-cx-lax", x1: tick.x, y1: g.guide.top, x2: tick.x, y2: g.guide.bottom }),
+      h9(Label, { className: "sw-cx-ll", x: tick.x, y: g.height - 16, anchor: tick.anchor }, tick.label)
+    )),
+    h9(Label, { className: "sw-cx-ll", x: g.title.x, y: g.title.y, anchor: "middle" }, t("monitor.context.cache.axis")),
+    h9("line", { className: "sw-cx-zero", x1: g.zero.x1, y1: g.zero.y, x2: g.zero.x2, y2: g.zero.y }),
+    h9(Label, { className: "sw-cx-ll", x: g.zero.labelX, y: g.zero.labelY }, "0"),
+    g.segments.map((segment) => h9("polyline", { key: segment.tone, className: `sw-cx-net sw-cx-${segment.tone}`, points: segment.points })),
+    g.crossing === null ? null : h9(
+      import_react8.default.Fragment,
+      null,
+      h9("line", { className: "sw-cx-guide", x1: g.crossing.x, y1: g.crossing.y, x2: g.crossing.x, y2: g.guide.bottom }),
+      h9("path", { className: "sw-cx-star", d: g.crossing.d })
+    ),
+    g.ends.map((end) => h9(
+      import_react8.default.Fragment,
+      { key: end.kind },
+      h9("circle", { className: end.kind === "none" ? "sw-cx-pt-m" : "sw-cx-pt-f", cx: end.x, cy: end.y, r: end.r }),
+      h9(Label, { className: "sw-cx-ll sw-cx-pri", x: end.label.x, y: end.label.y, anchor: end.label.anchor }, end.label.text)
+    )),
+    g.cursor === null ? null : h9(
+      import_react8.default.Fragment,
+      null,
+      h9("line", { className: "sw-cx-guide", x1: g.cursor.x, y1: g.guide.top, x2: g.cursor.x, y2: g.guide.bottom }),
+      h9("circle", { className: "sw-cx-lamcursor", cx: g.cursor.x, cy: g.cursor.y, r: 3.5 })
+    )
+  );
+}
+function RowCells({ row: row2 }) {
+  return row2.known ? [
+    h9("span", { key: "n" }, `#${row2.ordinal}`),
+    h9("span", { key: "bar", className: "sw-cx-bar", "aria-hidden": "true" }, h9("i", { style: { width: `${row2.bar}%` } })),
+    h9("span", { key: "rebuild" }, row2.rebuild),
+    h9("span", { key: "share", title: row2.share.title }, row2.share.text)
+  ] : [h9("span", { key: "n" }, `#${row2.ordinal}`), h9("span", { key: "bar" }), h9("span", { key: "rebuild" }, NOT_AVAILABLE), h9("span", { key: "share" }, NOT_AVAILABLE)];
+}
+function RebuildList({ list, state, dispatch, t }) {
+  return h9(
+    "details",
+    { className: "sw-cx-rows", open: isFoldOpen(state, "rows"), onToggle: (event) => dispatch({ type: "fold", name: "rows", open: event.currentTarget.open }) },
+    h9("summary", null, t("monitor.context.cache.rows")),
+    h9(
+      "div",
+      { className: "sw-cx-rl", role: "list" },
+      h9("div", { className: "sw-cx-rr sw-cx-rh", "aria-hidden": "true" }, h9("span", null, t("monitor.context.cache.rows.ordinal")), h9("span", null), h9("span", null, t("monitor.context.cache.rows.rebuild")), h9("span", null, t("monitor.context.cache.rows.share"))),
+      list.map((row2) => h9("div", { key: row2.ordinal, role: "listitem" }, row2.jump === null ? h9("div", { className: "sw-cx-rr" }, h9(RowCells, { row: row2 })) : h9("button", { type: "button", className: "sw-cx-rr", "aria-label": row2.label, onClick: () => dispatch({ type: "cursor", at: row2.jump }) }, h9(RowCells, { row: row2 }))))
+    )
+  );
+}
+var Figure = ({ name, value, tone }) => h9("div", { className: "sw-cx-kv" }, h9("div", { className: "sw-cx-t" }, name), h9("div", { className: tone === void 0 || tone === "zero" ? "sw-cx-v" : `sw-cx-v sw-cx-${tone}` }, value));
+function CacheSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
+  const readout = shareReadoutOf(cache.sums, state.share, t);
+  return h9(
+    "section",
+    { className: "sw-cx-cache", "aria-label": t("monitor.context.cache") },
+    h9("div", { className: "sw-cx-h" }, h9("h3", null, t("monitor.context.cache"))),
+    h9("div", { className: "sw-cx-sum" }, h9(Figure, { name: t("monitor.context.cache.share"), value: cache.share }), h9(Figure, { name: t("monitor.context.cache.net"), value: cache.net.text, tone: cache.net.tone })),
+    cache.chart === null ? null : h9(
+      "div",
+      { className: "sw-cx-card" },
+      h9("div", { className: "sw-cx-lamchart", role: "img", "aria-label": cache.chart.label, ref: lamRef }, h9(LamChart, { geometry: lamGeometryOf(cache.sums, state.share, lamWidth), t })),
+      h9(
+        "div",
+        { className: "sw-cx-sl" },
+        h9("label", { htmlFor: SHARE_INPUT_ID }, t("monitor.context.cache.slider")),
+        h9("input", {
+          id: SHARE_INPUT_ID,
+          className: "sw-cx-slider",
+          type: "range",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: state.share,
+          "aria-valuetext": readout,
+          onChange: (event) => dispatch({ type: "share", value: Number(event.currentTarget.value) })
+        })
+      ),
+      h9("p", { className: "sw-cx-rd" }, readout),
+      cache.crossing === null ? null : h9("p", { className: "sw-cx-thr" }, cache.crossing)
+    ),
+    cache.list === null ? null : h9(RebuildList, { list: cache.list, state, dispatch, t })
+  );
+}
+function Note({ state, dispatch, t }) {
+  return h9(
+    "details",
+    { className: "sw-cx-note", open: isFoldOpen(state, "note"), onToggle: (event) => dispatch({ type: "fold", name: "note", open: event.currentTarget.open }) },
+    h9("summary", null, t("monitor.context.note")),
+    h9("div", { className: "sw-cx-in" }, h9("p", null, t("monitor.context.note.line")))
+  );
+}
+function ContextView({ model, state, dispatch, width, lamWidth, chartRef, lamRef, notice: notice2, t }) {
+  const { stock } = model;
+  const shown = state.hover ?? state.cursor;
+  return h9(
+    "div",
+    { className: "sw-cx" },
+    stock === null ? null : h9(Readout, { lines: readoutOf(stock.series, stock.line, shown, t), t }),
+    h9("p", { className: "sw-cx-ctx" }, [model.count, model.calls].filter((text) => text !== null).join(PART_SEPARATOR)),
+    model.loading ? h9(Notice, { state: "context-loading" }, t("monitor.detail.loading")) : null,
+    stock === null ? null : h9(StockBlock, { stock, geometry: stockGeometryOf(stock.series, stock.line, width, t), state, shown, chartRef, dispatch, t }),
+    notice2,
+    h9(CacheSection, { cache: model.cache, state, dispatch, lamWidth, lamRef, t }),
+    stock === null || stock.line === null ? null : h9(Note, { state, dispatch, t }),
+    h9("div", { className: "sw-cx-pin" }, h9("p", { className: "sw-cx-unit" }, t("monitor.settlement.unit")))
+  );
+}
+function useAmberLine(session, epoch) {
+  const read = () => amberLineOf(session.result, epoch);
+  return import_react8.default.useSyncExternalStore(session.subscribe, read, read);
+}
+function ContextPage({ settlement, handoffId, monitor, session, t }) {
+  const result = useSettlementResult(monitor, handoffId);
+  const line = useAmberLine(session, settlement.epoch);
+  return h9(ContextReport, { model: contextPageOf(settlement, result, line, t), result, t });
+}
+function ContextReport({ model, result, current, t }) {
+  const [state, dispatch] = import_react8.default.useReducer(reduceContext, void 0, createContextState);
+  const [chartRef, width] = useElementWidth();
+  const [lamRef, lamWidth] = useElementWidth();
+  const notice2 = h9(
+    import_react8.default.Fragment,
+    null,
+    current && model.stock === null ? h9(Notice, { state: "current-stock-unavailable" }, t("monitor.settlement.current.stockUnavailable")) : null,
+    h9(RecallNotice, { result, partial: model.recallPartial, t })
+  );
+  return h9(ContextView, { model, state, dispatch, width, lamWidth, chartRef, lamRef, notice: notice2, t });
+}
+
+// dsh/src/client/monitor-drawer.js
+var h10 = import_react9.default.createElement;
+var SLOTS_ENDPOINT = "inner-monitor/slots";
+function Missing({ t }) {
+  return h10("span", { className: "sw-mon-missing" }, t("monitor.notRecorded"));
+}
+function Facts({ entries }) {
+  return h10("dl", { className: "sw-mon-facts" }, entries.map(([term, description], at) => h10(import_react9.default.Fragment, { key: at }, h10("dt", null, term), h10("dd", null, description))));
+}
+var Pre = ({ children }) => h10("pre", { className: "sw-mon-pre" }, children);
+var Json = ({ value }) => h10(Pre, null, jsonText(value));
+var Section = ({ name, title, children, ...attributes }) => h10("section", { className: "sw-mon-section", "data-sw-section": name, ...attributes }, title === void 0 ? null : h10("h3", { className: "sw-mon-heading" }, title), children);
+var WholeText = ({ text, t }) => text === "" ? h10("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.slot.empty")) : h10(Pre, null, text);
+function Block({ part: { kind, label, text, json, error, children } }) {
+  return h10(
+    "div",
+    { className: "sw-mon-block", "data-block": kind, "data-error": error === true ? "" : void 0 },
+    label === void 0 ? null : h10("span", { className: "sw-mon-label" }, label),
+    text === void 0 ? null : h10(Pre, null, text),
+    json === void 0 ? null : h10(Pre, null, json),
+    children === void 0 ? null : children.map((child, at) => h10(Block, { key: at, part: child }))
+  );
+}
+function Blocks({ blocks, t }) {
+  return h10(import_react9.default.Fragment, null, blockListParts(blocks, t).map((part, at) => h10(Block, { key: at, part })));
+}
+function Message({ message, t }) {
+  return h10("div", { className: "sw-mon-message" }, h10("span", { className: "sw-mon-label" }, message?.role ?? t("monitor.notRecorded")), Array.isArray(message?.content) ? h10(Blocks, { blocks: message.content, t }) : h10(Json, { value: message }));
+}
+function CarrierCache({ evidence, t }) {
+  if (evidence === void 0 || evidence === null) return t("monitor.carrierCache.unobserved");
+  return h10(
+    "ol",
+    { className: "sw-mon-cache", "data-sw-carrier-cache": "" },
+    evidence.results.map(({ result, reason }, at) => h10(
+      "li",
+      { key: at, "data-result": result },
+      result === "skipped" ? t("monitor.carrierCache.skipped", { reason: t(`monitor.carrierCache.reason.${reason}`) }) : t(`monitor.carrierCache.${result}`)
+    )),
+    evidence.omitted > 0 ? h10("li", { key: "omitted", className: "sw-mon-note", "data-result": "omitted" }, t("monitor.carrierCache.omitted", { count: evidence.omitted })) : null
+  );
+}
+var seqText = (seq, t) => seq === null || seq === void 0 ? h10(Missing, { t }) : t("monitor.overview.seq", { seq });
+var selectionOf = (request) => request.options ?? {};
+function OverviewPage({ detail, payback = /* @__PURE__ */ new Map(), t }) {
+  const { row: row2, ids, request } = detail;
+  const status = shownStatusOf(row2, payback);
+  const progress = payback.get(row2.id);
+  const { provider, model, reasoningEffort } = selectionOf(request);
+  const present = (value) => value === void 0 || value === null ? h10(Missing, { t }) : value;
+  const entries = [
+    [t("monitor.overview.status"), h10("span", { className: "sw-mon-status", "data-status": status }, t(`monitor.status.${status}`))],
+    ...row2.status === "committed" ? [[t("monitor.overview.payback"), Number.isFinite(progress) ? `${progress}%` : NOT_AVAILABLE]] : [],
+    [t("monitor.overview.callState"), t(`monitor.callState.${row2.call.state}`)],
+    [t("monitor.overview.carrierCache"), h10(CarrierCache, { evidence: row2.call.carrierCache, t })],
+    [t("monitor.overview.recordStart"), seqText(ids.start, t)],
+    [t("monitor.overview.recordCall"), seqText(ids.call, t)],
+    [t("monitor.overview.recordEnd"), seqText(ids.end, t)],
+    [t("monitor.overview.recordCarrier"), seqText(ids.carrier, t)],
+    ...row2.slots === null ? [] : [[t("monitor.overview.slots"), row2.slots]],
+    [t("monitor.overview.provider"), present(provider)],
+    [t("monitor.overview.model"), present(model)],
+    ...reasoningEffort === void 0 || reasoningEffort === null ? [] : [[t("monitor.overview.effort"), reasoningEffort]],
+    [t("monitor.overview.range"), t("monitor.overview.rangeValue", { first: row2.range.first, last: row2.range.last, count: row2.range.count })],
+    [t("monitor.overview.finish"), present(row2.call.finish)],
+    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h10(Pre, null, row2.reason)]],
+    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h10(Pre, null, row2.call.thrown)]]
+  ];
+  return h10(Facts, { entries });
+}
+function ToolsSection({ tools, t }) {
+  return h10(
+    Section,
+    { name: "tools", title: t("monitor.request.tools", { count: tools.count }) },
+    Array.isArray(tools.definitions) ? h10("details", { className: "sw-mon-fold" }, h10("summary", null, t("monitor.request.definitions")), h10(Json, { value: tools.definitions })) : h10("p", { className: "sw-mon-note" }, tools.reason)
+  );
+}
+function RequestPage({ detail, t }) {
+  const { request } = detail;
+  const options = Object.entries(selectionOf(request)).map(([name, value]) => [name, stringOf(value)]);
+  const updates = request.toolHistory?.updates;
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    h10(Section, { name: "options", title: t("monitor.request.options") }, h10(Facts, { entries: options })),
+    h10(
+      Section,
+      { name: "messages", title: t("monitor.request.tail") },
+      h10("p", { className: "sw-mon-note" }, t("monitor.request.messages", { count: request.messages.count })),
+      h10(Message, { message: request.messages.tail, t })
+    ),
+    h10(Section, { name: "sequence", title: t("monitor.request.sequence") }, h10(Facts, { entries: [[t("monitor.request.throughSeq"), request.throughSeq ?? h10(Missing, { t })], [t("monitor.request.headerSeq"), request.headerSeq ?? h10(Missing, { t })]] })),
+    request.tools === void 0 ? null : h10(ToolsSection, { tools: request.tools, t }),
+    updates === void 0 ? null : h10(
+      Section,
+      { name: "toolHistory", title: t("monitor.request.toolHistory") },
+      h10(Facts, { entries: updates.map(({ messageId, additions }) => [messageId, additions.join(", ")]) })
+    )
+  );
+}
+function ResponsePage({ detail, t }) {
+  const { row: row2, response: response2 } = detail;
+  const outcome = [
+    ...row2.reason === null ? [] : [[t("monitor.overview.endReason"), h10(Pre, null, row2.reason)]],
+    ...row2.call.thrown === null ? [] : [[t("monitor.overview.thrown"), h10(Pre, null, row2.call.thrown)]]
+  ];
+  const outcomeSection = outcome.length === 0 ? null : h10(Section, { name: "outcome", title: t("monitor.response.outcome") }, h10(Facts, { entries: outcome }));
+  const body = response2 === null ? h10("p", { className: "sw-mon-note" }, t("monitor.response.none")) : h10(
+    import_react9.default.Fragment,
+    null,
+    h10(
+      Section,
+      { name: "assembled", title: t("monitor.response.assembled") },
+      response2.blocks === null ? h10("p", { className: "sw-mon-note" }, t("monitor.response.assembleError", { message: response2.error })) : response2.blocks.length === 0 ? h10("p", { className: "sw-mon-note" }, t("monitor.response.noBlocks")) : h10(Blocks, { blocks: response2.blocks, t })
+    ),
+    h10(Section, { name: "finish", title: t("monitor.response.finish") }, response2.finish === null ? h10(Missing, { t }) : h10(Json, { value: response2.finish })),
+    h10(
+      Section,
+      { name: "raw", title: t("monitor.response.rawTitle") },
+      h10("details", { className: "sw-mon-fold" }, h10("summary", null, t("monitor.response.raw", { count: response2.stream.length })), h10(Json, { value: response2.stream }))
+    )
+  );
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    outcomeSection,
+    body
+  );
+}
+function UsagePage({ detail, t }) {
+  const usage = detail.usage;
+  const { folded, raw } = usage ?? {};
+  const change = detail.row?.contextChange;
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    h10(Section, { name: "folded", title: t("monitor.usage.folded") }, folded === void 0 || folded === null ? h10(Missing, { t }) : h10(Facts, { entries: [
+      [t("monitor.usage.input"), tokensOf(folded.input)],
+      [t("monitor.usage.output"), tokensOf(folded.output)],
+      [t("monitor.usage.cacheRead"), tokensOf(folded.cacheRead)],
+      [t("monitor.usage.cacheWrite"), tokensOf(folded.cacheWrite)]
+    ] })),
+    h10(Section, { name: "context", title: t("monitor.usage.context") }, h10(Facts, { entries: [
+      [t("monitor.context.before"), tokensOf(change?.before)],
+      [t("monitor.context.after"), tokensOf(change?.after)],
+      [t("monitor.context.change"), contextChangeText(change, t, TOKEN_UNIT)],
+      [t("monitor.context.miss"), tokensOf(change?.miss)]
+    ] })),
+    h10(Section, { name: "raw", title: t("monitor.usage.raw") }, raw === void 0 || raw === null ? h10(Missing, { t }) : h10(Json, { value: raw }))
+  );
+}
+function timeText(ms, t) {
+  if (ms === null || ms === void 0) return h10(Missing, { t });
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? String(ms) : date.toISOString();
+}
+function TimingPage({ detail, now, t }) {
+  const { row: row2, timing, response: response2 } = detail;
+  const span = (part) => {
+    const ms = elapsedOf(row2, part, now);
+    return ms === null ? h10(Missing, { t }) : formatElapsed(ms);
+  };
+  return h10(Facts, { entries: [
+    [t("monitor.timing.attemptStart"), timeText(timing.attempt.startedAt, t)],
+    [t("monitor.timing.attemptEnd"), timeText(timing.attempt.endedAt, t)],
+    [t("monitor.timing.attemptElapsed"), span("attempt")],
+    [t("monitor.timing.callStart"), timeText(timing.call.startedAt, t)],
+    [t("monitor.timing.callEnd"), timeText(timing.call.endedAt, t)],
+    [t("monitor.timing.callElapsed"), span("call")],
+    [t("monitor.timing.firstChunk"), timeText(response2?.firstAt, t)]
+  ] });
+}
+function SlotSummary({ slot, number, t }) {
+  return h10(
+    Section,
+    { title: t("monitor.summaries.heading", { number, title: slotTitleOf(slot, t), seq: slot.key }), "data-sw-slot-summary": slot.key },
+    h10(WholeText, { text: slot.output, t })
+  );
+}
+function SlotSummaries({ monitor, attemptId, t }) {
+  const result = useResult(monitor.resource({ endpoint: SLOTS_ENDPOINT, attempt: attemptId }));
+  return h10(DetailBody, { result, t, render: ({ slots }) => h10(import_react9.default.Fragment, null, slots.map((slot, at) => h10(SlotSummary, { key: slot.key, slot, number: at + 1, t }))) });
+}
+function SummariesPage({ detail, monitor, attemptId, t }) {
+  if (detail.row.status !== "committed") return h10(Notice, { state: "summaries-pending" }, t("monitor.summaries.pending"));
+  return h10(SlotSummaries, { monitor, attemptId, t });
+}
+function CarriedPage({ detail, t }) {
+  if (detail.row.status !== "committed") return h10(Notice, { state: "carried-pending" }, t("monitor.carried.pending"));
+  if (detail.carried === null) return h10(Notice, { state: "carried-none" }, t("monitor.carried.none"));
+  return h10(CarriedFiles, { carried: detail.carried, t });
+}
+function QuotePage({ detail, t }) {
+  if (detail.quote === null || detail.quote === void 0) return h10(Notice, { state: "quote-none" }, t("monitor.quote.none"));
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    h10("p", { className: "sw-mon-note" }, t("monitor.quote.note")),
+    h10(Facts, { entries: quoteFactsOf(detail.quote, t).map(([term, value]) => [term, value ?? h10(Missing, { t })]) })
+  );
+}
+function SourceEvent({ event, t }) {
+  const { seq, type, visible, blocks, raw } = event;
+  return h10(
+    "details",
+    { className: "sw-mon-event", "data-sw-event": "", "data-seq": seq, "data-visible": String(visible), open: visible },
+    h10(
+      "summary",
+      null,
+      t("monitor.slot.event", { seq, type }),
+      h10("span", { className: "sw-mon-tag", "data-tag": visible ? "surface" : "earlier" }, t(visible ? "monitor.slot.surface" : "monitor.slot.earlier"))
+    ),
+    blocks.length === 0 ? h10("p", { className: "sw-mon-note" }, t("monitor.slot.noBlocks")) : h10(Blocks, { blocks, t }),
+    h10(
+      "details",
+      { className: "sw-mon-fold", "data-sw-raw": "" },
+      h10("summary", null, t("monitor.slot.raw")),
+      h10(Json, { value: raw })
+    )
+  );
+}
+function SlotOverviewPage({ detail, t }) {
+  return h10(Facts, { entries: slotFactsOf(detail, t).map(([term, value]) => [term, value ?? h10(Missing, { t })]) });
+}
+function SlotSummaryPage({ detail, t }) {
+  return h10(Section, { name: "c" }, h10(WholeText, { text: detail.c, t }));
+}
+function SlotSourcePage({ detail, t }) {
+  return h10(
+    Section,
+    { name: "sources", title: t("monitor.slot.sources") },
+    detail.events.map((event) => h10(SourceEvent, { key: event.seq, event, t }))
+  );
+}
+function HandoffOverviewPage({ detail, t }) {
+  const { row: row2 } = detail;
+  const present = (value) => value === void 0 || value === null ? h10(Missing, { t }) : value;
+  return h10(Facts, { entries: [
+    [t("monitor.handoff.overview.type"), h10("span", { "data-type": row2.type }, t(`monitor.handoff.type.${row2.type}`))],
+    [t("monitor.handoff.overview.token"), row2.token],
+    [t("monitor.handoff.overview.createdAt"), timeText(row2.createdAt, t)],
+    [t("monitor.handoff.overview.deliveredAt"), timeText(row2.time, t)],
+    [t("monitor.handoff.overview.seq"), seqText(row2.id, t)],
+    [t("monitor.handoff.overview.filesRead"), present(row2.read)],
+    [t("monitor.handoff.overview.filesKept"), present(row2.kept)],
+    [t("monitor.handoff.overview.skills"), row2.skills],
+    [t("monitor.handoff.overview.before"), tokensOf(row2.contextChange?.before)],
+    [t("monitor.handoff.overview.after"), tokensOf(row2.contextChange?.after)]
+  ] });
+}
+function HandoffSummaryPage({ detail, t }) {
+  return h10(Section, { name: "summary" }, h10(WholeText, { text: detail.summary, t }));
+}
+function HandoffFilesPage({ detail, t }) {
+  return detail.files.length === 0 ? h10("p", { className: "sw-mon-note" }, t("monitor.handoff.files.none")) : h10(ReadFiles, { files: detail.files, t });
+}
+function HandoffTurnsPage({ detail, t }) {
+  return h10(Section, { name: "turns" }, detail.turnPage === null ? h10(Missing, { t }) : h10(Pre, null, detail.turnPage));
+}
+function HandoffLineagePage({ detail, t }) {
+  if (detail.lineage === null) return h10(Missing, { t });
+  return h10(Facts, { entries: detail.lineage.map((member) => [member.label, member.omitted === true ? t("monitor.handoff.lineage.omitted") : member.headline]) });
+}
+function TurnDetail({ turn, t }) {
+  const { user, note } = turn;
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    h10(Section, { name: "user", title: t("monitor.handoff.turn.user") }, h10(WholeText, { text: user, t })),
+    h10(
+      Section,
+      { name: "note", title: t("monitor.handoff.turn.note") },
+      note === null ? h10("p", { className: "sw-mon-empty", "data-sw-empty": "" }, t("monitor.handoff.turn.noNote")) : h10(WholeText, { text: note, t })
+    )
+  );
+}
+var CALL_PAGES = { overview: OverviewPage, request: RequestPage, response: ResponsePage, summaries: SummariesPage, carried: CarriedPage, quote: QuotePage, usage: UsagePage, timing: TimingPage };
+var SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, source: SlotSourcePage };
+var HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
+var SETTLEMENT_PAGES = { payback: PaybackPage, context: ContextPage };
+function PagedDetail({ pages, first, labels, ...props }) {
+  const [page, setPage] = import_react9.default.useState(first);
+  const Page = pages[page];
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    h10("div", { className: "sw-mon-tabs", role: "tablist" }, Object.keys(pages).map((name) => h10("button", {
+      key: name,
+      type: "button",
+      role: "tab",
+      className: "sw-mon-tab",
+      "data-page": name,
+      "aria-selected": name === page,
+      onClick: () => {
+        setPage(name);
+      }
+    }, props.t(`${labels}.${name}`)))),
+    h10("div", { className: "sw-mon-page", role: "tabpanel", "data-page": page }, h10(Page, props))
+  );
+}
+function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
+  return h10(PagedDetail, { pages: CALL_PAGES, first: "overview", labels: "monitor.page", detail, monitor, attemptId, payback, now, t });
+}
+function SlotDetail({ detail, t }) {
+  return h10(PagedDetail, { pages: SLOT_PAGES, first: "summary", labels: "monitor.slotPage", detail, t });
+}
+function HandoffDetail({ detail, t }) {
+  const pages = detail.row.type === "load" ? HANDOFF_PAGES : Object.fromEntries(Object.entries(HANDOFF_PAGES).filter(([name]) => name !== "lineage"));
+  return h10(PagedDetail, { pages, first: "overview", labels: "monitor.handoffPage", detail, t });
+}
+function SettlementDetail({ settlement, handoffId, monitor, session, t }) {
+  return settlement === void 0 ? null : h10(PagedDetail, { pages: SETTLEMENT_PAGES, first: "payback", labels: "monitor.settlementPage", settlement, handoffId, monitor, session, t });
+}
+var CURRENT_SETTLEMENT_PAGES = {
+  payback: ({ detail: { base, report, curve, snapshot }, t }) => h10(PaybackReport, { model: paybackModelOf(base, report, curve, t, true), result: snapshot, t }),
+  context: ({ detail: { base, report, snapshot }, t }) => h10(ContextReport, { model: contextModelOf(base, report, snapshot, null, t), result: snapshot, current: true, t })
+};
+function CurrentSettlementDetail({ result, t }) {
+  return h10(DetailBody, { result, t, render: (detail) => {
+    const { base, report } = detail;
+    if (base.count === 0) return h10(Notice, { state: "current-empty" }, t("monitor.settlement.current.empty"));
+    if (report === null) return h10(Notice, { state: "current-pending" }, t("monitor.settlement.current.pending"));
+    return h10(
+      import_react9.default.Fragment,
+      null,
+      base.rows.some((row2) => row2.saved === null) ? h10(Notice, { state: "current-partial" }, t("monitor.settlement.current.partial")) : null,
+      h10(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: "payback", labels: "monitor.settlementPage", detail, t })
+    );
+  } });
+}
+function DetailBody({ result, t, render }) {
+  if (result === null) return h10(Notice, { state: "detail-loading" }, t("monitor.detail.loading"));
+  if (result.kind === "unavailable") return h10(Notice, { state: "detail-unavailable" }, t("monitor.detail.unavailable"));
+  if (result.kind === "unreachable") return h10(Notice, { state: "detail-unreachable" }, t("monitor.detail.unreachable", { message: result.message }));
+  return render(result.value);
+}
+
+// dsh/src/client/monitor-view.js
+var h11 = import_react10.default.createElement;
+var CLOCK_TICK_MS = 1e3;
+var ROW_LEVELS = { attempt: 1, call: 2, slot: 2, handoff: 1, settlement: 1, content: 2, turn: 2, placeholder: 2 };
+function titleOf(row2, t) {
+  switch (row2.kind) {
+    case "attempt":
+      return t("monitor.object.attempt", { epoch: row2.epoch, ordinal: row2.ordinal });
+    case "call":
+      return t("monitor.object.call");
+    case "handoff":
+      return handoffTitle(row2.handoff, t);
+    case "settlement":
+      return t("monitor.object.settlement", { epoch: row2.settlement.epoch });
+    case "content":
+      return t("monitor.object.handoffContent");
+    case "turn":
+      return t("monitor.object.handoffTurn", { n: row2.at + 1 });
+    default:
+      return slotTitleOf(row2.slot, t);
+  }
+}
+function emptyMarkerOf(row2, t) {
+  if (row2.kind === "slot" && row2.slot.output === "") return t("monitor.slot.empty");
+  if (row2.kind === "turn" && row2.turn.note === null) return t("monitor.handoff.turn.noNote");
+  if (row2.kind === "turn" && row2.turn.note === "") return t("monitor.slot.empty");
+  return null;
+}
+function Preview2({ preview: { input, output }, empty }) {
+  const shown = empty ?? output;
+  if (input === void 0 && shown === null) return null;
+  const paired = input !== void 0;
+  return h11(
+    "div",
+    { className: "sw-mon-preview", title: paired ? shown === null ? input : `${input} \u2192 ${shown}` : shown },
+    paired ? h11("span", { className: "sw-mon-in" }, input) : null,
+    paired && shown !== null ? h11("span", { className: "sw-mon-arrow", "aria-hidden": "true" }, "\u2192") : null,
+    shown === null ? null : h11("span", empty === null ? { className: "sw-mon-out" } : { className: "sw-mon-out sw-mon-empty", "data-sw-empty": "" }, shown)
+  );
+}
+function Meta({ parts }) {
+  return h11(
+    "span",
+    { className: "sw-mon-meta" },
+    parts.map(({ part, text, title, attention, type }) => h11("span", { key: part, className: "sw-mon-meta-item", "data-part": part, "data-sw-attention": attention ? "" : void 0, "data-type": type, title }, text))
+  );
+}
+function MonitorRow({ row: row2, selected, now, dispatch, t }) {
+  const { kind, attempt, handoff } = row2;
+  const props = { className: "sw-mon-row", role: "treeitem", "data-sw-row": kind, "data-identity": row2.identity, "aria-level": ROW_LEVELS[kind] };
+  if (kind === "placeholder") {
+    const what = t(handoff === void 0 ? "monitor.leaves.summaries" : "monitor.leaves.turns");
+    return h11(
+      "div",
+      { ...props, "data-sw-placeholder": row2.state },
+      h11(
+        "div",
+        { className: "sw-mon-head" },
+        row2.state === "loading" ? h11("span", { className: "sw-mon-spinner", "aria-hidden": "true" }) : null,
+        h11("span", { "data-part": "text" }, t(`monitor.leaves.${row2.state}`, { what }))
+      )
+    );
+  }
+  const title = h11("span", { className: "sw-mon-title", "data-part": "title" }, titleOf(row2, t));
+  const preview = h11(Preview2, { preview: row2.preview, empty: emptyMarkerOf(row2, t) });
+  const toggle = h11("button", { type: "button", className: "sw-mon-toggle", "aria-expanded": row2.open }, h11("span", { className: "sw-mon-chevron", "aria-hidden": "true" }), title);
+  if (kind === "attempt") {
+    props["aria-expanded"] = row2.open;
+    props.onClick = () => dispatch({ type: "toggle", attemptId: attempt.id, open: row2.open });
+    const parts = parentMetaParts(attempt, now, t, row2.missWarned);
+    if (hasSlotWarnings(attempt) || parts.some(({ attention }) => attention)) props["data-sw-attention"] = "";
+    return h11(
+      "div",
+      props,
+      h11(
+        "div",
+        { className: "sw-mon-head" },
+        toggle,
+        h11("span", { className: "sw-mon-status", "data-part": "status", "data-status": row2.shownStatus }, t(`monitor.status.${row2.shownStatus}`)),
+        h11(Meta, { parts })
+      ),
+      row2.open ? null : preview
+    );
+  }
+  if (kind === "handoff") {
+    props["aria-expanded"] = row2.open;
+    props.onClick = () => dispatch({ type: "toggle", handoffId: handoff.id, open: row2.open });
+    return h11("div", props, h11("div", { className: "sw-mon-head" }, toggle, h11(Meta, { parts: handoffMetaParts(handoff, t) })), row2.open ? null : preview);
+  }
+  const warningKeys = kind === "slot" ? attempt.slotWarnings?.[row2.slot.key]?.map((warning) => `monitor.warning.${warning}`) : row2.warningKeys;
+  if (warningKeys?.length > 0) {
+    props["data-sw-attention"] = "";
+    props.title = props["aria-description"] = warningKeys.map((key) => t(key)).join(PART_SEPARATOR);
+  }
+  const select = () => dispatch(handoff === void 0 ? { type: "select", kind, attemptId: attempt.id, slotKey: row2.slot?.key } : { type: "select", kind, handoffId: handoff.id, turn: row2.at });
+  props["aria-selected"] = selected;
+  props.tabIndex = 0;
+  props.onClick = select;
+  props.onKeyDown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    select();
+  };
+  if (kind === "settlement") return h11("div", props, h11("div", { className: "sw-mon-head" }, title, h11(Meta, { parts: settlementMetaParts(row2.settlement, t) })));
+  return h11("div", props, h11("div", { className: "sw-mon-head" }, title), preview);
+}
+function MonitorList({ rows, selected, now, dispatch, t }) {
+  return h11(
+    "div",
+    { className: "sw-mon-list", role: "tree" },
+    rows.map((row2) => h11(MonitorRow, { key: row2.identity, row: row2, selected: row2.identity === selected, now, dispatch, t }))
+  );
+}
+function ResizeHandle({ width, dispatch, t }) {
+  const drag = import_react10.default.useRef(null);
+  return h11("div", {
+    className: "sw-mon-handle",
+    role: "separator",
+    "aria-orientation": "vertical",
+    "aria-label": t("monitor.drawer.resize"),
+    "aria-valuenow": width,
+    "aria-valuemin": DRAWER_MIN_WIDTH,
+    "aria-valuemax": DRAWER_MAX_WIDTH,
+    tabIndex: 0,
+    onPointerDown(event) {
+      if (event.button !== 0) return;
+      const handle = event.currentTarget;
+      drag.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: handle.parentElement.getBoundingClientRect().width,
+        containerWidth: handle.closest("[data-sw-monitor-split]").getBoundingClientRect().width
+      };
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    onPointerMove(event) {
+      const current = drag.current;
+      if (current === null || current.pointerId !== event.pointerId) return;
+      dispatch({ type: "resize", width: current.startWidth + current.startX - event.clientX, containerWidth: current.containerWidth });
+    },
+    onPointerUp(event) {
+      if (drag.current?.pointerId !== event.pointerId) return;
+      drag.current = null;
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    },
+    onPointerCancel() {
+      drag.current = null;
+    },
+    onKeyDown(event) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const containerWidth = event.currentTarget.closest("[data-sw-monitor-split]").getBoundingClientRect().width;
+      dispatch({ type: "resize", width: width + (event.key === "ArrowLeft" ? DRAWER_KEY_STEP : -DRAWER_KEY_STEP), containerWidth });
+    }
+  });
+}
+var CALL_ENDPOINT = "inner-monitor/call";
+var SLOT_ENDPOINT = "inner-monitor/slot";
+var HANDOFF_ENDPOINT = "inner-monitor/handoff";
+function CallDrawerBody({ monitor, attemptId, payback, now, t }) {
+  const result = useResult(monitor.resource({ endpoint: CALL_ENDPOINT, attempt: attemptId }));
+  return h11(DetailBody, { result, t, render: (detail) => h11(CallDetail, { detail, monitor, attemptId, payback, now, t }) });
+}
+function SlotDrawerBody({ monitor, attemptId, slotKey, t }) {
+  const result = useResult(monitor.resource({ endpoint: SLOT_ENDPOINT, attempt: attemptId, slot: slotKey }));
+  return h11(DetailBody, { result, t, render: (value) => h11(SlotDetail, { detail: value, t }) });
+}
+function HandoffDrawerBody({ monitor, handoffId, t }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  return h11(DetailBody, { result, t, render: (detail) => h11(HandoffDetail, { detail, t }) });
+}
+function TurnDrawerBody({ monitor, handoffId, turn, t }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  return h11(DetailBody, { result, t, render: (detail) => h11(TurnDetail, { turn: detail.turns[turn], t }) });
+}
+function TurnSubtitle({ monitor, handoffId, turn }) {
+  const result = useResult(monitor.resource({ endpoint: HANDOFF_ENDPOINT, handoff: handoffId }));
+  const address = result?.kind === "ready" ? result.value.turns[turn].address : null;
+  return address === null ? null : h11("p", { className: "sw-mon-drawer-sub" }, address);
+}
+function MonitorDrawer({ state, monitor, session, ordinals, payback, handoffs = [], settlements, now, dispatch, t }) {
+  const { selected, drawerWidth } = state;
+  if (selected === null) return null;
+  const { kind, identity, attemptId, slotKey, handoffId, turn } = selected;
+  let title;
+  let subtitle;
+  let body;
+  if (kind === "current-settlement") {
+    const value = selected.result?.kind === "ready" ? selected.result.value : null;
+    title = value === null ? t("monitor.toolbar.currentSettlement") : t("monitor.drawer.settlement", { epoch: value.base.epoch });
+    subtitle = value === null ? null : h11("p", { className: "sw-mon-drawer-sub" }, t("monitor.settlement.current.through", { step: value.base.steps }));
+    body = h11(CurrentSettlementDetail, { key: identity, result: selected.result, t });
+  } else if (kind === "settlement") {
+    const settlement = settlements.get(handoffId);
+    title = t("monitor.drawer.settlement", { epoch: settlement === void 0 ? NOT_AVAILABLE : settlement.epoch });
+    subtitle = h11("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
+    body = h11(SettlementDetail, { key: identity, settlement, handoffId, monitor, session, t });
+  } else if (kind === "content" || kind === "turn") {
+    const listed = handoffs.find((handoff) => handoff.id === handoffId);
+    title = t(kind === "turn" ? "monitor.drawer.handoffTurn" : "monitor.drawer.handoff", { epoch: listed === void 0 ? NOT_AVAILABLE : handoffSegmentOf(listed) });
+    subtitle = kind === "turn" ? h11(TurnSubtitle, { key: identity, monitor, handoffId, turn }) : h11("p", { className: "sw-mon-drawer-sub" }, t("monitor.drawer.handoffId", { id: handoffId }));
+    body = kind === "turn" ? h11(TurnDrawerBody, { key: identity, monitor, handoffId, turn, t }) : h11(HandoffDrawerBody, { key: identity, monitor, handoffId, t });
+  } else {
+    const call = kind === "call";
+    const { epoch, ordinal } = ordinals[attemptId] ?? { epoch: NOT_AVAILABLE, ordinal: NOT_AVAILABLE };
+    title = t(call ? "monitor.drawer.call" : "monitor.drawer.slot", { epoch, ordinal });
+    subtitle = h11("p", { className: "sw-mon-drawer-sub" }, call ? t("monitor.drawer.attemptId", { id: attemptId }) : t("monitor.drawer.slotKey", { id: slotKey }));
+    body = call ? h11(CallDrawerBody, { key: identity, monitor, attemptId, payback, now, t }) : h11(SlotDrawerBody, { key: identity, monitor, attemptId, slotKey, t });
+  }
+  return h11(
+    "aside",
+    { className: "sw-mon-drawer", "data-sw-monitor-drawer": "", "data-kind": kind, "aria-label": t("monitor.drawer.label"), style: { width: drawerWidth } },
+    h11(ResizeHandle, { width: drawerWidth, dispatch, t }),
+    h11(
+      "div",
+      { className: "sw-mon-drawer-head" },
+      h11("h2", { className: "sw-mon-drawer-title" }, title),
+      subtitle,
+      h11("button", { type: "button", className: "sw-mon-close", "aria-label": t("monitor.drawer.close"), onClick: () => dispatch({ type: "clear" }) }, "\xD7")
+    ),
+    h11("div", { className: "sw-mon-drawer-body" }, body)
+  );
+}
+var leavesOf = (result, list) => result === null ? LEAVES_LOADING : result.kind === "ready" ? result.value[list] : LEAVES_FAILED;
+function listFeed(monitor, { endpoint, address, list }, ids) {
+  const handles = ids.map((id) => [id, monitor.resource({ endpoint, [address]: id })]);
+  let seen = null;
+  let lists = null;
+  return {
+    subscribe(listener) {
+      const unsubscribes = handles.map(([, handle]) => handle.subscribe(listener));
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe();
+      };
+    },
+    snapshot() {
+      const results = handles.map(([, handle]) => handle.result);
+      if (seen !== null && results.every((result, at) => result === seen[at])) return lists;
+      seen = results;
+      lists = Object.fromEntries(handles.map(([id], at) => [id, leavesOf(results[at], list)]));
+      return lists;
+    }
+  };
+}
+var SLOT_LISTS = { endpoint: SLOTS_ENDPOINT, address: "attempt", list: "slots" };
+var TURN_LISTS = { endpoint: HANDOFF_ENDPOINT, address: "handoff", list: "turns" };
+function useLists(monitor, source, ids) {
+  const feed = import_react10.default.useMemo(() => listFeed(monitor, source, ids), [monitor, source, ids.join()]);
+  return import_react10.default.useSyncExternalStore(feed.subscribe, feed.snapshot, feed.snapshot);
+}
+function MonitorToolbar({ filter, dispatch, openCurrent, currentOpen = false, t }) {
+  const button = (props, text) => h11("button", { type: "button", className: "sw-mon-fbtn", ...props }, text);
+  return h11(
+    "div",
+    { className: "sw-mon-toolbar", role: "toolbar", "aria-label": t("monitor.toolbar.label") },
+    filter === null ? null : h11(
+      import_react10.default.Fragment,
+      null,
+      h11(
+        "div",
+        { className: "sw-mon-filter", role: "group", "aria-label": t("monitor.filter.category") },
+        FILTER_CATEGORIES.map((category) => button({ key: category, "aria-pressed": filter.category === category, onClick: () => dispatch({ type: "category", category }) }, t(`monitor.filter.${category}`)))
+      ),
+      button({ onClick: () => dispatch({ type: "collapse" }) }, t("monitor.filter.collapseAll")),
+      button({ "data-act": "warned", "aria-pressed": filter.warned, onClick: () => dispatch({ type: "warned", warned: !filter.warned }) }, t("monitor.filter.warned"))
+    ),
+    button({ "aria-expanded": currentOpen, onClick: openCurrent }, t("monitor.toolbar.currentSettlement"))
+  );
+}
+function MonitorSplit({ attempts, handoffs, listNotice = null, monitor, session, state, dispatch, t }) {
+  const paneRef = import_react10.default.useRef(null);
+  const placed = import_react10.default.useRef(false);
+  const hasEvents = attempts.length > 0 || handoffs.length > 0;
+  const currentOpen = state.selected?.kind === "current-settlement";
+  async function openCurrent() {
+    if (currentOpen) return;
+    const request = /* @__PURE__ */ Symbol();
+    dispatch({ type: "open-current-settlement", request });
+    const result = await monitor.readCurrentSettlement();
+    dispatch({ type: "current-settlement-result", request, result });
+  }
+  const [now, setNow] = import_react10.default.useState(() => Date.now());
+  const running = attempts.some((attempt) => ACTIVE_STATUSES.includes(attempt.status));
+  import_react10.default.useEffect(() => {
+    if (!running) return void 0;
+    setNow(Date.now());
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, CLOCK_TICK_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [running]);
+  import_react10.default.useLayoutEffect(() => {
+    if (!hasEvents || placed.current) return;
+    const pane = paneRef.current;
+    pane.scrollTop = pane.scrollHeight;
+    placed.current = true;
+  }, [hasEvents]);
+  const shown = visibleGroups(attempts, handoffs, state.filter);
+  const expanded = shown.attempts.filter((attempt) => isOpen(state, attempt.id) && attempt.status === "committed" && (!state.filter.warned || hasSlotWarnings(attempt))).map((attempt) => attempt.id);
+  const expandedHandoffs = shown.handoffs.filter((handoff) => isOpen(state, handoff.id)).map((handoff) => handoff.id);
+  const rows = flattenRows(attempts, useLists(monitor, SLOT_LISTS, expanded), state, handoffs, useLists(monitor, TURN_LISTS, expandedHandoffs));
+  return h11(
+    import_react10.default.Fragment,
+    null,
+    h11(MonitorToolbar, { filter: hasEvents ? state.filter : null, dispatch, openCurrent, currentOpen, t }),
+    h11(
+      "div",
+      { className: "sw-mon-split", "data-sw-monitor-split": "" },
+      h11("div", {
+        className: "sw-mon-pane",
+        ref: paneRef,
+        role: "region",
+        "aria-label": t("monitor.region"),
+        tabIndex: 0,
+        onClick(event) {
+          if (event.target === event.currentTarget) dispatch({ type: "clear" });
+        }
+      }, listNotice ?? (rows.length === 0 ? h11(Notice, { state: "filter-empty" }, t("monitor.filter.empty")) : h11(MonitorList, { rows, selected: state.selected?.identity ?? null, now, dispatch, t }))),
+      hasEvents || currentOpen ? h11(MonitorDrawer, { state, monitor, session, ordinals: ordinalsOf(attempts), payback: paybackOf(attempts, handoffs), handoffs, settlements: settlementsOf(attempts, handoffs), now, dispatch, t }) : null
+    )
+  );
+}
+function MonitorContent({ monitor, session, state, dispatch, t }) {
+  const rows = useResult(monitor.rows);
+  const { attempts = [], handoffs = [] } = rows ?? {};
+  const notice2 = rows?.kind === "ready" ? attempts.length + handoffs.length === 0 ? "empty" : null : rows?.kind ?? "loading";
+  const listNotice = notice2 === null ? null : h11(Notice, { state: `rows-${notice2}` }, t(`monitor.rows.${notice2}`, notice2 === "unreachable" ? { message: rows.message } : void 0));
+  return h11(MonitorSplit, { attempts, handoffs, listNotice, monitor, session, state, dispatch, t });
+}
+function InnerCompactionView({ monitor, session, t }) {
+  const [state, dispatch] = import_react10.default.useReducer(reduceView, void 0, createViewState);
+  return h11(
+    "div",
+    { className: "sw-mon", "data-sw-monitor": "", "data-conversation-composer-overlay": "" },
+    h11(MonitorContent, { monitor, session, state, dispatch, t })
+  );
+}
+
+// dsh/src/client/monitor-register.js
+var MONITOR_VIEW_ID = "session-watcher.inner-compaction";
+var MONITOR_VIEW_ORDER = 30;
+function registerMonitorView(child, { monitors, sessions, t }) {
+  child.slots.inject("conversation.view", () => child.slots.register({
+    name: "conversation.view",
+    id: MONITOR_VIEW_ID,
+    order: MONITOR_VIEW_ORDER,
+    locale: NS,
+    label: () => t("monitor.label"),
+    inject: (sessionId) => ({ monitor: monitors.for(sessionId), session: sessions.for(sessionId) })
+  }, InnerCompactionView));
+}
+
+// dsh/src/client/settings.js
+var import_react12 = __toESM(require("react"), 1);
+
+// dsh/src/client/switch.js
+var import_react11 = __toESM(require("react"), 1);
+var h12 = import_react11.default.createElement;
 function Switch({ checked, onChange, label, disabled = false }) {
-  return h8("button", {
+  return h12("button", {
     type: "button",
     role: "switch",
     "aria-checked": checked,
@@ -21311,11 +22924,11 @@ function Switch({ checked, onChange, label, disabled = false }) {
     onClick: () => {
       onChange(!checked);
     }
-  }, h8("span", { className: "sw-set-switch-thumb" }));
+  }, h12("span", { className: "sw-set-switch-thumb" }));
 }
 
 // dsh/src/client/settings.js
-var h9 = import_react8.default.createElement;
+var h13 = import_react12.default.createElement;
 var SETTINGS_ENTRY = "session-watcher";
 function bindSettingsForm(child) {
   const entry = child.configForms.get(SETTINGS_ENTRY);
@@ -21526,8 +23139,8 @@ function createResponsesBreakpointStore({ entry }) {
   };
 }
 function useSnapshot(form) {
-  const [snapshot, setSnapshot] = import_react8.default.useState(() => form.getSnapshot());
-  import_react8.default.useEffect(() => {
+  const [snapshot, setSnapshot] = import_react12.default.useState(() => form.getSnapshot());
+  import_react12.default.useEffect(() => {
     setSnapshot(form.getSnapshot());
     return form.subscribe(() => {
       setSnapshot(form.getSnapshot());
@@ -21537,13 +23150,13 @@ function useSnapshot(form) {
 }
 function IntegrationFailure({ failure, t }) {
   if (failure === null) return null;
-  return h9(
+  return h13(
     "div",
     { className: "sw-set-note sw-set-error sw-set-integration", role: "alert", "data-sw-integration": "" },
-    h9("strong", null, t("settings.integration.title")),
-    h9("p", null, t(`settings.integration.cause.${failure.cause}`)),
-    h9("p", null, t("settings.integration.consequence")),
-    h9("p", null, t("settings.integration.recovery"))
+    h13("strong", null, t("settings.integration.title")),
+    h13("p", null, t(`settings.integration.cause.${failure.cause}`)),
+    h13("p", null, t("settings.integration.consequence")),
+    h13("p", null, t("settings.integration.recovery"))
   );
 }
 var outcomeKey = ({ outcome, native, installed }) => {
@@ -21553,28 +23166,28 @@ var outcomeKey = ({ outcome, native, installed }) => {
 function CarrierCacheRow({ carrier, responses, id, t }) {
   const { state, cause, reason, install, confirming, busy, outcome } = useSnapshot(carrier);
   const breakpoint = useSnapshot(responses);
-  import_react8.default.useEffect(() => {
+  import_react12.default.useEffect(() => {
     void carrier.load();
   }, [carrier]);
   if (state === "loading" || state === "hidden") return null;
   const notes = [
-    state === "unavailable" ? h9("p", { key: "unavailable", className: "sw-set-note", role: "status" }, t(reason === void 0 ? "settings.carrier.unavailable" : `settings.carrier.unavailable.${reason}`)) : null,
-    state === "not-installed" ? h9("p", { key: "not-installed", className: "sw-set-note", role: "status" }, t("settings.carrier.notInstalled", install)) : null,
-    state === "not-installed" && confirming === true ? h9(
+    state === "unavailable" ? h13("p", { key: "unavailable", className: "sw-set-note", role: "status" }, t(reason === void 0 ? "settings.carrier.unavailable" : `settings.carrier.unavailable.${reason}`)) : null,
+    state === "not-installed" ? h13("p", { key: "not-installed", className: "sw-set-note", role: "status" }, t("settings.carrier.notInstalled", install)) : null,
+    state === "not-installed" && confirming === true ? h13(
       "div",
       { key: "install", className: "sw-set-note sw-set-integration", role: "alertdialog", "aria-label": t("settings.carrier.install.accept"), "data-sw-carrier-install": "" },
-      h9("p", null, t("settings.carrier.install.confirm", install)),
-      busy ? h9("p", { role: "status" }, t("settings.carrier.install.running")) : null,
-      h9("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-accept": "", onClick: () => {
+      h13("p", null, t("settings.carrier.install.confirm", install)),
+      busy ? h13("p", { role: "status" }, t("settings.carrier.install.running")) : null,
+      h13("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-accept": "", onClick: () => {
         void carrier.confirmInstall();
       } }, t("settings.carrier.install.accept")),
-      h9("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-cancel": "", onClick: () => {
+      h13("button", { type: "button", className: "sw-set-button", disabled: busy, "data-sw-carrier-install-cancel": "", onClick: () => {
         carrier.cancelInstall();
       } }, t("settings.carrier.install.cancel"))
     ) : null,
-    state === "pending" ? h9("p", { key: "pending", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.pending"), cause === void 0 ? null : ` ${t(`settings.integration.cause.${cause}`)}`) : null,
-    h9("p", { key: "caveat", className: "sw-set-note" }, t("settings.carrier.caveat")),
-    outcome === null ? null : h9(
+    state === "pending" ? h13("p", { key: "pending", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.pending"), cause === void 0 ? null : ` ${t(`settings.integration.cause.${cause}`)}`) : null,
+    h13("p", { key: "caveat", className: "sw-set-note" }, t("settings.carrier.caveat")),
+    outcome === null ? null : h13(
       "p",
       { key: "outcome", className: "sw-set-note", role: "status", "data-sw-carrier-outcome": outcome.outcome },
       t(`settings.carrier.outcome.${outcomeKey(outcome)}`),
@@ -21583,30 +23196,30 @@ function CarrierCacheRow({ carrier, responses, id, t }) {
       outcome.installed === true && outcome.outcome !== "enabled" ? ` ${t("settings.carrier.installedNote")}` : null
     )
   ];
-  return h9(
+  return h13(
     "div",
     { "data-sw-carrier": "" },
-    h9("h3", { className: "sw-set-group" }, t("settings.group.cache")),
-    h9(
+    h13("h3", { className: "sw-set-group" }, t("settings.group.cache")),
+    h13(
       Row2,
       { id: `${id}-carrier`, title: t("settings.carrier.title"), description: t("settings.carrier.description"), notes },
-      h9(Switch, { checked: state === "on", label: t("settings.carrier.title"), disabled: busy || state === "unavailable", onChange: (next) => {
+      h13(Switch, { checked: state === "on", label: t("settings.carrier.title"), disabled: busy || state === "unavailable", onChange: (next) => {
         void carrier.set(next);
       } })
     ),
-    h9(
+    h13(
       Row2,
       {
         id: `${id}-carrier-responses`,
         title: t("settings.carrier.responses.title"),
         description: t("settings.carrier.responses.description"),
         notes: [
-          h9("p", { key: "warning", className: "sw-set-note" }, t("settings.carrier.responses.warning")),
-          state === "on" ? null : h9("p", { key: "held", className: "sw-set-note", role: "status" }, t("settings.carrier.responses.held")),
-          breakpoint.failed ? h9("p", { key: "failed", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.responses.failed")) : null
+          h13("p", { key: "warning", className: "sw-set-note" }, t("settings.carrier.responses.warning")),
+          state === "on" ? null : h13("p", { key: "held", className: "sw-set-note", role: "status" }, t("settings.carrier.responses.held")),
+          breakpoint.failed ? h13("p", { key: "failed", className: "sw-set-note sw-set-error", role: "status" }, t("settings.carrier.responses.failed")) : null
         ]
       },
-      h9(Switch, {
+      h13(Switch, {
         checked: breakpoint.on,
         label: t("settings.carrier.responses.title"),
         disabled: state !== "on" || busy || breakpoint.status !== "ready" || !breakpoint.writable || breakpoint.saving,
@@ -21619,17 +23232,17 @@ function CarrierCacheRow({ carrier, responses, id, t }) {
 }
 var NOTICE_TEXT = { loading: "settings.loading", unavailable: "settings.unavailable" };
 function Row2({ id, title, description, notes, children }) {
-  return h9(
+  return h13(
     "div",
     { className: "sw-set-row", role: "group", "aria-labelledby": `${id}-title`, "aria-describedby": `${id}-text` },
-    h9(
+    h13(
       "div",
       { className: "sw-set-text" },
-      h9("div", { className: "sw-set-title", id: `${id}-title` }, title),
-      h9("div", { className: "sw-set-desc", id: `${id}-text` }, description),
+      h13("div", { className: "sw-set-title", id: `${id}-title` }, title),
+      h13("div", { className: "sw-set-desc", id: `${id}-text` }, description),
       ...notes
     ),
-    h9("div", { className: "sw-set-control" }, children)
+    h13("div", { className: "sw-set-control" }, children)
   );
 }
 function BackupModelSelect({ id, labelledBy, snapshot, form, t }) {
@@ -21641,16 +23254,16 @@ function BackupModelSelect({ id, labelledBy, snapshot, form, t }) {
     const choice = byKey.get(event.target.value);
     form.set("summaryFallbackModel", choice === void 0 ? null : { provider: choice.provider, model: choice.model });
   };
-  return h9(
+  return h13(
     "select",
     { id, className: "sw-set-select", value, disabled: !snapshot.writable || snapshot.saving, onChange, "aria-labelledby": labelledBy, "data-sw-backup-model": "" },
-    h9("option", { value: "" }, t("settings.backup.none")),
-    ...choices.groups.map((group) => h9(
+    h13("option", { value: "" }, t("settings.backup.none")),
+    ...choices.groups.map((group) => h13(
       "optgroup",
       { key: group.id, label: group.name },
-      ...group.models.map((model) => h9("option", { key: model.key, value: model.key }, model.name))
+      ...group.models.map((model) => h13("option", { key: model.key, value: model.key }, model.name))
     )),
-    choices.saved === null ? null : h9(
+    choices.saved === null ? null : h13(
       "option",
       { key: choices.saved.key, value: choices.saved.key },
       `${choices.saved.model} \xB7 ${choices.saved.provider}${choices.saved.unavailable ? ` (${t("settings.backup.unavailableTag")})` : ""}`
@@ -21660,51 +23273,51 @@ function BackupModelSelect({ id, labelledBy, snapshot, form, t }) {
 function CompactionSettings({ form, integration, carrier, responses, t }) {
   const snapshot = useSnapshot(form);
   const { failure } = useSnapshot(integration);
-  const id = import_react8.default.useId();
-  import_react8.default.useEffect(() => {
+  const id = import_react12.default.useId();
+  import_react12.default.useEffect(() => {
     void form.loadModels();
     return () => {
       form.cancel();
     };
   }, [form]);
-  import_react8.default.useEffect(() => {
+  import_react12.default.useEffect(() => {
     void integration.load();
   }, [integration]);
-  const heading = h9("h2", { className: "sw-set-heading" }, t("settings.title"));
+  const heading = h13("h2", { className: "sw-set-heading" }, t("settings.title"));
   if (snapshot.status !== "ready") {
-    return h9("section", { className: "sw-set" }, heading, h9(IntegrationFailure, { failure, t }), h9("p", { className: "sw-set-note", role: "status" }, t(NOTICE_TEXT[snapshot.status])), h9(CarrierCacheRow, { carrier, responses, id, t }));
+    return h13("section", { className: "sw-set" }, heading, h13(IntegrationFailure, { failure, t }), h13("p", { className: "sw-set-note", role: "status" }, t(NOTICE_TEXT[snapshot.status])), h13(CarrierCacheRow, { carrier, responses, id, t }));
   }
   const { values, catalog, choices } = snapshot;
   const locked = !snapshot.writable || snapshot.saving;
-  const toggle = (field, title) => h9(Switch, { checked: values[field], label: title, disabled: locked, onChange: (next) => {
+  const toggle = (field, title) => h13(Switch, { checked: values[field], label: title, disabled: locked, onChange: (next) => {
     form.set(field, next);
   } });
   const modelNotes = [
-    catalog.status === "loading" ? h9("p", { key: "loading", className: "sw-set-note", role: "status" }, t("settings.backup.loading")) : null,
-    catalog.status === "error" ? h9(
+    catalog.status === "loading" ? h13("p", { key: "loading", className: "sw-set-note", role: "status" }, t("settings.backup.loading")) : null,
+    catalog.status === "error" ? h13(
       "p",
       { key: "error", className: "sw-set-note sw-set-error", role: "alert" },
       t("settings.backup.loadFailed"),
-      h9("button", { type: "button", className: "sw-set-link", disabled: snapshot.saving, onClick: () => {
+      h13("button", { type: "button", className: "sw-set-link", disabled: snapshot.saving, onClick: () => {
         void form.loadModels();
       } }, t("settings.backup.retry"))
     ) : null,
-    catalog.partial.length > 0 ? h9("p", { key: "partial", className: "sw-set-note", role: "status" }, t("settings.backup.partial", { providers: catalog.partial.join(", ") })) : null,
-    choices.saved?.unavailable ? h9("p", { key: "gone", className: "sw-set-note sw-set-error", role: "status" }, t("settings.backup.unavailable")) : null
+    catalog.partial.length > 0 ? h13("p", { key: "partial", className: "sw-set-note", role: "status" }, t("settings.backup.partial", { providers: catalog.partial.join(", ") })) : null,
+    choices.saved?.unavailable ? h13("p", { key: "gone", className: "sw-set-note sw-set-error", role: "status" }, t("settings.backup.unavailable")) : null
   ];
-  return h9(
+  return h13(
     "section",
     { className: "sw-set", "data-sw-settings": "" },
     heading,
-    h9(IntegrationFailure, { failure, t }),
-    snapshot.writable ? null : h9("p", { className: "sw-set-note", role: "status" }, t("settings.readOnly")),
-    h9("h3", { className: "sw-set-group" }, t("settings.group.experimental")),
-    h9(Row2, { id: `${id}-show`, title: t("settings.show.title"), description: t("settings.show.description"), notes: [] }, toggle("showCompactionOption", t("settings.show.title"))),
-    h9("h3", { className: "sw-set-group" }, t("settings.group.preferences")),
-    h9(
+    h13(IntegrationFailure, { failure, t }),
+    snapshot.writable ? null : h13("p", { className: "sw-set-note", role: "status" }, t("settings.readOnly")),
+    h13("h3", { className: "sw-set-group" }, t("settings.group.experimental")),
+    h13(Row2, { id: `${id}-show`, title: t("settings.show.title"), description: t("settings.show.description"), notes: [] }, toggle("showCompactionOption", t("settings.show.title"))),
+    h13("h3", { className: "sw-set-group" }, t("settings.group.preferences")),
+    h13(
       Row2,
       { id: `${id}-policy`, title: t("settings.policy.title"), description: t("settings.policy.description"), notes: [] },
-      h9("select", {
+      h13("select", {
         className: "sw-set-select",
         value: values.compactionPreset,
         disabled: locked,
@@ -21712,23 +23325,23 @@ function CompactionSettings({ form, integration, carrier, responses, t }) {
         onChange: (event) => {
           form.set("compactionPreset", event.target.value);
         }
-      }, ...PRESET_IDS.map((preset) => h9("option", { key: preset, value: preset }, t(`monitor.quote.preset.${preset}`))))
+      }, ...PRESET_IDS.map((preset) => h13("option", { key: preset, value: preset }, t(`monitor.quote.preset.${preset}`))))
     ),
-    h9(
+    h13(
       Row2,
       { id: `${id}-backup`, title: t("settings.backup.title"), description: t("settings.backup.description"), notes: modelNotes },
-      h9(BackupModelSelect, { id: `${id}-backup-select`, labelledBy: `${id}-backup-title`, snapshot, form, t })
+      h13(BackupModelSelect, { id: `${id}-backup-select`, labelledBy: `${id}-backup-title`, snapshot, form, t })
     ),
-    h9(Row2, { id: `${id}-inherit`, title: t("settings.inherit.title"), description: t("settings.inherit.description"), notes: [] }, toggle("subagentsInheritCompaction", t("settings.inherit.title"))),
-    h9(CarrierCacheRow, { carrier, responses, id, t }),
-    h9(
+    h13(Row2, { id: `${id}-inherit`, title: t("settings.inherit.title"), description: t("settings.inherit.description"), notes: [] }, toggle("subagentsInheritCompaction", t("settings.inherit.title"))),
+    h13(CarrierCacheRow, { carrier, responses, id, t }),
+    h13(
       "div",
       { className: "sw-set-footer" },
-      snapshot.failed ? h9("p", { className: "sw-set-failed", role: "status" }, t("settings.saveFailed")) : null,
-      h9("button", { type: "button", className: "sw-set-button", disabled: !snapshot.dirty || snapshot.saving, onClick: () => {
+      snapshot.failed ? h13("p", { className: "sw-set-failed", role: "status" }, t("settings.saveFailed")) : null,
+      h13("button", { type: "button", className: "sw-set-button", disabled: !snapshot.dirty || snapshot.saving, onClick: () => {
         form.cancel();
       } }, t("settings.cancel")),
-      h9(
+      h13(
         "button",
         { type: "button", className: "sw-set-button sw-set-save", disabled: !snapshot.dirty || snapshot.saving || !snapshot.writable, onClick: () => {
           void form.save();
@@ -21879,7 +23492,7 @@ function applyClient(ctx, { tabCss, useAnchoredPosition: useAnchoredPosition2, u
     inject: (sessionId) => ({ reader: modes.for(sessionId) })
   }, ModeMark));
   ctx.inject(["commandUi", "sessions", "conversation"], (child) => registerHandoffPicker(child, { call, t }));
-  ctx.inject(["slots"], (child) => registerMonitorView(child, { monitors, t }));
+  ctx.inject(["slots"], (child) => registerMonitorView(child, { monitors, sessions, t }));
   ctx.inject(["configForms"], (child) => optionVisibility.bind(child));
   ctx.inject(["slots", "configForms", "remote", "remote.session"], (child) => registerSettingsSection(child, { t, call }));
 }
@@ -22234,6 +23847,11 @@ body {
 
 #sw-buckets .bucket-row.is-dir:hover {
   background-color: var(--sw-hover, rgba(79, 224, 176, 0.06));
+}
+
+/* A file row opens the file drawer. */
+#sw-buckets .bucket-row.is-file {
+  cursor: pointer;
 }
 
 /* Indent \u2014 dynamic depth (IDE-style: no hard cap).
@@ -23075,8 +24693,11 @@ body {
   stroke-width: 1.4;
 }
 
+/* \u2500\u2500 Drawer shell \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+   The modal drawer that public/lib/drawerShell.js builds, for the History drawer and the file drawer. */
+
 /* Scrim */
-.sw-history-scrim {
+.sw-drawer-scrim {
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -23086,13 +24707,13 @@ body {
   transition: opacity 150ms ease-out;
 }
 
-.sw-history-scrim.sw-history-scrim-visible {
+.sw-drawer-scrim.sw-drawer-scrim-visible {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* Drawer panel */
-.sw-history-drawer {
+.sw-drawer {
   position: fixed;
   inset: 0 0 0 auto;
   z-index: 1001;
@@ -23107,25 +24728,25 @@ body {
   visibility: hidden;
 }
 
-.sw-history-drawer.sw-history-drawer-open {
+.sw-drawer.sw-drawer-open {
   transform: translateX(0);
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1), visibility 0s;
   visibility: visible;
 }
 
 /* Header */
-.sw-history-head {
+.sw-drawer-head {
   padding: 20px 20px 15px;
   border-bottom: 1px solid var(--edge);
 }
 
-.sw-history-title-row {
+.sw-drawer-title-row {
   display: flex;
   min-height: 28px;
   align-items: center;
 }
 
-.sw-history-title {
+.sw-drawer-title {
   margin: 0;
   font-family: "Sora", sans-serif;
   font-size: 15px;
@@ -23133,7 +24754,7 @@ body {
   letter-spacing: -0.01em;
 }
 
-.sw-history-close {
+.sw-drawer-close {
   display: grid;
   width: 28px;
   height: 28px;
@@ -23147,9 +24768,18 @@ body {
   font-size: 18px;
 }
 
-.sw-history-close:hover {
+.sw-drawer-close:hover {
   background: var(--sw-hover, rgba(27, 35, 42, 0.7));
   color: var(--txt);
+}
+
+/* Body: the one scroller, filled by the drawer's own content */
+.sw-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--edge) transparent;
+  scrollbar-width: thin;
 }
 
 /* Search */
@@ -23194,12 +24824,7 @@ body {
 
 /* List */
 .sw-history-list {
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 8px 12px 24px 10px;
-  scrollbar-color: var(--edge) transparent;
-  scrollbar-width: thin;
 }
 
 /* Session divider \u2014 also the section's collapse toggle, so it takes the affordances of a control. It
@@ -23433,9 +25058,85 @@ body {
   line-height: 1.6;
 }
 
+/* \u2500\u2500 File Drawer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+   The lines a file holds, in the drawer shell above. public/lib/fileRows.js draws them and themes/file-rows.css
+   styles them from the --sw-fl-* variables, which map the dashboard's own variables here. The block's host is a
+   size container, as file-rows.css asks. */
+.sw-filedrawer {
+  --sw-fl-bg: var(--bg);
+  --sw-fl-text: var(--txt);
+  --sw-fl-dim: var(--mute);
+  --sw-fl-edge: var(--edge);
+  --sw-fl-hover: var(--sw-hover, color-mix(in srgb, var(--txt) 7%, transparent));
+  --sw-fl-warn: var(--amber);
+  --sw-fl-mono: "JetBrains Mono", monospace;
+  --sw-fl-sep-font: 11px/16px "Inter", system-ui, sans-serif;
+  width: min(720px, 100vw);
+}
+
+.sw-filedrawer .sw-drawer-title {
+  min-width: 0;
+  padding-right: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sw-filedrawer-meta {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--txt-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-filedrawer-wrap {
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--txt-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.sw-filedrawer-wrap:hover {
+  background: var(--sw-hover, rgba(79, 224, 176, 0.06));
+  color: var(--txt);
+}
+
+.sw-filedrawer-wrap[aria-pressed="true"] {
+  border-color: var(--mint-dim);
+  color: var(--txt);
+}
+
+.sw-filedrawer-rows {
+  container-type: inline-size;
+}
+
+.sw-filedrawer-notice {
+  padding: 28px 20px;
+  color: var(--mute);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sw-filedrawer-foot {
+  padding: 10px 20px 20px;
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* \u2500\u2500 Responsive: mobile full-width \u2500\u2500\u2500 */
 @media (max-width: 760px) {
-  .sw-history-drawer {
+  .sw-drawer {
     width: 100vw;
     border-left: 0;
     box-shadow: none;
@@ -23444,8 +25145,8 @@ body {
 
 /* \u2500\u2500 Reduced motion \u2500\u2500\u2500 */
 @media (prefers-reduced-motion: reduce) {
-  .sw-history-drawer,
-  .sw-history-scrim {
+  .sw-drawer,
+  .sw-drawer-scrim {
     transition: none;
   }
 }
@@ -23453,6 +25154,9 @@ body {
 
 // public/themes/h.css
 var h_default = '/* h.css \u2014 H theme: tokens + full component styles (ev-range). */\n\n:root {\n  /* Surface hierarchy */\n  --bg: #0e1114;\n  --bg2: #141a1e;\n  --card: #171e23;\n  --card2: #1b232a;\n  --edge: #252f37;\n\n  /* Accent palette */\n  --mint: #4fe0b0;\n  --mint-dim: #2a5f4e;\n  --sky: #6cc6f0;\n  --amber: #ffc24d;\n  --amber-dim: #7a5a20;\n  --coral: #ff7566;\n  --coral-dim: #7a2a22;\n\n  /* Text hierarchy */\n  --txt: #eef3f6;\n  --txt-dim: #93a1ab;\n  --mute: #5a6a75;\n\n  /* Zone colors for depthAux gradient */\n  --zone-shallow: #3f8a6a;\n  --zone-entry: #6cc6f0;\n  --zone-sweet: #4fe0b0;\n  --zone-deep: #ffc24d;\n  --zone-wall: #ff7566;\n}\n\nbody {\n  background: radial-gradient(120% 80% at 50% -10%, #17242a 0%, var(--bg) 60%, #0a0d0f 100%);\n  color: var(--txt);\n  font-family: "Inter", system-ui, sans-serif;\n}\n\n/* \u2500\u2500 Chrome bar \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.sw-chrome-bar {\n  display: contents;\n}\n\n.sw-chrome-mark {\n  width: 32px;\n  height: 32px;\n  border-radius: 9px;\n  background: linear-gradient(135deg, var(--mint), #2f9c7c);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  color: #052018;\n  font-family: "Sora", sans-serif;\n  font-weight: 700;\n  font-size: 14px;\n  flex-shrink: 0;\n}\n\n.sw-chrome-title {\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 18px;\n  letter-spacing: -0.01em;\n  color: var(--txt);\n  white-space: nowrap;\n}\n\n.sw-chrome-tag {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  letter-spacing: 0.18em;\n  color: var(--mute);\n  text-transform: uppercase;\n}\n\n.sw-chrome-spacer {\n  flex: 1;\n}\n\n.sw-chrome-conn {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--mint);\n  background: rgba(79, 224, 176, 0.1);\n  border: 1px solid var(--mint-dim);\n  border-radius: 20px;\n  corner-shape: round;\n  padding: 4px 11px;\n}\n\n.sw-chrome-conn-dot {\n  display: inline-block;\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  corner-shape: round;\n  background: var(--mint);\n  box-shadow: 0 0 7px var(--mint);\n  flex-shrink: 0;\n}\n\n.sw-chrome-conn-label {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n}\n\n.sw-chrome-meta {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  color: var(--txt-dim);\n}\n\n.sw-chrome-stop-banner {\n  position: sticky;\n  top: 0;\n  z-index: 10;\n  background: var(--coral);\n  color: #fff;\n  font-weight: bold;\n  padding: 8px 16px;\n  border-radius: 6px;\n  margin-bottom: 12px;\n  font-size: 13px;\n}\n\n/* \u2500\u2500 Pricing chip \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.sw-pricing-wrapper {\n  display: inline-flex;\n  position: relative;\n  flex-shrink: 0;\n}\n\n.sw-pricing-chip {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10.5px;\n  color: var(--txt-dim);\n  cursor: pointer;\n  user-select: none;\n  background: var(--bg2);\n  border: 1px solid var(--edge);\n  border-radius: 20px;\n  corner-shape: round;\n  padding: 5px 12px;\n  line-height: 1.4;\n}\n\n.sw-pricing-chip:hover {\n  border-color: var(--mint-dim);\n}\n\n.sw-pricing-chip-label b {\n  color: var(--sky);\n}\n\n.sw-pricing-popover {\n  display: none;\n  position: absolute;\n  top: calc(100% + 6px);\n  right: 0;\n  z-index: 20;\n  width: 340px;\n  background: var(--card);\n  border: 1px solid var(--edge);\n  border-radius: 14px;\n  padding: 16px 18px;\n  box-shadow: var(--sw-shadow-float, 0 16px 40px rgba(0, 0, 0, 0.5));\n  font-size: 0.85em;\n  font-family: "Inter", sans-serif;\n}\n\n.sw-pricing-popover .pp-h {\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 14px;\n  margin-bottom: 12px;\n  color: var(--txt);\n}\n\n.sw-pricing-popover .pp-h span {\n  font-family: "Inter", sans-serif;\n  font-weight: 400;\n  font-size: 11px;\n  color: var(--mute);\n  margin-left: 6px;\n}\n\n\n\n\n\n.sw-pricing-prow {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 12px;\n  margin-bottom: 12px;\n}\n\n.sw-pricing-pf label {\n  display: block;\n  font-size: 11px;\n  color: var(--txt-dim);\n  margin-bottom: 6px;\n}\n\n.sw-pricing-ib {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  background: var(--sw-field, #0d1214);\n  border: 1px solid var(--edge);\n  border-radius: 11px;\n  padding: 9px 12px;\n}\n\n.sw-pricing-ib:focus-within {\n  border-color: var(--mint-dim);\n}\n\n.sw-pricing-ib span {\n  color: var(--mute);\n  font-family: "JetBrains Mono", monospace;\n  font-size: 13px;\n}\n\n.sw-pricing-ib input {\n  background: transparent;\n  border: 0;\n  color: var(--txt);\n  width: 100%;\n  outline: none;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 15px;\n}\n\n.sw-pricing-pmid {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  color: var(--txt-dim);\n  margin-bottom: 12px;\n}\n\n.sw-pricing-pmid .sw-pricing-ratio-val {\n  color: var(--sky);\n}\n\n.sw-pricing-pmid .sw-pricing-source-val {\n  color: var(--mint);\n}\n\n.sw-pricing-notice {\n  font-size: 0.8em;\n  color: #92400e;\n  background: #fef3c7;\n  padding: 4px 8px;\n  border-radius: 4px;\n  margin-bottom: 8px;\n}\n\n.sw-pricing-error {\n  font-size: 0.8em;\n  color: var(--coral);\n  margin-bottom: 8px;\n}\n\n.sw-pricing-pfoot {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n}\n\n.sw-pricing-save-note {\n  font-size: 10.5px;\n  color: var(--mute);\n}\n\n.sw-pricing-save {\n  padding: 10px 22px;\n  border: none;\n  border-radius: 11px;\n  background: var(--mint);\n  color: var(--sw-on-mint, #052018);\n  cursor: pointer;\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 13px;\n}\n\n.sw-pricing-reset {\n  padding: 6px 14px;\n  border: 1px solid var(--edge);\n  border-radius: 8px;\n  background: none;\n  cursor: pointer;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  color: var(--txt-dim);\n}\n\n/* \u2500\u2500 Hero diptych \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n#sw-hero {\n  background: linear-gradient(160deg, var(--card2), var(--card));\n  border: 1px solid var(--edge);\n  box-shadow: var(--sw-shadow-float, 0 20px 50px rgba(0, 0, 0, 0.35));\n}\n\n.sw-hero-diptych {\n  padding: 20px 24px 12px;\n  border-right: 1px dashed var(--edge);\n}\n\n.sw-hero-diptych .lab {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9.5px;\n  letter-spacing: 0.18em;\n  text-transform: uppercase;\n  color: var(--mute);\n}\n\n.sw-hero-diptych .sub {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--mute);\n  margin-top: 2px;\n}\n\n.sw-hero-diptych .eoq-top {\n  display: flex;\n  justify-content: space-between;\n  align-items: baseline;\n}\n\n.sw-hero-diptych .eoq-u {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  color: var(--txt-dim);\n}\n\n.sw-hero-diptych .eoq-u b {\n  color: var(--amber);\n}\n\n.sw-hero-chart-wrap {\n  position: relative;\n  width: 100%;\n  height: 180px;\n  margin-top: 4px;\n}\n\n.sw-hero-canvas {\n  width: 100% !important;\n  height: 100% !important;\n}\n\n@keyframes sw-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }\n\n.sw-hero-uval {\n  color: var(--amber);\n  font-weight: 600;\n}\n\n\n/* \u2500\u2500 Depth aux-bar \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.sw-depth-aux {\n  padding: 0 24px 16px;\n  border-right: 1px dashed var(--edge);\n}\n\n.sw-aux-bar-wrap {\n  position: relative;\n  height: 20px;\n  border-radius: 5px;\n  overflow: visible;\n  border: 1px solid var(--edge);\n  font-family: "JetBrains Mono", monospace;\n  font-size: 8px;\n}\n\n.sw-aux-gradient {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: 0;\n  right: 0;\n  border-radius: 4px;\n  overflow: hidden;\n}\n\n.sw-aux-marker {\n  position: absolute;\n  top: -6px;\n  bottom: -6px;\n  width: 2px;\n  background: var(--sw-highlight, #fff);\n  box-shadow: var(--sw-glow, 0 0 6px rgba(255, 255, 255, 0.6));\n  transition: opacity 0.15s;\n}\n\n.sw-aux-marker::before {\n  content: "";\n  position: absolute;\n  left: -4px;\n  top: -4px;\n  border-left: 5px solid transparent;\n  border-right: 5px solid transparent;\n  border-top: 6px solid var(--sw-highlight, #fff);\n}\n\n.sw-aux-marker::after {\n  content: "";\n  position: absolute;\n  left: -10px;\n  right: -10px;\n  top: -8px;\n  bottom: -8px;\n  cursor: pointer;\n}\n\n.sw-aux-flag {\n  position: absolute;\n  top: -27px;\n  transform: translateX(-50%);\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  background: var(--sw-overlay, #0d1214);\n  border: 1px solid var(--amber-dim);\n  color: var(--amber);\n  border-radius: 5px;\n  padding: 2px 7px;\n  white-space: nowrap;\n}\n\n.sw-aux-flag b {\n  color: var(--sw-highlight, #fff);\n}\n\n.sw-aux-zone-label {\n  position: absolute;\n  top: 50%;\n  transform: translate(-50%, -50%);\n  font-size: 8px;\n  letter-spacing: 0.04em;\n  color: var(--sw-highlight, #eef3f6);\n  pointer-events: none;\n}\n\n.sw-aux-controls {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  margin-top: 10px;\n}\n\n.sw-aux-toklabel {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--txt-dim);\n  margin-top: 8px;\n  text-align: center;\n}\n\n.sw-aux-toklabel b {\n  color: var(--txt);\n  font-weight: 600;\n}\n\n.sw-aux-placeholder {\n  font-size: 0.8em;\n  opacity: 0.7;\n}\n\n/* \u2500\u2500 Burn meter \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.sw-burn-meter {\n  padding: 20px 24px;\n  border-left: 1px dashed var(--edge);\n  display: flex;\n  flex-direction: column;\n}\n\n.sw-burn-meter .lab {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9.5px;\n  letter-spacing: 0.18em;\n  text-transform: uppercase;\n  color: var(--mute);\n}\n\n.sw-burn-meter .sub {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--mute);\n  margin-top: 2px;\n}\n\n/* \u2500\u2500 Dual-bar rent meter: bar groups \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-group { margin-top: 16px; }\n.bar-group + .bar-group { margin-top: 14px; }\n\n.bar-name {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  font-weight: 400;\n  color: var(--mute);\n  text-transform: uppercase;\n  letter-spacing: 0.08em;\n  display: block;\n  margin-bottom: 4px;\n}\n\n/* \u2500\u2500 Cycle bar (inline: track + tail) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-inline { display: flex; align-items: center; gap: 6px; }\n.bar-inline .bar-track { flex: 1; }\n\n.bar-tail {\n  flex-shrink: 0;\n  width: 46px;\n  display: flex;\n  align-items: center;\n  justify-content: flex-start;\n}\n\n.bar-inline-value {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--txt-dim);\n  font-weight: 400;\n}\n\n/* \u2500\u2500 Bar track (vehicle gauge style) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-track {\n  height: 18px;\n  border-radius: 3px;\n  background: var(--sw-groove, linear-gradient(180deg, #0a0d10 0%, #141a1e 40%, #0e1215 100%));\n  border: 1px solid var(--edge);\n  overflow: visible;\n  position: relative;\n  box-shadow: var(--sw-groove-shadow, inset 0 1px 3px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.03));\n}\n\n/* Background 10% notch marks \u2014 only on cycle bar (depth uses dynamic ticks) */\n.bar-inline .bar-track::before {\n  content: "";\n  position: absolute;\n  inset: 0;\n  z-index: 2;\n  pointer-events: none;\n  background: repeating-linear-gradient(\n    90deg,\n    transparent 0px, transparent 9.8%,\n    var(--sw-hairline, rgba(255,255,255,0.04)) 9.8%, var(--sw-hairline, rgba(255,255,255,0.04)) 10%\n  );\n}\n\n/* \u2500\u2500 Depth bar (with magazine tail) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-with-mag { display: flex; align-items: center; gap: 6px; }\n.bar-with-mag > .bar-track { flex: 1; }\n\n/* \u2500\u2500 Bar fill \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-fill {\n  height: 100%;\n  overflow: hidden;\n  position: relative;\n  transition: width 0.2s;\n  border-radius: 2px;\n}\n\n/* Cycle bar: mint with edge glow */\n.bar-fill.cycle {\n  background: linear-gradient(180deg, var(--mint) 0%, var(--mint-dim) 100%);\n  color: var(--mint);\n  box-shadow: var(--sw-accent-glow, 0 0 8px rgba(79,224,176,0.3), inset 0 1px 0 rgba(255,255,255,0.2));\n}\n\n.bar-fill.cycle::after {\n  content: "";\n  position: absolute;\n  right: 0; top: 0; bottom: 0;\n  width: 4px;\n  background: linear-gradient(180deg, var(--sw-shade, #c8fff0), var(--mint));\n  box-shadow: var(--sw-cap-glow, 0 0 6px rgba(200,255,240,0.6));\n  border-radius: 0 2px 2px 0;\n}\n\n/* Depth bar: amber glow */\n.bar-fill.depth {\n  background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);\n  color: var(--amber);\n  box-shadow: var(--sw-accent-glow, 0 0 8px rgba(255,194,77,0.3), inset 0 1px 0 rgba(255,255,255,0.15));\n}\n\n.bar-fill.depth::after {\n  content: "";\n  position: absolute;\n  right: 0; top: 0; bottom: 0;\n  width: 4px;\n  background: linear-gradient(180deg, var(--sw-shade, #fff5dd), var(--amber));\n  box-shadow: var(--sw-cap-glow, 0 0 6px rgba(255,245,221,0.6));\n  border-radius: 0 2px 2px 0;\n}\n\n/* Depth bar hot: coral gradient */\n.bar-fill.depth-hot {\n  background: linear-gradient(180deg, var(--coral) 0%, var(--sw-shade, #a33a2f) 100%);\n  color: var(--coral);\n  box-shadow: var(--sw-accent-glow, 0 0 10px rgba(255,117,102,0.4), inset 0 1px 0 rgba(255,255,255,0.15));\n}\n\n.bar-fill.depth-hot::after {\n  content: "";\n  position: absolute;\n  right: 0; top: 0; bottom: 0;\n  width: 4px;\n  background: linear-gradient(180deg, var(--sw-shade, #ffd5d0), var(--coral));\n  box-shadow: var(--sw-cap-glow, 0 0 8px rgba(255,213,208,0.7));\n  border-radius: 0 2px 2px 0;\n}\n\n/* \u2500\u2500 Bar tick segments (internal backstop divisions) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-ticks {\n  position: absolute;\n  inset: 0;\n  z-index: 3;\n  pointer-events: none;\n  display: flex;\n}\n\n.bar-tick-segment {\n  flex: 1;\n  border-right: 2px solid var(--sw-hairline, rgba(238,243,246,0.2));\n}\n\n.bar-tick-segment:last-child { border-right: none; }\n\n/* \u2500\u2500 Bar detail line \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-detail {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  color: var(--mute);\n  margin-top: 5px;\n}\n\n.bar-detail .hl { color: var(--txt-dim); }\n\n/* \u2500\u2500 Disabled depth group \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.bar-group.disabled .bar-name { color: var(--sw-faint, #3a4550); }\n.bar-group.disabled .bar-track { opacity: 0.3; }\n.bar-group.disabled .bar-track::before { opacity: 0.3; }\n\n/* \u2500\u2500 Magazine tail \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.mag-tail {\n  flex-shrink: 0;\n  width: 46px;\n  display: flex;\n  align-items: center;\n  gap: 3px;\n}\n\n.mag-ticks {\n  display: flex;\n  flex-direction: row;\n  align-items: center;\n  gap: 3px;\n}\n\n.mag-tick {\n  width: 4px;\n  height: 18px;\n  border-radius: 2px;\n  border: 1px solid var(--edge);\n  background: var(--sw-groove, linear-gradient(180deg, #1a2028 0%, #0e1215 100%));\n  box-shadow: var(--sw-groove-shadow, inset 0 1px 2px rgba(0,0,0,0.4));\n  transition: all 0.2s;\n}\n\n.mag-tick.spent {\n  background: linear-gradient(180deg, var(--amber) 0%, var(--amber-dim) 100%);\n  border-color: var(--amber-dim);\n  color: var(--amber);\n  box-shadow: var(--sw-accent-glow, 0 0 6px rgba(255,194,77,0.5), inset 0 1px 0 rgba(255,255,255,0.2));\n}\n\n.mag-tick.spent.hot {\n  background: linear-gradient(180deg, var(--coral) 0%, var(--coral-dim) 100%);\n  border-color: var(--coral-dim);\n  color: var(--coral);\n  box-shadow: var(--sw-accent-glow, 0 0 8px rgba(255,117,102,0.6), inset 0 1px 0 rgba(255,255,255,0.2));\n}\n\n.mag-overflow {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  font-weight: 500;\n  color: var(--coral);\n}\n\n/* \u2500\u2500 Verdict row (spans hero columns) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n.sw-hero-verdict-row {\n  grid-column: 1 / -1;\n  border-top: 1px solid var(--edge);\n  padding: 13px 24px;\n  background: var(--sw-overlay, rgba(255, 194, 77, 0.05));\n  display: flex;\n  align-items: center;\n  gap: 12px;\n}\n\n.sw-hero-verdict-row .pill {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n  color: var(--amber);\n  border: 1px solid var(--amber-dim);\n  border-radius: 20px;\n  corner-shape: round;\n  padding: 4px 12px;\n  white-space: nowrap;\n}\n\n.sw-hero-verdict-row p {\n  margin: 0;\n  font-size: 13.5px;\n  color: var(--txt-dim);\n}\n\n.sw-hero-verdict-row p b {\n  color: var(--txt);\n  font-weight: 600;\n}\n\n/* \u2500\u2500 History card \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n#sw-history {\n  background: var(--card);\n  border: 1px solid var(--edge);\n  border-radius: 18px;\n  padding: 18px 20px;\n  height: 360px;\n  display: flex;\n  flex-direction: column;\n}\n\n.sw-history-header {\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 14px;\n  margin: 0;\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  color: var(--txt);\n}\n\n.sw-history-subtitle {\n  font-size: 11px;\n  color: var(--mute);\n  margin: 3px 0 12px;\n}\n\n.sw-history-container {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 0;\n}\n\n.sw-history-canvas {\n  width: 100% !important;\n  height: 100% !important;\n}\n\n.pager {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  color: var(--txt-dim);\n}\n\n.pager button {\n  background: var(--bg2);\n  border: 1px solid var(--edge);\n  color: var(--txt-dim);\n  border-radius: 6px;\n  width: 22px;\n  height: 22px;\n  cursor: pointer;\n  font-size: 12px;\n}\n\n.pager b {\n  color: var(--txt);\n}\n\n.sw-history-legend {\n  display: flex;\n  gap: 15px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  color: var(--txt-dim);\n  margin-top: 7px;\n}\n\n.sw-history-legend i {\n  display: inline-block;\n  width: 12px;\n  height: 2.5px;\n  vertical-align: middle;\n  margin-right: 5px;\n  border-radius: 2px;\n}\n\n.sw-history-footnote {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 14px;\n  border-top: 1px dotted var(--edge);\n  margin-top: 12px;\n  padding-top: 10px;\n  padding-bottom: 14px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--mute);\n}\n\n.sw-history-footnote b {\n  color: var(--txt-dim);\n  font-weight: 500;\n}\n\n/* \u2500\u2500 Buckets card \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n\n/* Card container */\n#sw-buckets .bucket-card {\n  background: var(--card);\n  border: 1px solid var(--edge);\n  border-radius: 18px;\n  padding: 18px 20px;\n  display: flex;\n  flex-direction: column;\n  position: relative;\n  overflow: hidden;\n}\n\n/* \u2500\u2500 Header: Donut + stats \u2500\u2500\u2500 */\n#sw-buckets .bucket-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  margin-bottom: 14px;\n}\n\n#sw-buckets .header-donut {\n  width: 42px;\n  height: 42px;\n  flex-shrink: 0;\n  position: relative;\n}\n\n#sw-buckets .header-donut svg {\n  width: 100%;\n  height: 100%;\n  transform: rotate(-90deg);\n  transition: all 0.3s ease;\n}\n\n#sw-buckets .header-info h3 {\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 14px;\n  margin: 0;\n  color: var(--txt);\n}\n\n#sw-buckets .header-info .subtitle {\n  font-size: 10.5px;\n  color: var(--mute);\n  margin-top: 2px;\n}\n\n#sw-buckets .header-stats {\n  margin-left: auto;\n  text-align: right;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  line-height: 1.7;\n}\n\n#sw-buckets .header-stats .val-selected {\n  color: var(--mint);\n}\n\n#sw-buckets .header-stats .val-discarded {\n  color: var(--coral);\n}\n\n/* \u2500\u2500 Section labels \u2500\u2500\u2500 */\n#sw-buckets .section-label {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  letter-spacing: 0.12em;\n  text-transform: uppercase;\n  color: var(--txt-dim);\n  margin: 10px 0 6px;\n  padding-left: 2px;\n}\n\n#sw-buckets .section-label:first-of-type {\n  margin-top: 0;\n}\n\n/* \u2500\u2500 Tree rows \u2500\u2500\u2500 */\n#sw-buckets .bucket-tree {\n  flex: 1;\n  min-height: 0;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 11px;\n  line-height: 1;\n}\n\n#sw-buckets .bucket-row {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  padding: 4.5px 4px;\n  position: relative;\n  border-radius: 4px;\n  cursor: default;\n  min-height: 24px;\n}\n\n#sw-buckets .bucket-row:hover {\n  background-color: var(--sw-hover, rgba(79, 224, 176, 0.04));\n}\n\n#sw-buckets .bucket-row.is-dir {\n  cursor: pointer;\n}\n\n#sw-buckets .bucket-row.is-dir:hover {\n  background-color: var(--sw-hover, rgba(79, 224, 176, 0.06));\n}\n\n/* Indent guides */\n#sw-buckets .bucket-row[data-indent="1"] { padding-left: 22px; }\n#sw-buckets .bucket-row[data-indent="2"] { padding-left: 40px; }\n#sw-buckets .bucket-row[data-indent="3"] { padding-left: 58px; }\n\n#sw-buckets .bucket-row[data-indent="1"]::before,\n#sw-buckets .bucket-row[data-indent="2"]::before {\n  content: "";\n  position: absolute;\n  left: 12px;\n  top: 0;\n  bottom: 0;\n  width: 1px;\n  background: var(--edge);\n}\n\n#sw-buckets .bucket-row[data-indent="2"]::after {\n  content: "";\n  position: absolute;\n  left: 30px;\n  top: 0;\n  bottom: 0;\n  width: 1px;\n  background: var(--edge);\n  opacity: 0.5;\n}\n\n/* Focus ring (a11y) */\n#sw-buckets .bucket-row:focus-visible {\n  outline: 1px solid var(--mint);\n  outline-offset: -1px;\n}\n\n/* \u2500\u2500 Checkbox \u2500\u2500\u2500 */\n#sw-buckets .bucket-cb {\n  width: 12px;\n  height: 12px;\n  border: 1.5px solid var(--mute);\n  border-radius: 3px;\n  flex-shrink: 0;\n  cursor: pointer;\n  position: relative;\n  transition: all 0.15s;\n}\n\n#sw-buckets .bucket-cb.checked {\n  background: var(--mint);\n  border-color: var(--mint);\n}\n\n#sw-buckets .bucket-cb.checked::after {\n  content: "";\n  position: absolute;\n  top: 0.5px;\n  left: 3px;\n  width: 4px;\n  height: 6.5px;\n  border: solid var(--sw-on-mint, #052018);\n  border-width: 0 1.5px 1.5px 0;\n  transform: rotate(45deg);\n}\n\n#sw-buckets .bucket-cb.locked {\n  background: var(--mute);\n  border-color: var(--mute);\n  cursor: default;\n  opacity: 0.35;\n}\n\n/* Half-select (indeterminate) state for directories */\n#sw-buckets .bucket-cb.half {\n  background: linear-gradient(135deg, var(--mint) 50%, transparent 50%);\n  border-color: var(--mint);\n}\n\n/* \u2500\u2500 Expand toggle \u2500\u2500\u2500 */\n#sw-buckets .bucket-expand {\n  color: var(--txt-dim);\n}\n\n/* \u2500\u2500 Icon \u2500\u2500\u2500 */\n#sw-buckets .bucket-icon {\n  font-size: 10px;\n  width: 14px;\n  text-align: center;\n  flex-shrink: 0;\n}\n\n/* \u2500\u2500 Name kind classes \u2500\u2500\u2500 */\n#sw-buckets .bucket-name {\n  color: var(--txt-dim);\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  padding-bottom: 2px;\n}\n\n#sw-buckets .bucket-name.is-dir-name {\n  color: var(--txt);\n  font-weight: 500;\n}\n\n#sw-buckets .bucket-name.is-special {\n  color: var(--amber);\n}\n\n#sw-buckets .bucket-name.is-system {\n  color: var(--mute);\n}\n\n#sw-buckets .bucket-name.is-skill {\n  color: var(--sky);\n}\n\n#sw-buckets .bucket-name.is-others {\n  color: var(--mute);\n  font-style: italic;\n}\n\n/* \u2500\u2500 Token count + bar \u2500\u2500\u2500 */\n#sw-buckets .bucket-right {\n  margin-left: auto;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  flex-shrink: 0;\n}\n\n#sw-buckets .bucket-tokens {\n  font-size: 10px;\n  color: var(--txt-dim);\n  white-space: nowrap;\n  min-width: 32px;\n  text-align: right;\n}\n\n#sw-buckets .bucket-bar-wrap {\n  display: inline-block;\n  width: 48px;\n  height: 6px;\n  border-radius: 3px;\n  background: var(--edge);\n  overflow: hidden;\n  flex-shrink: 0;\n  vertical-align: middle;\n}\n\n#sw-buckets .bucket-bar {\n  display: block;\n  height: 100%;\n  border-radius: 3px;\n  min-width: 3px;\n  transition: width 0.3s ease;\n}\n\n#sw-buckets .bucket-bar.color-mint  { background: var(--mint); }\n#sw-buckets .bucket-bar.color-amber { background: var(--amber); }\n#sw-buckets .bucket-bar.color-coral { background: var(--coral); }\n#sw-buckets .bucket-bar.color-mute  { background: var(--mute); }\n#sw-buckets .bucket-bar.color-sky   { background: var(--sky); }\n\n/* \u2500\u2500 Churn tier: path name coloring \u2500\u2500 */\n#sw-buckets .bucket-name.churn-med  { color: var(--amber); }\n#sw-buckets .bucket-name.churn-high { color: var(--coral); }\n#sw-buckets .bucket-name.is-dir-name.churn-med  { color: var(--amber); opacity: 0.85; }\n#sw-buckets .bucket-name.is-dir-name.churn-high { color: var(--coral); opacity: 0.85; }\n\n/* \u2500\u2500 Excluded rows \u2500\u2500 */\n#sw-buckets .bucket-row.is-excluded { opacity: 0.5; }\n#sw-buckets .bucket-row.is-excluded .bucket-cb { border-style: dashed; }\n#sw-buckets .bucket-row.is-excluded .bucket-name { font-style: italic; color: var(--mute); }\n\n\n/* Override indicator \u2014 wavy underline on filename */\n#sw-buckets .bucket-name[data-override] {\n  text-decoration: underline wavy;\n  text-decoration-thickness: 1px;\n  text-underline-offset: 2px;\n  overflow: visible;\n}\n#sw-buckets .bucket-name[data-override="include"] {\n  text-decoration-color: var(--sw-ok, rgba(79, 224, 176, 0.4));\n}\n#sw-buckets .bucket-name[data-override="exclude"] {\n  text-decoration-color: var(--sw-bad, rgba(255, 117, 102, 0.4));\n}\n\n/* \u2500\u2500 Section separator \u2500\u2500\u2500 */\n#sw-buckets .bucket-sep {\n  border: none;\n  border-top: 1px dotted var(--edge);\n  margin: 8px 0;\n}\n\n/* \u2500\u2500 Dir children container \u2500\u2500\u2500 */\n#sw-buckets .bucket-dir-children {\n  /* display:none toggled by JS when collapsed */\n}\n\n\n/* \u2500\u2500 Footer \u2500\u2500\u2500 */\n#sw-buckets .bucket-footer {\n  margin-top: 12px;\n  padding-top: 10px;\n  border-top: 1px dotted var(--edge);\n  display: flex;\n  align-items: center;\n  justify-content: flex-end;\n  gap: 6px;\n  position: relative;\n}\n\n#sw-buckets .bucket-copy-btn {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  background: var(--mint);\n  border: 1px solid var(--mint);\n  border-radius: 8px;\n  padding: 6px 12px;\n  color: var(--sw-on-mint, #052018);\n  font-weight: 600;\n  cursor: pointer;\n  transition: all 0.2s;\n}\n\n#sw-buckets .bucket-copy-btn:hover {\n  background: var(--sw-mint-deep, #3cc89a);\n  border-color: var(--sw-mint-deep, #3cc89a);\n}\n\n#sw-buckets .bucket-copy-btn.copied {\n  background: var(--mint-dim);\n  border-color: var(--mint);\n  color: var(--sw-on-fill, var(--mint));\n}\n\n#sw-buckets .bucket-reset-btn {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--mute);\n  border: 1px solid var(--edge);\n  border-radius: 8px;\n  padding: 6px 12px;\n  background: none;\n  cursor: pointer;\n  transition: all 0.2s;\n}\n\n#sw-buckets .bucket-reset-btn.active {\n  color: var(--txt-dim);\n  border-color: var(--txt-dim);\n}\n\n#sw-buckets .bucket-apply-btn {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  background: var(--mint);\n  border: 1px solid var(--mint);\n  border-radius: 8px;\n  padding: 6px 12px;\n  color: var(--sw-on-mint, #052018);\n  font-weight: 600;\n  cursor: pointer;\n  transition: all 0.2s;\n}\n\n#sw-buckets .bucket-apply-btn:hover:not(:disabled) {\n  background: var(--sw-mint-deep, #3cc89a);\n  border-color: var(--sw-mint-deep, #3cc89a);\n}\n\n#sw-buckets .bucket-apply-btn:disabled {\n  display: none;\n}\n\n#sw-buckets .bucket-apply-notice {\n  position: absolute;\n  left: 0;\n  bottom: calc(100% + 4px);\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  color: var(--amber);\n  white-space: nowrap;\n}\n\n/* \u2500\u2500 Copy overlay \u2500\u2500\u2500 */\n#sw-buckets .bucket-copy-overlay {\n  position: absolute;\n  inset: 0;\n  border-radius: 18px;\n  background: var(--sw-overlay, rgba(23, 30, 35, 0.96));\n  border: 1px solid var(--edge);\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n  padding: 18px 20px;\n  z-index: 10;\n}\n\n#sw-buckets .bucket-copy-overlay textarea {\n  flex: 1;\n  background: var(--card2);\n  border: 1px solid var(--edge);\n  border-radius: 8px;\n  color: var(--txt-dim);\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  line-height: 1.6;\n  padding: 10px 12px;\n  resize: none;\n  outline: none;\n}\n\n#sw-buckets .bucket-copy-overlay-dismiss {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 10px;\n  color: var(--txt-dim);\n  border: 1px solid var(--edge);\n  border-radius: 8px;\n  padding: 6px 12px;\n  background: none;\n  cursor: pointer;\n  align-self: flex-end;\n  transition: all 0.2s;\n}\n\n#sw-buckets .bucket-copy-overlay-dismiss:hover {\n  border-color: var(--mint-dim);\n  color: var(--txt);\n}\n\n/* \u2500\u2500 Loading States \u2500\u2500\u2500 */\n\n/* State 1: skeleton shimmer */\n@keyframes sw-shimmer {\n  0%   { background-position: -380px center; }\n  100% { background-position: 380px center; }\n}\n\n#sw-buckets .skel {\n  background: var(--sw-skeleton, linear-gradient(\n    90deg,\n    var(--edge)                0%,\n    rgba(255,255,255,0.045)   42%,\n    rgba(79, 224, 176, 0.09)  50%,\n    rgba(255,255,255,0.045)   58%,\n    var(--edge)               100%\n  ));\n  background-size: 380px 100%;\n  animation: sw-shimmer 1.9s ease-in-out infinite;\n  border-radius: 3px;\n  display: inline-block;\n}\n\n/* Indeterminate donut spin */\n@keyframes sw-donut-spin {\n  from { transform: rotate(0deg); }\n  to   { transform: rotate(360deg); }\n}\n\n@keyframes sw-track-breathe {\n  0%, 100% { opacity: 0.20; }\n  50%       { opacity: 0.40; }\n}\n\n#sw-buckets .donut-spin-arc {\n  transform-origin: 18px 18px;\n  animation: sw-donut-spin 1.6s linear infinite;\n}\n\n#sw-buckets .donut-track-breathe {\n  animation: sw-track-breathe 2.4s ease-in-out infinite;\n}\n\n/* Skeleton row geometry */\n#sw-buckets .skel-row {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  padding: 4.5px 4px;\n  min-height: 24px;\n}\n\n#sw-buckets .skel-cb      { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }\n#sw-buckets .skel-icon    { width: 14px; height: 9px;  border-radius: 2px; flex-shrink: 0; }\n#sw-buckets .skel-expand  { width: 10px; height: 8px;  border-radius: 2px; flex-shrink: 0; }\n#sw-buckets .skel-name    { height: 9px; flex: 1; }\n#sw-buckets .skel-tokens  { width: 28px; height: 9px;  border-radius: 3px; flex-shrink: 0; }\n#sw-buckets .skel-barwrap { width: 48px; height: 6px;  border-radius: 3px; flex-shrink: 0; }\n\n/* Dimmed section labels during skeleton */\n#sw-buckets .section-label.skel-label { opacity: 0.38; }\n\n/* Skeleton indent connector */\n#sw-buckets .skel-row.indent-1 {\n  padding-left: 22px;\n  position: relative;\n}\n#sw-buckets .skel-row.indent-1::before {\n  content: "";\n  position: absolute;\n  left: 12px;\n  top: 0;\n  bottom: 0;\n  width: 1px;\n  background: var(--edge);\n}\n\n/* State 2a: syncing sweep line */\n@keyframes sw-sweep {\n  0%   { left: -65%; width: 55%; }\n  100% { left: 110%; width: 55%; }\n}\n\n#sw-buckets .sync-sweep-track {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  height: 2px;\n  border-radius: 18px 18px 0 0;\n  background: transparent;\n  overflow: hidden;\n  z-index: 2;\n}\n\n#sw-buckets .sync-sweep-track::after {\n  content: "";\n  position: absolute;\n  top: 0;\n  height: 100%;\n  background: linear-gradient(\n    90deg,\n    transparent 0%,\n    var(--mint)  25%,\n    var(--sky)   75%,\n    transparent 100%\n  );\n  animation: sw-sweep 1.7s cubic-bezier(0.45, 0, 0.55, 1) infinite;\n}\n\n/* Syncing donut dim */\n#sw-buckets .donut-syncing {\n  opacity: 0.55;\n  transition: opacity 0.4s;\n}\n\n/* Status chips (syncing + stale) */\n#sw-buckets .panel-status-bar {\n  margin: -6px 0 10px;\n  display: flex;\n  align-items: center;\n}\n\n#sw-buckets .status-chip {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  font-family: "JetBrains Mono", monospace;\n  font-size: 9px;\n  letter-spacing: 0.05em;\n  border-radius: 100px;\n  corner-shape: round;\n  padding: 3px 9px 3px 7px;\n  white-space: nowrap;\n  flex-shrink: 0;\n}\n\n#sw-buckets .status-dot {\n  width: 5px;\n  height: 5px;\n  border-radius: 50%;\n  corner-shape: round;\n  flex-shrink: 0;\n}\n\n/* Syncing chip \u2014 sky-tinted */\n#sw-buckets .status-chip.chip-syncing {\n  background: var(--sw-wash, rgba(108, 198, 240, 0.09));\n  border: 1px solid var(--sw-wash-edge, rgba(108, 198, 240, 0.22));\n  color: var(--sky);\n}\n#sw-buckets .status-chip.chip-syncing .status-dot {\n  background: var(--sky);\n}\n\n@keyframes sw-dot-pulse {\n  0%, 100% { opacity: 1;   transform: scale(1);   }\n  50%       { opacity: 0.3; transform: scale(0.65); }\n}\n\n#sw-buckets .status-chip.chip-syncing .status-dot {\n  animation: sw-dot-pulse 1.1s ease-in-out infinite;\n}\n\n/* Stale chip \u2014 amber-tinted */\n#sw-buckets .status-chip.chip-stale {\n  background: var(--sw-wash, rgba(255, 194, 77, 0.07));\n  border: 1px solid var(--sw-wash-edge, rgba(255, 194, 77, 0.22));\n  color: var(--amber);\n}\n#sw-buckets .status-chip.chip-stale .status-dot {\n  background: var(--amber);\n}\n\n@keyframes sw-stale-pulse {\n  0%, 100% { opacity: 0.9; }\n  50%       { opacity: 0.25; }\n}\n\n#sw-buckets .status-chip.chip-stale .status-dot {\n  animation: sw-stale-pulse 2.2s ease-in-out infinite;\n}\n\n/* Reduced motion */\n@media (prefers-reduced-motion: reduce) {\n  #sw-buckets .skel { animation: none; background: var(--edge); }\n  #sw-buckets .donut-spin-arc { animation: none; }\n  #sw-buckets .donut-track-breathe { animation: none; }\n  #sw-buckets .sync-sweep-track::after { animation: none; opacity: 0.6; left: 0; width: 100%; }\n  #sw-buckets .status-chip.chip-syncing .status-dot,\n  #sw-buckets .status-chip.chip-stale   .status-dot { animation: none; }\n}\n\n/* \u2500\u2500 History hover line (lives outside #sw-buckets, in history chart scope) \u2500\u2500\u2500 */\n.sw-history-hoverline {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  border-left: 1px dashed var(--sky);\n  pointer-events: none;\n  z-index: 2;\n}\n\n.sw-history-hoverline-tag {\n  font: 9px/1 "JetBrains Mono", monospace;\n  color: var(--sky);\n  position: absolute;\n  top: 4px;\n  left: 4px;\n  white-space: nowrap;\n  pointer-events: none;\n}\n\n/* \u2500\u2500 History touch-sequence marker lines (dashed, tier-colored, one per touchSeqs entry) \u2500\u2500 */\n.sw-history-touchline {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  border-left: 1px dashed;\n  pointer-events: none;\n  z-index: 1;\n  opacity: 0.55;\n}\n\n/* \u2500\u2500 Terms \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */\n#sw-terms .sw-terms {\n  background: var(--card);\n  border: 1px solid var(--edge);\n  border-radius: 18px;\n  overflow: hidden;\n}\n\n#sw-terms .sw-terms-summary {\n  list-style: none;\n  cursor: pointer;\n  padding: 15px 20px;\n  font-family: "Sora", sans-serif;\n  font-weight: 600;\n  font-size: 14px;\n  display: flex;\n  align-items: center;\n  gap: 10px;\n  color: var(--txt);\n}\n\n#sw-terms .sw-terms-summary::-webkit-details-marker {\n  display: none;\n}\n\n#sw-terms .sw-terms-chev {\n  color: var(--mute);\n  font-size: 12px;\n  transition: transform 0.15s;\n}\n\n#sw-terms .sw-terms[open] .sw-terms-chev {\n  transform: rotate(90deg);\n}\n\n#sw-terms .sw-terms-subtitle {\n  font-family: "Inter", sans-serif;\n  font-weight: 400;\n  font-size: 11.5px;\n  color: var(--mute);\n  margin-left: auto;\n}\n\n#sw-terms .sw-terms-list {\n  padding: 4px 20px 20px;\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 12px 28px;\n  margin: 0;\n}\n\n#sw-terms .gterm {\n  display: flex;\n  gap: 12px;\n  align-items: baseline;\n}\n\n#sw-terms .gterm dt {\n  font-family: "JetBrains Mono", monospace;\n  font-size: 12px;\n  color: var(--mint);\n  font-weight: 600;\n  white-space: nowrap;\n  min-width: 120px;\n}\n\n#sw-terms .gterm dd {\n  margin: 0;\n  font-size: 12.5px;\n  color: var(--txt-dim);\n  line-height: 1.45;\n}\n';
+
+// public/themes/file-rows.css
+var file_rows_default = "/* file-rows.css \u2014 the block of one file's lines that `public/lib/fileRows.js` draws, for the dashboard's file drawer and the DSH tab's file lists.\n   Each rule starts at `.sw-fl-scroll` and reads only the `--sw-fl-*` variables, which the host sets on an ancestor of the block: --sw-fl-bg and --sw-fl-text (the block's fill and text), --sw-fl-dim (line numbers and gap rows), --sw-fl-edge (borders), --sw-fl-hover (a hovered line and a gap row), --sw-fl-warn (withdrawn rows), --sw-fl-mono (the code font) and --sw-fl-sep-font (the `font` shorthand of gap rows).\n   A gap and a withdrawn row stay at the left of a sideways-scrolled block and are as wide as the block shows, `100cqw`, so an ancestor of the block must be a size container. */\n.sw-fl-scroll {\n  background: var(--sw-fl-bg);\n  color: var(--sw-fl-text);\n  overflow-x: auto;\n}\n.sw-fl-scroll .sw-fl-rows {\n  display: grid;\n  grid-template-columns: max-content minmax(0, 1fr);\n  font-family: var(--sw-fl-mono);\n  font-size: 12px;\n  line-height: 18px;\n  tab-size: 2;\n}\n.sw-fl-scroll[data-wrap=\"off\"] .sw-fl-rows {\n  width: max-content;\n  min-width: 100%;\n}\n.sw-fl-scroll .sw-fl-row {\n  display: contents;\n}\n.sw-fl-scroll .sw-fl-n {\n  position: sticky;\n  z-index: 1;\n  left: 0;\n  min-height: 18px;\n  padding: 0 6px 0 14px;\n  border-right: 0.5px solid var(--sw-fl-edge);\n  background: color-mix(in srgb, var(--sw-fl-bg) 94%, var(--sw-fl-text));\n  color: var(--sw-fl-dim);\n  text-align: right;\n  user-select: none;\n}\n.sw-fl-scroll .sw-fl-t {\n  min-width: 0;\n  min-height: 18px;\n  padding: 0 14px 0 8px;\n  overflow-wrap: anywhere;\n  white-space: pre-wrap;\n}\n.sw-fl-scroll[data-wrap=\"off\"] .sw-fl-t {\n  overflow-wrap: normal;\n  white-space: pre;\n}\n.sw-fl-scroll .sw-fl-sep {\n  grid-column: 1 / -1;\n  border-top: 0.5px dashed var(--sw-fl-edge);\n  border-bottom: 0.5px dashed var(--sw-fl-edge);\n  background: var(--sw-fl-hover);\n  color: var(--sw-fl-dim);\n  font: var(--sw-fl-sep-font);\n  font-variant-numeric: inherit;\n}\n.sw-fl-scroll .sw-fl-sep > span,\n.sw-fl-scroll .sw-fl-wd > span {\n  position: sticky;\n  left: 0;\n  width: max-content;\n  max-width: 100cqw;\n  padding: 0 14px;\n}\n.sw-fl-scroll .sw-fl-sep > span {\n  display: block;\n  overflow-wrap: anywhere;\n}\n.sw-fl-scroll .sw-fl-wd {\n  grid-column: 1 / -1;\n  background: color-mix(in srgb, var(--sw-fl-warn) 11%, transparent);\n  color: var(--sw-fl-warn);\n  font-family: var(--sw-fl-mono);\n}\n.sw-fl-scroll .sw-fl-wd > span {\n  display: flex;\n  gap: 8px;\n}\n.sw-fl-scroll .sw-fl-wd b {\n  flex: none;\n  width: 1ch;\n  font-weight: 600;\n}\n@media (hover: hover) {\n  .sw-fl-scroll .sw-fl-row:hover > .sw-fl-t {\n    background: var(--sw-fl-hover);\n  }\n}\n";
 
 // dsh/src/client/scope.js
 var TAB_SCOPE = "[data-sw-tab]";
@@ -24156,6 +25860,14 @@ var DRAWER_OVERLAY_BELOW_PX = LIST_MIN_WIDTH + DRAWER_MIN_WIDTH;
 var MONITOR_CSS = `[data-sw-monitor] {
   --sw-mon-chevron-width: 5px;
   --sw-mon-chevron-gap: 6px;
+  --sw-fl-bg: var(--dsw-alias-bg-layer-1);
+  --sw-fl-text: var(--dsw-alias-label-primary);
+  --sw-fl-dim: var(--dsw-alias-label-tertiary);
+  --sw-fl-edge: var(--dsw-alias-border-l2);
+  --sw-fl-hover: var(--dsw-alias-interactive-bg-hover);
+  --sw-fl-warn: var(--dsw-alias-state-warn-primary);
+  --sw-fl-mono: var(--ds-font-family-code);
+  --sw-fl-sep-font: var(--dsw-font-xxxs-11);
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -24171,9 +25883,52 @@ var MONITOR_CSS = `[data-sw-monitor] {
   margin: 0;
   padding: 24px 20px;
   color: var(--dsw-alias-label-secondary);
-}
-[data-sw-monitor] > .sw-mon-notice {
   text-align: center;
+}
+[data-sw-monitor] .sw-mon-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 4px 12px;
+  gap: 4px 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+[data-sw-monitor] .sw-mon-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+[data-sw-monitor] .sw-mon-fbtn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-mon-fbtn[aria-pressed="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-mon-fbtn:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+    color: var(--dsw-alias-label-primary);
+  }
+}
+[data-sw-monitor] .sw-mon-fbtn[data-act="warned"] {
+  margin-left: auto;
 }
 [data-sw-monitor] .sw-mon-split {
   container: sw-monitor / inline-size;
@@ -24469,15 +26224,27 @@ var MONITOR_CSS = `[data-sw-monitor] {
   color: var(--dsw-alias-label-primary);
 }
 [data-sw-monitor] .sw-mon-close:focus-visible,
+[data-sw-monitor] .sw-mon-fbtn:focus-visible,
 [data-sw-monitor] .sw-mon-tab:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: -1px;
 }
 [data-sw-monitor] .sw-mon-drawer-body {
+  container: body / inline-size;
   flex: 1;
   min-height: 0;
-  padding: 12px 14px;
+  padding: 12px ${DRAWER_BODY_PADDING_X}px;
   overflow-y: auto;
+}
+/* A sticky bar covers an edge of the scrollport, which the scroll that brings a focused element into view does not count: the page keeps that much clear. Each size is the bar's border and padding with the lines its text takes where it wraps: the readout a small line over two lines of text, the axis header one line, the unit line two. */
+[data-sw-monitor] .sw-mon-drawer-body:has(.sw-cx-read) {
+  scroll-padding-top: calc(0.5px + 8px + 6px + 3lh);
+}
+[data-sw-monitor] .sw-mon-drawer-body:has(.sw-pb-axis) {
+  scroll-padding-top: calc(6px + 4px + 0.5px + 1lh);
+}
+[data-sw-monitor] .sw-mon-drawer-body:has(.sw-cx-pin, .sw-pb-pin) {
+  scroll-padding-bottom: calc(0.5px + 6px + 8px + 2lh);
 }
 [data-sw-monitor] .sw-mon-facts {
   display: grid;
@@ -24765,9 +26532,6 @@ var MONITOR_CSS = `[data-sw-monitor] {
     background: var(--dsw-alias-interactive-bg-hover);
     color: var(--dsw-alias-label-primary);
   }
-  [data-sw-monitor] .sw-fl-row:hover > .sw-fl-t {
-    background: var(--dsw-alias-interactive-bg-hover);
-  }
 }
 [data-sw-monitor] .sw-fl-chev {
   flex: none;
@@ -24893,84 +26657,6 @@ var MONITOR_CSS = `[data-sw-monitor] {
   line-height: 16px;
   overflow-wrap: anywhere;
 }
-[data-sw-monitor] .sw-fl-scroll {
-  background: var(--dsw-alias-bg-layer-1);
-  overflow-x: auto;
-}
-[data-sw-monitor] .sw-fl-rows {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
-  tab-size: 2;
-}
-[data-sw-monitor] .sw-fl-list[data-wrap="off"] .sw-fl-rows {
-  width: max-content;
-  min-width: 100%;
-}
-[data-sw-monitor] .sw-fl-row {
-  display: contents;
-}
-[data-sw-monitor] .sw-fl-n {
-  position: sticky;
-  z-index: 1;
-  left: 0;
-  min-height: 18px;
-  padding: 0 6px 0 14px;
-  border-right: 0.5px solid var(--dsw-alias-border-l2);
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, var(--dsw-alias-label-primary));
-  color: var(--dsw-alias-label-tertiary);
-  text-align: right;
-  user-select: none;
-}
-[data-sw-monitor] .sw-fl-t {
-  min-width: 0;
-  min-height: 18px;
-  padding: 0 14px 0 8px;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-[data-sw-monitor] .sw-fl-list[data-wrap="off"] .sw-fl-t {
-  overflow-wrap: normal;
-  white-space: pre;
-}
-[data-sw-monitor] .sw-fl-sep {
-  grid-column: 1 / -1;
-  border-top: 0.5px dashed var(--dsw-alias-border-l2);
-  border-bottom: 0.5px dashed var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
-  font-variant-numeric: inherit;
-}
-[data-sw-monitor] .sw-fl-sep > span,
-[data-sw-monitor] .sw-fl-wd > span {
-  position: sticky;
-  left: 0;
-  width: max-content;
-  max-width: 100cqw;
-  padding: 0 14px;
-}
-[data-sw-monitor] .sw-fl-sep > span {
-  display: block;
-  overflow-wrap: anywhere;
-}
-[data-sw-monitor] .sw-fl-wd {
-  grid-column: 1 / -1;
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 11%, transparent);
-  color: var(--dsw-alias-state-warn-primary);
-  font-family: var(--ds-font-family-code);
-}
-[data-sw-monitor] .sw-fl-wd > span {
-  display: flex;
-  gap: 8px;
-}
-[data-sw-monitor] .sw-fl-wd b {
-  flex: none;
-  width: 1ch;
-  font-weight: 600;
-}
 [data-sw-monitor] .sw-fl-foot {
   margin: 12px 0 0;
   border-top: 0.5px solid var(--dsw-alias-border-l2);
@@ -25003,6 +26689,911 @@ var MONITOR_CSS = `[data-sw-monitor] {
 [data-sw-monitor] .sw-fl-foldbody .sw-mon-pre {
   color: var(--dsw-alias-label-primary);
 }
+[data-sw-monitor] .sw-pb {
+  --sw-pb-idw: 34px;
+  --sw-pb-cn: 34px;
+  --sw-pb-cd: 44px;
+  --sw-pb-gap: 8px;
+}
+[data-sw-monitor] .sw-pb button:focus-visible,
+[data-sw-monitor] .sw-pb summary:focus-visible,
+[data-sw-monitor] .sw-pb [tabindex]:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+[data-sw-monitor] .sw-pb-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-pb-head span {
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-facts {
+  margin: 6px 0 0;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-facts p {
+  margin: 0;
+}
+[data-sw-monitor] .sw-pb-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin: 12px 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-pb-cap-k {
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-axisbtn {
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-note {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-pb-chart svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+[data-sw-monitor] .sw-pb-lbl {
+  fill: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+[data-sw-monitor] .sw-pb-xlbl {
+  fill: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-pb-halo {
+  paint-order: stroke;
+  stroke: var(--dsw-alias-bg-layer-2);
+  stroke-linejoin: round;
+  stroke-width: 3px;
+}
+[data-sw-monitor] .sw-pb-strong {
+  fill: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+[data-sw-monitor] .sw-pb-zero {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-pb-grid {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-dasharray: 2 3;
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-pb-clipline {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-dasharray: 4 2;
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-pb-curve {
+  fill: none;
+  stroke: var(--dsw-alias-label-primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-pb-gain {
+  fill: var(--dsw-alias-interactive-bg-hover);
+}
+[data-sw-monitor] .sw-pb-hatch-line {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-pb-pt {
+  fill: var(--dsw-alias-label-primary);
+  stroke: var(--dsw-alias-bg-layer-2);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-pb-seal {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-pb-lane {
+  fill: none;
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-pb-rows {
+  margin: 12px 0 0;
+}
+[data-sw-monitor] .sw-pb-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 8px 0 0;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-keys span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+[data-sw-monitor] .sw-pb-key {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 20px;
+  height: 10px;
+}
+[data-sw-monitor] .sw-pb-key::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 0;
+  left: 0;
+  border-top: 2px solid var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-pb-key[data-key="surplus"]::before {
+  top: 2px;
+  border-color: var(--dsw-alias-state-business-primary);
+  border-top-width: 6px;
+}
+[data-sw-monitor] .sw-pb-key[data-key="missing"]::before {
+  border-top: 2px dashed var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-key[data-key="needed"]::before {
+  top: 1px;
+  right: auto;
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  border: 0;
+  background: var(--dsw-alias-label-primary);
+  transform: rotate(45deg) scale(0.8);
+}
+[data-sw-monitor] .sw-pb-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-pb-sortbtn {
+  height: 22px;
+  padding: 0 7px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+[data-sw-monitor] .sw-pb-sortbtn[aria-pressed="true"] {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-pb-axis,
+[data-sw-monitor] .sw-pb-li {
+  display: grid;
+  grid-template-columns: var(--sw-pb-idw) minmax(0, 1fr) var(--sw-pb-cn) var(--sw-pb-cn) var(--sw-pb-cd);
+  align-items: center;
+  column-gap: var(--sw-pb-gap);
+}
+[data-sw-monitor] .sw-pb-axis {
+  position: sticky;
+  z-index: 2;
+  top: -12px;
+  margin: 10px -14px 0;
+  padding: 6px 14px 4px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-pb-ax {
+  position: relative;
+  height: 16px;
+}
+[data-sw-monitor] .sw-pb-tick {
+  position: absolute;
+  top: 0;
+  display: block;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-t0 {
+  left: 0;
+}
+[data-sw-monitor] .sw-pb-t1 {
+  left: 50%;
+  transform: translateX(-50%);
+}
+[data-sw-monitor] .sw-pb-t2 {
+  right: 0;
+}
+[data-sw-monitor] .sw-pb-axis .sw-pb-num {
+  color: var(--dsw-alias-label-secondary);
+  text-align: right;
+}
+[data-sw-monitor] .sw-pb-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] .sw-pb-li {
+  padding: 4px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-pb-axisbtn:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+[data-sw-monitor] .sw-pb-id {
+  font-weight: 600;
+}
+[data-sw-monitor] .sw-pb-li[data-unknown] .sw-pb-id {
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}
+[data-sw-monitor] .sw-pb-li .sw-pb-num {
+  text-align: right;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-li .sw-pb-num[data-muted] {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-pb-li .sw-pb-num small {
+  display: none;
+  margin-right: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-pb-plot {
+  position: relative;
+  display: block;
+  height: 20px;
+  border-right: 0.5px dotted var(--dsw-alias-border-l2);
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+  background:
+    linear-gradient(var(--dsw-alias-border-l1), var(--dsw-alias-border-l1)) 25% 0 / 0.5px 100% no-repeat,
+    linear-gradient(var(--dsw-alias-border-l1), var(--dsw-alias-border-l1)) 50% 0 / 0.5px 100% no-repeat,
+    linear-gradient(var(--dsw-alias-border-l1), var(--dsw-alias-border-l1)) 75% 0 / 0.5px 100% no-repeat;
+}
+[data-sw-monitor] .sw-pb-plot i,
+[data-sw-monitor] .sw-pb-plot b,
+[data-sw-monitor] .sw-pb-plot em {
+  position: absolute;
+  display: block;
+  font-style: normal;
+}
+[data-sw-monitor] .sw-pb-line {
+  top: 9px;
+  left: 0;
+  height: 2px;
+  background: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-pb-surplus {
+  top: 6px;
+  height: 8px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-pb-missing {
+  top: 9px;
+  height: 0;
+  border-top: 2px dashed var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-end {
+  top: 5px;
+  width: 0;
+  height: 10px;
+  border-left: 2px solid var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-pb-dia {
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--dsw-alias-label-primary);
+  box-shadow: 0 0 0 1.5px var(--dsw-alias-bg-layer-2);
+  transform: rotate(45deg);
+}
+[data-sw-monitor] .sw-pb-arrow {
+  top: 5px;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-color: transparent transparent transparent var(--dsw-alias-label-primary);
+  border-style: solid;
+  border-width: 5px 0 5px 7px;
+}
+[data-sw-monitor] .sw-pb-over {
+  top: 1px;
+  right: 9px;
+  padding: 0 3px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+  line-height: 14px;
+}
+[data-sw-monitor] .sw-pb-inf {
+  top: 1px;
+  margin-left: 5px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+  line-height: 14px;
+}
+[data-sw-monitor] .sw-pb-equations {
+  margin-top: 6px;
+  border-collapse: collapse;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-pb-equations th,
+[data-sw-monitor] .sw-pb-equations td {
+  padding: 2px 6px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  text-align: left;
+  vertical-align: top;
+}
+[data-sw-monitor] .sw-pb-equations th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-table {
+  margin: 10px 0 0;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-table summary {
+  width: max-content;
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-pb-scroll {
+  margin: 6px 0 0;
+  overflow-x: auto;
+}
+[data-sw-monitor] .sw-pb-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-pb-tbl th,
+[data-sw-monitor] .sw-pb-tbl td {
+  padding: 2px 6px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  text-align: right;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-pb-tbl th:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--dsw-alias-bg-layer-2);
+  text-align: left;
+}
+[data-sw-monitor] .sw-pb-tbl th {
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}
+[data-sw-monitor] .sw-pb-tbl td {
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-pb-tbl tr[data-unknown] td {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-pb-pin {
+  position: sticky;
+  z-index: 2;
+  bottom: -12px;
+  margin: 10px -14px 0;
+  padding: 6px 14px 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+[data-sw-monitor] .sw-pb-unit {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx button:focus-visible,
+[data-sw-monitor] .sw-cx summary:focus-visible,
+[data-sw-monitor] .sw-cx [tabindex]:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+[data-sw-monitor] .sw-cx .sw-cx-slider:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+[data-sw-monitor] .sw-cx-read {
+  position: sticky;
+  z-index: 4;
+  top: -12px;
+  box-sizing: border-box;
+  min-height: 62px;
+  margin: -12px -14px 8px;
+  padding: 8px 14px 6px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+[data-sw-monitor] .sw-cx-r {
+  display: block;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-cx-r1,
+[data-sw-monitor] .sw-cx-hint {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-cx-hint {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx-ctx {
+  margin: 0 0 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-cx-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+  margin: 12px 0 4px;
+}
+[data-sw-monitor] .sw-cx-h h3 {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+[data-sw-monitor] .sw-cx-tag {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-cx-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-cx-btn:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+  [data-sw-monitor] .sw-cx-rr:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+[data-sw-monitor] .sw-cx-facts {
+  margin: 2px 0 8px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-facts span {
+  display: block;
+}
+[data-sw-monitor] .sw-cx-svg {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+  touch-action: pan-y;
+}
+[data-sw-monitor] .sw-cx-lbl,
+[data-sw-monitor] .sw-cx-ll {
+  fill: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+[data-sw-monitor] .sw-cx-halo {
+  paint-order: stroke;
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-linejoin: round;
+  stroke-width: 3px;
+}
+[data-sw-monitor] .sw-cx-biz {
+  fill: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-cx-ink {
+  fill: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-cx-warn {
+  fill: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-cx-plotbg {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-cx-grid {
+  stroke: var(--dsw-alias-border-l1);
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-cx-axis {
+  fill: none;
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-cx-sealline {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 0.5;
+  opacity: 0.8;
+}
+[data-sw-monitor] .sw-cx-seal {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-width: 1.25;
+}
+[data-sw-monitor] .sw-cx-warnline {
+  stroke: var(--dsw-alias-state-warn-primary);
+  stroke-dasharray: 1 3;
+  stroke-linecap: round;
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-cx-actual {
+  fill: none;
+  stroke: var(--dsw-alias-label-primary);
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-uncompressed {
+  fill: none;
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-dasharray: 5 3;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-xmark {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-actualcross {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+[data-sw-monitor] .sw-cx-sealhit {
+  fill: transparent;
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-cx-cur {
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 0.75;
+}
+[data-sw-monitor] .sw-cx-curdot {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-curp {
+  stroke: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-cx-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-cx-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+[data-sw-monitor] .sw-cx-legend svg {
+  flex: none;
+  overflow: visible;
+}
+[data-sw-monitor] .sw-cx-sw {
+  fill: none;
+}
+[data-sw-monitor] .sw-cx-sw-actual {
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-sw-uncompressed {
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-dasharray: 5 3;
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-sw-seal {
+  stroke: var(--dsw-alias-label-secondary);
+  stroke-width: 1.25;
+}
+[data-sw-monitor] .sw-cx-assume {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx-cache {
+  margin: 12px 0 0;
+}
+[data-sw-monitor] .sw-cx-sum {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  margin: 0 0 10px;
+}
+[data-sw-monitor] .sw-cx-kv {
+  padding: 6px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+}
+[data-sw-monitor] .sw-cx-t {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx-v {
+  font: var(--dsw-font-xs-13);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+[data-sw-monitor] .sw-cx-v.sw-cx-neg {
+  color: var(--dsw-alias-state-error-primary);
+}
+[data-sw-monitor] .sw-cx-v.sw-cx-pos {
+  color: var(--dsw-alias-state-success-primary);
+}
+[data-sw-monitor] .sw-cx-card {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-1);
+}
+[data-sw-monitor] .sw-cx-lamchart {
+  width: 100%;
+  margin: 0 0 4px;
+}
+[data-sw-monitor] .sw-cx-lamchart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+[data-sw-monitor] .sw-cx-ll {
+  fill: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-ll.sw-cx-pri {
+  fill: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-cx-lax {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-cx-zero {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-cx-guide {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-dasharray: 2 3;
+  stroke-width: 0.5;
+}
+[data-sw-monitor] .sw-cx-net {
+  fill: none;
+  stroke-width: 2;
+}
+[data-sw-monitor] .sw-cx-net.sw-cx-pos {
+  stroke: var(--dsw-alias-state-success-primary);
+}
+[data-sw-monitor] .sw-cx-net.sw-cx-neg {
+  stroke: var(--dsw-alias-state-error-primary);
+  stroke-dasharray: 5 3;
+}
+[data-sw-monitor] .sw-cx-pt-m {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-pt-f {
+  fill: var(--dsw-alias-label-primary);
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-cx-star {
+  fill: var(--dsw-alias-state-business-primary);
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-cx-lamcursor {
+  fill: var(--dsw-alias-state-business-primary);
+  stroke: var(--dsw-alias-bg-layer-1);
+  stroke-width: 1.5;
+}
+[data-sw-monitor] .sw-cx-sl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 2px;
+}
+[data-sw-monitor] .sw-cx-sl label {
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-slider {
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-cx-rd {
+  margin: 0 0 4px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-thr {
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-cx-rows {
+  margin: 0;
+}
+[data-sw-monitor] .sw-cx-rows > summary,
+[data-sw-monitor] .sw-cx-note > summary {
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-cx-rows > summary {
+  padding: 3px 0;
+  border-radius: var(--dsw-radius-sm);
+}
+[data-sw-monitor] .sw-cx-rl {
+  margin: 4px 0 0;
+  padding: 0;
+}
+[data-sw-monitor] .sw-cx-rr {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) max(54px, 10ch) 48px;
+  gap: 0 8px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+[data-sw-monitor] .sw-cx-rr > span {
+  min-width: 0;
+  white-space: nowrap;
+}
+[data-sw-monitor] .sw-cx-rr > span:first-child {
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+}
+[data-sw-monitor] .sw-cx-rh {
+  height: 18px;
+  border-bottom-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+}
+[data-sw-monitor] .sw-cx-rh > span:first-child {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] button.sw-cx-rr {
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-cx-bar {
+  display: block;
+  height: 10px;
+  text-align: left;
+}
+[data-sw-monitor] .sw-cx-bar i {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+  border-radius: 0 var(--dsw-radius-xs) var(--dsw-radius-xs) 0;
+  background: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx-note {
+  margin: 6px 0 0;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-1);
+}
+[data-sw-monitor] .sw-cx-note > summary {
+  padding: 4px 8px;
+  list-style-position: inside;
+}
+[data-sw-monitor] .sw-cx-in {
+  padding: 0 8px 6px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-in p {
+  margin: 0 0 4px;
+}
+[data-sw-monitor] .sw-cx-pin {
+  position: sticky;
+  z-index: 2;
+  bottom: -12px;
+  margin: 12px -14px 0;
+  padding: 6px 14px 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+[data-sw-monitor] .sw-cx-unit {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+@container body (min-width: 540px) {
+  [data-sw-monitor] .sw-pb-plot {
+    height: 22px;
+  }
+}
+@container body (max-width: 340px) {
+  [data-sw-monitor] .sw-pb-axis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  [data-sw-monitor] .sw-pb-axis > .sw-pb-idh,
+  [data-sw-monitor] .sw-pb-axis > .sw-pb-num {
+    display: none;
+  }
+  [data-sw-monitor] .sw-pb-li {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas: "id id id" "a n d" "pl pl pl";
+    row-gap: 3px;
+    padding: 6px 0 7px;
+  }
+  [data-sw-monitor] .sw-pb-li .sw-pb-id {
+    grid-area: id;
+  }
+  [data-sw-monitor] .sw-pb-li .sw-pb-plot {
+    grid-area: pl;
+    height: 16px;
+  }
+  [data-sw-monitor] .sw-pb-li .sw-pb-num {
+    text-align: left;
+  }
+  [data-sw-monitor] .sw-pb-li .sw-pb-num small {
+    display: inline;
+  }
+}
 @container sw-fl (width < 360px) {
   [data-sw-monitor] .sw-fl-list {
     --sw-fl-stat: 6.5em;
@@ -25025,7 +27616,7 @@ var MONITOR_CSS = `[data-sw-monitor] {
 `;
 
 // dsh/src/client/styles.js
-var TAB_CSS = scopeStylesheet(base_default) + scopeStylesheet(h_default) + BRIDGE_CSS + CHROME_CSS + LIGHT_CSS + DOCK_CSS + MODE_CSS + SETTINGS_CSS + MONITOR_CSS;
+var TAB_CSS = scopeStylesheet(base_default) + scopeStylesheet(h_default) + BRIDGE_CSS + CHROME_CSS + LIGHT_CSS + DOCK_CSS + MODE_CSS + SETTINGS_CSS + MONITOR_CSS + file_rows_default;
 
 // dsh/src/client/index.js
 var inject = ["slots", "locale", "theme", "connection"];

@@ -22,34 +22,31 @@
 //! SOFTWARE.
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// lib/harness/dsh/inner-seal-message.js
-var CARRIER_WORDING = {
-  addresses: "These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: holds the user's own words instead, cut where a marker says so.",
-  slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
-  imageSaved: (name2) => `The image ${name2} is not in the current context; read_image can read the file below when it is needed.`,
-  carried: "Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. The reads behind this file text still count in this session, so edit a file without reading it again.",
-  empty: (path) => `${path} is empty.`,
-  unreadable: (path, reason) => `${path} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
-  skill: (name2, text) => `Skill ${name2}:
-${text}`,
-  stateHeading: (seq) => `Session state as of session seq ${seq}:`,
-  stateLabels: {
-    workingDirectory: (tool) => `Working directory, as ${tool} would show:`,
-    subagents: (tool) => `Running subagents, as ${tool} would show:`,
-    jobs: (tool) => `Running jobs, as ${tool} would show:`,
-    todos: (tool) => `Todo list, as ${tool} last left it:`
+// lib/inner-seal/git-state.js
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+var STATUS_COMMAND = ["status", "--short", "--branch"];
+var LOG_COMMAND = ["log", "-1", "--oneline"];
+function isGitStateCommand(command) {
+  if (typeof command !== "string") return false;
+  const [status, head, ...rest] = command.trim().split(/[ \t]*&&[ \t]*/u);
+  return rest.length === 0 && /^git[ \t]+status(?:[ \t]+--?[\w=-]+)*$/u.test(status) && (head === void 0 || head.split(/[ \t]+/u).join(" ") === `git ${LOG_COMMAND.join(" ")}`);
+}
+var GIT_STATE_ITEM = Object.freeze({
+  key: "git",
+  label: `Git, as \`git ${STATUS_COMMAND.join(" ")} && git ${LOG_COMMAND.join(" ")}\` would show:`,
+  multiline: true,
+  normalize: (value) => {
+    if (typeof value !== "string" || value === "") throw new Error("the git state is not a text");
+    return value;
   },
-  stateList: (entries) => entries.map(({ id, label: label2 }) => `${id} \u2014 ${label2}`).join("; "),
-  stateUnchanged: "unchanged since the last summary that shows it",
-  stateEmpty: "(empty)",
-  questionMark: "A line marked question: holds the original question.",
-  questionLine: (question) => `question: ${question}`,
-  userLine: (user) => `user: ${user}`,
-  askCall: ({ id, name: name2, arguments: args }) => `Original ${name2} call ${id}, arguments:
-${args}`,
-  askResult: (id, { text, isError }) => `Original result of call ${id}${isError ? " (marked as an error)" : ""}:
-${text}`
-};
+  isEmpty: () => false,
+  same: (a, b) => a === b,
+  text: (value) => value
+});
+
+// lib/harness/dsh/carrier-table.js
 var isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
 function todoItemsOf(value) {
   if (value === null) return [];
@@ -63,45 +60,66 @@ function textEntriesOf(value, fields, what) {
   return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
 }
 var sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
+var entryList = (entries) => entries.map(({ id, label: label2 }) => `${id} \u2014 ${label2}`).join("; ");
 var AGENT_FIELDS = ["id", "label"];
 var TODO_FIELDS = ["content", "status"];
-var STATE_ITEMS = Object.freeze([
-  Object.freeze({
-    key: "workingDirectory",
-    tool: "working_directory",
-    normalize: (value) => {
-      if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
-      return value;
-    },
-    isEmpty: () => false,
-    same: (a, b) => a === b,
-    text: (value) => value
-  }),
-  Object.freeze({
-    key: "subagents",
-    tool: "list_agents",
-    normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
-    isEmpty: (entries) => entries.length === 0,
-    same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-    text: CARRIER_WORDING.stateList
-  }),
-  Object.freeze({
-    key: "jobs",
-    tool: "job_list",
-    normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
-    isEmpty: (entries) => entries.length === 0,
-    same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-    text: CARRIER_WORDING.stateList
-  }),
-  Object.freeze({
-    key: "todos",
-    tool: "todo_write",
-    normalize: todoItemsOf,
-    isEmpty: (items) => items.length === 0,
-    same: (a, b) => sameEntries(TODO_FIELDS, a, b),
-    text: (items) => JSON.stringify(items)
-  })
-]);
+var stateItem = ({ tool, label: label2, ...rest }) => Object.freeze({ ...rest, tool, label: label2(tool) });
+function argumentsOf(call) {
+  try {
+    return JSON.parse(call.arguments);
+  } catch {
+    return void 0;
+  }
+}
+var CARRIER_TABLE = Object.freeze({
+  addresses: `These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
+  editGuard: "The reads behind this file text still count in this session, so edit a file without reading it again.",
+  imageReadTool: "read_image",
+  stateItems: Object.freeze([
+    stateItem({
+      key: "workingDirectory",
+      tool: "working_directory",
+      label: (tool) => `Working directory, as ${tool} would show:`,
+      operation: (call) => typeof argumentsOf(call)?.cd === "string" ? "write" : "read",
+      normalize: (value) => {
+        if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
+        return value;
+      },
+      isEmpty: () => false,
+      same: (a, b) => a === b,
+      text: (value) => value
+    }),
+    stateItem({
+      key: "subagents",
+      tool: "list_agents",
+      label: (tool) => `Running subagents, as ${tool} would show:`,
+      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
+      isEmpty: (entries) => entries.length === 0,
+      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+      text: entryList
+    }),
+    stateItem({
+      key: "jobs",
+      tool: "job_list",
+      label: (tool) => `Running jobs, as ${tool} would show:`,
+      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
+      isEmpty: (entries) => entries.length === 0,
+      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
+      text: entryList
+    }),
+    stateItem({
+      key: "todos",
+      tool: "todo_write",
+      operation: "write",
+      label: (tool) => `Todo list, as ${tool} last left it:`,
+      normalize: todoItemsOf,
+      isEmpty: (items) => items.length === 0,
+      same: (a, b) => sameEntries(TODO_FIELDS, a, b),
+      text: (items) => JSON.stringify(items)
+    }),
+    Object.freeze({ ...GIT_STATE_ITEM, matchesCall: (call) => call.name === "bash" && isGitStateCommand(argumentsOf(call)?.command) })
+  ])
+});
 
 // dsh/vendor/dsh-llm-pi-ai/src/config.ts
 import z from "@deepseek-ai/schemastery";
@@ -1383,7 +1401,7 @@ function bootstrap(ctx, config, decorateProfiles) {
   return { registeredRoutes: () => [...registeredRoutes] };
 }
 
-// dsh/src/carrier-cache.js
+// lib/llm-adapter/carrier-point.js
 var MAX_CONTROL_POINTS = 4;
 var ADDED = Object.freeze({ result: "added" });
 var NATIVE = Object.freeze({ result: "native" });
@@ -1396,9 +1414,8 @@ var UNSUPPORTED = skipped("unsupported");
 var LONG_RETENTION = "24h";
 var LONG_OPTIONS = Object.freeze({ ttl: "30m" });
 var textOfBlocks = (blocks) => blocks.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
-function createCarrierCache({ carrierPrefix, report, observe = () => {
-}, responsesBreakpoint = () => false }) {
-  const lastCarrier = (messages, textOf) => messages.findLastIndex((message) => message?.role === "user" && textOf(message).startsWith(carrierPrefix));
+var lastCarrier = (prefix, messages, textOf) => messages.findLastIndex((message) => message?.role === "user" && textOf(message).startsWith(prefix));
+function createCarrierPointWriter({ report, responsesBreakpoint }) {
   const blocksText = (content) => typeof content === "string" ? content : Array.isArray(content) ? textOfBlocks(content) : "";
   const controlText = (message) => blocksText(message.content);
   const controlled = (parts) => parts.filter((part) => part?.cache_control !== void 0);
@@ -1408,7 +1425,7 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     const last = pick(blocks);
     if (last.cache_control !== void 0) return NATIVE;
     if (marked.length >= MAX_CONTROL_POINTS) {
-      report(`llm-pi-ai carrier cache: route "${model.provider}/${model.id}" (${model.api}) already sends ${marked.length} cache points, so the last carrier is given none`);
+      report(`carrier cache: route "${model.provider}/${model.id}" (${model.api}) already sends ${marked.length} cache points, so the last carrier is given none`);
       return POINTS_FULL;
     }
     last.cache_control = { ...marked[0].cache_control };
@@ -1420,15 +1437,15 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     ...Array.isArray(payload.tools) ? payload.tools : [],
     ...(Array.isArray(payload.messages) ? payload.messages : []).flatMap((message) => Array.isArray(message.content) ? message.content : [])
   ]);
-  function anthropic(payload, model) {
+  function anthropic({ prefix, payload, model }) {
     if (!Array.isArray(payload.messages)) return UNSUPPORTED;
-    const at = lastCarrier(payload.messages, controlText);
+    const at = lastCarrier(prefix, payload.messages, controlText);
     if (at < 0) return NO_CARRIER;
     return controlPoint({ message: payload.messages[at], marked: anthropicMarked(payload), pick: (blocks) => blocks.at(-1), model });
   }
-  function completions(payload, model) {
+  function completions({ prefix, payload, model }) {
     if (!Array.isArray(payload.messages)) return UNSUPPORTED;
-    const at = lastCarrier(payload.messages, controlText);
+    const at = lastCarrier(prefix, payload.messages, controlText);
     if (at < 0) return NO_CARRIER;
     const marked = controlled([
       ...Array.isArray(payload.tools) ? payload.tools : [],
@@ -1437,9 +1454,9 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     return controlPoint({ message: payload.messages[at], marked, pick: (parts) => parts.findLast((part) => part?.type === "text"), model });
   }
   const bedrockText = (message) => Array.isArray(message.content) ? message.content.filter((block) => typeof block?.text === "string").map((block) => block.text).join("") : "";
-  function bedrock(payload) {
+  function bedrock({ prefix, payload }) {
     if (!Array.isArray(payload.messages)) return UNSUPPORTED;
-    const at = lastCarrier(payload.messages, bedrockText);
+    const at = lastCarrier(prefix, payload.messages, bedrockText);
     if (at < 0) return NO_CARRIER;
     const blocks = [...Array.isArray(payload.system) ? payload.system : [], ...payload.messages.flatMap((message) => Array.isArray(message.content) ? message.content : [])];
     const point = blocks.find((block) => block?.cachePoint !== void 0);
@@ -1455,7 +1472,7 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     try {
       return responsesBreakpoint() === true;
     } catch {
-      report("llm-pi-ai carrier cache: the Responses breakpoint setting could not be read, so the request is sent without it");
+      report("carrier cache: the Responses breakpoint setting could not be read, so the request is sent without it");
       return false;
     }
   };
@@ -1464,11 +1481,11 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     delete payload.prompt_cache_retention;
     payload.prompt_cache_options = { ...LONG_OPTIONS };
   };
-  function responses(payload, model, options) {
+  function responses({ prefix, payload, model, options }) {
     if (!switchedOn()) return RESPONSES_OFF;
     if (!Array.isArray(payload.input) || chatGptSignIn(model, options?.apiKey)) return UNSUPPORTED;
     if (options?.cacheRetention === "none") return NO_NATIVE_POINT;
-    const at = lastCarrier(payload.input, responsesText);
+    const at = lastCarrier(prefix, payload.input, responsesText);
     if (at < 0) return NO_CARRIER;
     if (at === payload.input.length - 1) return NATIVE;
     const block = payload.input[at].content.findLast((part) => part?.type === "input_text");
@@ -1477,6 +1494,14 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
     return ADDED;
   }
   const WRITERS = { "anthropic-messages": anthropic, "bedrock-converse-stream": bedrock, "openai-responses": responses, "openai-completions": completions };
+  return function writeCarrierPoint({ prefix, payload, model, options }) {
+    return WRITERS[model.api]?.({ prefix, payload, model, options }) ?? UNSUPPORTED;
+  };
+}
+
+// dsh/src/carrier-cache.js
+function createCarrierCache({ carrierPrefix, report, observe, responsesBreakpoint }) {
+  const writeCarrierPoint = createCarrierPointWriter({ report, responsesBreakpoint });
   const observed = (outcome) => {
     try {
       observe(outcome);
@@ -1487,9 +1512,9 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
   const hookOf = (earlier, options) => async (payload, model) => {
     const replaced = await earlier?.(payload, model);
     const body = replaced ?? payload;
-    const outcome = WRITERS[model.api]?.(body, model, options) ?? UNSUPPORTED;
+    const outcome = writeCarrierPoint({ prefix: carrierPrefix, payload: body, model, options });
     observed(outcome);
-    return outcome === ADDED ? body : replaced;
+    return outcome.result === "added" ? body : replaced;
   };
   const wrapProvider = (provider) => Object.create(provider, {
     streamSimple: {
@@ -1512,6 +1537,7 @@ function createCarrierCache({ carrierPrefix, report, observe = () => {
 var PI_AI_SERVICE = "sessionWatcherPiAi";
 var ORIGINAL_ROW = "include:llm-pi-ai";
 var CARRIER_EVIDENCE_SERVICE = "sessionWatcherCarrierEvidence";
+var CARRIER_SETTINGS_SERVICE = "sessionWatcherCarrierSettings";
 
 // dsh/src/pi-ai-index.js
 var inject = ["llm", "loader"];
@@ -1546,10 +1572,10 @@ function apply(ctx) {
     return;
   }
   const cache = createCarrierCache({
-    carrierPrefix: CARRIER_WORDING.addresses,
+    carrierPrefix: CARRIER_TABLE.addresses,
     report: (message) => ctx.logger.warn(message),
     observe: (result) => ctx.get(CARRIER_EVIDENCE_SERVICE)?.record(result),
-    responsesBreakpoint: () => ctx.get(CARRIER_EVIDENCE_SERVICE)?.responsesBreakpoint?.()
+    responsesBreakpoint: () => ctx.get(CARRIER_SETTINGS_SERVICE)?.responsesBreakpoint?.()
   });
   const registration = bootstrap(ctx, source.config, cache.decorateProfiles);
   ctx.provide(PI_AI_SERVICE, {

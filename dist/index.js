@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.0",
+      version: "0.11.1",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -3842,6 +3842,139 @@ var init_turn_browse = __esm({
   }
 });
 
+// lib/line-align.js
+function splitLines(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+function normalizeLine(line) {
+  return line.trimEnd();
+}
+function fingerprintOf(normalizedLine) {
+  let hash = FNV_OFFSET;
+  for (let i2 = 0; i2 < normalizedLine.length; i2++) {
+    hash = Math.imul(hash ^ normalizedLine.charCodeAt(i2), FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+function stripLinePrefix(line) {
+  for (const cue of CUES) {
+    const match = cue.pattern.exec(line);
+    if (!match) continue;
+    const declaredLine = Number(match[cue.line]);
+    if (!Number.isSafeInteger(declaredLine) || declaredLine < 1) continue;
+    return { text: match[cue.text], declaredLine, path: cue.path ? match[cue.path] : null };
+  }
+  return { text: line, declaredLine: null, path: null };
+}
+function trimEnds(a, b, minTrim) {
+  const shared = Math.min(a.length, b.length);
+  let head = 0;
+  while (head < shared && a[head] === b[head]) head++;
+  if (!(head >= minTrim)) head = 0;
+  const room = shared - head;
+  let tail = 0;
+  while (tail < room && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  if (!(tail >= minTrim)) tail = 0;
+  return { head, tail, cells: (a.length - head - tail) * (b.length - head - tail) };
+}
+function alignOrdered(a, b, { maxCells, minTrim }) {
+  const { head, tail, cells } = trimEnds(a, b, minTrim);
+  if (!(cells <= maxCells)) return null;
+  const pairs = [];
+  for (let k = 0; k < head; k++) pairs.push([k, k]);
+  const n = a.length - head - tail;
+  const m = b.length - head - tail;
+  if (n > 0 && m > 0) {
+    const width = m + 1;
+    const lcs = new Uint32Array((n + 1) * width);
+    for (let i3 = n - 1; i3 >= 0; i3--) {
+      for (let j2 = m - 1; j2 >= 0; j2--) {
+        lcs[i3 * width + j2] = a[head + i3] === b[head + j2] ? lcs[(i3 + 1) * width + j2 + 1] + 1 : Math.max(lcs[(i3 + 1) * width + j2], lcs[i3 * width + j2 + 1]);
+      }
+    }
+    let i2 = 0;
+    let j = 0;
+    while (i2 < n && j < m) {
+      if (a[head + i2] === b[head + j]) {
+        pairs.push([head + i2, head + j]);
+        i2++;
+        j++;
+      } else if (lcs[(i2 + 1) * width + j] > lcs[i2 * width + j + 1]) {
+        i2++;
+      } else {
+        j++;
+      }
+    }
+  }
+  for (let k = tail; k > 0; k--) pairs.push([a.length - k, b.length - k]);
+  return pairs;
+}
+var FNV_OFFSET, FNV_PRIME, CUES;
+var init_line_align = __esm({
+  "lib/line-align.js"() {
+    FNV_OFFSET = 2166136261;
+    FNV_PRIME = 16777619;
+    CUES = [
+      { pattern: /^ *(\d+)\t(.*)$/s, line: 1, text: 2 },
+      { pattern: /^ *(\d+)→(.*)$/s, line: 1, text: 2 },
+      { pattern: /^Line (\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(\d+): ?(.*)$/s, line: 1, text: 2 },
+      { pattern: /^(.+?):(\d+):(.*)$/s, path: 1, line: 2, text: 3 },
+      { pattern: /^(\d+)-(.*)$/s, line: 1, text: 2 },
+      // The path of a context row is not kept: its separators are indistinguishable from the path's own dashes.
+      { pattern: /^(\S+?)-(\d+)-(.*)$/s, line: 2, text: 3 }
+    ];
+  }
+});
+
+// lib/working-tree-text.js
+function readableText(tree, key, { size }, { fileBytes }) {
+  if (size > fileBytes) return unreadable("too-large");
+  const text = tree.readText(key);
+  if (text === null) return unreadable("unreadable");
+  if (text.includes("\0")) return unreadable("binary");
+  return { status: "readable", text };
+}
+function readTreeWindows(tree, key, ranges, { fileBytes }) {
+  const stat = tree.stat(key);
+  if (stat === null) return unreadable("missing");
+  if (!stat.isFile) return unreadable("not-file");
+  const judged = readableText(tree, key, stat, { fileBytes });
+  if (judged.status !== "readable") return judged;
+  const all = splitLines(judged.text);
+  const windows = [];
+  for (const { offset, limit } of ranges) {
+    const lines = all.slice(offset - 1, offset - 1 + limit).map((text, index) => ({ number: offset + index, text }));
+    if (lines.length > 0 || all.length === 0 && offset === 1) windows.push({ offset, lines });
+  }
+  return { status: "readable", totalLines: all.length, windows };
+}
+var unreadable;
+var init_working_tree_text = __esm({
+  "lib/working-tree-text.js"() {
+    init_line_align();
+    unreadable = (reason) => ({ status: "unreadable", reason });
+  }
+});
+
+// lib/carried-evidence.js
+function runsOf(numbers) {
+  const runs = [];
+  for (const number3 of numbers) {
+    const last = runs.at(-1);
+    if (last && last[1] + 1 === number3) last[1] = number3;
+    else runs.push([number3, number3]);
+  }
+  return runs;
+}
+var init_carried_evidence = __esm({
+  "lib/carried-evidence.js"() {
+    init_working_tree_text();
+  }
+});
+
 // lib/wire.js
 function statusWire(status) {
   const { sourceLocator, ...rest } = status;
@@ -3935,6 +4068,12 @@ function pricingResponse({ model, saved, policy, cliRatio }) {
     presets
   };
 }
+function heldFilePayload(path3, lineNumbers, workingTree, { fileBytes }) {
+  const ranges = runsOf(lineNumbers).map(([first, last]) => ({ offset: first, limit: last - first + 1 }));
+  const read = readTreeWindows(workingTree, path3, ranges, { fileBytes });
+  if (read.status !== "readable") return { path: path3, reason: read.reason };
+  return { path: path3, total: read.totalLines, runs: read.windows };
+}
 function turnPageWire({ turnPage, nextBefore }) {
   return {
     turn_page: turnPage,
@@ -3954,7 +4093,7 @@ async function loadedHandoffPayload(core, { store, turnPageBuilder, dialogueSour
     return { ...core, turn_page_error: "turn_page_unavailable" };
   }
 }
-var INVALID_OVERRIDES_MESSAGE;
+var INVALID_OVERRIDES_MESSAGE, INVALID_BUCKET_FILE_MESSAGE, NOT_HELD_MESSAGE;
 var init_wire = __esm({
   "lib/wire.js"() {
     init_rate_lamp_manager();
@@ -3963,7 +4102,11 @@ var init_wire = __esm({
     init_lineage();
     init_turn_browse();
     init_lineage_headlines();
+    init_carried_evidence();
+    init_working_tree_text();
     INVALID_OVERRIDES_MESSAGE = 'Body must contain { overrides: { path: "include"|"exclude" } }';
+    INVALID_BUCKET_FILE_MESSAGE = "Body must contain { path: string }";
+    NOT_HELD_MESSAGE = "The path is not held in the current context.";
   }
 });
 
@@ -49297,10 +49440,11 @@ var init_session_watcher = __esm({
           cacheRead: point.cacheRead,
           cacheCreation: point.cacheWrite,
           turnSeq: point.turnSeq,
-          foldedSeq: point.foldedSeq
+          foldedSeq: point.foldedSeq,
+          ...point.amberStockL === void 0 ? {} : { amberStockL: point.amberStockL }
         }));
       }
-      // The only bucket/resource query. It reads the Engine first, then passes only default-selected file rows
+      // Reads the Engine first, then passes only default-selected file rows
       // to Resource Enrichment — a row the position basis excludes buys no symbols, and a Skill has no file.
       getBucketData({ includeSymbols = false } = {}) {
         const bucket = this._engine.getBucketData();
@@ -49343,6 +49487,12 @@ var init_session_watcher = __esm({
           currentTurnSeq: bucket.currentTurnSeq,
           segment: bucket.segment
         };
+      }
+      // The Engine's held line numbers of one file, ascending; null when it has no resource at that path, and for a Skill
+      // key, whose number key 1 is no line of any file.
+      getHeldLines(path3) {
+        if (path3.startsWith(SKILL_RESOURCE_PREFIX)) return null;
+        return this._engine.heldLines().get(path3) ?? null;
       }
       // The value host wiring persists unchanged as `profile_snapshot`. `b_total` is the UNCAPPED resident total:
       // the read-time cap belongs to the live dashboard, while persistence needs the belief its own path rows sum
@@ -54329,7 +54479,7 @@ function landmarksOf(reference, mf) {
   if (!reference || !(Number.isFinite(mf) && mf > 0)) {
     return { xSweet: null, xBrAmberL: null, xBrAmberR: null, xBrRedR: null };
   }
-  const xAt = (u) => reference.a + reference.d * u;
+  const xAt = (u) => xOn(reference, u);
   return {
     xSweet: xAt(1),
     xBrAmberL: xAt(uLeftAtBr(mf, BR_AMBER)),
@@ -54337,10 +54487,16 @@ function landmarksOf(reference, mf) {
     xBrRedR: xAt(uAtBr(mf, BR_RED))
   };
 }
+function amberStockOf({ reference, u, xBrAmberR, bDefault }, anchorL) {
+  if (!reference || !Number.isFinite(u) || !Number.isFinite(xBrAmberR) || !(Number.isFinite(bDefault) && bDefault > 0)) return null;
+  return anchorL + bDefault * (xBrAmberR - xOn(reference, u));
+}
+var xOn;
 var init_position = __esm({
   "lib/measurement/position.js"() {
     init_rate_lamp();
     init_bill_regret();
+    xOn = (reference, u) => reference.a + reference.d * u;
   }
 });
 
@@ -54543,6 +54699,14 @@ var init_resident_ledger = __esm({
     TOUCH_HISTORY_MAX = 128;
     TOUCH_HISTORY_KEEP = 64;
     MUTATION_KINDS = /* @__PURE__ */ new Set(["replace-fragments", "merge-fragments", "adjust-total"]);
+  }
+});
+
+// lib/measurement/usage.js
+var stockOf;
+var init_usage = __esm({
+  "lib/measurement/usage.js"() {
+    stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
   }
 });
 
@@ -54899,7 +55063,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     segmentGMin = Math.min(segmentGMin, effectiveG(gEma));
   }
   function acceptNewStep(record2, usage, usageTotal, timestamp, result) {
-    const totalStock = usage.input + usage.cacheRead + usage.cacheWrite;
+    const totalStock = stockOf(usage);
     const model = record2.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
     if (totalStock > 0 && frames.length > 0) {
@@ -55081,6 +55245,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       },
       paths
     };
+    const { rateLamp } = readView();
+    const lastStep = segmentSteps.at(-1);
+    lastStep.amberStockL = rateLamp.reference?.provisional ? null : amberStockOf(rateLamp, stockOf(lastStep.usage));
     openFreshSegment();
     return closed;
   }
@@ -55159,7 +55326,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function getHistory() {
     return calls.map((step) => {
       const B = step.bAtCall;
-      const L = step.usage.input + step.usage.cacheRead + step.usage.cacheWrite;
+      const L = stockOf(step.usage);
       return {
         ts: step.timestamp,
         segment: step.segment,
@@ -55174,7 +55341,8 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
         cacheRead: step.usage.cacheRead,
         cacheWrite: step.usage.cacheWrite,
         turnSeq: step.turn,
-        foldedSeq: step.foldedSeq
+        foldedSeq: step.foldedSeq,
+        ...step.amberStockL === void 0 ? {} : { amberStockL: step.amberStockL }
       };
     });
   }
@@ -55395,6 +55563,7 @@ var init_engine = __esm({
     init_bill_regret();
     init_position();
     init_resident_ledger();
+    init_usage();
     USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
     SETTLEMENT_EPSILON = 1e-6;
   }
@@ -56447,109 +56616,6 @@ function createNodeWorkingTree({ path: path3, homeDir, cacheEntries, cacheChars 
 }
 var init_working_tree = __esm({
   "lib/working-tree.js"() {
-  }
-});
-
-// lib/line-align.js
-function splitLines(text) {
-  const lines = text.split(/\r?\n/);
-  if (lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
-function normalizeLine(line) {
-  return line.trimEnd();
-}
-function fingerprintOf(normalizedLine) {
-  let hash = FNV_OFFSET;
-  for (let i2 = 0; i2 < normalizedLine.length; i2++) {
-    hash = Math.imul(hash ^ normalizedLine.charCodeAt(i2), FNV_PRIME);
-  }
-  return hash >>> 0;
-}
-function stripLinePrefix(line) {
-  for (const cue of CUES) {
-    const match = cue.pattern.exec(line);
-    if (!match) continue;
-    const declaredLine = Number(match[cue.line]);
-    if (!Number.isSafeInteger(declaredLine) || declaredLine < 1) continue;
-    return { text: match[cue.text], declaredLine, path: cue.path ? match[cue.path] : null };
-  }
-  return { text: line, declaredLine: null, path: null };
-}
-function trimEnds(a, b, minTrim) {
-  const shared = Math.min(a.length, b.length);
-  let head = 0;
-  while (head < shared && a[head] === b[head]) head++;
-  if (!(head >= minTrim)) head = 0;
-  const room = shared - head;
-  let tail = 0;
-  while (tail < room && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  if (!(tail >= minTrim)) tail = 0;
-  return { head, tail, cells: (a.length - head - tail) * (b.length - head - tail) };
-}
-function alignOrdered(a, b, { maxCells, minTrim }) {
-  const { head, tail, cells } = trimEnds(a, b, minTrim);
-  if (!(cells <= maxCells)) return null;
-  const pairs = [];
-  for (let k = 0; k < head; k++) pairs.push([k, k]);
-  const n = a.length - head - tail;
-  const m = b.length - head - tail;
-  if (n > 0 && m > 0) {
-    const width = m + 1;
-    const lcs = new Uint32Array((n + 1) * width);
-    for (let i3 = n - 1; i3 >= 0; i3--) {
-      for (let j2 = m - 1; j2 >= 0; j2--) {
-        lcs[i3 * width + j2] = a[head + i3] === b[head + j2] ? lcs[(i3 + 1) * width + j2 + 1] + 1 : Math.max(lcs[(i3 + 1) * width + j2], lcs[i3 * width + j2 + 1]);
-      }
-    }
-    let i2 = 0;
-    let j = 0;
-    while (i2 < n && j < m) {
-      if (a[head + i2] === b[head + j]) {
-        pairs.push([head + i2, head + j]);
-        i2++;
-        j++;
-      } else if (lcs[(i2 + 1) * width + j] > lcs[i2 * width + j + 1]) {
-        i2++;
-      } else {
-        j++;
-      }
-    }
-  }
-  for (let k = tail; k > 0; k--) pairs.push([a.length - k, b.length - k]);
-  return pairs;
-}
-var FNV_OFFSET, FNV_PRIME, CUES;
-var init_line_align = __esm({
-  "lib/line-align.js"() {
-    FNV_OFFSET = 2166136261;
-    FNV_PRIME = 16777619;
-    CUES = [
-      { pattern: /^ *(\d+)\t(.*)$/s, line: 1, text: 2 },
-      { pattern: /^ *(\d+)→(.*)$/s, line: 1, text: 2 },
-      { pattern: /^Line (\d+): ?(.*)$/s, line: 1, text: 2 },
-      { pattern: /^(\d+): ?(.*)$/s, line: 1, text: 2 },
-      { pattern: /^(.+?):(\d+):(.*)$/s, path: 1, line: 2, text: 3 },
-      { pattern: /^(\d+)-(.*)$/s, line: 1, text: 2 },
-      // The path of a context row is not kept: its separators are indistinguishable from the path's own dashes.
-      { pattern: /^(\S+?)-(\d+)-(.*)$/s, line: 2, text: 3 }
-    ];
-  }
-});
-
-// lib/working-tree-text.js
-function readableText(tree, key, { size }, { fileBytes }) {
-  if (size > fileBytes) return unreadable("too-large");
-  const text = tree.readText(key);
-  if (text === null) return unreadable("unreadable");
-  if (text.includes("\0")) return unreadable("binary");
-  return { status: "readable", text };
-}
-var unreadable;
-var init_working_tree_text = __esm({
-  "lib/working-tree-text.js"() {
-    init_line_align();
-    unreadable = (reason) => ({ status: "unreadable", reason });
   }
 });
 
@@ -59155,6 +59221,94 @@ var init_log_frames = __esm({
   }
 });
 
+// lib/measurement/source-facts.js
+function initialSourceFacts() {
+  return { epoch: 0, headDone: false, points: [], carriers: [] };
+}
+function withCarrier(facts, input) {
+  const listed = new Set(input.sealed);
+  return {
+    ...facts,
+    points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
+    carriers: [...facts.carriers, { seq: input.seq, epoch: facts.epoch, post: null }]
+  };
+}
+function withMainCall(facts, input) {
+  const usage = usageOf(input);
+  const waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null);
+  const carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: input.seq, usage } } : carrier) : facts.carriers;
+  if (usage === null) return waiting ? { ...facts, carriers } : facts;
+  const role = facts.headDone ? waiting ? "post" : "current" : "head";
+  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: input.seq, role }], carriers };
+}
+function qualifiedCalls(facts) {
+  const pending = facts.points.findIndex((point) => point.role === "current");
+  return pending === -1 ? facts.points.length : pending;
+}
+function foldSourceFacts(facts, input) {
+  if (!isIndex(input.seq)) return facts;
+  if (startsEpoch(input)) return { ...facts, epoch: facts.epoch + 1, headDone: false, points: [] };
+  if (isCarrier(input)) return withCarrier(facts, input);
+  if (input.mainCall) return withMainCall(facts, input);
+  return facts;
+}
+var isCarrier, usageOf, startsEpoch, isIndex;
+var init_source_facts = __esm({
+  "lib/measurement/source-facts.js"() {
+    init_usage();
+    isCarrier = (input) => Array.isArray(input.sealed);
+    usageOf = (input) => input.observations.find((observation) => observation.type === "usage")?.usage ?? null;
+    startsEpoch = ({ observations }) => observations.some((observation) => observation.type === "epoch-boundary");
+    isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
+  }
+});
+
+// lib/measurement/source-fold.js
+function sealedBatch(batch, selected) {
+  return batch.flatMap((observation) => {
+    if (observation.type === "tool-result") return [observation.effectsOnly ? observation : { ...observation, effectsOnly: true }];
+    if (observation.type === "usage") return selected ? [observation] : [];
+    return ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : [];
+  });
+}
+function createSourceFold() {
+  const kept = [];
+  let epochStart = 0;
+  let facts = initialSourceFacts();
+  function push(input) {
+    const { observations, diagnostics, sealed = [] } = input;
+    facts = foldSourceFacts(facts, input);
+    let rewound = false;
+    if (sealed.length > 0) {
+      const listed = new Set(sealed);
+      const selected = new Set(facts.points.map((point) => point.seq));
+      for (let index = epochStart; index < kept.length; index += 1) {
+        if (!listed.has(kept[index].seq)) continue;
+        const next = sealedBatch(kept[index].batch, selected.has(kept[index].seq));
+        if (!changed(kept[index].batch, next)) continue;
+        kept[index].batch = next;
+        rewound = true;
+      }
+    }
+    const batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
+    if (batch.length === 0) return { batch: null, rewound, diagnostics };
+    if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
+    kept.push({ seq: input.seq, batch });
+    return { batch, rewound, diagnostics };
+  }
+  function batches() {
+    return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
+  }
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+}
+var changed;
+var init_source_fold = __esm({
+  "lib/measurement/source-fold.js"() {
+    init_source_facts();
+    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+  }
+});
+
 // lib/harness/dsh/load-message.js
 function loadRouteOf(message) {
   return message?.source?.kind === LOAD_MESSAGE_KIND ? message.source.route : void 0;
@@ -59176,98 +59330,25 @@ var init_load_message = __esm({
   }
 });
 
-// lib/harness/dsh/inner-seal-message.js
-function todoItemsOf(value) {
-  if (value === null) return [];
-  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
-  return value.map(({ content, status }) => ({ content, status }));
-}
-function textEntriesOf(value, fields, what) {
-  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && fields.every((field) => typeof entry[field] === "string"))) {
-    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
+// lib/inner-seal/state-block.js
+var init_state_block = __esm({
+  "lib/inner-seal/state-block.js"() {
   }
-  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
-}
-var INNER_SEAL_KIND, CARRIER_WORDING, isTodoItem, sameEntries, AGENT_FIELDS, TODO_FIELDS, STATE_ITEMS;
-var init_inner_seal_message = __esm({
-  "lib/harness/dsh/inner-seal-message.js"() {
-    init_working_tree_text();
-    init_load_message();
+});
+
+// lib/inner-seal/carrier.js
+var INNER_SEAL_KIND;
+var init_carrier = __esm({
+  "lib/inner-seal/carrier.js"() {
+    init_carried_evidence();
+    init_state_block();
     INNER_SEAL_KIND = "session-watcher-inner-seal";
-    CARRIER_WORDING = {
-      addresses: "These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: holds the user's own words instead, cut where a marker says so.",
-      slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
-      imageSaved: (name2) => `The image ${name2} is not in the current context; read_image can read the file below when it is needed.`,
-      carried: "Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. The reads behind this file text still count in this session, so edit a file without reading it again.",
-      empty: (path3) => `${path3} is empty.`,
-      unreadable: (path3, reason) => `${path3} could not be read (${reason}). This is not its text and not a tool failure; read the file directly when it is needed.`,
-      skill: (name2, text) => `Skill ${name2}:
-${text}`,
-      stateHeading: (seq) => `Session state as of session seq ${seq}:`,
-      stateLabels: {
-        workingDirectory: (tool) => `Working directory, as ${tool} would show:`,
-        subagents: (tool) => `Running subagents, as ${tool} would show:`,
-        jobs: (tool) => `Running jobs, as ${tool} would show:`,
-        todos: (tool) => `Todo list, as ${tool} last left it:`
-      },
-      stateList: (entries) => entries.map(({ id, label }) => `${id} \u2014 ${label}`).join("; "),
-      stateUnchanged: "unchanged since the last summary that shows it",
-      stateEmpty: "(empty)",
-      questionMark: "A line marked question: holds the original question.",
-      questionLine: (question) => `question: ${question}`,
-      userLine: (user) => `user: ${user}`,
-      askCall: ({ id, name: name2, arguments: args2 }) => `Original ${name2} call ${id}, arguments:
-${args2}`,
-      askResult: (id, { text, isError }) => `Original result of call ${id}${isError ? " (marked as an error)" : ""}:
-${text}`
-    };
-    isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
-    sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
-    AGENT_FIELDS = ["id", "label"];
-    TODO_FIELDS = ["content", "status"];
-    STATE_ITEMS = Object.freeze([
-      Object.freeze({
-        key: "workingDirectory",
-        tool: "working_directory",
-        normalize: (value) => {
-          if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
-          return value;
-        },
-        isEmpty: () => false,
-        same: (a, b) => a === b,
-        text: (value) => value
-      }),
-      Object.freeze({
-        key: "subagents",
-        tool: "list_agents",
-        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
-        isEmpty: (entries) => entries.length === 0,
-        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-        text: CARRIER_WORDING.stateList
-      }),
-      Object.freeze({
-        key: "jobs",
-        tool: "job_list",
-        normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
-        isEmpty: (entries) => entries.length === 0,
-        same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-        text: CARRIER_WORDING.stateList
-      }),
-      Object.freeze({
-        key: "todos",
-        tool: "todo_write",
-        normalize: todoItemsOf,
-        isEmpty: (items) => items.length === 0,
-        same: (a, b) => sameEntries(TODO_FIELDS, a, b),
-        text: (items) => JSON.stringify(items)
-      })
-    ]);
   }
 });
 
 // lib/harness/dsh/transcript-observation.js
 function violation(event, field) {
-  const at = isIndex(event.seq) ? ` at seq ${event.seq}` : "";
+  const at = isIndex2(event.seq) ? ` at seq ${event.seq}` : "";
   return {
     observations: [],
     diagnostics: [{ scope: SCOPE, code: "shape-violation", message: `${event.type}${at}: malformed ${field}` }]
@@ -59277,7 +59358,7 @@ function faultOf(checks) {
   return checks.find(([, holds]) => !holds)?.[0] ?? null;
 }
 function envelopeChecks(event) {
-  return [["seq", isIndex(event.seq)], ["time", Number.isFinite(event.time)]];
+  return [["seq", isIndex2(event.seq)], ["time", Number.isFinite(event.time)]];
 }
 function baseOf2(event) {
   return { sourceOrdinal: event.seq, sourceEntryId: String(event.seq), timestamp: event.time };
@@ -59301,7 +59382,7 @@ function parseArguments(raw) {
 function isUsage(usage) {
   return isObject3(usage) && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens) && (usage.cacheReadTokens === void 0 || Number.isFinite(usage.cacheReadTokens)) && (usage.cacheWriteTokens === void 0 || Number.isFinite(usage.cacheWriteTokens));
 }
-function usageOf(usage) {
+function usageOf2(usage) {
   return {
     input: usage.inputTokens,
     output: usage.outputTokens,
@@ -59378,8 +59459,8 @@ function reduceLoadMessage(event) {
 }
 function reduceInnerSeal(event) {
   const seqs = event.sourceEventSeqs;
-  if (!Array.isArray(seqs) || !seqs.every(isIndex)) return violation(event, "sourceEventSeqs");
-  return { observations: [], diagnostics: [], withdraws: seqs };
+  if (!Array.isArray(seqs) || !seqs.every(isIndex2)) return violation(event, "sourceEventSeqs");
+  return { observations: [], diagnostics: [], sealed: seqs };
 }
 function reduceUserMessage(event) {
   const kind = event.data?.source?.kind;
@@ -59394,8 +59475,8 @@ function reduceAssistantMessage(event) {
   const message = data?.message;
   const fault = faultOf([
     ...envelopeChecks(event),
-    ["data.turn", isIndex(data?.turn)],
-    ["data.step", isIndex(data?.step)],
+    ["data.turn", isIndex2(data?.turn)],
+    ["data.step", isIndex2(data?.step)],
     ["data.message.id", isId2(message?.id)],
     ["data.message.source.model", typeof message?.source?.model === "string"],
     ["data.message.content", isContent(message?.content, textShaped, toolCallShaped)],
@@ -59429,7 +59510,7 @@ function reduceAssistantMessage(event) {
       type: "usage",
       messageId,
       model,
-      usage: usageOf(data.usage),
+      usage: usageOf2(data.usage),
       ...base,
       provenance: "assistant"
     });
@@ -59443,8 +59524,8 @@ function reduceToolResult(event) {
   const message = data?.message;
   const fault = faultOf([
     ...envelopeChecks(event),
-    ["data.turn", isIndex(data?.turn)],
-    ["data.step", isIndex(data?.step)],
+    ["data.turn", isIndex2(data?.turn)],
+    ["data.step", isIndex2(data?.step)],
     ["data.message.toolCallId", isId2(message?.toolCallId)],
     ["data.message.isError", message?.isError === void 0 || typeof message.isError === "boolean"],
     ["data.message.content", isContent(message?.content, textShaped)]
@@ -59477,6 +59558,9 @@ function reduceDshEvent(event) {
       return nothing();
   }
 }
+function foldInputOf(event) {
+  return { ...reduceDshEvent(event), seq: event.seq, mainCall: isMainCall(event) };
+}
 function reduceDshSnapshot(events) {
   const batches = [];
   const diagnostics = [];
@@ -59487,113 +59571,22 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute;
+var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall;
 var init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     init_load_message();
-    init_inner_seal_message();
+    init_carrier();
     SCOPE = "dsh-transcript-observation";
     MESSAGE_NAMESPACE = "dsh:message:";
     isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-    isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
+    isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0;
     isId2 = (value) => typeof value === "string" && value !== "";
     isSurfaceOp = (value) => value === "append" || isObject3(value) && value.op === "replace";
     nothing = () => ({ observations: [], diagnostics: [] });
     textShaped = (block) => block.type !== "text" || typeof block.text === "string";
     toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
     isRoute = (route) => isObject3(route) && typeof route.provider === "string" && typeof route.model === "string";
-  }
-});
-
-// lib/harness/dsh/source-facts.js
-function initialSourceFacts() {
-  return { epoch: 0, headDone: false, points: [], carriers: [] };
-}
-function withCarrier(facts, event, reduced) {
-  const listed = new Set(reduced.withdraws);
-  return {
-    ...facts,
-    points: facts.points.filter((point) => point.role !== "current" || !listed.has(point.seq)),
-    carriers: [...facts.carriers, { seq: event.seq, epoch: facts.epoch, post: null }]
-  };
-}
-function withMainCall(facts, event, reduced) {
-  const usage = usageOf2(reduced);
-  const waiting = facts.carriers.some((carrier) => carrier.epoch === facts.epoch && carrier.post === null);
-  const carriers = waiting ? facts.carriers.map((carrier) => carrier.epoch === facts.epoch && carrier.post === null ? { ...carrier, post: { seq: event.seq, usage } } : carrier) : facts.carriers;
-  if (usage === null) return waiting ? { ...facts, carriers } : facts;
-  const role = facts.headDone ? waiting ? "post" : "current" : "head";
-  return { ...facts, headDone: facts.headDone || stockOf(usage) > 0, points: [...facts.points, { seq: event.seq, role }], carriers };
-}
-function qualifiedCalls(facts) {
-  const pending = facts.points.findIndex((point) => point.role === "current");
-  return pending === -1 ? facts.points.length : pending;
-}
-function foldSourceFacts(facts, event, reduced = reduceDshEvent(event)) {
-  if (!isIndex2(event.seq)) return facts;
-  if (startsEpoch(reduced)) return { ...facts, epoch: facts.epoch + 1, headDone: false, points: [] };
-  if (isCarrier(reduced)) return withCarrier(facts, event, reduced);
-  if (isMainCall(event)) return withMainCall(facts, event, reduced);
-  return facts;
-}
-var isCarrier, usageOf2, stockOf, startsEpoch, isIndex2, isMainCall;
-var init_source_facts = __esm({
-  "lib/harness/dsh/source-facts.js"() {
-    init_transcript_observation2();
-    isCarrier = (reduced) => Array.isArray(reduced.withdraws);
-    usageOf2 = (reduced) => reduced.observations.find((observation) => observation.type === "usage")?.usage ?? null;
-    stockOf = ({ input, cacheRead, cacheWrite }) => input + cacheRead + cacheWrite;
-    startsEpoch = (reduced) => reduced.observations.some((observation) => observation.type === "epoch-boundary");
-    isIndex2 = (value) => Number.isSafeInteger(value) && value >= 0;
     isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
-  }
-});
-
-// lib/harness/dsh/source-fold.js
-function withdrawn(batch, selected) {
-  return batch.flatMap((observation) => {
-    if (observation.type === "tool-result") return [observation.effectsOnly ? observation : { ...observation, effectsOnly: true }];
-    if (observation.type === "usage") return selected ? [observation] : [];
-    return ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : [];
-  });
-}
-function createDshSourceFold() {
-  const kept = [];
-  let epochStart = 0;
-  let facts = initialSourceFacts();
-  function push(event) {
-    const reduced = reduceDshEvent(event);
-    const { observations, diagnostics, withdraws = [] } = reduced;
-    facts = foldSourceFacts(facts, event, reduced);
-    let rewound = false;
-    if (withdraws.length > 0) {
-      const listed = new Set(withdraws);
-      const selected = new Set(facts.points.map((point) => point.seq));
-      for (let index = epochStart; index < kept.length; index += 1) {
-        if (!listed.has(kept[index].seq)) continue;
-        const next = withdrawn(kept[index].batch, selected.has(kept[index].seq));
-        if (!changed(kept[index].batch, next)) continue;
-        kept[index].batch = next;
-        rewound = true;
-      }
-    }
-    const batch = isMainCall(event) ? [{ type: "main-call", sourceOrdinal: event.seq }, ...observations] : observations;
-    if (batch.length === 0) return { batch: null, rewound, diagnostics };
-    if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
-    kept.push({ seq: event.seq, batch });
-    return { batch, rewound, diagnostics };
-  }
-  function batches() {
-    return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
-  }
-  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
-}
-var changed;
-var init_source_fold = __esm({
-  "lib/harness/dsh/source-fold.js"() {
-    init_transcript_observation2();
-    init_source_facts();
-    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
   }
 });
 
@@ -59602,14 +59595,14 @@ function indexDshLog(events) {
   return events.filter((event) => event.type === "assistant/message" && event.data?.usage !== void 0).map((event) => ({ limit: event.seq, ts: event.time }));
 }
 function createDshPlaybackDriver({ sessionId, events }) {
-  const fold = createDshSourceFold();
+  const fold = createSourceFold();
   let cursor = 0;
   let replaced = false;
   function advance({ captureMode = "replay", limit = Infinity } = {}) {
     const batches = [];
     let rewound = false;
     for (; cursor < events.length && events[cursor].seq <= limit; cursor += 1) {
-      const pushed = fold.push(events[cursor]);
+      const pushed = fold.push(foldInputOf(events[cursor]));
       rewound = rewound || pushed.rewound;
       if (pushed.batch !== null) batches.push(pushed.batch);
     }
@@ -59633,6 +59626,7 @@ function createDshPlaybackDriver({ sessionId, events }) {
 var init_playback = __esm({
   "lib/harness/dsh/playback.js"() {
     init_source_fold();
+    init_transcript_observation2();
   }
 });
 
@@ -59671,6 +59665,47 @@ var init_replay_source = __esm({
   }
 });
 
+// lib/held-view.js
+function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
+  return (observations) => {
+    let completed = [];
+    const projection = createProjection({
+      completeToolResult: (pending, observation, context, options) => {
+        const answer = completeToolResult(pending, observation, context, options);
+        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
+        return answer;
+      }
+    });
+    const engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED });
+    let skills = /* @__PURE__ */ new Map();
+    const effects = [];
+    for (const observation of observations) {
+      completed = [];
+      const { records } = projection.project(observation, frameCtx);
+      engine.ingest(records.filter((record2) => record2.type === "effect" || record2.type === "epoch"));
+      if (records.some((record2) => record2.type === "epoch")) skills = /* @__PURE__ */ new Map();
+      for (const { effects: answered, text, seq } of completed) {
+        for (const { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
+          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
+          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
+          if (isSkill) skills.set(key, text);
+          effects.push({ seq, kind: isSkill ? "skill" : "path", key });
+        }
+      }
+    }
+    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
+    return { paths, skills, effects };
+  };
+}
+var SELECTED;
+var init_held_view = __esm({
+  "lib/held-view.js"() {
+    init_engine();
+    init_resource_policy();
+    SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
+  }
+});
+
 // lib/harness/dsh/dialogue-source.js
 function createDshDialogueSource({ readSession }) {
   return {
@@ -59691,6 +59726,29 @@ var init_dialogue_source2 = __esm({
   }
 });
 
+// lib/harness/dsh/ask-result.js
+function askAnswersOf(resultText) {
+  let value;
+  try {
+    value = JSON.parse(resultText);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(value?.answers)) return [];
+  const answers = [];
+  for (const answer of value.answers) {
+    const { id, selected, custom: custom3 } = answer ?? {};
+    if (!Array.isArray(selected) || !selected.every((label) => typeof label === "string")) return [];
+    if (custom3 !== void 0 && typeof custom3 !== "string") return [];
+    answers.push(custom3 === void 0 ? { id, selected } : { id, selected, custom: custom3 });
+  }
+  return answers;
+}
+var init_ask_result = __esm({
+  "lib/harness/dsh/ask-result.js"() {
+  }
+});
+
 // lib/harness/dsh/history-turn-rules.js
 function createDshHumanHeadRule() {
   return (line) => {
@@ -59699,25 +59757,11 @@ function createDshHumanHeadRule() {
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
-function answerText(result) {
-  let value;
-  try {
-    value = JSON.parse(result);
-  } catch {
-    return "";
-  }
-  const lines = [];
-  for (const answer of Array.isArray(value?.answers) ? value.answers : []) {
-    if (Array.isArray(answer?.selected)) lines.push(...answer.selected);
-    if (answer?.custom) lines.push(answer.custom);
-  }
-  return lines.join("\n");
-}
 function createDshAskHeadRule() {
   return (line) => {
     if (line.kind !== "tool" || line.tool.name !== ASK_TOOL_NAME2) return PASS;
     if (line.tool.isError === true) return ABSORB;
-    const text = answerText(line.tool.result).trim();
+    const text = askAnswersOf(line.tool.result).flatMap(({ selected, custom: custom3 }) => custom3 ? [...selected, custom3] : selected).join("\n").trim();
     return text === "" ? ABSORB : { kind: "HEAD", text };
   };
 }
@@ -59740,6 +59784,7 @@ var init_history_turn_rules2 = __esm({
   "lib/harness/dsh/history-turn-rules.js"() {
     init_turn();
     init_dialogue_fold();
+    init_ask_result();
     ASK_TOOL_NAME2 = "ask_user_question";
   }
 });
@@ -59877,10 +59922,6 @@ function composeWatcher({
     resourceKeysOf,
     modelPolicyFor: policyFor
   });
-  const heldView = heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult });
-  return { watcher, dialogueSource, dialogueProjection, heldView };
-}
-function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, completeToolResult }) {
   const recall = (toolUseId) => {
     try {
       return store.recallAttribution(sessionId, toolUseId);
@@ -59888,43 +59929,22 @@ function heldViewOf({ sessionId, cwd, store, policyFor, interpretToolUse, comple
       return null;
     }
   };
-  const frameCtx = sessionId ? { recall } : {};
-  return (events, range) => {
-    const inRange = new Set(range);
-    const touched = { paths: /* @__PURE__ */ new Set(), skills: /* @__PURE__ */ new Set() };
-    let completed = [];
-    const projection = createDshMeasurementProjection({
+  const view = createHeldView({
+    createProjection: ({ completeToolResult: recording }) => createDshMeasurementProjection({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy: policyFor,
       interpretToolUse,
-      completeToolResult: (pending, observation, context, options) => {
-        const answer = completeToolResult(pending, observation, context, options);
-        completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal });
-        return answer;
-      }
-    });
-    const engine = createMeasurementEngine({ resolveModelPolicy: policyFor, resolveResourcePolicy: SELECTED });
-    let skills = /* @__PURE__ */ new Map();
-    for (const observation of reduceDshSnapshot(events).observations) {
-      completed = [];
-      const { records } = projection.project(observation, frameCtx);
-      engine.ingest(records.filter((record2) => record2.type === "effect" || record2.type === "epoch"));
-      if (records.some((record2) => record2.type === "epoch")) skills = /* @__PURE__ */ new Map();
-      for (const { effects, text, seq } of completed) {
-        for (const { resourceKey } of effects.flatMap((effect) => effect.impacts)) {
-          const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
-          const key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
-          if (isSkill) skills.set(key, text);
-          if (inRange.has(seq)) touched[isSkill ? "skills" : "paths"].add(key);
-        }
-      }
-    }
-    const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, touched };
-  };
+      completeToolResult: recording
+    }),
+    completeToolResult,
+    resolveModelPolicy: policyFor,
+    frameCtx: sessionId ? { recall } : {}
+  });
+  const heldView = (events) => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView };
 }
-var DSH_TURN_NOTES_ROOT, sharedWorkingTree, SELECTED;
+var DSH_TURN_NOTES_ROOT, sharedWorkingTree;
 var init_composition = __esm({
   "dsh/src/composition.js"() {
     init_session_watcher();
@@ -59932,6 +59952,7 @@ var init_composition = __esm({
     init_resource_enrichment();
     init_handoff();
     init_engine();
+    init_held_view();
     init_model_policy();
     init_pricing_store();
     init_project_key();
@@ -59947,7 +59968,6 @@ var init_composition = __esm({
     init_tool_evidence_profile2();
     DSH_TURN_NOTES_ROOT = join10(tmpdir(), "session-watcher", "turn-notes");
     sharedWorkingTree = null;
-    SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
   }
 });
 
@@ -60306,6 +60326,13 @@ function createServer({ watcher, pollIntervalMs = 1e3, sessionId, hookSessionId 
       return res.status(400).json({ error: "invalid_body", message: INVALID_OVERRIDES_MESSAGE });
     }
     res.json({ scenario: watcher.readScenario(overrides) });
+  });
+  app.post("/api/bucket/file", (req, res) => {
+    const { path: path3 } = req.body || {};
+    if (typeof path3 !== "string") return res.status(400).json({ error: "invalid_body", message: INVALID_BUCKET_FILE_MESSAGE });
+    const lineNumbers = activeWatcher.getHeldLines(path3);
+    if (lineNumbers === null) return res.status(404).json({ error: "not_held", message: NOT_HELD_MESSAGE });
+    res.json(heldFilePayload(path3, lineNumbers, nodeWorkingTree2(), { fileBytes: ATTRIBUTION_LIMITS.fileBytes }));
   });
   let _replayController = null;
   app.post("/api/replay/start", async (req, res) => {

@@ -3,6 +3,8 @@
 // so an event is well-formed on its own and events keep their build order; `sessionLog` renumbers a list into a log
 // from zero. A seq-valued argument names the referenced event's own `seq`, which `sessionLog` carries along with it.
 
+import { carryChanges, foldCarried } from '../../lib/carried-evidence.js';
+
 const T0 = Date.UTC(2026, 8, 27);
 const TICK_MS = 1000;
 const PROVIDER = 'deepseek';
@@ -224,6 +226,7 @@ export function requestContext({ model = MODEL, contextWindow = 1_000_000 } = {}
 export function loadMessage({
   route = { provider: PROVIDER, model: MODEL },
   calls = [{ id: 'sw-load-0000aaaa-1', name: 'load_handoff', arguments: '{}', text: '{"found":true}' }],
+  paths,
 } = {}) {
   const { seq, time } = stamp();
   return {
@@ -233,6 +236,7 @@ export function loadMessage({
       source: {
         kind: 'session-watcher-load', route,
         calls: calls.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })),
+        ...(paths === undefined ? {} : { paths }),
       },
       role: 'user',
       id: messageId(seq),
@@ -260,12 +264,21 @@ export function loadPayload({
   return loadMessage({ calls: [{ id: 'sw-load-0000aaaa-0', name: 'load_handoff', arguments: JSON.stringify({ load_token: token }), text: text ?? JSON.stringify(payload) }] });
 }
 
-/** The read message of a load: one `read` call per entry of `files`, each `{ path, ranges, text }`, its arguments the logical `{ file_path, ranges }` and its text the rendering. */
-export function loadReads({ files = [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }], text: '/repo/src/a.js (total lines: 2)\n1: a\n2: b\n' }] } = {}) {
+/**
+ * The read message of a load: one `read` call per entry of `files`, each `{ path, displayPath, ranges, text, totalLines, windows }`, its arguments the logical `{ file_path, ranges }`, its text the rendering and `displayPath` (the path by default) the path the rendering names. The source's `paths` state the lines `windows` hold, `[{ offset, lines: [{ number, text }] }]`, of a file of `totalLines` lines, as the read message of a load carries them.
+ */
+export function loadReads({
+  files = [{
+    path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }], text: '/repo/src/a.js (total lines: 2)\n1: a\n2: b\n',
+    totalLines: 2, windows: [{ offset: 1, lines: [{ number: 1, text: 'a' }, { number: 2, text: 'b' }] }],
+  }],
+} = {}) {
+  const view = { paths: new Map(files.map(({ path, displayPath = path, totalLines, windows }) => [path, { displayPath, read: { status: 'readable', totalLines, windows } }])), skills: new Map() };
   return loadMessage({
     calls: files.map(({ path, ranges, text }, index) => ({
       id: `sw-load-0000aaaa-${index + 1}`, name: 'read', arguments: JSON.stringify({ file_path: path, ranges }), text,
     })),
+    paths: carryChanges(foldCarried([]), view).paths,
   });
 }
 

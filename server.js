@@ -21,6 +21,7 @@ import { resolveClaudeCodeCacheTtl } from './lib/harness/claude-code/cache-ttl.j
 import { advanceRateLampToCurrent, getLiveLedger, flushAll, getDebugCounters, isEnospcPaused } from './lib/rate-lamp-manager.js';
 import {
   statusWire, statusWireWithLedger, bucketsPayload, overrideWarnings, pricingResponse, turnPageWire, loadedHandoffPayload, isOverrideMap, INVALID_OVERRIDES_MESSAGE,
+  heldFilePayload, INVALID_BUCKET_FILE_MESSAGE, NOT_HELD_MESSAGE,
 } from './lib/wire.js';
 import {
   IDLE_HEARTBEAT_MS, ATTRIBUTION_LIMITS, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS,
@@ -541,6 +542,17 @@ export function createServer({ watcher, pollIntervalMs = 1000, sessionId, hookSe
       return res.status(400).json({ error: 'invalid_body', message: INVALID_OVERRIDES_MESSAGE });
     }
     res.json({ scenario: watcher.readScenario(overrides) });
+  });
+
+  // ── Held file ────────────────────────────────────────────────────────────────
+  // The lines the active watcher holds of one path, read from the working tree now. A path it has no resource at is
+  // refused, so the route reads no file the session never held.
+  app.post('/api/bucket/file', (req, res) => {
+    const { path } = req.body || {};
+    if (typeof path !== 'string') return res.status(400).json({ error: 'invalid_body', message: INVALID_BUCKET_FILE_MESSAGE });
+    const lineNumbers = activeWatcher.getHeldLines(path);
+    if (lineNumbers === null) return res.status(404).json({ error: 'not_held', message: NOT_HELD_MESSAGE });
+    res.json(heldFilePayload(path, lineNumbers, nodeWorkingTree(), { fileBytes: ATTRIBUTION_LIMITS.fileBytes }));
   });
 
   // ── Replay (post-v3: transcript replay for demo recording) ──────────────

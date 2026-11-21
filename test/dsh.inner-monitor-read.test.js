@@ -7,19 +7,21 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createInnerMonitor } from '../dsh/src/inner-monitor.js';
-import { innerQuote } from '../dsh/src/inner-quote.js';
+import { MAX_CARRIER_EVIDENCE } from '../lib/inner-seal/call-record.js';
+import { innerQuote } from '../lib/inner-seal/quote.js';
 
 // The policy the quotes below are priced under, the one each page then names.
 const PRESET = 'E2';
 import { parentMetaParts, quoteFactsOf } from '../dsh/src/client/monitor-model.js';
 import { exportSession } from '../dsh/src/client/monitor-export.js';
-import { CARRIER_WORDING } from '../lib/harness/dsh/inner-seal-message.js';
+import { CARRIED_WORDING, carriedNote } from '../lib/carried-evidence.js';
+import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { INNER_ATTEMPT_RECORD_TYPE, INNER_END_RECORD_TYPE } from '../dsh/src/inner-seal.js';
 import {
-  innerMonitorProjection, isMonitorInput, rowsOf, createMonitorAccess, MONITOR_PROJECTION_KEY, PREVIEW_SOURCE_CHARS,
+  heldInContext, innerMonitorProjection, isMonitorInput, rowsOf, createMonitorAccess, MONITOR_PROJECTION_KEY, PREVIEW_SOURCE_CHARS,
 } from '../dsh/src/inner-monitor-read.js';
 import {
-  assistantMessage, compactCheckpoint, compactionPrune, ignorableEvent, innerAttempt, innerCall, innerEnd, innerSealCarrier, prunedResult, requestHeader, toolResult,
+  assistantMessage, attempt, compactCheckpoint, compactionPrune, ignorableEvent, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, loadReads, prunedResult, requestHeader, toolCall, toolResult,
   turnStart, userMessage,
 } from './helpers/dsh-events.js';
 import { newSession } from './helpers/dsh-mode-kit.js';
@@ -43,7 +45,7 @@ const kit = skip ? null : {
 const projection = skip ? null : innerMonitorProjection(kit);
 
 // The state the registry's fold reaches over `events`: `init`, then `apply` per event.
-const fold = events => events.reduce((state, event) => projection.apply(state, event), projection.init());
+const fold = (events, header) => events.reduce((state, event) => projection.apply(state, event), projection.init(header));
 const rowsFor = (events, live = []) => rowsOf(fold(events), live, kit);
 
 // The compact stream the real accumulator keeps of `chunks`, a tick apart.
@@ -90,7 +92,6 @@ test('a sealed attempt folds to a committed row: the start, the call, the prune 
     id: start.seq,
     revision: carrier.seq,
     status: 'committed',
-    legacy: false,
     startedAt: start.time,
     endedAt: carrier.time,
     range: { first: range[0], last: range.at(-1), count: range.length },
@@ -118,12 +119,12 @@ test('a valid call with no carrier is not a committed seal: an attempt with only
   assert.equal(called?.endedAt, null);
 });
 
-// Quotes as the seal records them, the `innerQuote` snapshots of a quote left of its reference, one right of it, and one with trigger `hard` and no ratio to price it.
+// Quotes as the seal records them, the `innerQuote` snapshots of a quote left of its reference, one right of it, and one whose trigger is the retired `hard`, which is no quote the monitor reads.
 const QUOTE_FIELDS = { lA: 40000, bEst: 120, cEst: 2400, sEst: 37480, cRatio: 30, fee: 5000, kappa: 1.1 };
 const QUOTES = {
-  inside: { n: 8, ...QUOTE_FIELDS, nRef: 15, N: 21.96, jRef: 28.87, q: 1.04, arm: 'left', trigger: 'quote', missing: null },
-  beyond: { n: 20, ...QUOTE_FIELDS, nRef: 1, N: 2.16, jRef: 10.1, q: 2.19, arm: 'right', trigger: 'quote', missing: null },
-  hard: { n: 24, ...QUOTE_FIELDS, cRatio: null, nRef: null, N: null, jRef: null, q: null, arm: null, trigger: 'hard', missing: 'ratio_unavailable' },
+  inside: { n: 8, ...QUOTE_FIELDS, nRef: 15, N: 21.96, jRef: 28.87, q: 1.04, arm: 'left', trigger: 'quote' },
+  beyond: { n: 20, ...QUOTE_FIELDS, nRef: 1, N: 2.16, jRef: 10.1, q: 2.19, arm: 'right', trigger: 'quote' },
+  hard: { n: 24, ...QUOTE_FIELDS, cRatio: null, nRef: null, N: null, jRef: null, q: null, arm: null, trigger: 'hard' },
 };
 
 test('the quote an attempt record keeps folds with it: the row carries the deviation q and the kappa the snapshot holds, a value the quote has none of null, while an attempt recorded without a quote has none and is not reconstructed', { skip }, () => {
@@ -132,11 +133,11 @@ test('the quote an attempt record keeps folds with it: the row carries the devia
     return rowsFor(failed ? [...source, start, innerEnd({ attempt: start.seq, outcome: 'failed', reason: 'refused' })] : [...source, start, call, prune, carrier])[0];
   };
   assert.deepEqual(rowOf(QUOTES.inside).trigger, { q: 1.04, kappa: 1.1 });
-  assert.deepEqual([QUOTES.inside, QUOTES.beyond, QUOTES.hard, undefined].map(quote => rowOf(quote).stepN), [8, 20, 24, null], 'the step count is the quote\'s n, and none for an attempt recorded without a quote');
-  assert.deepEqual([QUOTES.inside, QUOTES.beyond, QUOTES.hard, undefined].map(quote => rowOf(quote).cRatio), [30, 30, null, null], 'the price ratio is the quote\'s own, none where there is no quote or no ratio');
+  assert.deepEqual([QUOTES.inside, QUOTES.beyond, undefined].map(quote => rowOf(quote).stepN), [8, 20, null], 'the step count is the quote\'s n, and none for an attempt recorded without a quote');
+  assert.deepEqual([QUOTES.inside, QUOTES.beyond, undefined].map(quote => rowOf(quote).cRatio), [30, 30, null], 'the price ratio is the quote\'s own, none where there is no quote');
   assert.deepEqual(rowOf(QUOTES.beyond).trigger, { q: 2.19, kappa: 1.1 }, 'a q at or above kappa is carried as it is');
   const hard = rowOf(QUOTES.hard, { failed: true });
-  assert.deepEqual(hard.trigger, { q: null, kappa: 1.1 }, 'a quote with trigger `hard` and no result keeps its kappa');
+  assert.deepEqual([hard.trigger, hard.stepN, hard.cRatio], [null, null, null], 'a quote with trigger `hard` reads as no quote');
   assert.equal(hard.status, 'failed', 'the quote leaves the status as the facts give it');
   assert.deepEqual(rowOf(undefined).trigger, null, 'an attempt recorded before the quote');
 });
@@ -179,7 +180,7 @@ test('a quote the producer prices reaches the read side with the kappa and the p
   assert.ok(second.includes('monitor.meta.estimate(q=1.36)'), second);
 });
 
-test('each attempt carries the epoch it began in, the count of epoch boundaries folded before its first record: a committed, a failed and a legacy attempt alike, and one whose call is recorded after a boundary keeps the epoch it began in', { skip }, () => {
+test('each attempt carries the epoch it began in, the count of epoch boundaries folded before its first record: a committed and a failed attempt alike, and one whose call is recorded after a boundary keeps the epoch it began in', { skip }, () => {
   const first = sealOf();
   const toSecond = compactCheckpoint({ startSeq: first.source[0].seq, endSeq: first.carrier.seq });
   const second = sealOf();
@@ -188,15 +189,14 @@ test('each attempt carries the epoch it began in, the count of epoch boundaries 
   const crossing = innerAttempt({ range: second.range, tail: PROMPT });
   const toThird = compactCheckpoint({ startSeq: second.source[0].seq, endSeq: failedEnd.seq });
   const crossingCall = innerCall({ range: second.range, tail: PROMPT, stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, attempt: crossing.seq });
-  const legacy = innerCall({ range: second.range, tail: 'an older prompt', stream: answer(SUMMARIES) });
 
   const events = [
     ...first.source, first.start, first.call, first.prune, first.carrier, toSecond,
-    ...second.source, second.start, second.call, second.prune, second.carrier, failedStart, failedEnd, crossing, toThird, crossingCall, legacy,
+    ...second.source, second.start, second.call, second.prune, second.carrier, failedStart, failedEnd, crossing, toThird, crossingCall,
   ];
 
   assert.deepEqual(rowsFor(events).map(row => [row.id, row.epoch]), [
-    [first.start.seq, 0], [second.start.seq, 1], [failedStart.seq, 1], [crossing.seq, 1], [legacy.seq, 2],
+    [first.start.seq, 0], [second.start.seq, 1], [failedStart.seq, 1], [crossing.seq, 1],
   ]);
 });
 
@@ -277,39 +277,20 @@ test('the status is the first that holds of the carrier, the end record, a live 
   assert.equal(both?.endedAt, carrier.time, 'the carrier is the terminal fact');
 });
 
-test('a call that names no attempt of the log is an attempt of its own, a legacy row with no start time and the call\'s own range, prompt and time, which a carrier still commits', { skip }, () => {
+test('a call that names no attempt of the log makes no row, a carrier citing it commits nothing, and a call that joins an attempt with a start leaves the start\'s prompt as the input', { skip }, () => {
   const { source, range, prune } = sealOf();
-  // A seal from before the monitor, or one whose start record could not be appended: no `attempt`, and from before the monitor no `endedAt`.
+  // A call with no `attempt`, as a seal from before the monitor wrote it, and one that names an attempt the log never started.
   const old = innerCall({ range, tail: 'an older prompt', stream: answer(SUMMARIES) });
-  const carrier = innerSealCarrier({ sourceEventSeqs: [old.seq, prune.seq, ...range], slots: slotsOf(2) });
-  const legacy = {
-    id: old.seq, legacy: true, startedAt: null, range: { first: range[0], last: range.at(-1), count: range.length }, reason: null,
-    call: { state: 'received', endedAt: null, finish: 'stop', thrown: null, input: 'an older prompt', output: SUMMARIES, outputDisplay: 'one\ntwo\nthree', usage: USAGE },
-    contextChange: null, trigger: null, stepN: null, cRatio: null, epoch: 0,
-  };
-
-  assert.deepEqual(rowsFor([...source, old]), [{ ...legacy, revision: old.seq, status: 'unknown', endedAt: null, slots: null }]);
-  assert.deepEqual(rowsFor([...source, old, prune, carrier]), [{ ...legacy, revision: carrier.seq, status: 'committed', endedAt: carrier.time, slots: 2, contextChange: { before: null, after: null, delta: null, miss: null } }]);
-
   const orphan = innerCall({ range, tail: 'a call of a lost start', stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, attempt: old.seq - 1 });
-  const [named] = rowsFor([...source, orphan]);
-  assert.equal(named?.id, orphan.seq, 'an attempt no record of the log introduced is the call\'s own');
-  assert.equal(named?.legacy, true);
-  assert.equal(named?.call.endedAt, CALL_ENDED_AT);
-});
+  const carrier = innerSealCarrier({ sourceEventSeqs: [old.seq, prune.seq, ...range], slots: slotsOf(2) });
 
-test('a call that joins an attempt with a start leaves the start\'s prompt as the input, and the rows of a log read ascending by id, a legacy one among them', { skip }, () => {
-  const old = sealOf({ tail: 'an older prompt' });
-  const legacyCall = innerCall({ range: old.range, tail: 'an older prompt', stream: answer(SUMMARIES) });
+  assert.deepEqual(rowsFor([...source, old, orphan]), []);
+  assert.deepEqual(rowsFor([...source, old, orphan, prune, carrier]), []);
+
   const next = sealOf({ tail: 'the start\'s prompt' });
   const rewritten = innerCall({ range: next.range, tail: 'the call\'s prompt', stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, attempt: next.start.seq });
-
-  const rows = rowsFor([...old.source, legacyCall, ...next.source, next.start, rewritten]);
-
-  assert.deepEqual(rows.map(row => [row.id, row.legacy, row.call.input]), [
-    [legacyCall.seq, true, 'an older prompt'],
-    [next.start.seq, false, 'the start\'s prompt'],
-  ]);
+  const rows = rowsFor([...source, old, ...next.source, next.start, rewritten]);
+  assert.deepEqual(rows.map(row => [row.id, row.call.input]), [[next.start.seq, 'the start\'s prompt']]);
 });
 
 const BLOCK_START = { type: 'block-start', index: 0, blockType: 'text' };
@@ -430,8 +411,8 @@ test('the revision is the greatest seq of the start, call, end and carrier facts
 test('the projection is keyed session-watcher/inner-monitor, versioned, and starts from a new empty state each time', { skip }, () => {
   assert.equal(projection.key, 'session-watcher/inner-monitor');
   assert.equal(MONITOR_PROJECTION_KEY, projection.key);
-  assert.equal(projection.stateVersion, 10, 'the version of the state that holds the step counts');
-  assert.deepEqual(projection.init(), { attempts: [], handoffs: [], lastMainUsage: null, lastCheckpointToken: null, lastCheckpointSteps: 0, openSteps: 0, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
+  assert.equal(projection.stateVersion, 16, 'the version of the state that holds injected text sources');
+  assert.deepEqual(projection.init(), { attempts: [], handoffs: [], lastMainUsage: null, settlementBefore: null, lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: null, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
   assert.notEqual(projection.init(), projection.init());
 });
 
@@ -444,24 +425,168 @@ test('an attempt record and an inner-seal carrier are the signal inputs `isMonit
   ]) assert.equal(isMonitorInput(event), false, `${event.type}: not a signal input, whether or not the projection folds it`);
 });
 
+function dispatchedStep(calls, { step = 1, text } = {}) {
+  return [assistantMessage({ toolCalls: calls, step, text }), ...calls.map(({ id, ...args }) => toolCall({ ...args, callId: id, step }))];
+}
+
+const eventsOfSeal = ({ source, start, call, prune, carrier }) => [...source, start, call, prune, carrier];
+
+function sealSteps(...steps) {
+  const slots = steps.map(source => ({ seqs: source.filter(event => event.type !== 'tool/call').map(event => event.seq), text: 'step summary' }));
+  const range = slots.flatMap(slot => slot.seqs);
+  const start = innerAttempt({ range });
+  const call = innerCall({ range, attempt: start.seq });
+  const prune = compactionPrune(steps[0][0]);
+  return [start, call, prune, innerSealCarrier({ sourceEventSeqs: [call.seq, prune.seq, ...range], slots })];
+}
+
+test('state warnings land on the next seal’s existing slots, using the first main request rather than the first successful retry', { skip }, async () => {
+  const seal = sealOf();
+  const base = eventsOfSeal(seal);
+  const git = { id: 'git', name: 'bash', arguments: '{"command":"git status --short && git log -1 --oneline"}' };
+  const list = { id: 'agents', name: 'list_agents' };
+  const todo = { id: 'todo', name: 'todo_write', arguments: '{"todos":[{"content":"continue","status":"in_progress"}]}' };
+  const read = { id: 'read', name: 'read' };
+  const rowsAfter = async tail => {
+    const { access, id, reads } = detailsOver([...base, ...tail]);
+    const { attempts } = await access.rows(id);
+    assert.deepEqual(reads, [], 'listing warnings needs no detail or full-log read');
+    return attempts;
+  };
+  const only = dispatchedStep([git], { text: 'Checking.' });
+  const failed = attempt({ finish: { kind: 'error' } });
+  for (const [lead, step, expected] of [
+    [[], only, ['state-check']],
+    [[], dispatchedStep([read, list, todo]), ['state-mixed', 'state-write']],
+    [[], dispatchedStep([{ id: 'cwd', name: 'working_directory', arguments: '{"cd":"src"}' }]), ['state-write']],
+    [[failed], dispatchedStep([git]), undefined],
+    [[], dispatchedStep([{ ...git, arguments: '{"command":"git status && git add ."}' }]), undefined],
+    [[assistantMessage({ text: 'First.' })], dispatchedStep([git], { step: 2 }), undefined],
+    [[], only.slice(0, 1), undefined],
+  ]) {
+    const [previous] = await rowsAfter([...lead, ...step]);
+    assert.equal(previous.slotWarnings, undefined, 'an unsealed call does not warn on the previous parent');
+    assert.equal(previous.marks, undefined, 'the list no longer exposes standalone call rows');
+    const [old, next] = await rowsAfter([...lead, ...step, ...sealSteps(step)]);
+    assert.deepEqual([old.slotWarnings, next.slotWarnings], [undefined, expected === undefined ? undefined : { [step[0].seq]: expected }]);
+  }
+});
+
+test('recall warnings follow the slot that seals the call, not the prior seal or the recall target', { skip }, async () => {
+  const oldMessage = userMessage({ text: 'older epoch' });
+  const oldHandoff = loadPayload();
+  const old = sealOf();
+  const checkpoint = compactCheckpoint({ startSeq: oldMessage.seq, endSeq: old.carrier.seq });
+  const first = sealOf();
+  const injected = first.source[0].seq;
+  first.carrier.data.source.verbatimSeqs = [injected];
+  const later = sealOf();
+  later.carrier.data.source.verbatimSeqs = [later.source[0].seq];
+  const legacy = sealOf();
+  const recall = (id, seq, extra = {}) => ({ id, name: 'sw_event_read', arguments: JSON.stringify({ seq, ...extra }) });
+  const local = dispatchedStep([recall('local', injected, { session_id: 's-detail' })], { step: 2 });
+  const failed = toolResult({ callId: 'local', step: 2, isError: true, text: 'read denied' });
+  const direct = dispatchedStep([recall('handoff', oldHandoff.seq), recall('carrier', old.carrier.seq)], { step: 3 });
+  const unmarked = dispatchedStep([
+    recall('old', oldMessage.seq),
+    recall('peer', injected, { session_id: 'other' }),
+    recall('legacy', legacy.source[0].seq),
+    recall('neighbor only', injected + 1, { before: 1 }),
+  ], { step: 4 });
+  const base = [
+    oldMessage, oldHandoff, ...eventsOfSeal(old), checkpoint, ...eventsOfSeal(first), ...eventsOfSeal(later), ...eventsOfSeal(legacy),
+    ...local, failed, ...direct, ...unmarked,
+  ];
+  const second = sealSteps([...local, failed], direct, unmarked);
+  const boundary = compactCheckpoint({ startSeq: checkpoint.seq, endSeq: second.at(-1).seq });
+  const beforeFirstSeal = dispatchedStep([recall('no owner', old.carrier.seq)], { step: 5 });
+  const newEpochSeal = sealSteps(beforeFirstSeal);
+  const afterBoundary = dispatchedStep([recall('previous epoch text', injected)], { step: 6 });
+  const { access, id, reads } = detailsOver([...base, ...second, boundary, ...beforeFirstSeal, ...newEpochSeal, ...afterBoundary, ...sealSteps(afterBoundary)]);
+  const { attempts, handoffs } = await access.rows(id);
+  assert.deepEqual(reads, [], 'listing warnings needs no full-log read');
+  assert.deepEqual(handoffs.map(row => row.slotWarnings), [undefined], 'the handoff target is not warned');
+  assert.deepEqual(attempts.map(row => row.slotWarnings), [undefined, undefined, undefined, undefined, {
+    [local[0].seq]: ['verbatim-recall'],
+    [direct[0].seq]: ['handoff-recall', 'carrier-recall'],
+  }, undefined, undefined], 'a later carrier does not hide an earlier carrier’s verbatim text in the same epoch');
+});
+
+test('a read by the native tool name warns the slot that seals it as the DSH tool name does, for a verbatim, a carrier and a handoff target', { skip }, async () => {
+  const handoff = loadPayload();
+  const first = sealOf();
+  const injected = first.source[0].seq;
+  first.carrier.data.source.verbatimSeqs = [injected];
+  const read = (id, seq) => ({ id, name: 'session_event_read', arguments: JSON.stringify({ seq }) });
+  const step = dispatchedStep([read('verbatim', injected), read('carrier', first.carrier.seq), read('handoff', handoff.seq)], { step: 2 });
+  const { access, id } = detailsOver([handoff, ...eventsOfSeal(first), ...step, ...sealSteps(step)]);
+  const { attempts } = await access.rows(id);
+  assert.deepEqual(attempts.map(row => row.slotWarnings), [undefined, { [step[0].seq]: ['verbatim-recall', 'carrier-recall', 'handoff-recall'] }]);
+});
+
+test('an event is held in context as a carrier, a handoff payload, the load’s read message and follow-up or verbatim text of the open epoch, and not as a summarized source or anything of an earlier epoch', { skip }, () => {
+  const oldHandoff = loadPayload();
+  const oldReads = loadReads();
+  const oldFollowUp = loadFollowUp();
+  const old = sealOf();
+  old.carrier.data.source.verbatimSeqs = [old.source[0].seq];
+  const checkpoint = compactCheckpoint({ startSeq: oldHandoff.seq, endSeq: old.carrier.seq });
+  const handoff = loadPayload();
+  const reads = loadReads();
+  const followUp = loadFollowUp();
+  const current = sealOf();
+  current.carrier.data.source.verbatimSeqs = [current.source[0].seq];
+  const state = fold([oldHandoff, oldReads, oldFollowUp, ...eventsOfSeal(old), checkpoint, handoff, reads, followUp, ...eventsOfSeal(current)]);
+
+  for (const [why, seq, held] of [
+    ['the open epoch’s carrier', current.carrier.seq, true],
+    ['the open epoch’s handoff payload', handoff.seq, true],
+    ['the open epoch’s load read message', reads.seq, true],
+    ['the open epoch’s load follow-up', followUp.seq, true],
+    ['verbatim text the open epoch’s carrier holds', current.source[0].seq, true],
+    ['a source the carrier summarizes', current.source[1].seq, false],
+    ['an earlier epoch’s carrier', old.carrier.seq, false],
+    ['an earlier epoch’s handoff payload', oldHandoff.seq, false],
+    ['an earlier epoch’s load read message', oldReads.seq, false],
+    ['an earlier epoch’s load follow-up', oldFollowUp.seq, false],
+    ['verbatim text of an earlier epoch', old.source[0].seq, false],
+  ]) assert.equal(heldInContext(state, seq), held, why);
+});
+
+test('recall warns for verbatim text sealed from a stock checkpoint’s retained tail', { skip }, async () => {
+  const earlier = userMessage({ text: 'replaced prefix' });
+  const keptTail = userMessage({ text: 'retained original' });
+  const checkpoint = compactCheckpoint({ startSeq: earlier.seq, endSeq: earlier.seq });
+  const worked = assistantMessage({ text: 'worked after the checkpoint' });
+  const firstSeal = sealSteps([keptTail], [worked]);
+  const carrier = firstSeal.at(-1);
+  carrier.data.source.slots[0].text = 'user: retained original';
+  carrier.data.source.verbatimSeqs = [keptTail.seq];
+  const recall = dispatchedStep([{ id: 'kept-tail', name: 'sw_event_read', arguments: JSON.stringify({ seq: keptTail.seq }) }], { step: 2 });
+  const { access, id } = detailsOver([earlier, keptTail, checkpoint, worked, ...firstSeal, ...recall, ...sealSteps(recall)]);
+
+  const { attempts } = await access.rows(id);
+  assert.deepEqual(attempts.map(row => row.slotWarnings), [undefined, { [recall[0].seq]: ['verbatim-recall'] }]);
+});
+
 // ── The main calls around a committed seal ───────────────────────────────────────────────────────────────
 
 // DSH's token usage as an `assistant/message` carries it.
 const tokens = (input, output, cacheRead = 0, cacheWrite = 0) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
 
 // A seal over a turn that ends in a main call, with the main calls `after` following the carrier. `earlier` is a main call before the last one; `last` is the last one's usage (`false`: the turn has no main call), `after` a list of usages, `undefined` for a call that reported none.
-function sealAround({ earlier, last, after = [], withCall = true } = {}) {
+function sealAround({ earlier, last, after = [] } = {}) {
   const ask = userMessage({ text: 'please work' });
   const calls = [];
   if (earlier !== undefined) calls.push(assistantMessage({ text: 'early', usage: earlier }));
   if (last !== false) calls.push(assistantMessage({ text: 'reply', ...(last === undefined ? {} : { usage: last }) }));
   const range = [ask.seq, ...calls.map(event => event.seq)];
   const start = innerAttempt({ range, tail: PROMPT });
-  const call = innerCall({ range, tail: PROMPT, stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, ...(withCall ? { attempt: start.seq } : {}) });
+  const call = innerCall({ range, tail: PROMPT, stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, attempt: start.seq });
   const prune = compactionPrune(ask);
   const carrier = innerSealCarrier({ sourceEventSeqs: [call.seq, prune.seq, ...range], slots: slotsOf(3) });
   const later = after.map(usage => assistantMessage({ text: 'next', ...(usage === undefined ? {} : { usage }) }));
-  return { source: [ask, ...calls], start, call, prune, carrier, later, log: [ask, ...calls, ...(withCall ? [start] : []), call, prune, carrier, ...later] };
+  return { source: [ask, ...calls], start, call, prune, carrier, later, log: [ask, ...calls, start, call, prune, carrier, ...later] };
 }
 
 test('the context change of a committed seal is the first main call after its carrier less the last main call before it, which counts its own output while the later call\'s output counts for nothing', { skip }, async () => {
@@ -551,13 +676,6 @@ test('only a committed seal has a context change: one that is started, called, f
   }
 });
 
-test('an attempt with no start record takes its before from the main calls before its call record and its after from the first call after its carrier', { skip }, () => {
-  const { log } = sealAround({ last: tokens(100, 20, 300, 40), after: [tokens(500, 90, 200, 10)], withCall: false });
-  const [row] = rowsFor(log);
-  assert.equal(row.legacy, true);
-  assert.deepEqual(row.contextChange, { before: 460, after: 710, delta: 250, miss: 510 });
-});
-
 test('the state keeps the last main call across the records that amend an attempt, and each seal takes its before from the call last before its own start', { skip }, () => {
   const first = sealAround({ last: tokens(100, 20, 300, 40), after: [tokens(500, 90, 200, 10)] });
   const middle = assistantMessage({ text: 'between', usage: tokens(1, 2, 3, 4) });
@@ -605,6 +723,8 @@ test('a record of the wrong shape is ignored and not thrown at: the state comes 
     ['a start of another version', changed(start, e => { e.data.v = 2; })],
     ['a start with no request', changed(start, e => { delete e.data.request; })],
     ['a start whose tail is not a message', changed(start, e => { e.data.request.messages.tail = 'text'; })],
+    ['a start whose tail is an object that holds no message content', changed(start, e => { e.data.request.messages.tail = { role: 'user', content: 'text' }; })],
+    ['a start whose tail is an empty object', changed(start, e => { e.data.request.messages.tail = {}; })],
     ['a start with no data', changed(start, e => { e.data = null; })],
     ['a call whose stream is not a list', changed(call, e => { e.data.stream = 'text'; })],
     ['a call whose stream holds a record that is none', changed(call, e => { e.data.stream = [null]; })],
@@ -636,6 +756,22 @@ test('a record of the wrong shape is ignored and not thrown at: the state comes 
   assert.equal(projection.apply(state, changed(start, e => { e.data.v = 2; })), state, 'a record that is no input at all is the same state');
 });
 
+test('a call whose C tail is no message still folds: the fold never reads the call\'s tail, so the row is the call the stream says whatever shape the tail has', { skip }, () => {
+  const { source, start, call, prune, carrier } = sealOf();
+  const expected = rowsFor([...source, start, call, prune, carrier])[0];
+  const tails = {
+    'content that is text': { role: 'user', content: 'text' },
+    'an empty object': {},
+    'a message of another role and blocks': { role: 'assistant', content: [{ type: 'unknown' }] },
+  };
+  for (const [why, tail] of Object.entries(tails)) {
+    const odd = changed(call, (e) => { e.data.input.tail = tail; });
+    const state = fold([...source, start, odd, prune, carrier]);
+    assert.notEqual(state.attempts[0].call, null, `${why}: the call is folded into the state`);
+    assert.deepEqual(rowsOf(state, [], kit)[0], expected, `${why}: the row is the one the call with a message tail gives`);
+  }
+});
+
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -662,7 +798,7 @@ test('the fold changes neither the state nor the event it is given, and a row sh
   assert.deepEqual(rowsOf(states.at(-1), [], kit), expected, 'a row\'s nested values are its own');
 });
 
-// Attempts of every kind in one log: sealed, failed after a call, cancelled with no call, a legacy call that was sealed, and one still waiting for a terminal fact.
+// Attempts of every kind in one log: sealed, failed after a call, cancelled with no call, a call that names no attempt, and one still waiting for a terminal fact.
 function mixedLog() {
   const sealed = sealOf();
   const failed = sealOf({ stream: answer('not a summary') });
@@ -683,7 +819,7 @@ function mixedLog() {
 test('the state is plain JSON the schema accepts: a state persisted after any prefix of the log and folded on with the rest reaches the state of folding the log whole', { skip }, () => {
   const events = mixedLog();
   const whole = fold(events);
-  assert.equal(whole.attempts.length, 5);
+  assert.equal(whole.attempts.length, 4);
 
   for (let cut = 0; cut <= events.length; cut += 1) {
     const persisted = JSON.parse(JSON.stringify(fold(events.slice(0, cut))));
@@ -697,13 +833,12 @@ test('the state schema accepts the states the fold reaches and refuses any other
   const end = innerEnd({ attempt: start.seq, reason: 'a stray end' });
   const good = fold([...source, start, call, end, carrier]);
   assert.deepEqual(projection.stateSchema.parse(structuredClone(good)), good, 'an attempt that holds every fact');
-  assert.deepEqual(projection.stateSchema.parse(projection.init()), { attempts: [], handoffs: [], lastMainUsage: null, lastCheckpointToken: null, lastCheckpointSteps: 0, openSteps: 0, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
-  const legacy = fold([...source, innerCall({ range: [1, 2], stream: [] })]);
-  assert.deepEqual(projection.stateSchema.parse(structuredClone(legacy)), legacy, 'a legacy attempt');
+  assert.deepEqual(projection.stateSchema.parse(projection.init()), { attempts: [], handoffs: [], lastMainUsage: null, settlementBefore: null, lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: null, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
 
   for (const [why, change] of [
     ['an id that is not a seq', attempt => { attempt.id = -1; }],
     ['a start time that is text', attempt => { attempt.startedAt = 'now'; }],
+    ['a start time that is null, which no fold reaches', attempt => { attempt.startedAt = null; }],
     ['a range with no count', attempt => { delete attempt.range.count; }],
     ['an input that is not text', attempt => { attempt.input = 7; }],
     ['a call with no seq', attempt => { delete attempt.call.seq; }],
@@ -722,6 +857,7 @@ test('the state schema accepts the states the fold reaches and refuses any other
     ['an attempt persisted before the quote, which has none', attempt => { delete attempt.quote; }],
     ['a quote whose q is text', attempt => { attempt.quote.q = 'high'; }],
     ['a quote of a trigger the seal never takes', attempt => { attempt.quote.trigger = 'soft'; }],
+    ['a quote of the retired hard trigger', attempt => { attempt.quote.trigger = 'hard'; }],
   ]) {
     const bad = structuredClone(good);
     change(bad.attempts[0]);
@@ -800,7 +936,7 @@ test('the rows merge the attempts the projection folded from the session\'s log 
   const started = session.snapshotEvents().at(-1);
   assert.equal(started.type, INNER_ATTEMPT_RECORD_TYPE);
   const row = {
-    id: started.seq, revision: started.seq, status: 'generating', legacy: false, startedAt: started.time, endedAt: null,
+    id: started.seq, revision: started.seq, status: 'generating', startedAt: started.time, endedAt: null,
     range: { first: 5, last: 7, count: 3 }, reason: null, slots: null,
     call: { state: 'generating', endedAt: null, finish: null, thrown: null, input: PROMPT, output: '{"1":"one",', outputDisplay: '{"1":"one",', usage: null },
     contextChange: null, trigger: { q: 1.04, kappa: 1.1 }, stepN: 8, cRatio: 30, epoch: 0,
@@ -939,7 +1075,7 @@ function detailsOver(events, { live = [], readSession, read = events } = {}) {
   Object.defineProperty(held, 'surface', { get() { throw new Error('the current surface was read'); } });
   const access = createMonitorAccess({
     sessionOf: id => (id === held.id ? held : undefined),
-    readMonitor: () => fold(events),
+    readMonitor: () => fold(events, held),
     live: () => live,
     kit,
     readSession: readSession ?? (async (sessionId) => {
@@ -947,6 +1083,7 @@ function detailsOver(events, { live = [], readSession, read = events } = {}) {
       return { session: { id: sessionId }, inheritedEventCount: 0, events: structuredClone(read) };
     }),
     readStored: async () => undefined,
+    nextTaskOf: () => null,
   });
   return { access, reads, id: held.id };
 }
@@ -1019,7 +1156,7 @@ test('the call of a committed attempt carries B, the evidence its carrier change
     removed: ['/r/gone.txt'],
     skills: [{ name: 'tdd', text: 'Test first.' }],
   };
-  const W = CARRIER_WORDING;
+  const W = CARRIED_WORDING;
   const sealed = sealedOver(conv, { changes });
   const log = [conv.header, ...conv.source, sealed.start, sealed.call, sealed.prune, sealed.carrier];
   const { access, id, reads } = detailsOver(log);
@@ -1027,8 +1164,8 @@ test('the call of a committed attempt carries B, the evidence its carrier change
   const detail = await access.call(id, sealed.start.seq);
 
   assert.deepEqual(detail?.carried, {
-    text: [W.carried, '/shown/a.txt (total lines: 9)\n1: one\n2: two', W.skill('tdd', 'Test first.')].join('\n\n'),
-    note: W.carried,
+    text: [carriedNote(CARRIER_TABLE), '/shown/a.txt (total lines: 9)\n1: one\n2: two', W.skill('tdd', 'Test first.')].join('\n\n'),
+    note: carriedNote(CARRIER_TABLE),
     files: [{
       path: '/shown/a.txt', total: 9, state: 'readable', reason: null,
       runs: [{ offset: 1, lines: [{ number: 1, text: 'one' }, { number: 2, text: 'two' }] }],
@@ -1055,7 +1192,7 @@ test('the call of a committed attempt whose carrier only withdraws lines or remo
 
   assert.deepEqual((await access.call(id, sealed.start.seq))?.carried, {
     text: null,
-    note: CARRIER_WORDING.carried,
+    note: carriedNote(CARRIER_TABLE),
     files: [{ path: '/shown/a.txt', total: null, state: null, reason: null, runs: [], withdrawn: [{ first: 3, last: 4 }] }],
     removed: ['/r/gone.txt'],
     skills: [],
@@ -1230,7 +1367,7 @@ test('the request of an attempt with a start record is the start\'s display alon
   assert.equal('selection' in detail.request, false);
 });
 
-test('the call of a legacy attempt, one with no start record, shows the partial request its call record holds, marked as such, and has no start id and no start time', { skip }, async () => {
+test('the call of an attempt the monitor holds none of rejects, a call record naming none included, and its carrier opens no attempt', { skip }, async () => {
   const conv = conversation();
   // A seal from before the monitor: the call alone, with neither `attempt` nor `endedAt`.
   const old = innerCall({ range: conv.range, tail: LONG_PROMPT, stream: answer(SUMMARIES) });
@@ -1238,16 +1375,8 @@ test('the call of a legacy attempt, one with no start record, shows the partial 
   const carrier = innerSealCarrier({ sourceEventSeqs: [old.seq, prune.seq, ...conv.range, conv.original.seq], slots: conv.slots });
   const { access, id } = detailsOver([conv.header, ...conv.source, old, prune, carrier]);
 
-  const detail = await access.call(id, old.seq);
-
-  assert.deepEqual(detail?.request, {
-    recorded: 'partial', selection: old.data.selection, tail: old.data.input.tail, throughSeq: old.data.input.throughSeq, headerSeq: old.data.input.headerSeq,
-  });
-  assert.deepEqual(detail?.ids, { start: null, call: old.seq, end: null, carrier: carrier.seq });
-  assert.deepEqual(detail?.timing, { attempt: { startedAt: null, endedAt: carrier.time }, call: { startedAt: null, endedAt: null } });
-  assert.equal(detail?.row.legacy, true);
-  assert.deepEqual(detail?.response.stream, old.data.stream);
-  assert.deepEqual(detail?.usage, { folded: USAGE, raw: USAGE_CHUNK });
+  assert.deepEqual((await access.rows(id)).attempts, []);
+  await assert.rejects(access.call(id, old.seq), /the inner monitor holds no attempt/);
 });
 
 test('an attempt with only its start, or with its start and a failed end and no call, still shows the request the start recorded and answers no response and no usage', { skip }, async () => {
@@ -1417,9 +1546,9 @@ test('the slots of a committed attempt are the carrier\'s, each keyed by its fir
 
   assert.deepEqual(listed, {
     slots: [
-      { key: conv.ask.seq, turn: null, step: null, source: { type: 'user/message', kind: 'user' }, input: 'please work', inputDisplay: 'please work', output: 'asked for work' },
-      { key: conv.first.seq, turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model' }, input: 'reading\nread {"file_path":"a.js"}\nfile pruned', inputDisplay: 'reading\nread\nfile pruned', output: 'read the file' },
-      { key: conv.last.seq, turn: 1, step: 2, source: { type: 'assistant/message', kind: 'model' }, input: 'done', inputDisplay: 'done', output: 'finished' },
+      { key: conv.ask.seq, turn: null, step: null, source: { type: 'user/message', kind: 'user', category: 'user' }, input: 'please work', inputDisplay: 'please work', output: 'asked for work' },
+      { key: conv.first.seq, turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model', category: 'assistant' }, input: 'reading\nread {"file_path":"a.js"}\nfile pruned', inputDisplay: 'reading\nread\nfile pruned', output: 'read the file' },
+      { key: conv.last.seq, turn: 1, step: 2, source: { type: 'assistant/message', kind: 'model', category: 'assistant' }, input: 'done', inputDisplay: 'done', output: 'finished' },
     ],
   });
   assert.deepEqual(reads, [id], 'one read');
@@ -1608,12 +1737,12 @@ test('a slot carries the source of its first source event as the log records it,
   const details = await Promise.all(listed.map(slot => access.slot(id, start.seq, slot.key)));
 
   const sources = [
-    { type: 'tool/result', kind: 'tool' },
-    { type: 'user/message', kind: 'runtime-context' },
-    { type: 'user/message', kind: null },
-    { type: 'user/message', kind: 'user' },
-    { type: 'assistant/message', kind: 'model' },
-    { type: 'assistant/message', kind: 'model' },
+    { type: 'tool/result', kind: 'tool', category: 'tool' },
+    { type: 'user/message', kind: 'runtime-context', category: 'injected' },
+    { type: 'user/message', kind: null, category: 'other' },
+    { type: 'user/message', kind: 'user', category: 'user' },
+    { type: 'assistant/message', kind: 'model', category: 'assistant' },
+    { type: 'assistant/message', kind: 'model', category: 'assistant' },
   ];
   assert.deepEqual(listed.map(slot => slot.source), sources);
   assert.deepEqual(details.map(detail => detail?.source), sources, 'the detail names the same source as the list');
@@ -1621,7 +1750,7 @@ test('a slot carries the source of its first source event as the log records it,
   assert.deepEqual(reads, [id, ...listed.map(() => id)], 'the list and each detail read the log once, as before');
 });
 
-test('a call that recorded the carrier cache evidence of its request shows it in order in its row and its detail, and the evidence a record does not hold in the closed shape, or never held, is no field of the row: the call reads as not observed', { skip }, async () => {
+test('a call that recorded the carrier cache evidence of its request shows it in order in its row and its detail, and the evidence a record does not hold in the structure of a bounded list of results with a count, or never held, is no field of the row: the call reads as not observed', { skip }, async () => {
   const conv = conversation();
   const evidence = { results: [{ result: 'skipped', reason: 'no-native-point' }, { result: 'added' }, { result: 'native' }], omitted: 2 };
   const observed = sealedOver(conv, { carrierCache: evidence });
@@ -1635,19 +1764,17 @@ test('a call that recorded the carrier cache evidence of its request shows it in
   row.call.carrierCache.results.push({ result: 'added' });
   assert.deepEqual(rowsFor(log)[0].call.carrierCache, evidence);
 
-  const closedOnly = {
+  const noStructure = {
     'an earlier record that never held it': undefined,
-    'a result outside the closed ones': { results: [{ result: 'reused' }], omitted: 0 },
-    'a skip whose reason is outside the closed ones': { results: [{ result: 'skipped', reason: 'the key was wrong' }], omitted: 0 },
-    'a skip with no reason': { results: [{ result: 'skipped' }], omitted: 0 },
-    'a result with a member of its own': { results: [{ result: 'added', body: 'a prompt' }], omitted: 0 },
-    'a list past the bound': { results: Array.from({ length: 9 }, () => ({ result: 'added' })), omitted: 0 },
+    'a list past the bound': { results: Array.from({ length: MAX_CARRIER_EVIDENCE + 1 }, () => ({ result: 'added' })), omitted: 0 },
     'an empty list': { results: [], omitted: 0 },
     'an omitted count that is no count': { results: [{ result: 'added' }], omitted: -1 },
-    'a field beside the two': { results: [{ result: 'added' }], omitted: 0, prompt: 'text' },
     'a list that is no list': { results: 'added', omitted: 0 },
+    'a result with no result text': { results: [{ reason: 'no-native-point' }], omitted: 0 },
+    'a result whose result is no text': { results: [{ result: 1 }], omitted: 0 },
+    'a reason that is no text': { results: [{ result: 'skipped', reason: 3 }], omitted: 0 },
   };
-  for (const [label, carrierCache] of Object.entries(closedOnly)) {
+  for (const [label, carrierCache] of Object.entries(noStructure)) {
     const seal = sealedOver(conv, { carrierCache });
     const events = [conv.header, ...conv.source, seal.start, seal.call, seal.prune, seal.carrier];
     const [shown] = rowsFor(events);
@@ -1658,7 +1785,19 @@ test('a call that recorded the carrier cache evidence of its request shows it in
   }
 });
 
-test('a state persisted before the evidence existed seeds a fold that reads it, and a state holding evidence in the closed shape is read back as persisted while one holding any other is refused', { skip }, () => {
+test('evidence in the structure the record shell checks is shown whatever its words: a result or a reason outside the adapter\'s vocabulary, a skip with no reason, and a result with a member of its own, reach the row, the detail and the persisted state as the record holds them', { skip }, async () => {
+  const conv = conversation();
+  const outside = { results: [{ result: 'reused' }, { result: 'skipped', reason: 'the key was wrong' }, { result: 'skipped' }, { result: 'added', body: 'a prompt' }], omitted: 0 };
+  const seal = sealedOver(conv, { carrierCache: outside });
+  const log = [conv.header, ...conv.source, seal.start, seal.call, seal.prune, seal.carrier];
+  assert.deepEqual(rowsFor(log)[0].call.carrierCache, outside);
+  assert.deepEqual((await detailsOver(log).access.call('s-detail', seal.start.seq)).row.call.carrierCache, outside);
+  const state = fold(log);
+  assert.deepEqual(state.attempts[0].call.carrierCache, outside);
+  assert.deepEqual(projection.stateSchema.parse(structuredClone(state)), state);
+});
+
+test('a state persisted before the evidence existed seeds a fold that reads it, and a state holding evidence in the structure the shell checks is read back as persisted while one holding any other is refused', { skip }, () => {
   const conv = conversation();
   const { start, call, prune, carrier } = sealedOver(conv, { carrierCache: { results: [{ result: 'added' }], omitted: 0 } });
   const plain = sealedOver(conv);
@@ -1667,6 +1806,6 @@ test('a state persisted before the evidence existed seeds a fold that reads it, 
   assert.deepEqual(projection.stateSchema.parse(structuredClone(withEvidence)), withEvidence);
   assert.deepEqual(projection.stateSchema.parse(structuredClone(without)), without);
   const damaged = structuredClone(withEvidence);
-  damaged.attempts[0].call.carrierCache = { results: [{ result: 'unknown' }], omitted: 0 };
+  damaged.attempts[0].call.carrierCache = { results: [{}], omitted: 0 };
   assert.throws(() => projection.stateSchema.parse(damaged));
 });

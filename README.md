@@ -143,7 +143,7 @@ One compact line:
 
 ## Context Buckets
 
-The bucket panel shows exactly which files, skills, and tools are consuming your context budget. Each path carries a token count — check or uncheck to preview how the restart cost changes. The U-curve ghost line updates in real time as you toggle.
+The bucket panel shows exactly which files, skills, and tools are consuming your context budget. Each path carries a token count — check or uncheck to preview how the restart cost changes. The U-curve ghost line updates in real time as you toggle. A file row also opens a drawer of the lines the session holds of it, read from the working tree when it opens.
 
 <img src="assets/preview_u.gif" alt="Context bucket selection preview" width="820">
 

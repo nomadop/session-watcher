@@ -1,10 +1,15 @@
 // public/lib/format.js — shared formatters
 const PLACEHOLDER = '—';
 
-/** A token count rounded whole, grouped by thousands and followed by the `tok` unit, the way the host's stat dialogs print one; the placeholder unless it is finite. */
+/** A token count rounded to a whole number and grouped by thousands, or the placeholder. */
+export function formatTokenCount(n) {
+  return Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : PLACEHOLDER;
+}
+
+/** A grouped token count with the `tok` unit, as in the host's stat dialogs. */
 export function formatTokens(n) {
-  if (!Number.isFinite(n)) return PLACEHOLDER;
-  return `${Math.round(n).toLocaleString('en-US')} tok`;
+  const count = formatTokenCount(n);
+  return count === PLACEHOLDER ? count : `${count} tok`;
 }
 
 export function formatX(x) {

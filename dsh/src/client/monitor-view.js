@@ -1,10 +1,12 @@
-// dsh/src/client/monitor-view.js — the inner compaction monitor's view: the compactions and the handoffs as compact trajectory items in a list pane of its own, and the drawer of the selected row.
+// dsh/src/client/monitor-view.js — the monitor's toolbar, event list and detail drawer, which can also show the current settlement without a selected row.
 import React from 'react';
 import { ACTIVE_STATUSES } from './monitor-store.js';
-import { Notice, CallDetail, SlotDetail, HandoffDetail, TurnDetail, SettlementDetail, DetailBody, useResult, SLOTS_ENDPOINT } from './monitor-drawer.js';
+import { CallDetail, SlotDetail, HandoffDetail, TurnDetail, SettlementDetail, CurrentSettlementDetail, DetailBody, SLOTS_ENDPOINT } from './monitor-drawer.js';
+import { Notice, useResult } from './monitor-handle.js';
 import {
-  createViewState, reduceView, flattenRows, isOpen, LEAVES_LOADING, LEAVES_FAILED, ordinalsOf, paybackOf, settlementsOf, slotTitleOf, handoffSegmentOf, NOT_AVAILABLE, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, DRAWER_KEY_STEP,
+  createViewState, reduceView, flattenRows, visibleGroups, isOpen, hasSlotWarnings, FILTER_CATEGORIES, LEAVES_LOADING, LEAVES_FAILED, slotTitleOf, handoffSegmentOf, NOT_AVAILABLE, PART_SEPARATOR, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, DRAWER_KEY_STEP,
 } from './monitor-state.js';
+import { ordinalsOf, paybackOf, settlementsOf } from '../../../public/lib/compactionEconomics.js';
 import { parentMetaParts, handoffMetaParts, handoffTitle, settlementMetaParts } from './monitor-model.js';
 
 const h = React.createElement;
@@ -69,9 +71,8 @@ function MonitorRow({ row, selected, now, dispatch, t }) {
   if (kind === 'attempt') {
     props['aria-expanded'] = row.open;
     props.onClick = () => dispatch({ type: 'toggle', attemptId: attempt.id, open: row.open });
-    // The row carries the mark of any of its slots' warnings.
     const parts = parentMetaParts(attempt, now, t, row.missWarned);
-    if (parts.some(({ attention }) => attention)) props['data-sw-attention'] = '';
+    if (hasSlotWarnings(attempt) || parts.some(({ attention }) => attention)) props['data-sw-attention'] = '';
     return h('div', props,
       h('div', { className: 'sw-mon-head' },
         toggle,
@@ -83,6 +84,11 @@ function MonitorRow({ row, selected, now, dispatch, t }) {
     props['aria-expanded'] = row.open;
     props.onClick = () => dispatch({ type: 'toggle', handoffId: handoff.id, open: row.open });
     return h('div', props, h('div', { className: 'sw-mon-head' }, toggle, h(Meta, { parts: handoffMetaParts(handoff, t) })), row.open ? null : preview);
+  }
+  const warningKeys = kind === 'slot' ? attempt.slotWarnings?.[row.slot.key]?.map(warning => `monitor.warning.${warning}`) : row.warningKeys;
+  if (warningKeys?.length > 0) {
+    props['data-sw-attention'] = '';
+    props.title = props['aria-description'] = warningKeys.map(key => t(key)).join(PART_SEPARATOR);
   }
   const select = () => dispatch(handoff === undefined
     ? { type: 'select', kind, attemptId: attempt.id, slotKey: row.slot?.key }
@@ -192,21 +198,26 @@ function TurnSubtitle({ monitor, handoffId, turn }) {
  * The detail drawer of the selected identity, nothing while none is selected.
  * What a call, slot, content or turn drawer shows depends on the identity alone: `monitor.resource` hands the detail of the selected item, so a selection under a collapsed parent keeps its drawer and a selection the rows do not list keeps it too.
  * `ordinals` is `ordinalsOf` over all the attempts: the title names the attempt by its segment and ordinal, the neutral marker for both where it has none, and the raw seq the drawer is addressed by is the id beside it in the header line, as plain text: a call's attempt id, a slot's first event id. `payback` is `paybackOf` over all the attempts and handoffs, from which the overview of a call reads its progress and its shown status.
- * A settlement row opens a drawer titled by the segment it settles (`settlements` is `settlementsOf` over the attempts and handoffs, and the segment reads as the neutral marker where it holds none), with the handoff's id beside it and no page tabs: the one block of the settlement's text, read from `settlements` alone.
+ * A settlement row opens a drawer titled by the segment it settles (`settlements` is `settlementsOf` over the attempts and handoffs, and the segment reads as the neutral marker where it holds none), with the handoff's id beside it and the page tabs of the settlement: the selected page reads the settlement's resource through `monitor`, and the context page also reads the amber line through `session`, the session's store; another settlement opens at the first page.
  * A handoff's content row and its turn rows open their own drawers, titled by the handoff's segment, which `handoffs` (the host's rows) names, the neutral marker where it lists no such handoff; the content row's by the handoff's id beside the title, a turn's by the turn's address, once the detail has it.
  */
-export function MonitorDrawer({ state, monitor, ordinals, payback, handoffs = [], settlements, now, dispatch, t }) {
+export function MonitorDrawer({ state, monitor, session, ordinals, payback, handoffs = [], settlements, now, dispatch, t }) {
   const { selected, drawerWidth } = state;
   if (selected === null) return null;
   const { kind, identity, attemptId, slotKey, handoffId, turn } = selected;
   let title;
   let subtitle;
   let body;
-  if (kind === 'settlement') {
+  if (kind === 'current-settlement') {
+    const value = selected.result?.kind === 'ready' ? selected.result.value : null;
+    title = value === null ? t('monitor.toolbar.currentSettlement') : t('monitor.drawer.settlement', { epoch: value.base.epoch });
+    subtitle = value === null ? null : h('p', { className: 'sw-mon-drawer-sub' }, t('monitor.settlement.current.through', { step: value.base.steps }));
+    body = h(CurrentSettlementDetail, { key: identity, result: selected.result, t });
+  } else if (kind === 'settlement') {
     const settlement = settlements.get(handoffId);
     title = t('monitor.drawer.settlement', { epoch: settlement === undefined ? NOT_AVAILABLE : settlement.epoch });
     subtitle = h('p', { className: 'sw-mon-drawer-sub' }, t('monitor.drawer.handoffId', { id: handoffId }));
-    body = h(SettlementDetail, { settlement, t });
+    body = h(SettlementDetail, { key: identity, settlement, handoffId, monitor, session, t });
   } else if (kind === 'content' || kind === 'turn') {
     const listed = handoffs.find(handoff => handoff.id === handoffId);
     title = t(kind === 'turn' ? 'monitor.drawer.handoffTurn' : 'monitor.drawer.handoff', { epoch: listed === undefined ? NOT_AVAILABLE : handoffSegmentOf(listed) });
@@ -264,15 +275,36 @@ function useLists(monitor, source, ids) {
   return React.useSyncExternalStore(feed.subscribe, feed.snapshot, feed.snapshot);
 }
 
+export function MonitorToolbar({ filter, dispatch, openCurrent, currentOpen = false, t }) {
+  const button = (props, text) => h('button', { type: 'button', className: 'sw-mon-fbtn', ...props }, text);
+  return h('div', { className: 'sw-mon-toolbar', role: 'toolbar', 'aria-label': t('monitor.toolbar.label') },
+    filter === null ? null : h(React.Fragment, null,
+      h('div', { className: 'sw-mon-filter', role: 'group', 'aria-label': t('monitor.filter.category') },
+        FILTER_CATEGORIES.map(category => button({ key: category, 'aria-pressed': filter.category === category, onClick: () => dispatch({ type: 'category', category }) }, t(`monitor.filter.${category}`)))),
+      button({ onClick: () => dispatch({ type: 'collapse' }) }, t('monitor.filter.collapseAll')),
+      button({ 'data-act': 'warned', 'aria-pressed': filter.warned, onClick: () => dispatch({ type: 'warned', warned: !filter.warned }) }, t('monitor.filter.warned'))),
+    button({ 'aria-expanded': currentOpen, onClick: openCurrent }, t('monitor.toolbar.currentSettlement')));
+}
+
 /**
- * The attempts and the handoffs as compact trajectory items in a list pane of its own beside the drawer.
- * The pane is placed at its tail once, when it first lays out with the rows a store already holds; no later commit moves it.
+ * The toolbar opens a fixed current settlement snapshot even when the event pane shows `listNotice`. Row filters and row-selected drawers need an event list.
+ * The pane scrolls to the tail when its first event list arrives; later commits do not move it. A filter that matches nothing shows a notice instead of rows.
  * A click on the pane's blank space clears the selection.
  * The clock ticks only while an attempt is in progress.
- * The slot list of an attempt is subscribed while the attempt is committed and its group shows open, and not otherwise; the summaries page of the call drawer subscribes to the same `slots` handle; the detail of a handoff, whose turns are its leaf rows, is subscribed while its group shows open and not otherwise, and its drawers read the same handle. The leaves are collected by id, a group's read in progress and one that failed standing as such, and handed, with all the attempts and handoffs at once, to the one `flattenRows` call.
+ * The list subscribes to slots only for open, shown, committed attempts. The summaries page uses the same slots handle; an open, shown handoff and its drawers use the handoff handle.
  */
-export function MonitorSplit({ attempts, handoffs, monitor, state, dispatch, t }) {
+export function MonitorSplit({ attempts, handoffs, listNotice = null, monitor, session, state, dispatch, t }) {
   const paneRef = React.useRef(null);
+  const placed = React.useRef(false);
+  const hasEvents = attempts.length > 0 || handoffs.length > 0;
+  const currentOpen = state.selected?.kind === 'current-settlement';
+  async function openCurrent() {
+    if (currentOpen) return;
+    const request = Symbol();
+    dispatch({ type: 'open-current-settlement', request });
+    const result = await monitor.readCurrentSettlement();
+    dispatch({ type: 'current-settlement-result', request, result });
+  }
   const [now, setNow] = React.useState(() => Date.now());
   const running = attempts.some(attempt => ACTIVE_STATUSES.includes(attempt.status));
   React.useEffect(() => {
@@ -282,42 +314,49 @@ export function MonitorSplit({ attempts, handoffs, monitor, state, dispatch, t }
     return () => { clearInterval(timer); };
   }, [running]);
   React.useLayoutEffect(() => {
+    if (!hasEvents || placed.current) return;
     const pane = paneRef.current;
     pane.scrollTop = pane.scrollHeight;
-  }, []);
-  const expanded = attempts.filter(attempt => attempt.status === 'committed' && isOpen(state, attempt.id)).map(attempt => attempt.id);
-  const expandedHandoffs = handoffs.filter(handoff => isOpen(state, handoff.id)).map(handoff => handoff.id);
+    placed.current = true;
+  }, [hasEvents]);
+  const shown = visibleGroups(attempts, handoffs, state.filter);
+  const expanded = shown.attempts.filter(attempt => isOpen(state, attempt.id) && attempt.status === 'committed' && (!state.filter.warned || hasSlotWarnings(attempt))).map(attempt => attempt.id);
+  const expandedHandoffs = shown.handoffs.filter(handoff => isOpen(state, handoff.id)).map(handoff => handoff.id);
   const rows = flattenRows(attempts, useLists(monitor, SLOT_LISTS, expanded), state, handoffs, useLists(monitor, TURN_LISTS, expandedHandoffs));
-  return h('div', { className: 'sw-mon-split', 'data-sw-monitor-split': '' },
-    h('div', {
-      className: 'sw-mon-pane',
-      ref: paneRef,
-      role: 'region',
-      'aria-label': t('monitor.region'),
-      tabIndex: 0,
-      onClick(event) { if (event.target === event.currentTarget) dispatch({ type: 'clear' }); },
-    }, h(MonitorList, { rows, selected: state.selected?.identity ?? null, now, dispatch, t })),
-    h(MonitorDrawer, { state, monitor, ordinals: ordinalsOf(attempts), payback: paybackOf(attempts, handoffs), handoffs, settlements: settlementsOf(attempts, handoffs), now, dispatch, t }));
+  return h(React.Fragment, null,
+    h(MonitorToolbar, { filter: hasEvents ? state.filter : null, dispatch, openCurrent, currentOpen, t }),
+    h('div', { className: 'sw-mon-split', 'data-sw-monitor-split': '' },
+      h('div', {
+        className: 'sw-mon-pane',
+        ref: paneRef,
+        role: 'region',
+        'aria-label': t('monitor.region'),
+        tabIndex: 0,
+        onClick(event) { if (event.target === event.currentTarget) dispatch({ type: 'clear' }); },
+      }, listNotice ?? (rows.length === 0
+        ? h(Notice, { state: 'filter-empty' }, t('monitor.filter.empty'))
+        : h(MonitorList, { rows, selected: state.selected?.identity ?? null, now, dispatch, t }))),
+      hasEvents || currentOpen
+        ? h(MonitorDrawer, { state, monitor, session, ordinals: ordinalsOf(attempts), payback: paybackOf(attempts, handoffs), handoffs, settlements: settlementsOf(attempts, handoffs), now, dispatch, t })
+        : null));
 }
 
-// What the monitor store answered: its own texts for a read not yet answered, an unavailable store, an unreachable one and a store with neither attempts nor handoffs, else the rows.
-function MonitorContent({ monitor, state, dispatch, t }) {
+function MonitorContent({ monitor, session, state, dispatch, t }) {
   const rows = useResult(monitor.rows);
-  if (rows === null) return h(Notice, { state: 'rows-loading' }, t('monitor.rows.loading'));
-  if (rows.kind === 'unavailable') return h(Notice, { state: 'rows-unavailable' }, t('monitor.rows.unavailable'));
-  if (rows.kind === 'unreachable') return h(Notice, { state: 'rows-unreachable' }, t('monitor.rows.unreachable', { message: rows.message }));
-  if (rows.attempts.length === 0 && rows.handoffs.length === 0) return h(Notice, { state: 'rows-empty' }, t('monitor.rows.empty'));
-  return h(MonitorSplit, { attempts: rows.attempts, handoffs: rows.handoffs, monitor, state, dispatch, t });
+  const { attempts = [], handoffs = [] } = rows ?? {};
+  const notice = rows?.kind === 'ready' ? (attempts.length + handoffs.length === 0 ? 'empty' : null) : rows?.kind ?? 'loading';
+  const listNotice = notice === null ? null : h(Notice, { state: `rows-${notice}` }, t(`monitor.rows.${notice}`, notice === 'unreachable' ? { message: rows.message } : undefined));
+  return h(MonitorSplit, { attempts, handoffs, listNotice, monitor, session, state, dispatch, t });
 }
 
 /**
- * The monitor's `conversation.view` entry: the attempts and handoffs the session's monitor stores hold, for every session whatever its inner mode.
- * The view state, the open and selected rows and the drawer's width, belongs to the instance and lasts as long as the tab stays mounted.
+ * The monitor's `conversation.view` entry: the attempts and handoffs the session's monitor stores hold, for every session whatever its inner mode. `session` is the session's store (`session-store.js`), which the settlement drawer's context page subscribes to for the amber line for as long as that page is shown.
+ * The view state, the open and selected rows, the drawer's width and the filter, belongs to the instance and lasts as long as the tab stays mounted.
  *
- * @param {{ monitor: { rows: { result: object | null, subscribe: Function } }, t: Function }} props
+ * @param {{ monitor: { rows: { result: object | null, subscribe: Function } }, session: { result: object | null, subscribe: Function }, t: Function }} props
  */
-export function InnerCompactionView({ monitor, t }) {
+export function InnerCompactionView({ monitor, session, t }) {
   const [state, dispatch] = React.useReducer(reduceView, undefined, createViewState);
   return h('div', { className: 'sw-mon', 'data-sw-monitor': '', 'data-conversation-composer-overlay': '' },
-    h(MonitorContent, { monitor, state, dispatch, t }));
+    h(MonitorContent, { monitor, session, state, dispatch, t }));
 }

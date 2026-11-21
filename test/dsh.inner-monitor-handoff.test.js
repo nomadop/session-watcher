@@ -42,8 +42,14 @@ function loaded({ token = 'amber-falcon', payload = {}, reads = true, followUp =
     payload: loadPayload({ token, paths: ['/repo/src/a.js', '/repo/src/b.js', '/repo/src/c.js'], skills: ['sw-handoff'], lineage: LINEAGE, ...payload }),
     reads: reads ? loadReads({
       files: [
-        { path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }, { offset: 9, limit: 1 }], text: '/repo/src/a.js (total lines: 12)\n1: a\n2: b\n--\n9: i\n' },
-        { path: '/repo/src/b.js', ranges: [{ offset: 1, limit: 40 }], text: '/repo/src/b.js (total lines: 1)\n1: x\n' },
+        {
+          path: '/repo/src/a.js', displayPath: 'src/a.js', ranges: [{ offset: 1, limit: 2 }, { offset: 9, limit: 1 }], text: 'src/a.js (total lines: 12)\n1: a\n2: b\n--\n9: i\n',
+          totalLines: 12, windows: [{ offset: 1, lines: [{ number: 1, text: 'a' }, { number: 2, text: 'b' }] }, { offset: 9, lines: [{ number: 9, text: 'i' }] }],
+        },
+        {
+          path: '/repo/src/b.js', ranges: [{ offset: 1, limit: 40 }], text: '/repo/src/b.js (total lines: 1)\n1: x\n',
+          totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }],
+        },
       ],
     }) : null,
     followUp: followUp ? loadFollowUp({ token }) : null,
@@ -71,7 +77,7 @@ test('a load folds to one row whose id is the payload message\'s seq: the type, 
     skills: 1,
     lineage: 6,
     contextChange: null,
-    tailSteps: null,
+    tailCalls: null,
     nextTask: NEXT_TASKS[7],
   }]);
 });
@@ -203,8 +209,8 @@ test('a continue row reads the steps after the last carrier that the clear cut o
   const [row] = await handoffsOf(log);
 
   assert.equal(row.type, 'continue');
-  assert.equal(row.tailSteps, 3, 'the text step, the tool call and the last step; the empty call is none and the two steps before the carrier are none');
-  assert.equal((await handoffsOf(log.slice(0, log.length - 2)))[0].tailSteps, 3, 'the steps the resumed session takes are no part of it');
+  assert.equal(row.tailCalls, 3, 'the text step, the tool call and the last step; the empty call is none and the two steps before the carrier are none');
+  assert.equal((await handoffsOf(log.slice(0, log.length - 2)))[0].tailCalls, 3, 'the steps the resumed session takes are no part of it');
 });
 
 test('without a carrier the steps are counted from the start of the log, a stock checkpoint starts the count again, and a clear right after one has none', async () => {
@@ -213,16 +219,16 @@ test('without a carrier the steps are counted from the start of the log, a stock
 
   const whole = [stepOf(1, 1), stepOf(1, 2)];
   const bare = sessionLog([ask, ...whole, continueCheckpoint({ token: 'amber-falcon', startSeq: ask.seq, endSeq: whole.at(-1).seq }), ...load.events]);
-  assert.equal((await handoffsOf(bare))[0].tailSteps, 2);
+  assert.equal((await handoffsOf(bare))[0].tailCalls, 2);
 
   const before = [stepOf(1, 1), stepOf(1, 2)];
   const stock = compactCheckpoint({ startSeq: ask.seq, endSeq: before.at(-1).seq, text: 'a summary of the work' });
   const after = [stepOf(2, 1)];
   const cleared = continueCheckpoint({ token: 'amber-falcon', startSeq: ask.seq, endSeq: after.at(-1).seq });
-  assert.equal((await handoffsOf(sessionLog([ask, ...before, stock, ...after, cleared, ...load.events])))[0].tailSteps, 1, 'the steps before the stock checkpoint are not the continue\'s');
+  assert.equal((await handoffsOf(sessionLog([ask, ...before, stock, ...after, cleared, ...load.events])))[0].tailCalls, 1, 'the steps before the stock checkpoint are not the continue\'s');
 
   const idle = continueCheckpoint({ token: 'amber-falcon', startSeq: ask.seq, endSeq: ask.seq });
-  assert.equal((await handoffsOf(sessionLog([ask, idle, ...load.events])))[0].tailSteps, 0, 'a clear that cut off no step');
+  assert.equal((await handoffsOf(sessionLog([ask, idle, ...load.events])))[0].tailCalls, 0, 'a clear that cut off no step');
 });
 
 test('a carrier the monitor reads as no attempt\'s, one with no slots, ends the steps all the same', async () => {
@@ -233,7 +239,7 @@ test('a carrier the monitor reads as no attempt\'s, one with no slots, ends the 
   const log = sessionLog([ask, ...early, unreadable, ...after, continueCheckpoint({ token: 'amber-falcon', startSeq: ask.seq, endSeq: after[0].seq }), ...loaded().events]);
 
   assert.equal(unreadable.data.source.slots, undefined, 'the fixture is the unreadable shape');
-  assert.equal((await handoffsOf(log))[0].tailSteps, 1);
+  assert.equal((await handoffsOf(log))[0].tailCalls, 1);
 });
 
 test('each continue reads its own steps: those between the clear before it and the clear of its own, never added up', async () => {
@@ -249,7 +255,7 @@ test('each continue reads its own steps: those between the clear before it and t
 
   const rows = await handoffsOf(log);
 
-  assert.deepEqual(rows.map(row => [row.type, row.tailSteps]), [['continue', 2], ['continue', 3]]);
+  assert.deepEqual(rows.map(row => [row.type, row.tailCalls]), [['continue', 2], ['continue', 3]]);
 });
 
 test('a clear whose load failed leaves only its checkpoint, which is no row, and a later load of another token is a load', async () => {
@@ -261,7 +267,7 @@ test('a clear whose load failed leaves only its checkpoint, which is no row, and
   const [row] = await handoffsOf(sessionLog([ask, checkpoint, ...other.events]));
   assert.equal(row.type, 'load', 'a checkpoint that names another token makes no continue');
   assert.equal(row.contextChange, null);
-  assert.equal(row.tailSteps, null);
+  assert.equal(row.tailCalls, null);
   assert.equal(row.nextTask, NEXT_TASKS[8]);
 });
 
@@ -305,7 +311,7 @@ test('the read message and the follow-up attach to the nearest row, the one befo
   const second = loaded({
     token: 'copper-heron', payload: { handoffId: 8 },
   });
-  second.events[1] = loadReads({ files: [{ path: '/repo/src/c.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/c.js (total lines: 1)\n1: c\n' }] });
+  second.events[1] = loadReads({ files: [{ path: '/repo/src/c.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/c.js (total lines: 1)\n1: c\n', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'c' }] }] }] });
   const log = sessionLog([...first.events, ...second.events]);
 
   const rows = await handoffsOf(log);
@@ -320,7 +326,7 @@ test('a read message after the follow-up, a second read message and a follow-up 
   const load = loaded({ reads: false });
   const wrongToken = loadFollowUp({ token: 'copper-heron' });
   const late = loadReads();
-  const second = loadReads({ files: [{ path: '/repo/src/q.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/q.js (total lines: 1)\n1: q\n' }] });
+  const second = loadReads({ files: [{ path: '/repo/src/q.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/q.js (total lines: 1)\n1: q\n', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'q' }] }] }] });
   const log = sessionLog([load.payload, load.followUp, wrongToken, late, second]);
 
   const [row] = await handoffsOf(log);
@@ -372,7 +378,7 @@ test('the state keeps the bounded facts of a handoff: neither its summary, its t
 
   for (const marker of ['SUMMARY-MARKER', 'PAGE-MARKER', 'sw-handoff', 'fifth work', '1: a', 'The harness placed']) assert.equal(kept.includes(marker), false, marker);
   assert.deepEqual(Object.keys(state.handoffs[0]).sort(), [
-    'after', 'before', 'createdAt', 'epoch', 'followSeq', 'handoffId', 'id', 'kept', 'lineage', 'read', 'readSeq', 'skills', 'tailSteps', 'time', 'token', 'type',
+    'after', 'before', 'createdAt', 'epoch', 'followSeq', 'handoffId', 'id', 'kept', 'lineage', 'read', 'readSeq', 'skills', 'tailCalls', 'time', 'token', 'type',
   ]);
 });
 
@@ -390,12 +396,12 @@ test('the state a fold reaches is the state the schema reads back, and a handoff
   assert.throws(() => projection.stateSchema.parse({ ...state, handoffs: [{ ...state.handoffs[0], after: { seq: -1, stock: 1, miss: 1 } }] }), /inner monitor state/);
   assert.throws(() => projection.stateSchema.parse({ ...state, handoffs: 'none' }), /inner monitor state/);
   assert.throws(() => projection.stateSchema.parse({ ...state, lastCheckpointToken: 3 }), /inner monitor state/);
-  assert.throws(() => projection.stateSchema.parse({ ...state, handoffs: [{ ...state.handoffs[0], tailSteps: -1 }] }), /inner monitor state/);
-  assert.throws(() => projection.stateSchema.parse({ ...state, lastCheckpointSteps: 'many' }), /inner monitor state/);
-  assert.throws(() => projection.stateSchema.parse({ ...state, openSteps: 'many' }), /inner monitor state/);
+  assert.throws(() => projection.stateSchema.parse({ ...state, handoffs: [{ ...state.handoffs[0], tailCalls: -1 }] }), /inner monitor state/);
+  assert.throws(() => projection.stateSchema.parse({ ...state, lastCheckpointCalls: 'many' }), /inner monitor state/);
+  assert.throws(() => projection.stateSchema.parse({ ...state, openCalls: 'many' }), /inner monitor state/);
   const { handoffs, ...without } = state;
   assert.throws(() => projection.stateSchema.parse(without), /inner monitor state/, 'a state persisted before the handoffs is refused');
-  const { openSteps, ...uncounted } = state;
+  const { openCalls, ...uncounted } = state;
   assert.throws(() => projection.stateSchema.parse(uncounted), /inner monitor state/, 'a state without the step count is refused');
 });
 
@@ -430,7 +436,7 @@ function detailLog() {
 }
 
 for (const held of [true, false]) {
-  test(`the handoff detail of a ${held ? 'held' : 'stored'} session carries its row, the summary whole, the files read with their total lines and the lines each block shows as runs, the lineage as sent, the turn page raw and the turns of its newest lineage member parsed, and the follow-up`, async () => {
+  test(`the handoff detail of a ${held ? 'held' : 'stored'} session carries its row, the summary whole, the files its read message's paths carry under their display paths with their total lines and the lines as runs, the lineage as sent, the turn page raw and the turns of its newest lineage member parsed, and the follow-up`, async () => {
     const log = detailLog();
     const { access } = accessOver(log, { held });
     const payloadSeq = log[3].seq;
@@ -442,7 +448,7 @@ for (const held of [true, false]) {
       summary: 'The whole summary.\nIn two lines.',
       files: [
         {
-          path: '/repo/src/a.js',
+          path: 'src/a.js',
           total: 12,
           runs: [{ offset: 1, lines: [{ number: 1, text: 'a' }, { number: 2, text: 'b' }] }, { offset: 9, lines: [{ number: 9, text: 'i' }] }],
         },
@@ -503,23 +509,45 @@ test('a read call whose arguments do not parse or name no file makes the detail 
   await assert.rejects(accessOver(garbledLog).access.handoff(SESSION, garbledLog[0].seq));
 });
 
-// Read blocks that are no rendering of a file: the read tool's own envelope under the arguments `{ file_path, offset, limit }`, a header followed by `@@` section marks, and a text with no header.
+test('a read message with `paths` lists its files from them alone: a call whose arguments name no file, or whose text shows other lines, changes nothing', async () => {
+  const load = loaded({ reads: false });
+  const reads = loadReads({ files: [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 1 }], text: 'garbled', totalLines: 3, windows: [{ offset: 2, lines: [{ number: 2, text: 'two' }] }] }] });
+  reads.data.source.calls[0].arguments = '{"file_path":';
+  const log = sessionLog([load.payload, reads, load.followUp]);
+
+  const { files } = await accessOver(log).access.handoff(SESSION, log[0].seq);
+
+  assert.deepEqual(files, [{ path: '/repo/src/a.js', total: 3, runs: [{ offset: 2, lines: [{ number: 2, text: 'two' }] }] }]);
+});
+
+test('a read message whose paths carry an empty file lists it with a line count of zero and no lines', async () => {
+  const load = loaded({ reads: false });
+  const reads = loadReads({ files: [{ path: '/repo/src/empty.js', ranges: [{ offset: 1, limit: 1 }], text: '/repo/src/empty.js (total lines: 0)\n', totalLines: 0, windows: [{ offset: 1, lines: [] }] }] });
+  const log = sessionLog([load.payload, reads, load.followUp]);
+
+  const { files } = await accessOver(log).access.handoff(SESSION, log[0].seq);
+
+  assert.deepEqual(files, [{ path: '/repo/src/empty.js', total: 0, runs: [] }]);
+});
+
+// A read message with no `paths`, as an older log holds it: its calls are the only record, so a file is the one a call's arguments name, whatever the call's text shows.
+const RENDERED = { args: { file_path: '/repo/src/old.js', ranges: [{ offset: 1, limit: 2 }] }, text: '/repo/src/old.js (total lines: 2)\n1: a\n2: b\n' };
 const OLD_ENVELOPE = { args: { file_path: '/repo/src/old.js', offset: 1, limit: 2 }, text: '<path>/repo/src/old.js</path>\n<type>file</type>\n<content>\n1: a\n2: b\n\n(End of file - total 2 lines)\n</content>\n' };
-const SECTION_MARKS = { args: { file_path: '/repo/src/old.js', ranges: [{ offset: 1, limit: 2 }] }, text: '/repo/src/old.js (total lines: 2)\n@@ 1-2 @@\n1: a\n2: b\n' };
 const NO_HEADER = { args: { file_path: '/repo/src/old.js', ranges: [{ offset: 1, limit: 2 }] }, text: '/repo/src/old.js\n1: a\n' };
 
-test('a read call whose text is no rendering of a file is a file with no line count and no lines, in the entry every file has, and the files beside it are unaffected: the read tool\'s envelope with its own arguments, section marks, no header', async () => {
-  for (const [why, { args, text }] of Object.entries({ OLD_ENVELOPE, SECTION_MARKS, NO_HEADER })) {
+test('a read message with no `paths` lists the files its read calls name, each with no line count and no lines whatever its text shows, and the calls that are no read are no file', async () => {
+  for (const [why, { args, text }] of Object.entries({ RENDERED, OLD_ENVELOPE, NO_HEADER })) {
     const bad = { id: 'sw-load-0000aaaa-1', name: 'read', arguments: JSON.stringify(args), text };
     const good = { id: 'sw-load-0000aaaa-2', name: 'read', arguments: JSON.stringify({ file_path: '/repo/src/b.js', ranges: [{ offset: 1, limit: 1 }] }), text: '/repo/src/b.js (total lines: 1)\n1: x\n' };
+    const other = { id: 'sw-load-0000aaaa-3', name: 'grep', arguments: '{}', text: 'a match' };
     const load = loaded({ reads: false });
-    const log = sessionLog([load.payload, loadMessage({ calls: [bad, good] }), load.followUp]);
+    const log = sessionLog([load.payload, loadMessage({ calls: [bad, good, other] }), load.followUp]);
 
     const { files } = await accessOver(log).access.handoff(SESSION, log[0].seq);
 
     assert.deepEqual(files, [
       { path: '/repo/src/old.js', total: null, runs: [] },
-      { path: '/repo/src/b.js', total: 1, runs: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] },
+      { path: '/repo/src/b.js', total: null, runs: [] },
     ], why);
   }
 });

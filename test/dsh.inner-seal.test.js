@@ -9,14 +9,16 @@ import { loads } from 'ai-json-repair';
 
 import { createInnerMonitor } from '../dsh/src/inner-monitor.js';
 import { loadHandoffInto } from '../dsh/src/load.js';
-import { INNER_QUOTE } from '../dsh/src/inner-quote.js';
+import { INNER_QUOTE, KAPPA_PRESETS, kappaOf } from '../lib/inner-seal/quote.js';
 import { createMonitorAccess, innerMonitorProjection, rowsOf, PREVIEW_SOURCE_CHARS } from '../dsh/src/inner-monitor-read.js';
-import {
-  createInnerSeal, INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE, SUMMARY_MAX_REQUESTS,
-  UNCACHED_SHARE_ALERT,
-} from '../dsh/src/inner-seal.js';
-import { CARRIER_WORDING, INNER_SEAL_KIND, STATE_ITEMS, renderCarried, renderCarrier } from '../lib/harness/dsh/inner-seal-message.js';
-import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { createInnerSeal, INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE } from '../dsh/src/inner-seal.js';
+import { SUMMARY_MAX_REQUESTS } from '../lib/inner-seal/ladder.js';
+import { UNCACHED_SHARE_ALERT } from '../lib/inner-seal/call-record.js';
+import { CARRIER_WORDING, INNER_SEAL_KIND, renderCarrier } from '../lib/inner-seal/carrier.js';
+import { STATE_WORDING } from '../lib/inner-seal/state-block.js';
+import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
+import { renderCarried } from '../lib/carried-evidence.js';
+import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
 import { createNodeWorkingTree } from '../lib/working-tree.js';
 import { readTreeWindows } from '../lib/working-tree-text.js';
 import { fakeTokenMeter } from './helpers/dsh-fake-context.js';
@@ -53,8 +55,6 @@ const kitOf = (overrides = {}) => ({
   ...overrides,
 });
 
-// The touched entries of a held view the range of the case leaves alone.
-const NOTHING_TOUCHED = { paths: new Set(), skills: new Set() };
 const SELECTION = { provider: 'deepseek', model: 'deepseek-v4-pro', reasoningEffort: 'high' };
 const TOOLS = [{ name: 'read', description: 'Read a file.', parameters: { type: 'object', properties: {} } }];
 
@@ -158,6 +158,17 @@ function sequencedLlm(...scripts) {
 }
 // A reply that stopped with no tool call and fails the notes' format: one note for the slots the tail asks.
 const wrongFormat = () => summaryStream(['only one']);
+// A reply that stopped with a tool call, and one whose finish is tool-calls: neither carries the notes object.
+const toolCalled = () => chunks(
+  { type: 'block-start', index: 0, blockType: 'tool-call' },
+  { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{}' } },
+  { type: 'finish', reason: { kind: 'stop' } },
+);
+const toolCallsFinish = () => chunks(
+  { type: 'block-start', index: 0, blockType: 'tool-call' },
+  { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{}' } },
+  { type: 'finish', reason: { kind: 'tool-calls' } },
+);
 // A consumed stream whose failure is no format failure: it ended on the output ceiling.
 const cutShort = () => chunks({ type: 'finish', reason: { kind: 'max-tokens' } });
 // A stream the provider's content filter cut off mid-reply: the finish chunk is an error carrying the provider's stop text.
@@ -175,7 +186,7 @@ const routeOf = options => ({ provider: options.provider, model: options.model, 
 
 const NEXT_DECISION = Object.freeze({ kind: 'enter', messages: [] });
 
-// The C ratio the session's watcher reads, the calibrated pair the host reads for the session and the meter's heuristic price of a node. The pair is a power of two, so every token count is exact, and a range of `INNER_QUOTE.minSteps` counted steps of `turnOf` quotes as worth sealing under it, while no range of any count does under `SMALL_CTP`; `test/dsh.inner-quote.test.js` holds the estimate's and the decision's worked examples. The node price is the prune's `shadowedTokenCount` alone, which the quote does not read.
+// The C ratio the session's watcher reads, the calibrated pair the host reads for the session and the meter's heuristic price of a node. The pair is a power of two, so every token count is exact, and a range of `INNER_QUOTE.minSteps` counted steps of `turnOf` quotes as worth sealing under it, while no range of any count does under `SMALL_CTP`; `test/inner-seal.quote.test.js` holds the estimate's and the decision's worked examples. The node price is the prune's `shadowedTokenCount` alone, which the quote does not read.
 const RATIO = 30;
 // A count of steps well past `INNER_QUOTE.minSteps`: under `ELIGIBLE_CTP` a range of `turnOf` steps quotes on the right arm and seals whatever its count.
 const LONG_STEPS = 24;
@@ -186,19 +197,19 @@ const SMALL_CTP = { ascii: 2 ** 20, cjk: 2 ** 20, version: 1 };
 const ELIGIBLE_NODE = { tokens: 10, heuristicTokens: 5000 };
 // The characters of the text blocks of events that carry nothing else, as `turnOf` writes its replies.
 const charsOf = events => events.reduce((sum, event) => sum + event.data.message.content.reduce((total, block) => total + block.text.length, 0), 0);
-// The tokens of the B block a carrier of `paths` renders under `ELIGIBLE_CTP`, over text that is all ASCII: the block's characters, its blank-line opening included, at the pair's characters per token.
-const pricedB = paths => `\n\n${renderCarried({ paths })}`.length / ELIGIBLE_CTP.ascii;
+// The tokens of the B text `renderCarried` renders for `paths` under `ELIGIBLE_CTP`, over text that is all ASCII: its characters at the pair's characters per token, the blank-line opening the carrier's block adds not among them.
+const pricedB = paths => renderCarried({ paths }, CARRIER_TABLE).length / ELIGIBLE_CTP.ascii;
 const emptyRead = async (_agent, key) => ({ read: { status: 'readable', totalLines: 0, windows: [] }, displayPath: key });
 
-// The seal over `session`, with every service a double the case may replace: the mode `on`, the source facts read from the session's own log, the session's own log as the frozen slice, an empty held view, readable reads, observed or not, a host that reads no state, the watcher's ratio `RATIO`, the pair `ELIGIBLE_CTP` and a meter pricing every node at `ELIGIBLE_NODE`.
+// The seal over `session`, with every service a double the case may replace: the mode `on`, the event facts read from the session's own log, the session's own log as the frozen slice, an empty held view, readable reads, observed or not, a host that reads no state, the watcher's ratio `RATIO`, the pair `ELIGIBLE_CTP` and a meter pricing every node at `ELIGIBLE_NODE`.
 // The monitor is the real one, made after the overrides apply so it appends through the kit the seal appends through; `published` keeps the session id of each publish it makes.
 function sealOver(session, { settings, ...overrides } = {}) {
   const published = [];
   const services = {
     readMode: () => ({ mode: 'on', locked: true }),
-    sourceFacts: () => new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)])),
+    eventFacts: () => new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)])),
     readSession: async () => ({ events: session.snapshotEvents() }),
-    heldView: () => ({ paths: new Map(), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map(), skills: new Map(), effects: [] }),
     readFile: emptyRead,
     readUnobserved: emptyRead,
     readState: () => ({ asOfSeq: 0, items: {} }),
@@ -271,7 +282,7 @@ test('a range of INNER_QUOTE.minSteps counted steps seals before the step: the a
   assert.equal(source.kind, INNER_SEAL_KIND);
   assert.deepEqual(source.slots.map(slot => slot.seqs), replies.map(reply => [seqOf(reply)]));
   assert.deepEqual(source.slots.map(slot => slot.text), source.slots.map((_, index) => `summary ${index + 1}`));
-  assert.deepEqual(carrier.data.content, renderCarrier(source), 'the body is the source rendered');
+  assert.deepEqual(carrier.data.content, renderCarrier(source, CARRIER_TABLE), 'the body is the source rendered');
   assert.equal(services.llm.calls.length, 1);
 });
 
@@ -285,8 +296,8 @@ test('the seal follows its quote: a range the quote finds worth sealing seals wi
   assert.deepEqual(typesSince(eligible, before), SEALED);
   const { quote } = attempt.data;
   assert.deepEqual(
-    [quote.trigger, quote.arm, quote.missing, quote.n, quote.lA, quote.bEst, quote.cEst, quote.cRatio, quote.fee],
-    ['quote', 'right', null, INNER_QUOTE.minSteps, charsOf(eligibleTurn.replies) / ELIGIBLE_CTP.ascii, 0, INNER_QUOTE.cPerStep * INNER_QUOTE.minSteps, RATIO, INNER_QUOTE.fee],
+    [quote.trigger, quote.arm, quote.n, quote.lA, quote.bEst, quote.cEst, quote.cRatio, quote.fee],
+    ['quote', 'right', INNER_QUOTE.minSteps, charsOf(eligibleTurn.replies) / ELIGIBLE_CTP.ascii, 0, INNER_QUOTE.cPerStep * INNER_QUOTE.minSteps, RATIO, INNER_QUOTE.fee],
   );
   // The preset's kappa at n 8 and ratio 30, the research record's expression evaluated apart from the module; the right arm passes with no regard for q.
   assert.ok(Math.abs(quote.kappa - 1.0994084552089021) < 1e-12, `kappa ${quote.kappa}`);
@@ -303,11 +314,25 @@ test('the seal follows its quote: a range the quote finds worth sealing seals wi
 
   const short = sessionOver([systemMessage(), ...turnOf({ steps: INNER_QUOTE.minSteps - 1 }).events], 'short').session;
   let quoted = 0;
-  const { seal: idle } = sealOver(short, { heldView: () => { quoted += 1; return { paths: new Map(), skills: new Map(), touched: NOTHING_TOUCHED }; }, readUnobserved: async (...args) => { quoted += 1; return emptyRead(...args); } });
+  const { seal: idle } = sealOver(short, { heldView: () => { quoted += 1; return { paths: new Map(), skills: new Map(), effects: [] }; }, readUnobserved: async (...args) => { quoted += 1; return emptyRead(...args); } });
   const shortBefore = short.seq;
   assert.equal((await preStep(idle, short)).answer, NEXT_DECISION);
   assert.equal(quoted, 0, 'below the minimum nothing is read for a quote');
   assert.equal(short.seq, shortBefore);
+});
+
+test('a node of the range that derives no message adds nothing to the quote\'s A: the messages of the other nodes are priced alone', { skip }, async () => {
+  const { events, replies } = turnOf();
+  // An assistant node with no content, as a step that ran out of tokens leaves it, derives no message.
+  const empty = assistantMessage({ turn: 1, step: 1 });
+  events.splice(events.indexOf(replies[0]) + 1, 0, empty);
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const before = session.seq;
+  await preStep(sealOver(session).seal, session);
+
+  const [attempt, , , carrier] = appendedSince(session, before);
+  assert.ok(carrier.sourceEventSeqs.includes(seqOf(empty)), 'the node without a message stands in the range the seal replaces');
+  assert.equal(attempt.data.quote.lA, charsOf(replies) / ELIGIBLE_CTP.ascii);
 });
 
 // A session of `INNER_QUOTE.minSteps` steps whose range the pair prices at `lA` tokens: at ratio 40 and n 8 a `lA` of 20000 is a left quote under E2's kappa and above the kappa of W2, M2, S3 and X3, so it passes under E2 alone.
@@ -335,6 +360,131 @@ test('the preset the settings name decides the seal: one range at one ratio seal
   assert.equal(nextCalls, 1);
   assert.equal(llm.calls.length, 0, 'no summary is requested');
   assert.equal(typesSince(balanced.session, balanced.session.seq).length, 0);
+});
+
+// A meter whose whole surface weighs `total` heuristic tokens, half on the head and half on the newest node, so the sum is exact and counts nodes inside the range as well as outside it. Its request pressure `totalTokens` is the nodes' route prices, of no weight beside the read the cases below state.
+const meterOfTotal = (session, total) => {
+  const nodes = session.surface.nodes;
+  const half = { tokens: 1, heuristicTokens: total / 2 };
+  return fakeTokenMeter({ prices: { [nodes[0]]: half, [nodes.at(-1)]: half }, fallback: { tokens: 1, heuristicTokens: 0 } });
+};
+
+// A left quote at lA 34000, n 8 and ratio 40 passes under E2 and W2 and is declined by M2, S3 and X3; at 38000 M2 passes too; at 48000 every preset passes.
+test('the quote is priced under the preset the settings name whatever the heuristic length of the whole surface: the snapshot records that preset and its kappa', { skip }, async () => {
+  for (const [configured, lA, total] of [
+    ['E2', 34000, 0], ['E2', 34000, 400_000], ['E2', 34000, 5_000_000],
+    ['M2', 38000, 200_000], ['S3', 46000, 200_000], ['X3', 48000, 1_000_000],
+  ]) {
+    const { session, ctp } = leftQuoteAt(lA, `${configured}-${total}`);
+    const before = session.seq;
+    const llm = answeringSlots();
+    const { seal } = sealOver(session, { ctpOf: () => ctp, cRatio: () => 40, llm, meter: meterOfTotal(session, total), readSettings: () => ({ preset: configured, fallbackModel: null }) });
+    await preStep(seal, session);
+    const why = `${configured} at ${total}`;
+    assert.ok(llm.calls.length > 0, `${why}: the quote passes under the configured preset`);
+    const { quote } = appendedSince(session, before)[0].data;
+    assert.equal(quote.preset, configured, why);
+    assert.equal(quote.kappa, kappaOf(quote.n, quote.cRatio, KAPPA_PRESETS[configured]), `${why}: the kappa is the configured preset's`);
+  }
+});
+
+// The range of `turnOf` at n 8 and ratio 25 whose quote under E2 is the research record's worked point with no B: C 1600, S 31250, so a read of the history of 0, 140625 or 312500 puts the reference at 8, 12.5 or 18 (`test/inner-seal.quote.test.js` `READ_COST_AT_ANCHOR`); the first two seal, the third is a left quote at or above kappa. The pair's characters per token is inexact here, so a case reads the trigger and the recorded read, not the arm at the boundary.
+function readPointAt(id) {
+  const { events, replies } = turnOf();
+  const { session } = sessionOver([systemMessage(), ...events], id);
+  return { session, ctp: { ascii: charsOf(replies) / 32850, cjk: 1, version: 1 } };
+}
+const READ_POINT_SERVICES = ({ ctp, ...overrides }) => ({ ctpOf: () => ctp, cRatio: () => 25, readSettings: () => ({ preset: 'E2', fallbackModel: null }), ...overrides });
+
+test('the summary call\'s read of the active history is paid in the quote by the meter\'s total pressure, not by the sum of its nodes: one range at one ratio seals at a read of zero or 140625 with the read on the attempt record and is left unsealed at 312500 with no summary and nothing appended', { skip }, async () => {
+  for (const [totalTokens, seals] of [[0, true], [140625, true], [312500, false]]) {
+    const { session, ctp } = readPointAt(`read-${totalTokens}`);
+    const before = session.seq;
+    const llm = answeringSlots();
+    // The nodes' own prices sum to far more than any total here and to something else than each of them, so only the total decides.
+    const meter = fakeTokenMeter({ fallback: { tokens: 1_000_000, heuristicTokens: 1 }, totalTokens });
+    const { seal } = sealOver(session, READ_POINT_SERVICES({ ctp, llm, meter }));
+    const { answer, nextCalls } = await preStep(seal, session);
+    const why = `a read of ${totalTokens}`;
+    assert.equal(answer, NEXT_DECISION, why);
+    assert.equal(nextCalls, 1, why);
+    if (!seals) {
+      assert.equal(llm.calls.length, 0, `${why}: no summary is requested`);
+      assert.equal(session.seq, before, `${why}: nothing is appended`);
+      continue;
+    }
+    assert.deepEqual(typesSince(session, before), SEALED, why);
+    const { quote } = appendedSince(session, before)[0].data;
+    assert.deepEqual([quote.trigger, quote.summaryReadCost, quote.preset, quote.fee], ['quote', totalTokens, 'E2', INNER_QUOTE.fee], `${why}: the attempt keeps the read it was priced with`);
+    assert.equal(quote.kappa, kappaOf(quote.n, quote.cRatio, KAPPA_PRESETS.E2), `${why}: the read leaves kappa alone`);
+    assert.ok(Math.abs(quote.nRef - (250000 + totalTokens) / quote.sEst) < 1e-9, `${why}: the reference is the fixed load plus the read over the savings, the read not multiplied by the ratio`);
+  }
+});
+
+test('the configured preset still prices the quote whatever the read: one read passes under the most aggressive policy and is left unsealed under the balanced one, a read past the left arm declines under the one that passed, and the snapshot names the configured preset and its kappa', { skip }, async () => {
+  for (const [configured, totalTokens, seals] of [['E2', 140625, true], ['M2', 140625, false], ['E2', 5_000_000, false], ['M2', 0, true]]) {
+    const { session, ctp } = readPointAt(`${configured}-${totalTokens}`);
+    const before = session.seq;
+    const llm = answeringSlots();
+    const { seal } = sealOver(session, READ_POINT_SERVICES({ ctp, llm, meter: fakeTokenMeter({ totalTokens }), readSettings: () => ({ preset: configured, fallbackModel: null }) }));
+    await preStep(seal, session);
+    const why = `${configured} at a read of ${totalTokens}`;
+    assert.equal(llm.calls.length > 0, seals, why);
+    if (!seals) continue;
+    const { quote } = appendedSince(session, before)[0].data;
+    assert.equal(quote.preset, configured, why);
+    assert.equal(quote.kappa, kappaOf(quote.n, quote.cRatio, KAPPA_PRESETS[configured]), why);
+  }
+});
+
+test('the read is taken beside the settings and the surface cut, before the pre-step\'s first await', { skip }, async () => {
+  const { session, ctp } = readPointAt('read-order');
+  const order = [];
+  const meter = fakeTokenMeter({ totalTokens: 0 });
+  const measure = meter.measure.bind(meter);
+  meter.measure = function (...args) { order.push('meter'); return measure(...args); };
+  const { seal } = sealOver(session, READ_POINT_SERVICES({
+    ctp, meter,
+    readSettings: () => { order.push('settings'); return { preset: 'E2', fallbackModel: null }; },
+    readSession: async () => { order.push('session'); return { events: session.snapshotEvents() }; },
+  }));
+  await preStep(seal, session);
+  assert.deepEqual(order.slice(0, 3), ['settings', 'meter', 'session']);
+});
+
+test('a read that cannot be taken leaves the old quote whole: a meter with no total, a total that is not a finite non-negative number, and a measurement that throws at the quote each seal as the quote without a read did, the attempt keeps no read, and only the throw writes one diagnostic line naming it', { skip }, async (t) => {
+  for (const [why, meter, lines] of [
+    ['no total', { measure: () => ({ nodes: [] }) }, 0],
+    ['a total that is not a number', { measure: () => ({ nodes: [], totalTokens: Number.NaN }) }, 0],
+    ['a negative total', { measure: () => ({ nodes: [], totalTokens: -1 }) }, 0],
+  ]) {
+    const { session, ctp } = readPointAt(`unread-${why}`);
+    const before = session.seq;
+    // The commit's own measurement still has the nodes of the surface to count.
+    let calls = 0;
+    const real = fakeTokenMeter();
+    const { seal } = sealOver(session, READ_POINT_SERVICES({ ctp, meter: { measure(...args) { calls += 1; return calls === 1 ? meter.measure() : real.measure(...args); } } }));
+    const written = await stderrOf(t, async () => { await preStep(seal, session); });
+    assert.deepEqual(typesSince(session, before), SEALED, why);
+    const { quote } = appendedSince(session, before)[0].data;
+    assert.equal(Object.hasOwn(quote, 'summaryReadCost'), false, why);
+    assert.equal(written.filter(line => line.includes('inner_quote_failed')).length, lines, `${why}: ${written.join('\n')}`);
+  }
+
+  // A total that would decline the range, never read: the throw leaves the quote as before and the range seals.
+  const { session, ctp } = readPointAt('throws');
+  const before = session.seq;
+  let calls = 0;
+  const real = fakeTokenMeter({ totalTokens: 312500 });
+  const meter = { measure(...args) { calls += 1; if (calls === 1) throw new Error('the meter has no baseline'); return real.measure(...args); } };
+  const { seal } = sealOver(session, READ_POINT_SERVICES({ ctp, meter }));
+  const written = await stderrOf(t, async () => { await preStep(seal, session); });
+  assert.deepEqual(typesSince(session, before), SEALED);
+  const { quote } = appendedSince(session, before)[0].data;
+  assert.equal(Object.hasOwn(quote, 'summaryReadCost'), false);
+  const failures = written.filter(line => line.includes('inner_quote_failed'));
+  assert.equal(failures.length, 1, written.join('\n'));
+  assert.ok(failures[0].includes('the meter has no baseline'), failures[0]);
 });
 
 test('no count of steps seals without a quote that passes: a ratio the watcher cannot read, a pair it cannot read, savings that are not positive and a left quote at or above kappa permit the step with no summary, no attempt and nothing appended', { skip }, async (t) => {
@@ -412,7 +562,7 @@ test('the quote reads the held files without recording an observation and the co
   };
   const later = 'the held line as the commit reads it, rewritten after the quote and longer than before';
   const { seal } = sealOver(session, {
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
     readUnobserved: at('x', 'quote'),
     readFile: at(later, 'commit'),
   });
@@ -427,43 +577,52 @@ test('the quote reads the held files without recording an observation and the co
 });
 
 test('the summary tail names the held files and skills the range touched, while the quote and the carrier hold every one the held view answers', { skip }, async () => {
-  const { session } = sessionOver([systemMessage(), ...turnOf({ steps: LONG_STEPS, bulk: BULK }).events]);
+  const { events, replies, request } = turnOf({ steps: LONG_STEPS, bulk: BULK });
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
   const before = session.seq;
   const other = '/repo/src/other.js';
-  const asked = [];
+  // An effect belongs to the seq of an event: the first reply is among the events the seal replaces, the task's request is not.
+  const inside = seqOf(replies[0]);
+  const outside = seqOf(request);
   const readable = async (_agent, key) => ({ read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key });
   const { services, seal } = sealOver(session, {
-    heldView: (sessionId, _events, range) => {
-      asked.push([sessionId, range]);
-      return {
-        paths: new Map([[HELD_PATH, [1]], [other, [1]]]),
-        skills: new Map([['tdd', 'TDD body'], ['grill', 'Grill body']]),
-        touched: { paths: new Set([other]), skills: new Set(['grill']) },
-      };
-    },
+    heldView: () => ({
+      paths: new Map([[HELD_PATH, [1]], [other, [1]]]),
+      skills: new Map([['tdd', 'TDD body'], ['grill', 'Grill body']]),
+      effects: [
+        { seq: outside, kind: 'path', key: HELD_PATH },
+        { seq: inside, kind: 'path', key: other },
+        { seq: outside, kind: 'skill', key: 'tdd' },
+        { seq: inside, kind: 'skill', key: 'grill' },
+      ],
+    }),
     readUnobserved: readable,
     readFile: readable,
   });
   await preStep(seal, session);
 
   const [attempt, , , carrier] = appendedSince(session, before);
+  const replaced = carrier.data.source.slots.flatMap(slot => slot.seqs);
+  assert.ok(replaced.includes(inside) && !replaced.includes(outside), 'the effects stand inside and outside the range the seal replaces');
   const tail = services.llm.calls[0].messages.at(-1).content[0].text;
   assert.deepEqual(tail.split('\n').filter(line => /^- (file|skill) /u.test(line)), [`- file ${other}`, '- skill grill']);
-  assert.deepEqual(asked, [[session.id, carrier.data.source.slots.flatMap(slot => slot.seqs)]], 'the view is asked for the range the seal replaces');
   assert.deepEqual(carrier.data.source.paths.map(entry => entry.path).sort(), [other, HELD_PATH].sort(), 'the carrier holds every held file');
   assert.deepEqual(carrier.data.source.skills.map(skill => skill.name).sort(), ['grill', 'tdd'], 'and every held skill');
   const everything = {
     paths: [HELD_PATH, other].map(path => ({ path, displayPath: path, totalLines: 1, state: 'readable', write: [[1, 'x']] })),
     skills: [{ name: 'tdd', text: 'TDD body' }, { name: 'grill', text: 'Grill body' }],
   };
-  assert.equal(attempt.data.quote.bEst, `\n\n${renderCarried(everything)}`.length / ELIGIBLE_CTP.ascii, 'the quote prices every held file and skill');
+  assert.equal(attempt.data.quote.bEst, renderCarried(everything, CARRIER_TABLE).length / ELIGIBLE_CTP.ascii, 'the quote prices every held file and skill');
 });
 
-test('a held view the range touched none of leaves the summary tail naming no file and no skill', { skip }, async () => {
-  const { session } = sessionOver([systemMessage(), ...turnOf({ steps: LONG_STEPS, bulk: BULK }).events]);
+test('a held view whose effects all lie outside the range leaves the summary tail naming no file and no skill', { skip }, async () => {
+  const { events, request } = turnOf({ steps: LONG_STEPS, bulk: BULK });
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const outside = seqOf(request);
   const { services, seal } = sealOver(session, {
     heldView: () => ({
-      paths: new Map([[HELD_PATH, [1]]]), skills: new Map([['tdd', 'TDD body']]), touched: { paths: new Set(), skills: new Set() },
+      paths: new Map([[HELD_PATH, [1]]]), skills: new Map([['tdd', 'TDD body']]),
+      effects: [{ seq: outside, kind: 'path', key: HELD_PATH }, { seq: outside, kind: 'skill', key: 'tdd' }],
     }),
   });
   await preStep(seal, session);
@@ -472,29 +631,26 @@ test('a held view the range touched none of leaves the summary tail naming no fi
   assert.deepEqual(tail.split('\n').filter(line => /^- (file|skill) /u.test(line)), []);
 });
 
-test('the held view is asked for the original result a pruner replacement in the range stands for, since the effects of a read belong to the original, so the file the pruned read held is named in the tail', { skip }, async () => {
+test('the effects of the original result a pruner replacement in the range stands for count with the range\'s, so the file the pruned read held is named in the tail', { skip }, async () => {
   const { events } = turnOf({ steps: LONG_STEPS, bulk: BULK, toolSteps: [1] });
   const original = events.find(event => event.type === 'tool/result');
   const replacement = prunedResult(original, { text: 'pruned once' });
   const at = events.indexOf(original) + 1;
   const { session, seqOf } = sessionOver([systemMessage(), ...events.slice(0, at), replacement, ...events.slice(at)]);
-  const asked = [];
+  // The surface the range is taken from holds the replacement, and the original it stands for is no node of it.
+  assert.ok(session.surface.nodes.includes(seqOf(replacement)) && !session.surface.nodes.includes(seqOf(original)));
   const readable = async (_agent, key) => ({ read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key });
   const { services, seal } = sealOver(session, {
     // The effect of the read belongs to the original, as the projection attributes it: the replacement yields no observation.
-    heldView: (_id, _events, range) => {
-      asked.push(range);
-      return {
-        paths: new Map([[HELD_PATH, [1]]]), skills: new Map(),
-        touched: { paths: new Set(range.includes(seqOf(original)) ? [HELD_PATH] : []), skills: new Set() },
-      };
-    },
+    heldView: () => ({
+      paths: new Map([[HELD_PATH, [1]]]), skills: new Map(),
+      effects: [{ seq: seqOf(original), kind: 'path', key: HELD_PATH }],
+    }),
     readUnobserved: readable,
     readFile: readable,
   });
   await preStep(seal, session);
 
-  assert.ok(asked[0].includes(seqOf(replacement)) && asked[0].includes(seqOf(original)), 'the replacement and the original it stands for');
   const tail = services.llm.calls[0].messages.at(-1).content[0].text;
   assert.deepEqual(tail.split('\n').filter(line => /^- (file|skill) /u.test(line)), [`- file ${HELD_PATH}`]);
 });
@@ -508,7 +664,7 @@ test('a cancel while the quote reads ends the turn as the abort before any attem
   // The read itself survives the abort, as the unobserved read does when the execution world refuses: the quote alone does not end the turn.
   const { seal } = sealOver(session, {
     llm,
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
     readUnobserved: async (...args) => { controller.abort(cause); return emptyRead(...args); },
   });
   const { error, nextCalls } = await failingPreStep(seal, session, { signal: controller.signal });
@@ -660,16 +816,16 @@ test('the call record names the request header the summary call sent, found in t
   withoutEventAt(session);
   const earlier = session.snapshotEvents().find(event => event.type === 'request/header');
   // The index the host's feed keeps: it takes each committed event as it commits.
-  const index = new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)]));
+  const index = new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)]));
   let later;
 
   const { record, call } = await sealedRecord(session, {
     kit: withoutPairing(),
-    sourceFacts: () => index,
+    eventFacts: () => index,
     readSession: async () => {
       const slice = session.snapshotEvents();
       later = session.append('request/header', headerData(LATER_TOOLS));
-      index.set(later.seq, sourceFactOf(later));
+      index.set(later.seq, eventFactOf(later));
       return { events: slice };
     },
   });
@@ -686,11 +842,11 @@ test('the request header the call record names is the one of greatest seq, whate
   events.splice(events.length - 1, 0, second);
   const { session, seqOf } = sessionOver([systemMessage(), ...events]);
   withoutEventAt(session);
-  const entries = session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)]);
-  const latest = entries.findLast(([, fact]) => fact.type === 'request/header')[0];
+  const entries = session.snapshotEvents().map(event => [event.seq, eventFactOf(event)]);
+  const latest = entries.findLast(([, fact]) => fact.header)[0];
   assert.equal(latest, seqOf(second), 'the later header is the log\'s last');
   // A snapshot merged after live feeds leaves the Map with its later seqs first.
-  const { record } = await sealedRecord(session, { kit: withoutPairing(), sourceFacts: () => new Map([...entries].reverse()) });
+  const { record } = await sealedRecord(session, { kit: withoutPairing(), eventFacts: () => new Map([...entries].reverse()) });
   assert.equal(record.data.input.headerSeq, latest);
 
   const headerless = sessionOver([systemMessage(), ...turnOf().events.filter(event => event.type !== 'request/header')], 'headerless').session;
@@ -733,7 +889,7 @@ test('an unready source index permits the next step without sealing: a mode-on s
   const { session } = sessionOver([systemMessage(), ...turnOf().events]);
   const llm = answeringSlots();
   let reads = 0;
-  const { seal } = sealOver(session, { sourceFacts: () => null, readSession: async () => { reads += 1; return { events: session.snapshotEvents() }; }, llm });
+  const { seal } = sealOver(session, { eventFacts: () => null, readSession: async () => { reads += 1; return { events: session.snapshotEvents() }; }, llm });
   const before = session.seq;
 
   const { answer, nextCalls } = await preStep(seal, session);
@@ -852,7 +1008,7 @@ test('each request of a seal asks the same thing and states its own point: the h
   const signal = new AbortController().signal;
   const { seal } = sealOver(session, {
     llm,
-    heldView: () => { reads.held += 1; return { paths: new Map(), skills: new Map(), touched: NOTHING_TOUCHED }; },
+    heldView: () => { reads.held += 1; return { paths: new Map(), skills: new Map(), effects: [] }; },
     readUnobserved: async (...args) => { reads.unobserved += 1; return emptyRead(...args); },
     readFile: async (...args) => { reads.committed += 1; return emptyRead(...args); },
     readState: () => { reads.state += 1; return { asOfSeq: 0, items: {} }; },
@@ -1074,6 +1230,39 @@ test('a format failure never moves the ladder and a filter failure never spends 
   }
 });
 
+test('a text that is not the notes and both kinds of tool call share the one bound: each is asked again on the same selection, and the last failure ends the turn with its own reason', { skip }, async () => {
+  const { session } = sessionOver([systemMessage(), ...turnOf().events]);
+  const before = session.seq;
+  const nodes = [...session.surface.nodes];
+  const llm = sequencedLlm(wrongFormat, toolCalled, toolCallsFinish);
+  const { seal, monitor } = sealOver(session, { llm, settings: { fallbackModel: FALLBACK } });
+
+  const { error, nextCalls } = await failingPreStep(seal, session);
+
+  assert.match(error.message, /finished with tool-calls/);
+  assert.equal(nextCalls, 0);
+  assert.deepEqual(llm.calls.map(routeOf), Array(SUMMARY_MAX_REQUESTS).fill(SELECTION), 'asked again on the same selection up to the bound, never on the fallback');
+  assert.deepEqual(appendedSince(session, before).map(event => event.type), Array(SUMMARY_MAX_REQUESTS).fill(FAILED).flat(), 'each request is an attempt of its own, failed with its call recorded');
+  assert.deepEqual(session.surface.nodes, nodes);
+  assert.deepEqual(monitor.live(session.id), []);
+});
+
+test('a tool call that the next request answers in the notes format seals with that answer: the failed attempt is closed first, both requests on the session\'s selection', { skip }, async () => {
+  for (const [why, failing] of [['a tool call that stopped', toolCalled], ['a finish of tool-calls', toolCallsFinish]]) {
+    const { session } = sessionOver([systemMessage(), ...turnOf().events], why);
+    const before = session.seq;
+    const llm = sequencedLlm(failing, answeringSlots().stream);
+    const { seal, monitor } = sealOver(session, { llm, settings: { fallbackModel: FALLBACK } });
+
+    const { nextCalls } = await preStep(seal, session);
+
+    assert.equal(nextCalls, 1, `${why}: the step is entered after the seal`);
+    assert.deepEqual(llm.calls.map(routeOf), [SELECTION, SELECTION], why);
+    assert.deepEqual(appendedSince(session, before).map(event => event.type), [...FAILED, ...SEALED], why);
+    assert.deepEqual(monitor.live(session.id), [], why);
+  }
+});
+
 test('a cancel is never followed by another rung: one that arrives while a filtered attempt is closed ends the turn as the abort, and one that the filtered reply met first ends its attempt as cancelled', { skip }, async () => {
   const cause = { kind: 'user' };
 
@@ -1111,7 +1300,7 @@ test('a cancel is never followed by another rung: one that arrives while a filte
 test('a reply that answered in the format is never asked again whatever fails after it: a held file that cannot be read, a range whose surface changed, unbalanced tool pairing, a carrier that cannot be assembled and a commit append that throws each end the attempt failed after the one request', { skip }, async () => {
   const refused = new Error('the prune was refused');
   const cases = [
-    ['a held file that cannot be read', {}, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }), readFile: async () => { throw new Error('the file is gone'); } }, /the file is gone/],
+    ['a held file that cannot be read', {}, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }), readFile: async () => { throw new Error('the file is gone'); } }, /the file is gone/],
     ['a range whose surface changed', {
       during: (session) => {
         const result = session.snapshotEvents().find(event => event.type === 'tool/result');
@@ -1338,7 +1527,7 @@ const HELD_PATH = '/repo/src/held.js';
 // An appended carrier whose source carries `paths`, as an earlier seal left it on the surface.
 function carrierWith(paths) {
   const source = { kind: INNER_SEAL_KIND, v: 1, slots: [], paths };
-  return { ...userMessage({ text: 'earlier seal' }), data: { ...userMessage({ text: 'earlier seal' }).data, content: renderCarrier(source), source } };
+  return { ...userMessage({ text: 'earlier seal' }), data: { ...userMessage({ text: 'earlier seal' }).data, content: renderCarrier(source, CARRIER_TABLE), source } };
 }
 
 // A session `[system, h1, carrier, ...one turn of INNER_QUOTE.minSteps steps, step 1 with a tool call]` whose first request header precedes the carrier, as a log written by the loop has it, a seal that holds HELD_PATH's line 1 as `x` and whose B read runs `during(session)` before it answers.
@@ -1351,7 +1540,7 @@ function commitRig({ during = () => {}, kit, services = {}, tools } = {}) {
   const { seal } = sealOver(session, {
     ...(kit === undefined ? {} : { kit }),
     ...services,
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
     readFile: async (_agent, key) => {
       during(session);
       return { read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key };
@@ -1483,7 +1672,7 @@ test('a file block of A moves to its slot\'s place in the carrier, and an image 
   assert.deepEqual(blocks.filter(block => block.type === 'file').map(block => block.attachment), [FILE_REF, saved]);
   const behind = blocks[blocks.findIndex(block => block.type === 'file' && block.attachment.attachmentId === saved.attachmentId) - 1];
   assert.equal(behind.type, 'text');
-  assert.ok(behind.text.endsWith(`${CARRIER_WORDING.imageSaved(IMAGE_REF.name)}\n`), `the saved image's file block follows its sentence's line: ${JSON.stringify(behind.text)}`);
+  assert.ok(behind.text.endsWith(`${CARRIER_WORDING.imageSaved(IMAGE_REF.name, CARRIER_TABLE.imageReadTool)}\n`), `the saved image's file block follows its sentence's line: ${JSON.stringify(behind.text)}`);
 });
 
 test('a failed image save is a summary failure: the attempt, the call record and a failed end, and an error that ends the turn', { skip }, async () => {
@@ -1561,13 +1750,13 @@ test('a step that asked the user carries each question\'s original text and the 
   ]);
   assert.equal(slots[2].text, restated, 'the note is the model\'s, nothing taken out of it');
   assert.deepEqual(slots.map(slot => Object.hasOwn(slot, 'questions')), slots.map((_, index) => index === 2), 'no other slot has the field');
-  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source), 'the body is the source rendered');
+  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
   // Independent of the wording: whatever frames them, the originals stand in the body whole, in the order note, question, answer, question, answer, next note.
   const body = carrier.data.content[0].text;
   assert.ok(ascending(placesIn(body, [restated, LONG_QUESTION, 'Ship now\nSplit\n', PLAN_CUSTOM, 'Who owns the rollout?', 'Platform', slots[3].text])), 'the originals follow the step\'s note, before the next note');
   for (const explanation of EXPLANATIONS) assert.ok(!body.includes(explanation), `the model's explanation is no part of the body: ${explanation}`);
   assert.ok(!body.includes('Wait') && !body.includes('Product'), 'the options the user did not select are no part of the body');
-  assert.ok(body.startsWith(`${CARRIER_WORDING.addresses} ${CARRIER_WORDING.questionMark}`), 'the address sentence names the question lines');
+  assert.ok(body.startsWith(`${CARRIER_TABLE.addresses} ${CARRIER_WORDING.questionMark}`), 'the address sentence names the question lines');
   assert.equal(llm.calls.length, 1, 'one summary call, over the slots as before');
 });
 
@@ -1582,7 +1771,7 @@ async function sealedAsk({ arguments: args = PLAN_ARGUMENTS, result, mutate = ()
   return { carrier: appendedSince(session, before).find(event => event.type === 'user/message'), types: typesSince(session, before) };
 }
 
-test('what cannot give a question with the user\'s own answer adds nothing, and the seal commits as it would without it: a result the tool marked as an error, text that is no answer, arguments that are no questions, a result that no call id pairs, answers that name no question, a selection of nothing with no custom text', { skip }, async () => {
+test('what cannot give a question with the user\'s own answer adds nothing, and the seal commits as it would without it: a result the tool marked as an error, text that is no answer, arguments that are no questions, a result that no call id pairs, answers that name no question, a selection of nothing with no custom text, a malformed answer that voids the well-formed answers beside it', { skip }, async () => {
   const unpaired = (events) => {
     const answer = events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === 'call_ask_plan');
     answer.data.message.toolCallId = 'call_elsewhere';
@@ -1598,6 +1787,8 @@ test('what cannot give a question with the user\'s own answer adds nothing, and 
     ['a result that holds no answers list', { result: { text: '{"answers":"yes"}' } }],
     ['a selection that is no list of labels', { result: { text: JSON.stringify({ answers: [{ id: 'plan', selected: 'Ship now' }] }) } }],
     ['a label that is no text', { result: { text: JSON.stringify({ answers: [{ id: 'plan', selected: [1] }] }) } }],
+    ['a malformed answer beside a well-formed one', { result: { text: JSON.stringify({ answers: [{ id: 'plan', selected: ['Ship now'] }, { id: 'owner', selected: [1] }] }) } }],
+    ['a custom answer that is no text beside a well-formed one', { result: { text: JSON.stringify({ answers: [{ id: 'plan', selected: ['Ship now'] }, { id: 'owner', selected: ['Platform'], custom: 3 }] }) } }],
     ['answers that name no question', { result: { text: JSON.stringify({ answers: [{ id: 'elsewhere', selected: ['Ship now'] }] }) } }],
     ['a result no call id pairs', { result: { text: PLAN_RESULT }, mutate: unpaired }],
     ['a selection of nothing and no custom text', { result: { text: nothing } }],
@@ -1606,7 +1797,7 @@ test('what cannot give a question with the user\'s own answer adds nothing, and 
     assert.deepEqual(types, SEALED, why);
     const { slots } = carrier.data.source;
     assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text']), `${why}: no field, no stand-in`);
-    assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_WORDING.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }], `${why}: the body is the notes alone, as without an ask`);
+    assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_TABLE.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }], `${why}: the body is the notes alone, as without an ask`);
   }
 });
 
@@ -1706,7 +1897,7 @@ test('several question calls keep their own pairing and order: two asks of one s
   assert.deepEqual(slots[5].questions, [{ question: 'Question c?\nWith a second line.', user: 'Later' }]);
   assert.deepEqual(slots.map(slot => Object.hasOwn(slot, 'questions')), slots.map((_, index) => index === 3 || index === 5));
   assert.deepEqual(slots.map(slot => slot.text), slots.map((_, index) => `summary ${index + 1}`), 'every step has its note, the asking ones included');
-  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source), 'the body is the source rendered');
+  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
   const body = carrier.data.content[0].text;
   assert.ok(ascending(placesIn(body, [
     slots[3].text, 'Question a?\nWith a second line.', 'Yes', 'Question b?\nWith a second line.', 'No\nNot before Friday', slots[4].text, slots[5].text, 'Question c?\nWith a second line.', 'Later', slots[6].text,
@@ -1724,7 +1915,7 @@ test('a seal over steps that asked nothing, tool calls of other tools among them
   const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
   const { slots } = carrier.data.source;
   assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text']));
-  assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_WORDING.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }]);
+  assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_TABLE.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }]);
 });
 
 test('a second seal whose range holds an old carrier, kept in a checkpoint\'s tail, builds B against only the carriers outside the range on the commit-time surface, so the old carrier\'s lines are carried again', { skip }, async () => {
@@ -1736,7 +1927,7 @@ test('a second seal whose range holds an old carrier, kept in a checkpoint\'s ta
   assert.deepEqual(session.surface.nodes.slice(0, 3), [0, seqOf(checkpoint), seqOf(old)], 'the checkpoint keeps the old carrier in its tail');
   const before = session.seq;
   const { seal } = sealOver(session, {
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
     readFile: async (_agent, key) => ({ read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key }),
   });
   await preStep(seal, session);
@@ -1750,7 +1941,7 @@ const SHOWN_BODY = ['first line of the held block, long enough', 'second line of
 const shownAt = first => ({ path: HELD_PATH, displayPath: HELD_PATH, totalLines: 40, state: 'readable', write: SHOWN_BODY.map((text, at) => [first + at, text]) });
 // A seal whose held view holds `texts` from line `first` of a 40-line file, read as it stands on disk.
 const heldAt = (first, texts) => ({
-  heldView: () => ({ paths: new Map([[HELD_PATH, texts.map((_, at) => first + at)]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+  heldView: () => ({ paths: new Map([[HELD_PATH, texts.map((_, at) => first + at)]]), skills: new Map(), effects: [] }),
   readFile: async (_agent, key) => ({
     read: { status: 'readable', totalLines: 40, windows: [{ offset: first, lines: texts.map((text, at) => ({ number: first + at, text })) }] }, displayPath: key,
   }),
@@ -1770,8 +1961,8 @@ test('a held block that moved to other lines with its text unchanged is left out
   const [entry] = carrier.data.source.paths;
   assert.deepEqual(entry, { path: HELD_PATH, displayPath: HELD_PATH, totalLines: 40, write: shownAt(6).write, withdraw: [1, 2, 3], omit: [6, 7, 8] },
     'every line is written, the old ones withdrawn, and every line is the one omitted');
-  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source), 'the body is the source rendered');
-  assert.equal(renderCarried(carrier.data.source), null, 'the withdrawals are no part of B, which has nothing else to say');
+  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
+  assert.equal(renderCarried(carrier.data.source, CARRIER_TABLE), null, 'the withdrawals are no part of B, which has nothing else to say');
   const body = carrier.data.content.map(block => block.text ?? '').join('');
   for (const text of SHOWN_BODY) assert.ok(!body.includes(text), 'no row of the omitted lines is in the body');
   assert.ok(!body.includes('(total lines:'), 'and no file block');
@@ -1828,12 +2019,12 @@ test('a carrier in the range, replaced by the new one, is no carrier on the requ
 test('when the cheap check and the frozen slice disagree, the slice\'s range, count and pause decide the summary and the commit', { skip }, async () => {
   const { events, replies } = turnOf({ steps: INNER_QUOTE.minSteps + 1 });
   const { session, seqOf } = sessionOver([systemMessage(), ...events]);
-  const factsOf = s => new Map(s.snapshotEvents().map(event => [event.seq, sourceFactOf(event)]));
+  const factsOf = s => new Map(s.snapshotEvents().map(event => [event.seq, eventFactOf(event)]));
   // The index wrongly takes the first reply for a checkpoint: its range starts after it, still at INNER_QUOTE.minSteps.
   const stale = factsOf(session);
-  stale.set(seqOf(replies[0]), { ...stale.get(seqOf(replies[0])), kind: 'compact-checkpoint' });
+  stale.set(seqOf(replies[0]), { ...stale.get(seqOf(replies[0])), marker: 'checkpoint' });
   const before = session.seq;
-  const { seal } = sealOver(session, { sourceFacts: () => stale });
+  const { seal } = sealOver(session, { eventFacts: () => stale });
   await preStep(seal, session);
   const record = session.eventAt(before + 1);
   assert.equal(record.data.range[0], seqOf(replies[0]), 'the slice\'s range starts after the initial prefix');
@@ -1847,7 +2038,7 @@ test('when the cheap check and the frozen slice disagree, the slice\'s range, co
   const unpaused = factsOf(held);
   for (const [seq, fact] of unpaused) unpaused.set(seq, { ...fact, skeletonCall: false });
   const llm = answeringSlots();
-  const { seal: pausedSeal } = sealOver(held, { sourceFacts: () => unpaused, llm });
+  const { seal: pausedSeal } = sealOver(held, { eventFacts: () => unpaused, llm });
   const heldBefore = held.seq;
   const { answer } = await preStep(pausedSeal, held);
   assert.equal(answer, NEXT_DECISION);
@@ -1860,11 +2051,11 @@ test('the surface capture and the slice read share one synchronous stretch: an e
   const late = { seq: null };
   const slices = [];
   const { seal } = sealOver(session, {
-    sourceFacts: () => {
+    eventFacts: () => {
       queueMicrotask(() => { late.seq = session.append('user/message', { role: 'user', content: [{ type: 'text', text: 'late' }], source: { kind: 'user' }, id: 'late' }, { surfaceOp: 'append' }).seq; });
-      return new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)]));
+      return new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)]));
     },
-    heldView: (_id, events) => { slices.push(events.map(event => event.seq)); return { paths: new Map(), skills: new Map(), touched: NOTHING_TOUCHED }; },
+    heldView: (_id, events) => { slices.push(events.map(event => event.seq)); return { paths: new Map(), skills: new Map(), effects: [] }; },
   });
   await preStep(seal, session);
   assert.notEqual(late.seq, null);
@@ -1920,7 +2111,7 @@ test('the question supplement is optional and nothing else is: over a range that
   const cases = [
     ['a carrier factory that throws', { kit: kitOf({ createUserMessage: () => { throw new Error('the message is not well formed'); } }) }, {}, error => /the message is not well formed/.test(error.message)],
     ['a cancel while the commit reads', {
-      heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+      heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
       readFile: async (...args) => { controller.abort(reason); return emptyRead(...args); },
     }, { signal: controller.signal }, error => error === reason],
     ['an unbalanced tool pairing', { kit: kitOf({ toolPairingBalancedAfter: () => false }) }, {}, error => /tool pairing is unbalanced/.test(error.message)],
@@ -2018,11 +2209,6 @@ test('each way a consumed summary can fail leaves the attempt, the call record a
     ['a stream that throws', async function* () { yield { type: 'block-start', index: 0, blockType: 'text' }; throw new Error('the connection reset'); }, /the summary stream threw: the connection reset/],
     ['a stream without a finish chunk', () => textStream('[]'), /ended without a finish chunk/],
     ['a finish that is not a stop', () => textStream('[]', { type: 'finish', reason: { kind: 'max-tokens' } }), /finished with max-tokens/],
-    ['a tool call', () => chunks(
-      { type: 'block-start', index: 0, blockType: 'tool-call' },
-      { type: 'block-end', index: 0, block: { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{}' } },
-      STOP,
-    ), /made a tool call/],
   ];
   for (const [why, script, pattern] of cases) {
     const { session } = sessionOver([systemMessage(), ...turnOf().events]);
@@ -2101,7 +2287,7 @@ test('a cancel the loop made ends the attempt as cancelled with its cause readab
     });
     for (const [where, { session }, controller, overrides] of [
       ['in the stream', streaming, midStream, { llm: streamed }],
-      ['in a held-file read', reading, whileReading, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), touched: NOTHING_TOUCHED }), readFile: read }],
+      ['in a held-file read', reading, whileReading, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }), readFile: read }],
     ]) {
       const before = session.seq;
       const { seal, monitor } = sealOver(session, overrides);
@@ -2300,7 +2486,6 @@ test('the facts of a sealed attempt read as one committed row: the attempt recor
     id: attempt.seq,
     revision: carrier.seq,
     status: 'committed',
-    legacy: false,
     startedAt: attempt.time,
     endedAt: carrier.time,
     range: attempt.data.range,
@@ -2387,7 +2572,6 @@ test('the facts of a request that could not be sent read as a failed row that sh
     id: attempt.seq,
     revision: end.seq,
     status: 'failed',
-    legacy: false,
     startedAt: attempt.time,
     endedAt: end.time,
     range: attempt.data.range,
@@ -2444,7 +2628,7 @@ test('the entries of the registry join the folded facts by the attempt record\'s
   assert.deepEqual([sealed.id, sealed.status, sealed.slots], [attempt.seq, 'committed', INNER_QUOTE.minSteps]);
 });
 
-test('the facts a seal leaves when a monitor record could not be appended read as the contract says: a call with no attempt record is a legacy row that its carrier commits, and an attempt whose end could not be appended stays unknown beside its call', { skip }, async (t) => {
+test('the facts a seal leaves when a monitor record could not be appended read as the contract says: a call with no attempt record makes no row though its carrier commits, and an attempt whose end could not be appended stays unknown beside its call', { skip }, async (t) => {
   const unstarted = sessionOver([systemMessage(), ...turnOf().events]).session;
   const unstartedBefore = unstarted.seq;
   const startRefused = countingKit({ refuse: { [INNER_ATTEMPT_RECORD_TYPE]: new Error('the log refused the attempt') } });
@@ -2454,11 +2638,8 @@ test('the facts a seal leaves when a monitor record could not be appended read a
 
   const [call, , carrier] = appendedSince(unstarted, unstartedBefore);
   assert.equal(call.type, INNER_CALL_RECORD_TYPE);
-  const [legacy] = rowsAfter(unstarted, startRig.monitor.live(unstarted.id));
-  assert.deepEqual([legacy.id, legacy.legacy, legacy.startedAt, legacy.status, legacy.endedAt, legacy.slots, legacy.revision], [call.seq, true, null, 'committed', carrier.time, INNER_QUOTE.minSteps, carrier.seq]);
-  assert.deepEqual(legacy.range, { first: call.data.range[0], last: call.data.range.at(-1), count: call.data.range.length });
-  assert.equal(legacy.call.input, promptOf(startLlm.calls[0]).slice(0, PREVIEW_SOURCE_CHARS));
-  assert.equal(legacy.call.endedAt, call.data.endedAt);
+  assert.equal(carrier.data.source.slots.length, INNER_QUOTE.minSteps, 'the seal committed');
+  assert.deepEqual(rowsAfter(unstarted, startRig.monitor.live(unstarted.id)), [], 'the call names no attempt of the log');
 
   const unended = sessionOver([systemMessage(), ...turnOf().events]).session;
   const unendedBefore = unended.seq;
@@ -2468,7 +2649,7 @@ test('the facts a seal leaves when a monitor record could not be appended read a
 
   assert.deepEqual(typesSince(unended, unendedBefore), [INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE]);
   const [waiting] = rowsAfter(unended, endRig.monitor.live(unended.id));
-  assert.deepEqual([waiting.status, waiting.reason, waiting.endedAt, waiting.legacy], ['unknown', null, null, false]);
+  assert.deepEqual([waiting.status, waiting.reason, waiting.endedAt], ['unknown', null, null]);
   assert.deepEqual([waiting.call.state, waiting.call.output], ['received', '{"1":"only one"}']);
 });
 
@@ -2490,6 +2671,42 @@ function accessAfter(session, monitor, reads = []) {
     readStored: async () => undefined,
   });
 }
+
+test('the monitor warns only when a later slot seals a direct read of text the real carrier injected whole', { skip }, async () => {
+  const opening = turnOf({ steps: 1 });
+  const short = turnOf({ turn: 2, steps: 1, ask: 'Keep the smoke checks focused.' });
+  const long = turnOf({ turn: 3, steps: LONG_STEPS, bulk: BULK, ask: 'Long input. '.repeat(20_000), toolSteps: [3], asks: {
+    3: [
+      { id: 'answered', arguments: PLAN_ARGUMENTS, result: { text: JSON.stringify({ answers: [{ id: 'plan', selected: ['Split'] }, { id: 'unpaired', selected: ['Not shown'] }] }) } },
+      { id: 'unanswered', arguments: PLAN_ARGUMENTS, result: { text: 'No answer', isError: true } },
+    ],
+  } });
+  const { session, seqOf } = sessionOver([systemMessage(), ...opening.events, ...short.events, ...long.events]);
+  const { seal, monitor } = sealOver(session);
+  const access = accessAfter(session, monitor);
+  await preStep(seal, session);
+  const result = id => long.events.find(event => event.type === 'tool/result' && event.data.message.toolCallId === id);
+  const targets = [short.request, long.replies[2], result('answered'), long.request, opening.request, result('call-3-3'), result('unanswered')];
+  const append = ({ type, data, surfaceOp }) => session.append(type, data, surfaceOp === undefined ? undefined : { surfaceOp });
+  const recallSlots = targets.map((target, at) => {
+    const step = at + 1;
+    const id = `recall-${step}`;
+    const args = JSON.stringify({ seq: seqOf(target) });
+    const reply = append(assistantMessage({ turn: 4, step, toolCalls: [{ id, name: 'sw_event_read', arguments: args }] }));
+    append(toolCall({ turn: 4, step, callId: id, name: 'sw_event_read', arguments: args }));
+    append(toolResult({ turn: 4, step, callId: id, text: 'Read denied', isError: true }));
+    return reply.seq;
+  });
+  turnOf({ turn: 5, steps: LONG_STEPS, bulk: BULK }).events.forEach(append);
+
+  const warnings = async () => (await access.rows(session.id)).attempts.map(row => row.slotWarnings);
+  assert.deepEqual(await warnings(), [undefined], 'do not mark the source or the earlier seal');
+  await preStep(seal, session);
+  assert.deepEqual(await warnings(), [undefined, {
+    [recallSlots[0]]: ['verbatim-recall'],
+    [recallSlots[2]]: ['verbatim-recall'],
+  }], 'mark whole user text and the result of an injected question; not the message that asked it, whose own text the carrier does not hold, nor truncated, unsealed or other result text');
+});
 
 test('the details of a sealed attempt read from the facts the seal wrote: the request as it was sent with the definitions of the header\'s tools, the response and its usage, and slots that tell the sources the call saw from the original a pruner replaced', { skip }, async () => {
   const { events } = turnOf({ toolSteps: [1] });
@@ -2679,7 +2896,7 @@ test('the seal of a session that started with a load builds B against the eviden
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
     // What the session holds of the files: the lines the load showed, one line the model read later, and a line of the other file past what the load showed.
-    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8, 12]], [keyOf(root, 'other.js'), [1, 2, 4]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8, 12]], [keyOf(root, 'other.js'), [1, 2, 4]]]), skills: new Map(), effects: [] }),
   });
   const shownBefore = JSON.stringify(read.data.source);
   writeFileSync(key, `${fileRows('kept.js', 20).map((row, index) => (index + 1 === 5 ? 'kept.js line 5 rewritten' : row)).join('\n')}\n`);
@@ -2703,7 +2920,7 @@ test('a path the load kept follows the carried semantics against the evidence it
   const before = session.seq;
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
-    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] }),
   });
   rmSync(key);
 
@@ -2717,7 +2934,7 @@ test('a path the load kept follows the carried semantics against the evidence it
 test('the quote and the commit read B against the same evidence the load showed: the attempt keeps the estimate of the B the commit then writes, nothing for kept lines that stand and the price of the rewritten line alone', { skip }, async (t) => {
   const root = directoryWith(t, { 'kept.js': fileRows('kept.js', 20) });
   const key = keyOf(root, 'kept.js');
-  const held = () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), touched: NOTHING_TOUCHED });
+  const held = () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] });
 
   const standing = await loadedSession(root, [{ path: 'kept.js', lines: [[3, 8]] }]);
   const standingBefore = standing.session.seq;
@@ -2742,7 +2959,7 @@ test('B₂ is built by the machinery of B₁: the second seal of a session that 
   const key = keyOf(root, 'kept.js');
   const rewrite = (row5, row6 = 'kept.js line 6') => writeFileSync(key, `${fileRows('kept.js', 20).map((row, index) => (index + 1 === 5 ? row5 : index + 1 === 6 ? row6 : row)).join('\n')}\n`);
   const { session } = await loadedSession(root, [{ path: 'kept.js', lines: [[3, 8]] }]);
-  const services = { readFile: readFromDisk, readUnobserved: readFromDisk, heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), touched: NOTHING_TOUCHED }) };
+  const services = { readFile: readFromDisk, readUnobserved: readFromDisk, heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] }) };
   const { seal } = sealOver(session, services);
   rewrite('kept.js line 5 second');
   const first = session.seq;
@@ -2772,7 +2989,7 @@ test('evidence inside the victim range is no baseline: a later load\'s read mess
   const before = session.seq;
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
-    heldView: () => ({ paths: new Map([[keyOf(root, 'kept.js'), [3, 4, 5, 6, 7, 8]], [keyOf(root, 'later.js'), [1, 2, 3, 4]]]), skills: new Map(), touched: NOTHING_TOUCHED }),
+    heldView: () => ({ paths: new Map([[keyOf(root, 'kept.js'), [3, 4, 5, 6, 7, 8]], [keyOf(root, 'later.js'), [1, 2, 3, 4]]]), skills: new Map(), effects: [] }),
   });
 
   await preStep(seal, session);
@@ -2784,11 +3001,11 @@ test('evidence inside the victim range is no baseline: a later load\'s read mess
 
 // ── The session state ────────────────────────────────────────────────────────
 
-const W = CARRIER_WORDING;
-const toolOf = key => STATE_ITEMS.find(item => item.key === key).tool;
+const toolOf = key => CARRIER_TABLE.stateItems.find(item => item.key === key).tool;
 // The session's tool list with the tool of each item named in `keys` beside the one every test session lists.
 const toolsFor = (...keys) => [...TOOLS, ...keys.map(key => ({ name: toolOf(key), description: `The ${toolOf(key)} tool.`, parameters: { type: 'object', properties: {} } }))];
-const ALL_KEYS = STATE_ITEMS.map(({ key }) => key);
+// The items that stand for a tool of the session: the git state stands for none and is read by `readGit`.
+const ALL_KEYS = CARRIER_TABLE.stateItems.filter(({ tool }) => tool !== undefined).map(({ key }) => key);
 const ALL_TOOLS = toolsFor(...ALL_KEYS);
 // What the host's `readState(session)` answers for `values`, `{ key: value }`: the cut and a read for each item named, answering its value.
 const stateRead = (values, asOfSeq = 9) => () => ({ asOfSeq, items: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, () => value])) });
@@ -2803,13 +3020,13 @@ const bodyOf = carrier => carrier.data.content.at(-1).text;
 const sealedCarrier = (session, before) => appendedSince(session, before).find(event => event.type === 'user/message');
 const stateLines = lines => lines.filter(line => line.includes('inner_'));
 
-// A seal over one padded turn that lists `tools`, with `anchors` as the extra fields of earlier carriers on its surface; answers the carrier it commits and the stderr lines.
-async function sealingWith(t, { values = FULL, tools = ALL_TOOLS, anchors = [], readState = stateRead(values), asOfSeq } = {}) {
+// A seal over one padded turn that lists `tools`, with `anchors` as the extra fields of earlier carriers on its surface and `readGit` the host's read of the git state; answers the carrier it commits and the stderr lines.
+async function sealingWith(t, { values = FULL, tools = ALL_TOOLS, anchors = [], readState = stateRead(values), asOfSeq, readGit, signal } = {}) {
   const { events } = turnOf({ steps: LONG_STEPS, bulk: BULK, tools });
   const { session } = sessionOver([systemMessage(), userMessage({ text: 'earlier ask' }), requestHeader(), ...anchors.map(carrierShowing), ...events]);
   const before = session.seq;
-  const { seal } = sealOver(session, { readState: asOfSeq === undefined ? readState : stateRead(values, asOfSeq), llm: answeringSlots(QUIET_USAGE) });
-  const lines = await stderrOf(t, async () => { await preStep(seal, session); });
+  const { seal } = sealOver(session, { readState: asOfSeq === undefined ? readState : stateRead(values, asOfSeq), readGit, llm: answeringSlots(QUIET_USAGE) });
+  const lines = await stderrOf(t, async () => { await preStep(seal, session, signal === undefined ? {} : { signal }); });
   return { session, before, lines, carrier: sealedCarrier(session, before) };
 }
 
@@ -2819,10 +3036,10 @@ function carrierShowing(extra = {}) {
   const message = userMessage({ text: 'earlier seal' });
   let content;
   try {
-    content = renderCarrier(source);
+    content = renderCarrier(source, CARRIER_TABLE);
   } catch {
     const { state, ...bare } = source;
-    content = renderCarrier(bare);
+    content = renderCarrier(bare, CARRIER_TABLE);
   }
   return { ...message, data: { ...message.data, content, source } };
 }
@@ -2842,7 +3059,7 @@ test('the carrier shows the state the host reads at the commit after the body: e
     const { source } = carrier.data;
     assert.deepEqual(stateLines(lines), [], `${why}: nothing is a diagnostic`);
     assert.equal(Object.hasOwn(source, 'state'), shown.length > 0, why);
-    assert.deepEqual(carrier.data.content, renderCarrier(source), `${why}: the body is the source rendered`);
+    assert.deepEqual(carrier.data.content, renderCarrier(source, CARRIER_TABLE), `${why}: the body is the source rendered`);
     if (shown.length === 0) continue;
     assert.equal(source.state.asOfSeq, 41, why);
     assert.deepEqual(Object.keys(source.state.items), shown, `${why}: the shown items in the items' order`);
@@ -2850,7 +3067,7 @@ test('the carrier shows the state the host reads at the commit after the body: e
       const value = values[key] === null ? [] : values[key];
       assert.deepEqual(source.state.items[key], { value }, `${why}: ${key} in full, as read`);
     }
-    assert.ok(bodyOf(carrier).includes(W.stateHeading(41)), `${why}: the block closes the body under the cut`);
+    assert.ok(bodyOf(carrier).includes(STATE_WORDING.heading(41)), `${why}: the block closes the body under the cut`);
   }
 });
 
@@ -2867,7 +3084,7 @@ test('each item follows the retained carriers the surface holds: a value the nea
   for (const [why, anchors, values, expected] of rows) {
     const { carrier } = await sealingWith(t, { anchors, values });
     assert.deepEqual(carrier.data.source.state.items, expected, why);
-    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source), `${why}: the body is the source rendered`);
+    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), `${why}: the body is the source rendered`);
   }
 });
 
@@ -2923,7 +3140,7 @@ test('an item that fails is left out with one inner_state_failed line naming it,
     const { carrier, lines, session, before } = await sealingWith(t, { readState });
     assert.deepEqual(typesSince(session, before), SEALED, `${why}: the seal commits`);
     assert.deepEqual(Object.keys(carrier.data.source.state.items), ALL_KEYS.filter(each => each !== key), `${why}: every other item stands`);
-    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source), why);
+    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), why);
     const reported = stateLines(lines);
     assert.equal(reported.length, 1, `${why}: ${lines.join('\n')}`);
     assert.equal(/^\S+ \[dsh-host\] inner_state_failed: (\w+)/.exec(reported[0])?.[1], key, `${why}: ${reported[0]}`);
@@ -2979,7 +3196,7 @@ test('the values a carrier keeps are its own: what the host hands out and mutate
   live.todos[0].status = 'pending';
   const expected = { asOfSeq: 6, items: { subagents: { value: AGENTS }, jobs: { value: JOBS }, todos: { value: TODO_A } } };
   assert.deepEqual(handed.source.state, expected);
-  assert.deepEqual(handed.content, renderCarrier({ ...handed.source, state: expected }));
+  assert.deepEqual(handed.content, renderCarrier({ ...handed.source, state: expected }, CARRIER_TABLE));
   assert.deepEqual(sealedCarrier(session, before).data.source.state, expected, 'as the log holds it');
 });
 
@@ -3012,4 +3229,105 @@ test('the commit reads the state only in the stretch behind its checks: a range 
   const ok = commitRig({ services: standing.services, tools: ALL_TOOLS });
   await preStep(ok.seal, ok.session);
   assert.equal(standing.reads.length, 1, 'the commit\'s read alone');
+});
+
+// ── The git state ────────────────────────────────────────────────────────────
+
+const GIT = '## main...origin/main [ahead 1]\n M lib/a.js\n?? notes.md\n4f2a9c1 fix the thing';
+const GIT_ITEM = CARRIER_TABLE.stateItems.find(item => item.key === 'git');
+// The host's read of the git state answering `text` after a turn of the event loop, and the calls it took.
+const gitReading = (text = GIT) => {
+  const calls = [];
+  const readGit = async (session, signal) => {
+    calls.push({ session, signal });
+    await new Promise(resolve => setImmediate(resolve));
+    return text;
+  };
+  return { calls, readGit };
+};
+
+test('the git state is read before the commit\'s synchronous stretch and carried as the last item, whatever tools the session lists: the host\'s state is read after it, the value stands as read and the block ends on it', { skip }, async (t) => {
+  const order = [];
+  const { calls, readGit } = gitReading();
+  const reading = async (session, signal) => { order.push('git'); return readGit(session, signal); };
+  const controller = new AbortController();
+  const readState = () => { order.push('state'); return stateRead(FULL, 41)(); };
+  const { carrier, lines, session } = await sealingWith(t, { readGit: reading, readState, signal: controller.signal });
+
+  assert.deepEqual(order, ['git', 'state']);
+  assert.equal(calls.length, 1, 'one read for the seal');
+  assert.equal(calls[0].session, session, 'the session whose carrier it is');
+  assert.equal(calls[0].signal, controller.signal, 'the seal\'s own signal, so a cancel stops the read');
+  const { source } = carrier.data;
+  assert.deepEqual(Object.keys(source.state.items), [...ALL_KEYS, 'git']);
+  assert.deepEqual(source.state.items.git, { value: GIT });
+  assert.equal(source.state.asOfSeq, 41, 'the cut is the host\'s state read');
+  assert.deepEqual(carrier.data.content, renderCarrier(source, CARRIER_TABLE));
+  assert.ok(bodyOf(carrier).endsWith(`${GIT_ITEM.label}\n${GIT}`), 'the block ends on the git text under its label');
+  assert.deepEqual(stateLines(lines), []);
+
+  const alone = await sealingWith(t, { tools: TOOLS, values: {}, readGit: gitReading().readGit });
+  assert.deepEqual(Object.keys(alone.carrier.data.source.state.items), ['git'], 'it stands for no tool the session must list');
+});
+
+test('the git state follows the retained carriers like any item: the same text is shown as unchanged beside its text, another whole', { skip }, async (t) => {
+  const rows = [
+    ['the same as shown', [shows({ git: { value: GIT } })], { value: GIT, unchanged: true }],
+    ['another text than the one shown', [shows({ git: { value: `${GIT}\n` } })], { value: GIT }],
+    ['never shown', [shows({ jobs: { value: JOBS } })], { value: GIT }],
+  ];
+  for (const [why, anchors, expected] of rows) {
+    const { carrier } = await sealingWith(t, { anchors, values: {}, readGit: gitReading().readGit });
+    assert.deepEqual(carrier.data.source.state.items.git, expected, why);
+    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), `${why}: the body is the source rendered`);
+  }
+});
+
+test('no git state is no item and no line: a host that has no read, a directory that is no repository and a state that is the only item', { skip }, async (t) => {
+  const none = await sealingWith(t, { values: {}, readGit: async () => null });
+  assert.equal(Object.hasOwn(none.carrier.data.source, 'state'), false, 'no repository, no other item: no block');
+  assert.deepEqual(stateLines(none.lines), []);
+  const beside = await sealingWith(t, { readGit: async () => null });
+  assert.deepEqual(Object.keys(beside.carrier.data.source.state.items), ALL_KEYS, 'the other items stand');
+  assert.deepEqual(stateLines(beside.lines), []);
+  const unread = await sealingWith(t, {});
+  assert.deepEqual(Object.keys(unread.carrier.data.source.state.items), ALL_KEYS, 'a host with no read for it');
+  assert.deepEqual(stateLines(unread.lines), []);
+});
+
+test('a git state that cannot be read leaves its item out with one inner_state_failed line naming it, and the seal commits with every other item: a read that rejects, one that throws at once and a value that is no text', { skip }, async (t) => {
+  const failing = [
+    ['a rejection', async () => { throw new Error('git status timed out'); }, 'git status timed out'],
+    ['a throw at once', () => { throw new Error('the working directory could not be read'); }, 'the working directory could not be read'],
+    ['a value that is no text', async () => 7, ''],
+  ];
+  for (const [why, readGit, message] of failing) {
+    const { carrier, lines, session, before } = await sealingWith(t, { readGit });
+    assert.deepEqual(typesSince(session, before), SEALED, `${why}: the seal commits`);
+    assert.deepEqual(Object.keys(carrier.data.source.state.items), ALL_KEYS, `${why}: every other item stands`);
+    assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), why);
+    const reported = stateLines(lines);
+    assert.equal(reported.length, 1, `${why}: ${lines.join('\n')}`);
+    assert.ok(reported[0].startsWith(`${session.id} [dsh-host] inner_state_failed: git: ${message}`), `${why}: ${reported[0]}`);
+  }
+});
+
+test('a cancel during the git read ends the turn as the cancel, with no carrier and no state line: the read answers the abort and the seal stops at its check', { skip }, async (t) => {
+  const controller = new AbortController();
+  const cancelled = new Error('the user cancelled');
+  const readGit = async (_session, signal) => {
+    controller.abort(cancelled);
+    throw signal.reason;
+  };
+  const { events } = turnOf({ steps: LONG_STEPS, bulk: BULK, tools: ALL_TOOLS });
+  const { session } = sessionOver([systemMessage(), userMessage({ text: 'earlier ask' }), requestHeader(), ...events]);
+  const before = session.seq;
+  const { seal } = sealOver(session, { readState: stateRead(FULL), readGit, llm: answeringSlots(QUIET_USAGE) });
+  let failure;
+  const lines = await stderrOf(t, async () => { failure = await failingPreStep(seal, session, { signal: controller.signal }); });
+
+  assert.equal(failure.error, cancelled);
+  assert.equal(failure.nextCalls, 0);
+  assert.deepEqual(typesSince(session, before), FAILED, 'the attempt ends with no prune and no carrier');
+  assert.deepEqual(stateLines(lines), []);
 });

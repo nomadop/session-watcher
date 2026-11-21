@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { loads } from 'ai-json-repair';
 
 import { summarizeSlots } from '../dsh/src/inner-summary.js';
-import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
 import { assistantMessage, requestHeader, sessionLog, stepEnd, stepStart, systemMessage, turnEnd, turnStart, userMessage } from './helpers/dsh-events.js';
 
 const CHECKOUT = process.env.SW_DSH_CHECKOUT;
@@ -66,7 +66,7 @@ async function outcomeOf(list, recoveries = []) {
   const { session, slots } = twoSlots();
   const llm = { stream: () => chunks(...list) };
   return summarizeSlots({
-    llm, session, index: new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
+    llm, session, index: new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
     slots, range: slots.flatMap(slot => slot.seqs), held: { paths: new Map(), skills: new Map() }, signal: new AbortController().signal, kit: kitOf(recoveries),
   });
 }
@@ -101,7 +101,6 @@ test('a reply that stopped without a tool call and fails JSON syntax alone is re
   }
 });
 
-// Supplemental guards over the same seam: the classification that already held before the discriminator existed, kept so the retry never widens it.
 test('a reply that is legal JSON is read as it stands and never reaches the library: the notes object with surrounding whitespace, reordered keys and empty notes carries no failure category', { skip }, async () => {
   for (const text of ['{"1": "a", "2": "b"}', '\n  {"2": "b", "1": "a"}\n', '{"1": "", "2": "b"}']) {
     const recoveries = [];
@@ -112,10 +111,28 @@ test('a reply that is legal JSON is read as it stands and never reaches the libr
   }
 });
 
-test('every other way a summary call fails is no format failure: a stream that threw, one with no finish chunk, a finish that is not a stop, and a tool call in a stream that stopped, whatever its text says', { skip }, async () => {
+test('a reply that is a tool call is the format failure, like a text that is not the notes: a finish of tool-calls and a stop with a tool call block, whatever the text beside the call says', { skip }, async () => {
   const valid = '{"1": "a", "2": "b"}';
   const invalid = 'not the notes';
   const toolCall = { type: 'block-end', index: 1, block: { type: 'tool-call', id: 'call-1', name: 'read', arguments: '{}' } };
+  const finishedWithCalls = { type: 'finish', reason: { kind: 'tool-calls' } };
+  for (const [why, list] of [
+    ['a tool-calls finish, a malformed text', textReply(invalid, finishedWithCalls)],
+    ['a tool-calls finish, a well-formed text', textReply(valid, finishedWithCalls)],
+    ['a tool-calls finish, no text', [finishedWithCalls]],
+    ['a tool call beside a well-formed text, stopped', [...textReply(valid), toolCall, STOP]],
+    ['a tool call beside a malformed text, stopped', [...textReply(invalid), toolCall, STOP]],
+  ]) {
+    const outcome = await outcomeOf(list);
+    assert.equal(outcome.ok, false, why);
+    assert.equal(outcome.failure, 'format', why);
+    assert.equal(outcome.summaries, undefined, why);
+  }
+});
+
+test('every other way a summary call fails is no format failure: a stream that threw, one with no finish chunk and a finish that is neither a stop nor tool-calls', { skip }, async () => {
+  const valid = '{"1": "a", "2": "b"}';
+  const invalid = 'not the notes';
   const cases = [
     ['no chunk at all', []],
     ['no finish chunk, a well-formed text', textReply(valid)],
@@ -123,9 +140,6 @@ test('every other way a summary call fails is no format failure: a stream that t
     ['an error finish', textReply(invalid, { type: 'finish', reason: { kind: 'error', failure: { message: 'upstream said no', code: 'provider_error' } } })],
     ['an aborted finish', textReply(invalid, { type: 'finish', reason: { kind: 'aborted', failure: { message: 'caller left', code: 'aborted' } } })],
     ['a max-tokens finish', textReply(invalid, { type: 'finish', reason: { kind: 'max-tokens' } })],
-    ['a tool-calls finish', textReply(invalid, { type: 'finish', reason: { kind: 'tool-calls' } })],
-    ['a tool call beside a well-formed text', [...textReply(valid), toolCall, STOP]],
-    ['a tool call beside a malformed text', [...textReply(invalid), toolCall, STOP]],
   ];
   for (const [why, list] of cases) {
     const outcome = await outcomeOf(list);
@@ -136,7 +150,7 @@ test('every other way a summary call fails is no format failure: a stream that t
   const { session, slots } = twoSlots();
   const thrown = await summarizeSlots({
     llm: { stream: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error('the connection reset')) }) }) },
-    session, index: new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
+    session, index: new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)])), events: session.snapshotEvents(), selection: SELECTION,
     slots, range: slots.flatMap(slot => slot.seqs), held: { paths: new Map(), skills: new Map() }, signal: new AbortController().signal, kit: kitOf(),
   });
   assert.equal(thrown.ok, false);

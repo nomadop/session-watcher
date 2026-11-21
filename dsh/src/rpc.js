@@ -3,6 +3,7 @@
 import { getLiveLedger } from '../../lib/rate-lamp-manager.js';
 import {
   statusWire, statusWireWithLedger, bucketsPayload, overrideWarnings, pricingResponse, isOverrideMap, INVALID_OVERRIDES_MESSAGE,
+  heldFilePayload, INVALID_BUCKET_FILE_MESSAGE, NOT_HELD_MESSAGE,
 } from '../../lib/wire.js';
 import { buildTurnBrowse } from '../../lib/turn-browse.js';
 import { forLoadedHandoff } from '../../lib/lineage.js';
@@ -11,7 +12,7 @@ import {
   loadPricingOverride, savePricingOverride, deletePricingOverride, validatePricingInput, sanitizePresetId, NO_MODEL_MESSAGE,
 } from '../../lib/pricing-store.js';
 import { modelPolicyFor } from '../../lib/model-policy.js';
-import { DEFAULT_CACHE_TTL } from '../../lib/constants.js';
+import { DEFAULT_CACHE_TTL, ATTRIBUTION_LIMITS } from '../../lib/constants.js';
 import { writeDiagnostic, handlerFailed, hostDiagnostic } from './watcher-table.js';
 
 const failure = (code, message) => ({ ok: false, error: { code, message, details: {} } });
@@ -32,22 +33,25 @@ const MONITOR_NOT_COMMITTED = failure('inner_monitor_not_committed', 'The inner 
  * A user-overrides apply publishes the caller's session; no other endpoint publishes.
  * `inner-mode` and `inner-mode/select` answer from the session mode's access (`innerMode()`, null while none is published) straight after the body check, before the table and the persisted listing, so a bootstrapping, failed or unobserved measurement changes neither: `inner-mode` awaits the access's `display` and answers `{ mode, locked }`, and `inner_mode_unavailable` when no access is published or the session is neither held nor stored with a turn started; a throw or a rejection from the read is one `inner_mode_read_failed` line under the session and the same failure as an envelope, never a failed request. `inner-mode/select` with a boolean `enabled` answers from the held instance alone, synchronously, `{}` once it has appended the record, `inner_mode_locked` once a turn has started, and `inner_mode_unavailable` at once when no access is published or the host holds no such live session. Their notification is the session/event listener's, so neither publishes.
  * `inner-monitor` answers from the monitor's access (`innerMonitor()`, null while none is published) at the same place, so the measurement's state changes nothing there either: it answers the access's `rows` as `{ attempts, handoffs }`, and `inner_monitor_unavailable` when no access is published or the access answers `undefined` for a session that is neither held nor stored. Every method of the access is awaited, and a throw or a rejection from it is one `inner_monitor_read_failed` line under the session and the same failure as an envelope, never a failed request. It publishes nothing.
- * `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot` and `inner-monitor/handoff` answer the access's `call`, `slots`, `slot` and `handoff` the same way, an `attempt`, `slot` or `handoff` (the seq of the handoff's payload message, the `id` of its row) that is not a non-negative safe integer being `invalid_body` with the access not consulted. The access's closed `{ kind: 'not_committed' }` for an attempt with no carrier is `inner_monitor_not_committed`; an address or a fact the access cannot find is its throw, so `inner_monitor_read_failed`, and only an absent access or a session neither held nor stored is `inner_monitor_unavailable`.
+ * `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot`, `inner-monitor/handoff` and `inner-monitor/settlement` answer the access's `call`, `slots`, `slot`, `handoff` and `settlement` the same way, an `attempt`, `slot` or `handoff` (the seq of the handoff's payload message, the `id` of its row) that is not a non-negative safe integer being `invalid_body` with the access not consulted. The access's closed `{ kind: 'not_committed' }` for an attempt with no carrier is `inner_monitor_not_committed`; an address or a fact the access cannot find is its throw, so `inner_monitor_read_failed`, and only an absent access or a session neither held nor stored is `inner_monitor_unavailable`.
+ * `inner-monitor/settlement/current` answers the access's `currentSettlement` with only a `sessionId`; no handoff is needed.
  * `pi-ai/status` names no session and answers before any session is looked up: `{ failure }`, null or the `{ cause }` of the opt-in pi-ai entry (`pi-ai-integration.js`) that `piAiFailure()` reads at each call, null while that entry is not mounted or serves its routes.
  * `carrier-cache/status` and `carrier-cache/set` name no session and answer for the owner of the host alone: the fourth argument of the channel's handler is the `PeerScope` the connection layer admitted the call for, and a call whose `peer.principal.kind` is not `owner` (or that has no peer) is `forbidden` before the switch (`carrierCache()`, null where the host holds none, `carrier_cache_unavailable`) is read. The bundles the switch acts on and the one package it may install are fixed in the switch; the body of `set` is `{ enabled: boolean, confirmInstall?: boolean }` and nothing else is read, `confirmInstall` counting only as the literal `true`.
- * `store` is the store the lineage and the turn browse read; `now` stamps the buckets payload; `publish(sessionId)` signals that a session's readings changed.
+ * `bucket/file` answers `heldFilePayload` of the watcher's held lines of the body's `path`, read from `workingTree`; a `path` that is no string is `invalid_body` and one the watcher has no resource at is `not_held`.
+ * `store` is the store the lineage and the turn browse read; `workingTree` is the tree `bucket/file` reads; `now` stamps the buckets payload; `publish(sessionId)` signals that a session's readings changed.
  *
- * @param {{ table: { get: Function, live: Function }, store: object, now?: () => number, publish?: (sessionId: string) => void,
+ * @param {{ table: { get: Function, live: Function }, store: object, workingTree: object, now?: () => number, publish?: (sessionId: string) => void,
  *   piAiFailure?: () => ({ cause: string }|null),
  *   carrierCache?: () => ({ status: () => Promise<object>, set: (enabled: boolean, options: { confirmInstall: boolean }) => Promise<object> } | null),
  *   resolvePersisted?: (sessionId: string) => Promise<object|null>,
  *   innerMode?: () => ({ display: (sessionId: string) => Promise<object|undefined>, select: (sessionId: string, enabled: boolean) => string } | null),
  *   innerMonitor?: () => ({ rows: (sessionId: string) => Reply, call: (sessionId: string, attempt: number) => Reply, slots: (sessionId: string, attempt: number) => Reply,
- *     slot: (sessionId: string, attempt: number, slot: number) => Reply, handoff: (sessionId: string, handoff: number) => Reply } | null) }} options `Reply` is `(object|undefined|Promise<object|undefined>)`, the payload of the endpoint, `{ kind: 'not_committed' }` or `undefined`
+ *     slot: (sessionId: string, attempt: number, slot: number) => Reply, handoff: (sessionId: string, handoff: number) => Reply,
+ *     settlement: (sessionId: string, handoff: number) => Reply, currentSettlement: (sessionId: string) => Reply } | null) }} options `Reply` is `(object|undefined|Promise<object|undefined>)`, the payload of the endpoint, `{ kind: 'not_committed' }` or `undefined`
  * @returns {(endpoint: string, payload: unknown, signal?: AbortSignal, peer?: { principal: { kind: string } }) => Promise<object>}
  */
 export function createRpcHandler({
-  table, store, now = Date.now, publish = () => {}, resolvePersisted = async () => null, innerMode = () => null, innerMonitor = () => null,
+  table, store, workingTree, now = Date.now, publish = () => {}, resolvePersisted = async () => null, innerMode = () => null, innerMonitor = () => null,
   piAiFailure = () => null, carrierCache = () => null,
 }) {
   // The policy is the one the watcher meters under, priced at the lifetime its entry declares.
@@ -80,6 +84,13 @@ export function createRpcHandler({
     buckets: ({ watcher }, { sessionId }) => live(bucketsPayload({
       bucketData: watcher.getBucketData({ includeSymbols: false }), status: watcher.getStatus(), sessionId, now: now(),
     })),
+    // The held lines of one path, read from the host's working tree now; a path the watcher has no resource at is refused, so the endpoint reads no file the session never held.
+    'bucket/file': ({ watcher }, { path }) => {
+      if (typeof path !== 'string') return failure('invalid_body', INVALID_BUCKET_FILE_MESSAGE);
+      const lineNumbers = watcher.getHeldLines(path);
+      if (lineNumbers === null) return failure('not_held', NOT_HELD_MESSAGE);
+      return live(heldFilePayload(path, lineNumbers, workingTree, { fileBytes: ATTRIBUTION_LIMITS.fileBytes }));
+    },
     'turn/browse': (_entry, { sessionId }) => {
       const { sections } = buildTurnBrowse({ store, lineage: forLoadedHandoff({ store, sessionId }) });
       return live({ sections });
@@ -144,6 +155,8 @@ export function createRpcHandler({
     'inner-monitor/slots': { addresses: ['attempt'], read: (access, { sessionId, attempt }) => access?.slots(sessionId, attempt) },
     'inner-monitor/slot': { addresses: ['attempt', 'slot'], read: (access, { sessionId, attempt, slot }) => access?.slot(sessionId, attempt, slot) },
     'inner-monitor/handoff': { addresses: ['handoff'], read: (access, { sessionId, handoff }) => access?.handoff(sessionId, handoff) },
+    'inner-monitor/settlement': { addresses: ['handoff'], read: (access, { sessionId, handoff }) => access?.settlement(sessionId, handoff) },
+    'inner-monitor/settlement/current': { addresses: [], read: (access, { sessionId }) => access?.currentSettlement(sessionId) },
   };
   const isAddress = value => Number.isSafeInteger(value) && value >= 0;
 

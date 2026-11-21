@@ -7,7 +7,7 @@ import nodePath, { dirname, join } from 'node:path';
 
 import { handOver, loadHandoffInto, loadedText } from '../dsh/src/load.js';
 import { ATTRIBUTION_LIMITS } from '../lib/constants.js';
-import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
 import { LOAD_MESSAGE_KIND, isLoadPayload } from '../lib/harness/dsh/load-message.js';
 import { reduceDshEvent } from '../lib/harness/dsh/transcript-observation.js';
 import { createNodeWorkingTree } from '../lib/working-tree.js';
@@ -389,7 +389,7 @@ test('the evidence in the read message\'s source changes what the Source reads o
 
   assert.deepEqual(reduceDshEvent(eventOf(message)), reduceDshEvent(eventOf({ ...message, source })));
   assert.equal(reduceDshEvent(eventOf(message)).observations.length, 4, 'one use and one result for each of the two calls');
-  assert.deepEqual(sourceFactOf(eventOf(message)), sourceFactOf(eventOf({ ...message, source })));
+  assert.deepEqual(eventFactOf(eventOf(message)), eventFactOf(eventOf({ ...message, source })));
 });
 
 test('isLoadPayload holds of the payload message\'s source alone, not of the read message\'s nor of another kind\'s', async (t) => {

@@ -2,8 +2,9 @@
 import React from 'react';
 import { PART_SEPARATOR } from './monitor-state.js';
 import {
-  carriedFilesOf, readFilesOf, bodyRowsOf, spanText, createFilesState, reduceFiles, isFileOpen, isGroupOpen, isFootOpen, controlsOf,
+  carriedFilesOf, readFilesOf, createFilesState, reduceFiles, isFileOpen, isGroupOpen, isFootOpen, controlsOf,
 } from './monitor-files-model.js';
+import { bodyRowsOf, fileRows } from '../../../public/lib/fileRows.js';
 
 const h = React.createElement;
 
@@ -56,25 +57,19 @@ function Preview({ item: { bar, stat } }) {
         : stat.empty.text));
 }
 
-// One row of an open file: a line with its number, the lines of the file no run shows, or the lines the carrier withdrew.
-function Row({ row, t }) {
-  const range = spanText([row.first, row.last]);
-  switch (row.type) {
-    case 'gap': return h('div', { className: 'sw-fl-sep' }, h('span', null, t('monitor.files.row.gap', { range })));
-    case 'withdrawn': return h('div', { className: 'sw-fl-wd' }, h('span', null, h('b', { 'aria-hidden': 'true' }, '−'), t('monitor.files.row.withdrawn', { range, count: row.last - row.first + 1 })));
-    default: return h('div', { className: 'sw-fl-row' }, h('div', { className: 'sw-fl-n' }, row.number), h('div', { className: 'sw-fl-t' }, row.text));
-  }
-}
-
-// The body of an open file: the meta line, with the whole path first where the row shows it cut, then its lines.
-function FileBody({ item, id, t }) {
+// The body of an open file: the meta line, with the whole path first where the row shows it cut, then its lines, drawn by the rows module with this list's wording.
+function FileBody({ item, id, wrap, t }) {
   const rows = React.useMemo(() => bodyRowsOf(item), [item]);
+  const words = {
+    gap: range => t('monitor.files.row.gap', { range }),
+    withdrawn: (range, count) => t('monitor.files.row.withdrawn', { range, count }),
+  };
   return h('div', { id },
     item.name.cut || item.meta !== '' ? h('div', { className: 'sw-fl-meta' }, item.name.cut ? h('div', { className: 'sw-fl-full' }, item.path) : null, item.meta) : null,
-    h('div', { className: 'sw-fl-scroll' }, h('div', { className: 'sw-fl-rows' }, rows.map((row, at) => h(Row, { key: at, row, t })))));
+    fileRows(h, rows, words, wrap));
 }
 
-function FileItem({ item, open, bodyId, dispatch, t }) {
+function FileItem({ item, open, bodyId, wrap, dispatch, t }) {
   return h('div', { className: 'sw-fl-item', 'data-kind': 'file', 'data-open': open ? '' : undefined, 'data-skill': item.skill ? '' : undefined },
     h('h4', { className: 'sw-fl-fh' },
       h('button', { type: 'button', className: 'sw-fl-fbtn', 'aria-expanded': open, 'aria-controls': open ? bodyId : undefined, onClick: () => dispatch({ type: 'toggle', id: item.id }) },
@@ -82,7 +77,7 @@ function FileItem({ item, open, bodyId, dispatch, t }) {
         h(Path, { item }),
         h('span', { className: 'sw-fl-cnt' }, item.count.map(({ text, tone }) => h('span', { key: text, 'data-tone': toneOf(tone) }, text))),
         h(Preview, { item }))),
-    open ? h(FileBody, { item, id: bodyId, t }) : null);
+    open ? h(FileBody, { item, id: bodyId, wrap, t }) : null);
 }
 
 // A file with no lines to show: one line, its reason at its end, and nothing to fold.
@@ -103,7 +98,7 @@ function Group({ group, state, baseId, dispatch, t }) {
         h('span', { className: 'sw-fl-lbl' }, group.label),
         h('span', { className: 'sw-fl-gcnt' }, group.items.length))),
     open ? h('div', { id: bodyId }, group.items.map(item => (item.kind === 'file'
-      ? h(FileItem, { key: item.id, item, open: isFileOpen(state, item.id), bodyId: `${baseId}-file-${item.id}`, dispatch, t })
+      ? h(FileItem, { key: item.id, item, open: isFileOpen(state, item.id), bodyId: `${baseId}-file-${item.id}`, wrap: state.wrap, dispatch, t })
       : h(PlainItem, { key: item.id, item })))) : null);
 }
 
@@ -129,7 +124,7 @@ export function FilesView({ model, state, dispatch, baseId = 'sw-files', t }) {
       h('p', { className: 'sw-fl-sum' }, model.summary.flatMap(({ text, tone }, at) => [at > 0 ? PART_SEPARATOR : null, h('span', { key: at, 'data-tone': toneOf(tone) }, text)])),
       h(Controls, { state, ids, dispatch, t }),
       model.sub === null ? null : h('p', { className: 'sw-fl-sub' }, model.sub)),
-    h('div', { className: 'sw-fl-list', 'data-wrap': state.wrap ? 'on' : 'off' }, model.groups.map(group => h(Group, { key: group.id, group, state, baseId, dispatch, t }))),
+    h('div', { className: 'sw-fl-list' }, model.groups.map(group => h(Group, { key: group.id, group, state, baseId, dispatch, t }))),
     model.foot.length === 0 ? null : h(Foot, { foot: model.foot, state, baseId, dispatch }));
 }
 

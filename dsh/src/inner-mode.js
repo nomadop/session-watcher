@@ -1,41 +1,30 @@
-// dsh/src/inner-mode.js — the session mode of the inner compaction experiment: the record a selection appends, the host-only projection that folds the records into the mode, the selection and the plain subagent's inheritance.
+// dsh/src/inner-mode.js — the host adapter of the inner compaction session mode: the record a selection appends, the classification of the events the shared fold (`lib/inner-seal/mode.js`) takes, the selection, the plain subagent's inheritance and the access the channel reads.
 // It knows no Cordis and imports no DSH package: the `dsh-session` record functions reach it by parameter.
 import { writeDiagnostic, hostDiagnostic } from './watcher-table.js';
+import { foldMode, INITIAL_MODE, modeStateOf } from '../../lib/inner-seal/mode.js';
 
 /** The plugin record a selection appends: the SW namespace the log keeps beside the events the model sees. */
 export const MODE_RECORD_TYPE = 'plugin:session-watcher/inner-mode';
 /** The projection key the registry keeps the mode under. */
 export const MODE_PROJECTION_KEY = 'session-watcher/inner-mode';
 
-const MODES = ['off', 'on', 'invalid'];
-
 const messageOf = error => (error instanceof Error ? error.message : String(error));
-
-// One frozen state per mode and lock, so a fold step that changes nothing returns the reference it was given.
-const STATES = Object.fromEntries(MODES.map(mode => [mode, {
-  unlocked: Object.freeze({ mode, locked: false }),
-  locked: Object.freeze({ mode, locked: true }),
-}]));
-const stateOf = (mode, locked) => STATES[mode][locked ? 'locked' : 'unlocked'];
 
 /** Whether a committed event is an input of the mode's projection, a mode record or a `turn/start`. */
 export const isModeInput = event => event.type === 'turn/start' || event.type === MODE_RECORD_TYPE;
 
-const isModeData = data => data !== null && typeof data === 'object' && data.v === 1 && typeof data.enabled === 'boolean';
-
 // The persisted state seeds a fold only when it is one of the six states; any other value is refused with an error.
 const stateSchema = {
   parse(value) {
-    if (value === null || typeof value !== 'object' || !MODES.includes(value.mode) || typeof value.locked !== 'boolean') {
-      throw new Error('the inner mode state is not { mode, locked }');
-    }
-    return stateOf(value.mode, value.locked);
+    const state = modeStateOf(value);
+    if (state === null) throw new Error('the inner mode state is not { mode, locked }');
+    return state;
   },
 };
 
 /**
- * The host-only projection of the session mode.
- * Its state is `{ mode: 'off' | 'on' | 'invalid', locked }`: the last mode record before the first `turn/start` decides the mode, `turn/start` locks it, and a record whose data does not read as `{ v: 1, enabled: boolean }` makes the mode `invalid`, which seals nothing and shows nothing.
+ * The host-only projection of the session mode: the classification of the events the fold takes.
+ * `turn/start` is the fold's turn input and a plugin record of `MODE_RECORD_TYPE` its record input; any other event leaves the state as it was.
  * The fold is pure and writes nothing: an invalid mode's diagnostic belongs to the seal listener.
  *
  * @param {{ pluginRecordOf: (event: object) => ({ type: string, data: unknown } | undefined) }} kit
@@ -45,13 +34,12 @@ export function innerModeProjection({ pluginRecordOf }) {
     key: MODE_PROJECTION_KEY,
     stateVersion: 1,
     stateSchema,
-    init: () => stateOf('off', false),
+    init: () => INITIAL_MODE,
     apply(state, event) {
-      if (state.locked) return state;
-      if (event.type === 'turn/start') return stateOf(state.mode, true);
+      if (event.type === 'turn/start') return foldMode(state, { turnStarted: true });
       const record = pluginRecordOf(event);
       if (record?.type !== MODE_RECORD_TYPE) return state;
-      return stateOf(isModeData(record.data) ? (record.data.enabled ? 'on' : 'off') : 'invalid', false);
+      return foldMode(state, { record: record.data });
     },
   };
 }

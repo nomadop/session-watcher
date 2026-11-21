@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.1 (2026-11-22) — The plugin's own event read, and the inner seal's settlement in the monitor
+
+### DSH plugin
+
+- **The plugin registers its own `sw_event_read` tool** — it reads one event of a session in the caller's directory back as the verbatim text of its messages, tool calls and tool results, a message's reasoning blocks included as recorded, and the replies of the turn tools point at it. Neighbors that carry a handoff, a seal or a checkpoint are listed by identity alone. The bundle patch no longer mounts DSH's `@deepseek-ai/dsh-tool-session-query`, so DSH's Session search can be switched on or off without the two registering the same prompt section; `@deepseek-ai/dsh-session-query` joins the peer dependencies.
+- **A read of what the context already holds whole is refused** — `sw_event_read` answers `SW_EVENT_CARRIED`, whatever window it asks for, for a carrier or a handoff payload of the open epoch, the read message and follow-up of that handoff's load, and a source a carrier of that epoch quotes word for word.
+- **A seal asks its summary again after a reply that is a tool call** — such a reply counts with text that is not the expected notes, asked again over the same request within the same bound, where it failed the seal at once before.
+- **Post-seal state calls and recalls are marked on the slots that seal them** — a native `session_event_read` included; the compaction settlement accounts for event recall, and the SW Events monitor opens the current settlement on demand, with its payback and context pages, the formulas and the full figures.
+- **The SW Events monitor filters its events and opens the lines a session holds of a file** — category and warning filters narrow the list, and a file drawer shows the lines a session holds.
+- **The seal's state block carries the working directory's git state** — the output of `git status --short --branch` and `git log -1 --oneline`, read with `core.fsmonitor` off and left out where the directory is no repository.
+- **The carrier states a user line and an answer line as the full text** — word for word unless a marker says where it is cut.
+- **The inner quote adds the summary call's own read of the active history to its fixed load** — estimated by the token meter's request pressure at the cache-read price, with no cache hit promised, whatever the context's length; a pre-step that cannot estimate it is quoted without it, and only a quote that used one records it. A call row's cue in the monitor keeps number and boolean arguments under their keys.
+
+### DSH plugin and Claude Code
+
+- **A file row of the bucket panel opens the lines the session holds of it** — a click or Enter on the row opens a drawer of the lines, read from the working tree when it opens, with each stretch not held marked as a gap; Space keeps toggling the row's check. The dashboard asks for them with `POST /api/bucket/file`, which refuses a path the session never held, and the DSH tab through its RPC channel.
+- **The last history point of a closed segment carries `amberStockL`** — the stock at which that segment's fit put the amber line, `null` where the fit was still on the left arm or there was none.
+
+---
+
 ## 0.11.0 (2026-11-19) — Experimental inner compaction on DSH, and an opt-in carrier cache point
 
 ### DSH plugin

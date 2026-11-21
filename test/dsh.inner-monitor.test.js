@@ -76,7 +76,7 @@ test('making a monitor, beginning an attempt and reading the registry only alloc
 
 // A quote as the seal hands it to `begin`, the snapshot `innerQuote` answers.
 const QUOTE = Object.freeze({
-  n: 8, lA: 40000, bEst: 120, cEst: 2400, sEst: 37480, cRatio: 30, fee: 5000, kappa: 1.1, nRef: 4.1, N: 6, jRef: 13, q: 1.1, arm: 'right', trigger: 'quote', missing: null,
+  n: 8, lA: 40000, bEst: 120, cEst: 2400, sEst: 37480, cRatio: 30, fee: 5000, kappa: 1.1, nRef: 4.1, N: 6, jRef: 13, q: 1.1, arm: 'right', trigger: 'quote',
 });
 
 test('dispatch appends the attempt record of the range, the request\'s display and the quote the seal triggered on, takes the record\'s seq as the attempt\'s, registers the generating entry and publishes it', () => {

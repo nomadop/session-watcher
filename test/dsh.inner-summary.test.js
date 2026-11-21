@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { requestDisplayOf, summarizeSlots } from '../dsh/src/inner-summary.js';
-import { sourceFactOf } from '../lib/harness/dsh/inner-source.js';
+import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
 import {
   assistantMessage, innerSealCarrier, loadMessage, requestHeader, sessionLog, stepEnd, stepStart, systemMessage, toolRegistryMessage, toolResult, turnEnd, turnStart,
   userMessage,
@@ -32,8 +32,8 @@ const kitOf = () => ({
   appendPluginRecord: sessionPackage.appendPluginRecord,
 });
 
-// The index the host's feed keeps for `session`: the `seq → sourceFactOf` Map of its events, each later event added as it commits.
-const indexOf = session => new Map(session.snapshotEvents().map(event => [event.seq, sourceFactOf(event)]));
+// The index the host's feed keeps for `session`: the `seq → eventFactOf` Map of its events, each later event added as it commits.
+const indexOf = session => new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)]));
 
 // The held view of a call whose tail names nothing held.
 const NO_HELD = { paths: new Map(), skills: new Map() };
@@ -552,7 +552,7 @@ test('the history, the cut and the header seq are those at the call: an event ap
   const llm = recordingLlm(() => (async function* () {
     kitOf().appendPluginRecord(session, 'plugin:session-watcher/noted', { v: 1 });
     const header = session.append('request/header', { header: { config: { provider: 'deepseek', model: 'deepseek-v4-pro' } }, reason: 'change' });
-    index.set(header.seq, sourceFactOf(header));
+    index.set(header.seq, eventFactOf(header));
     yield* reply(NOTES, FINISH_STOP);
   })());
 
@@ -564,6 +564,23 @@ test('the history, the cut and the header seq are those at the call: an event ap
   assert.equal(outcome.call.input.throughSeq, before.cut);
   assert.equal(outcome.call.input.headerSeq, seqOf(headerWithTools));
   assert.deepEqual(llm.calls[0].messages.slice(0, -1), before.derived);
+});
+
+test('the header seq is the live index\'s latest, not the frozen slice\'s: a header appended after the slice was taken and before the call is the one named', { skip }, async () => {
+  const fixture = sealedSession();
+  const { session, seqOf, headerWithTools } = fixture;
+  const slots = slotsOf(fixture, fixture.seqOf);
+  const frozen = session.snapshotEvents();
+  const index = indexOf(session);
+  const header = session.append('request/header', { header: { config: { provider: 'deepseek', model: 'deepseek-v4-pro' } }, reason: 'change' });
+  index.set(header.seq, eventFactOf(header));
+  assert.ok(header.seq > seqOf(headerWithTools) && !frozen.some(event => event.seq === header.seq), 'fixture: the slice holds the earlier header alone');
+
+  const outcome = await summarizeSlots({
+    llm: recordingLlm(() => chunks(...reply(NOTES, FINISH_STOP))), session, index, events: frozen, selection: SELECTION, slots, range: slots.flatMap(slot => slot.seqs), signal: new AbortController().signal, held: NO_HELD, kit: kitOf(),
+  });
+
+  assert.equal(outcome.call.input.headerSeq, header.seq);
 });
 
 // The chunks of a text block at `index`, optionally opened and with its deltas and its closing block as given.

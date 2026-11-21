@@ -1,10 +1,11 @@
-// The display model of the evidence page and the handoff files page, `monitor-files-model.js`: the groups and items each page lists as plain data with the texts worded, the rows an open file shows, the shortened path, the count a row carries, and the view state of the lists.
+// The display model of the evidence page and the handoff files page, `monitor-files-model.js`: the groups and items each page lists as plain data with the texts worded, the shortened path, the count a row carries, and the view state of the lists.
 // Each function is tested on its own, against expected values written out by hand; the translate is the key followed by its parameters, so a wrong key or a wrong parameter shows in the expected literal.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  compactCount, commonRoot, compactPath, spanText, carriedFilesOf, readFilesOf, bodyRowsOf, createFilesState, reduceFiles, isFileOpen, isGroupOpen, isFootOpen, controlsOf,
+  compactCount, commonRoot, compactPath, carriedFilesOf, readFilesOf, createFilesState, reduceFiles, isFileOpen, isGroupOpen, isFootOpen, controlsOf,
 } from '../dsh/src/client/monitor-files-model.js';
+import { bodyRowsOf } from '../public/lib/fileRows.js';
 
 const t = (key, params) => (params === undefined ? key : `${key}(${Object.entries(params).map(([name, value]) => `${name}=${value}`).join(',')})`);
 
@@ -74,11 +75,6 @@ test('a name and a directory at their limits are not cut, and one column more is
   assert.equal(compactPath(`${'c'.repeat(30)}/x`).cut, true);
   const several = `${'a'.repeat(10)}/bb/${'c'.repeat(15)}/`;
   assert.deepEqual(compactPath(`${several}x`), { dir: several, base: 'x', cut: false }, 'a directory of several segments, exactly at the limit, keeps them all');
-});
-
-test('a span of one line is that line and any other is its first and last line with a dash between', () => {
-  assert.equal(spanText([7, 7]), '7');
-  assert.equal(spanText([7, 12]), '7–12');
 });
 
 // ── carriedFilesOf ────────────────────────────────────────────────────────────
@@ -336,43 +332,6 @@ test('the files page sums its files, the lines of the ones read and their segmen
   assert.equal(readFilesOf([{ path: '/a.js', total: 1, runs: [run(1, 1)] }], t).sub, null);
   assert.equal(readFilesOf([{ path: 'a.js', total: 1, runs: [run(1, 1)] }, { path: '/b.js', total: 1, runs: [run(1, 1)] }], t).sub, null);
   assert.deepEqual(readFilesOf([], t).groups, []);
-});
-
-// ── bodyRowsOf ────────────────────────────────────────────────────────────────
-
-const lineRow = (number, text = 'abcd') => ({ type: 'line', number, text });
-
-test('an open file shows its lines in order with a gap row between what is not shown and a withdrawn row where lines were withdrawn, and a gap to the end of the file', () => {
-  const item = { skill: false, total: 200, runs: [run(1, 3), run(10, 11)], withdrawn: [{ first: 5, last: 6 }] };
-  assert.deepEqual(bodyRowsOf(item), [
-    lineRow(1), lineRow(2), lineRow(3), { type: 'gap', first: 4, last: 4 }, { type: 'withdrawn', first: 5, last: 6 }, { type: 'gap', first: 7, last: 9 },
-    lineRow(10), lineRow(11), { type: 'gap', first: 12, last: 200 },
-  ]);
-});
-
-test('a file whose line count is not known has no gap to its end, and one whose last line is shown has none either', () => {
-  assert.deepEqual(bodyRowsOf({ skill: false, total: null, runs: [run(5, 6)], withdrawn: [] }), [{ type: 'gap', first: 1, last: 4 }, lineRow(5), lineRow(6)]);
-  assert.deepEqual(bodyRowsOf({ skill: false, total: 3, runs: [run(1, 3)], withdrawn: [] }), [lineRow(1), lineRow(2), lineRow(3)]);
-  assert.deepEqual(bodyRowsOf({ skill: false, total: null, runs: [], withdrawn: [{ first: 1, last: 4 }] }), [{ type: 'withdrawn', first: 1, last: 4 }]);
-});
-
-test('a gap stops at the end of the file, and lines withdrawn past it are still said', () => {
-  assert.deepEqual(bodyRowsOf({ skill: false, total: 10, runs: [run(1, 2)], withdrawn: [{ first: 12, last: 14 }] }), [
-    lineRow(1), lineRow(2), { type: 'gap', first: 3, last: 10 }, { type: 'withdrawn', first: 12, last: 14 },
-  ]);
-  assert.deepEqual(bodyRowsOf({ skill: false, total: 2, runs: [run(1, 2)], withdrawn: [{ first: 5, last: 5 }] }), [lineRow(1), lineRow(2), { type: 'withdrawn', first: 5, last: 5 }]);
-});
-
-test('a span inside a span already shown does not move the place the next gap starts from', () => {
-  assert.deepEqual(bodyRowsOf({ skill: false, total: 12, runs: [run(2, 8)], withdrawn: [{ first: 3, last: 4 }] }), [
-    { type: 'gap', first: 1, last: 1 }, lineRow(2), lineRow(3), lineRow(4), lineRow(5), lineRow(6), lineRow(7), lineRow(8), { type: 'withdrawn', first: 3, last: 4 }, { type: 'gap', first: 9, last: 12 },
-  ]);
-});
-
-test('a skill shows its text line by line with no line number', () => {
-  assert.deepEqual(bodyRowsOf({ skill: true, text: 'a\n\nb' }), [
-    { type: 'line', number: null, text: 'a' }, { type: 'line', number: null, text: '' }, { type: 'line', number: null, text: 'b' },
-  ]);
 });
 
 // ── the view state ────────────────────────────────────────────────────────────

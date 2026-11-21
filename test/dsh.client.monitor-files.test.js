@@ -57,7 +57,7 @@ test('a new evidence list has its head, every group open and every file folded t
   assert.equal(html.includes('sw-fl-rows'), false);
   assert.deepEqual(attrs(html, 'sw-fl-foldbtn', 'aria-expanded'), ['false', 'false']);
   assert.equal(html.includes('<pre') || html.includes('of B.'), false, 'the foot shows nothing while folded');
-  assert.deepEqual(attrs(html, 'sw-fl-list', 'data-wrap'), ['on']);
+  assert.equal(html.includes('data-wrap'), false, 'the wrapping belongs to the lines of an open file');
 });
 
 test('the head says what the page holds: the lines written and withdrawn and the changed files, each in the tone of its kind, and what else the carrier says', () => {
@@ -98,7 +98,7 @@ test('an open file shows its meta line and its rows in the order of the file, a 
   const body = bodyOf(html, attr(button, 'aria-controls'));
 
   assert.equal(attr(button, 'aria-expanded'), 'true');
-  assert.equal(textOf(/<div class="sw-fl-meta">(.*?)<\/div><div class="sw-fl-scroll">/s.exec(body)[1]), 'monitor.files.meta.total(count=40) · monitor.files.meta.lines(spans=1–2, 10)');
+  assert.equal(textOf(/<div class="sw-fl-meta">(.*?)<\/div><div class="sw-fl-scroll"/s.exec(body)[1]), 'monitor.files.meta.total(count=40) · monitor.files.meta.lines(spans=1–2, 10)');
   assert.deepEqual(rowsOf(body), [
     ['line', '1', '<b>1</b>'], ['line', '2', '<b>2</b>'],
     ['sep', 'monitor.files.row.gap(range=3–4)'],
@@ -180,7 +180,8 @@ test('the head controls are the three of the page, named and pressed by the stat
   const unwrapped = view(MODEL, reduceFiles(createFilesState(), { type: 'wrap' }));
   const [, , off] = stateOf(unwrapped);
   assert.deepEqual([attr(off, 'aria-pressed'), attr(off, 'title')], ['false', 'monitor.files.wrap.off']);
-  assert.deepEqual(attrs(unwrapped, 'sw-fl-list', 'data-wrap'), ['off']);
+  assert.deepEqual(attrs(view(MODEL, opened(MODEL)), 'sw-fl-scroll', 'data-wrap'), ['on', 'on', 'on'], 'the lines of every open file wrap');
+  assert.deepEqual(attrs(view(MODEL, reduceFiles(opened(MODEL), { type: 'wrap' })), 'sw-fl-scroll', 'data-wrap'), ['off', 'off', 'off'], 'and none does once the switch is off');
 });
 
 test('the foot folds show their text once open: the note as a paragraph and B\'s whole text in a preformatted block, markup shown and not interpreted', () => {

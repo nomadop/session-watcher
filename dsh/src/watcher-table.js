@@ -2,7 +2,7 @@
 // It knows no Cordis: the host hands it each session, event and disposal, and reads its entries.
 // Its diagnostics leave through one stderr line, `writeDiagnostic`, which the host's own catches share.
 import { createDshSourceDriver } from '../../lib/harness/dsh/source-driver.js';
-import { sourceFactOf } from '../../lib/harness/dsh/inner-source.js';
+import { eventFactOf } from '../../lib/harness/dsh/event-facts.js';
 import { advanceRateLampToCurrent, releaseSession } from '../../lib/rate-lamp-manager.js';
 
 const HOST_SCOPE = 'dsh-host';
@@ -49,12 +49,12 @@ const PASS_THROUGH_NAMES = {
  * `innerModeOn(sessionId)` answers whether the session's inner mode is on (`inner-mode.js`), read at every frame the entry's driver makes, so it holds from the session's first call. A session that answers true has the calls its Source qualifies on its frames (`qualifyCalls` of `createDshSourceDriver`), so its Rate Lamp budget counts that prefix and nothing pending; one that answers false, or nothing, is an ordinary session whose budget counts every call.
  * `modelNames` is a `createModelNames` result, a pass-through when absent: each `request/header` fed warms its pair without the feed awaiting it; a snapshot installs once every pair named by its events and by the events fed before it arrived has settled once; and every event reaches the driver through `mapEvent`, so an `assistant/message` or a load message whose pair has a name by then carries it.
  * The events fed while bootstrapping wait in the entry, in order, and reach the driver after the snapshot's install, ahead of its drain.
- * Each entry also keeps the `seq → sourceFactOf` Map of its session's raw events, the index the inner-seal trigger reads (`innerSource`) and the auxiliary call reads for the request header it sends (`headerSeqOf`), apart from the measurement: `feed` adds an event before it looks at the entry's state, so a failed or bootstrapping entry still takes the facts, and the snapshot's events merge in before the model-name warm-up, which alone makes `sourceFacts(sessionId)` answer the Map, `null` for an unobserved session, one whose snapshot was rejected (no retry until a disposed entry is built again) and one not yet merged. Disposal drops the Map with the entry.
- * `heldView(sessionId, events, range)` answers the entry's composition `heldView` over the raw slice `events` and the seqs `range` in every state of its measurement, and null for a session the table lacks; it leaves with the entry.
+ * Each entry also keeps the `seq → eventFactOf` Map of its session's raw events, the index the inner-seal trigger reads (`innerSource`) and the auxiliary call reads for the request header it sends (`headerSeqIn`), apart from the measurement: `feed` adds an event before it looks at the entry's state, so a failed or bootstrapping entry still takes the facts, and the snapshot's events merge in before the model-name warm-up, which alone makes `eventFacts(sessionId)` answer the Map, `null` for an unobserved session, one whose snapshot was rejected (no retry until a disposed entry is built again) and one not yet merged. Disposal drops the Map with the entry.
+ * `heldView(sessionId, events)` answers the entry's composition `heldView` over the raw slice `events` in every state of its measurement, and null for a session the table lacks; it leaves with the entry.
  * `onChange(listener)` adds a listener the table calls with the session id once each when an entry turns `live`, when a fed event applies a frame, when an entry fails and when it is removed; the frames the snapshot install drains are covered by the `live` call, and a listener's throw is a `handler_failed` line.
  *
  * @param {{ compose: (options: { sessionId: string, cwd: string|null, cacheTtl: () => string|null }) =>
- *   { watcher: object, dialogueSource: object, dialogueProjection: object, heldView: (events: object[], range: number[]) => object },
+ *   { watcher: object, dialogueSource: object, dialogueProjection: object, heldView: (events: object[]) => object },
  *   readSession: (sessionId: string) => Promise<{ events: object[] }>,
  *   cacheTtlFor?: (route: string|undefined) => string|null,
  *   innerModeOn?: (sessionId: string) => boolean,
@@ -155,7 +155,7 @@ export function createWatcherTable({
         fail(entry, hostDiagnostic('read_session_rejected', error));
         return;
       }
-      for (const event of snapshot.events) entry.facts.set(event.seq, sourceFactOf(event));
+      for (const event of snapshot.events) entry.facts.set(event.seq, eventFactOf(event));
       entry.sourceReady = true;
       await modelNames.warm(modelNames.pairsOf([...snapshot.events, ...entry.pending]));
       if (entry.state !== 'bootstrapping') return;
@@ -202,7 +202,7 @@ export function createWatcherTable({
   function feed(sessionId, event) {
     const entry = entries.get(sessionId);
     if (entry === undefined) return;
-    entry.facts.set(event.seq, sourceFactOf(event));
+    entry.facts.set(event.seq, eventFactOf(event));
     if (entry.state !== 'bootstrapping' && entry.state !== 'live') return;
     // `warm` settles through `allSettled`, so the promise left unawaited never rejects (test/dsh.host.watcher-table.test.js `a rejected warm-up never fails the entry`).
     if (event.type === 'request/header') void modelNames.warm(modelNames.pairsOf([event]));
@@ -278,16 +278,16 @@ export function createWatcherTable({
     listeners.add(listener);
   }
 
-  function sourceFacts(sessionId) {
+  function eventFacts(sessionId) {
     const entry = entries.get(sessionId);
     return entry?.sourceReady ? entry.facts : null;
   }
 
   // The composition's own held view, bound to the session's store, tree and policy, apart from the measurement's state.
-  function heldView(sessionId, events, range) {
+  function heldView(sessionId, events) {
     const entry = entries.get(sessionId);
-    return entry === undefined ? null : entry.heldView(events, range);
+    return entry === undefined ? null : entry.heldView(events);
   }
 
-  return { ensure, feed, dispose, disposeAll, get, waitLive, live, onChange, sourceFacts, heldView };
+  return { ensure, feed, dispose, disposeAll, get, waitLive, live, onChange, eventFacts, heldView };
 }

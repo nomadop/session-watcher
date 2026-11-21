@@ -127,17 +127,23 @@ const sessionsOf = calls => calls.map(entry => entry.payload.sessionId);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const frame = (page, sessionId) => page.sources[0].emit('message', { data: JSON.stringify({ sessionId }) });
 
-test('the entry\'s inject hands the session\'s monitor handles alone, one set per session, and neither inject nor taking a handle reads', (t) => {
+test('the entry\'s inject hands the session\'s monitor handles and its session store, one set per session, and neither inject nor taking a handle reads', (t) => {
   const { fake } = mountClient(t);
   fake.declare();
   const { inject } = monitorEntries(fake)[0].options;
 
   const face = inject('s1');
 
-  assert.deepEqual(Object.keys(face), ['monitor']);
-  assert.deepEqual(Object.keys(face.monitor).sort(), ['resource', 'rows']);
+  assert.deepEqual(Object.keys(face), ['monitor', 'session']);
+  assert.deepEqual(Object.keys(face.monitor).sort(), ['readCurrentSettlement', 'resource', 'rows']);
   assert.equal(inject('s1').monitor, face.monitor, 'one set of handles per session');
   assert.notEqual(inject('s2').monitor, face.monitor);
+  const tab = fake.registrations.find(registration => registration.options.name === 'conversation.view' && registration.options.id === 'session-watcher');
+  assert.equal(face.session, tab.options.inject('s1').store, 'the store the tab reads, so the monitor\'s subscription shares its pulls');
+  assert.equal(inject('s1').session, face.session, 'one store per session');
+  assert.notEqual(inject('s2').session, face.session);
+  assert.equal(face.session.result, null);
+  assert.equal(typeof face.session.subscribe, 'function');
   assert.equal(face.monitor.rows.result, null);
   face.monitor.resource({ endpoint: 'inner-monitor/call', attempt: 1 });
   assert.deepEqual(rpcCalls(fake), [], 'no read until a handle is subscribed');

@@ -1,24 +1,20 @@
-// dsh/src/client/monitor-drawer.js — the inner compaction monitor's drawer contents: the eight pages of a call's detail, a slot's detail, a handoff's pages and one of its turns, the settlement of a cleared segment, and the notices for a detail not yet answered.
-// The pages show the payloads of the host's `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot` and `inner-monitor/handoff` endpoints as they are, whole: text and JSON are set in `<pre>` through React, which escapes them, so nothing is parsed as Markdown, redacted or run, and a tool call is data to show.
+// dsh/src/client/monitor-drawer.js — the inner compaction monitor's drawer contents: the eight pages of a call's detail, a slot's detail, a handoff's pages and one of its turns, settlement reports, and notices for a detail not yet answered.
+// The call, slot and handoff pages show the payloads of the host's `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot` and `inner-monitor/handoff` endpoints as they are, whole: text and JSON are set in `<pre>` through React, which escapes them, so nothing is parsed as Markdown, redacted or run, and a tool call is data to show.
 import React from 'react';
-import { elapsedOf, formatElapsed, slotTitleOf, shownStatusOf, contextChangeText, tokensOf, NOT_AVAILABLE, TOKEN_UNIT } from './monitor-state.js';
-import { blockListParts, quoteFactsOf, slotFactsOf, settlementTextOf, jsonText, stringOf } from './monitor-model.js';
+import { elapsedOf, formatElapsed, slotTitleOf, contextChangeText, tokensOf, NOT_AVAILABLE, TOKEN_UNIT } from './monitor-state.js';
+import { shownStatusOf } from '../../../public/lib/compactionEconomics.js';
+import { blockListParts, quoteFactsOf, slotFactsOf, jsonText, stringOf } from './monitor-model.js';
 import { CarriedFiles, ReadFiles } from './monitor-files.js';
+import { PaybackPage, PaybackReport } from './monitor-settlement.js';
+import { paybackModelOf } from './monitor-settlement-model.js';
+import { ContextPage, ContextReport } from './monitor-context.js';
+import { contextModelOf } from './monitor-context-model.js';
+import { Notice, useResult } from './monitor-handle.js';
 
 const h = React.createElement;
 
-/** The handle's retained result, read again whenever its subscription calls back; a server render reads the same retained result. */
-export function useResult(handle) {
-  return React.useSyncExternalStore(handle.subscribe, () => handle.result, () => handle.result);
-}
-
 /** The endpoint the list of the slots of a committed attempt is read from, by the list of rows and by the summaries page alike. */
 export const SLOTS_ENDPOINT = 'inner-monitor/slots';
-
-/** A text in the list's or the drawer's place that stands for content not shown: `state` is its marker, `children` its text. */
-export function Notice({ state, children }) {
-  return h('p', { className: 'sw-mon-notice', 'data-sw-monitor-notice': state, role: 'status' }, children);
-}
 
 // An id the detail lacks, a field an old record never had and a value the producer left out all read as this text.
 function Missing({ t }) {
@@ -70,10 +66,8 @@ function CarrierCache({ evidence, t }) {
 
 const seqText = (seq, t) => (seq === null || seq === undefined ? h(Missing, { t }) : t('monitor.overview.seq', { seq }));
 
-// The selection the attempt asked for: a new attempt's from the options the caller gave, an old one's from its call record, and in neither case a default the adapter would add.
-function selectionOf(request) {
-  return (request.recorded === 'partial' ? request.selection : request.options) ?? {};
-}
+// The selection the attempt asked for, from the options the caller gave and never a default the adapter would add.
+const selectionOf = request => request.options ?? {};
 
 /**
  * The overview of a call: the attempt's status and, for a committed one, its payback progress, what the carrier cache did for its request (`CarrierCache`), which of its records exist, the count of slots its carrier committed (zero included, none without a carrier), the selection it asked for, the events it summarizes, how its stream finished and the reason its end record recorded.
@@ -103,9 +97,7 @@ export function OverviewPage({ detail, payback = new Map(), t }) {
     ...(row.reason === null ? [] : [[t('monitor.overview.endReason'), h(Pre, null, row.reason)]]),
     ...(row.call.thrown === null ? [] : [[t('monitor.overview.thrown'), h(Pre, null, row.call.thrown)]]),
   ];
-  return h(React.Fragment, null,
-    h(Facts, { entries }),
-    row.legacy ? h('p', { className: 'sw-mon-note' }, t('monitor.overview.legacy')) : null);
+  return h(Facts, { entries });
 }
 
 // The tools a request sent: their count and, folded, their definitions, else the reason there are none to show.
@@ -118,19 +110,16 @@ function ToolsSection({ tools, t }) {
 
 /**
  * What the call was asked, as the caller built it: the options, the count of earlier messages (their bodies are not shown) and the C tail whole, the sequence numbers, the tools sent and the tool history updated.
- * An attempt from before the start record has only what its call record kept and says so.
  */
 export function RequestPage({ detail, t }) {
   const { request } = detail;
-  const partial = request.recorded === 'partial';
   const options = Object.entries(selectionOf(request)).map(([name, value]) => [name, stringOf(value)]);
   const updates = request.toolHistory?.updates;
   return h(React.Fragment, null,
-    partial ? h('p', { className: 'sw-mon-note' }, t('monitor.request.partial')) : null,
     h(Section, { name: 'options', title: t('monitor.request.options') }, h(Facts, { entries: options })),
     h(Section, { name: 'messages', title: t('monitor.request.tail') },
-      partial ? null : h('p', { className: 'sw-mon-note' }, t('monitor.request.messages', { count: request.messages.count })),
-      h(Message, { message: partial ? request.tail : request.messages.tail, t })),
+      h('p', { className: 'sw-mon-note' }, t('monitor.request.messages', { count: request.messages.count })),
+      h(Message, { message: request.messages.tail, t })),
     h(Section, { name: 'sequence', title: t('monitor.request.sequence') }, h(Facts, { entries: [[t('monitor.request.throughSeq'), request.throughSeq ?? h(Missing, { t })], [t('monitor.request.headerSeq'), request.headerSeq ?? h(Missing, { t })]] })),
     request.tools === undefined ? null : h(ToolsSection, { tools: request.tools, t }),
     updates === undefined ? null : h(Section, { name: 'toolHistory', title: t('monitor.request.toolHistory') },
@@ -242,7 +231,7 @@ export function CarriedPage({ detail, t }) {
 }
 
 /**
- * The quote the attempt triggered on, as its attempt record keeps it: the estimate taken before the summary, which the carried page's committed B does not replace, the compaction policy it was priced under and, where it has no results, the reason; a value it holds none of reads as not recorded.
+ * The quote the attempt triggered on, as its attempt record keeps it: the estimate taken before the summary, which the carried page's committed B does not replace, and the compaction policy it was priced under; a value it holds none of reads as not recorded.
  * An attempt recorded without a quote says so; nothing is reconstructed for it.
  * `detail` is the `inner-monitor/call` payload.
  */
@@ -348,27 +337,20 @@ export function TurnDetail({ turn, t }) {
       note === null ? h('p', { className: 'sw-mon-empty', 'data-sw-empty': '' }, t('monitor.handoff.turn.noNote')) : h(WholeText, { text: note, t })));
 }
 
-/**
- * The settlement of a segment a `/sw-continue` cleared, as one block of text set whole: a line for each compaction, the total and the unit. A settlement the list no longer holds shows nothing.
- * `settlement` is an entry of `settlementsOf`, undefined where there is none; the drawer has no page tabs and reads no resource of the host.
- */
-export function SettlementDetail({ settlement, t }) {
-  return settlement === undefined ? null : h(Pre, null, settlementTextOf(settlement, t));
-}
-
 const CALL_PAGES = { overview: OverviewPage, request: RequestPage, response: ResponsePage, summaries: SummariesPage, carried: CarriedPage, quote: QuotePage, usage: UsagePage, timing: TimingPage };
 const SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, source: SlotSourcePage };
 const HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
+export const SETTLEMENT_PAGES = { payback: PaybackPage, context: ContextPage };
 
 // The pages of a detail behind a tab strip, `first` shown to begin with and the page the component's own state: the drawer keys the component by the selected identity, so another item opens at its first page.
-function PagedDetail({ pages, first, labels, detail, monitor, attemptId, payback, now, t }) {
+export function PagedDetail({ pages, first, labels, ...props }) {
   const [page, setPage] = React.useState(first);
   const Page = pages[page];
   return h(React.Fragment, null,
     h('div', { className: 'sw-mon-tabs', role: 'tablist' }, Object.keys(pages).map(name => h('button', {
       key: name, type: 'button', role: 'tab', className: 'sw-mon-tab', 'data-page': name, 'aria-selected': name === page, onClick: () => { setPage(name); },
-    }, t(`${labels}.${name}`)))),
-    h('div', { className: 'sw-mon-page', role: 'tabpanel', 'data-page': page }, h(Page, { detail, monitor, attemptId, payback, now, t })));
+    }, props.t(`${labels}.${name}`)))),
+    h('div', { className: 'sw-mon-page', role: 'tabpanel', 'data-page': page }, h(Page, props)));
 }
 
 /** The eight pages of a call's detail behind a tab strip, the overview first. `detail` is the `inner-monitor/call` payload, `monitor` the monitor's resource handles and `attemptId` the attempt the detail is of, which the summaries page reads the slots of, `payback` the `paybackOf` of all the attempts and handoffs, which the overview reads, and `now` the display clock a running span reads. */
@@ -385,6 +367,30 @@ export function SlotDetail({ detail, t }) {
 export function HandoffDetail({ detail, t }) {
   const pages = detail.row.type === 'load' ? HANDOFF_PAGES : Object.fromEntries(Object.entries(HANDOFF_PAGES).filter(([name]) => name !== 'lineage'));
   return h(PagedDetail, { pages, first: 'overview', labels: 'monitor.handoffPage', detail, t });
+}
+
+/**
+ * The settlement of a segment a `/sw-continue` cleared behind a tab strip, the payback page first and the context page after it. A settlement the list no longer holds shows nothing.
+ * `settlement` is an entry of `settlementsOf`, undefined where there is none, and `handoffId` the handoff that cleared the segment. Both pages read the same settlement resource; only the context page reads the amber line from the session store.
+ */
+export function SettlementDetail({ settlement, handoffId, monitor, session, t }) {
+  return settlement === undefined ? null : h(PagedDetail, { pages: SETTLEMENT_PAGES, first: 'payback', labels: 'monitor.settlementPage', settlement, handoffId, monitor, session, t });
+}
+
+const CURRENT_SETTLEMENT_PAGES = {
+  payback: ({ detail: { base, report, curve, snapshot }, t }) => h(PaybackReport, { model: paybackModelOf(base, report, curve, t, true), result: snapshot, t }),
+  context: ({ detail: { base, report, snapshot }, t }) => h(ContextReport, { model: contextModelOf(base, report, snapshot, null, t), result: snapshot, current: true, t }),
+};
+
+export function CurrentSettlementDetail({ result, t }) {
+  return h(DetailBody, { result, t, render: (detail) => {
+    const { base, report } = detail;
+    if (base.count === 0) return h(Notice, { state: 'current-empty' }, t('monitor.settlement.current.empty'));
+    if (report === null) return h(Notice, { state: 'current-pending' }, t('monitor.settlement.current.pending'));
+    return h(React.Fragment, null,
+      base.rows.some(row => row.saved === null) ? h(Notice, { state: 'current-partial' }, t('monitor.settlement.current.partial')) : null,
+      h(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: 'payback', labels: 'monitor.settlementPage', detail, t }));
+  } });
 }
 
 /**

@@ -28,7 +28,7 @@ test('the Rate Lamp in a later segment: its clocks stand at zero while the calls
   runShippedScenario(t, 'loop-lamp', CHECKOUT, LOOP);
 });
 
-test('consecutive user-triggered failures through the real loop: a content_filtered stop on every rung of the ladder, the session\'s model, its repeat and the saved backup model, and then a stream ending in tool calls, are each a fresh dispatch recorded once with its raw outcome, and each failed turn ends without pruning, replacing, executing the emitted tool call or changing the mode or range, and the next attempt seals the same range', SHIPPED, (t) => {
+test('consecutive user-triggered failures through the real loop: a content_filtered stop on every rung of the ladder, the session\'s model, its repeat and the saved backup model, and then streams ending in tool calls, asked again as far as the format bound allows, are each a fresh dispatch recorded once with its raw outcome, and each failed turn ends without pruning, replacing, executing the emitted tool call or changing the mode or range, and the next attempt seals the same range', SHIPPED, (t) => {
   runShippedScenario(t, 'loop-repeated-failures', CHECKOUT, LOOP);
 });
 

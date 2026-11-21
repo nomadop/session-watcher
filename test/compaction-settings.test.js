@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSettingsDraft, PRESET_IDS } from '../public/lib/compactionSettings.js';
-import { KAPPA_PRESETS } from '../dsh/src/inner-quote.js';
+import { KAPPA_PRESETS } from '../lib/inner-seal/quote.js';
 
 const ACCEPTED = Object.freeze({ showCompactionOption: false, compactionPreset: 'M2', summaryFallbackModel: null, subagentsInheritCompaction: false });
 const BACKUP = Object.freeze({ provider: 'p-backup', model: 'm-backup' });

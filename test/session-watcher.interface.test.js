@@ -60,6 +60,7 @@ function makeEngine(script = {}) {
       }];
     },
     getBucketData() { return structuredClone(engine.bucket); },
+    heldLines() { return new Map(structuredClone([...(script.held ?? new Map())])); },
     getHandoffMeasurement() {
       return script.handoffMeasurement ?? {
         segment: 3, turnSeq: 9, epochModel: 'epoch-model',
@@ -690,6 +691,24 @@ describe('named reads', () => {
     }]);
   });
 
+  test('getHistory passes `amberStockL` through on the points the Engine annotates, a null included, and adds no key to the others', () => {
+    const point = foldedSeq => ({
+      ts: 1000, segment: 0, L: 10, B: 5, x: 2, bDefault: 4, u: 2, pp: 0.25, g: 1, miss: false,
+      cacheRead: 3, cacheWrite: 4, turnSeq: 1, foldedSeq,
+    });
+    const watcher = build({
+      createEngine: () => {
+        const engine = makeEngine();
+        engine.getHistory = () => [point(1), { ...point(2), amberStockL: 71_000.5 }, { ...point(3), amberStockL: null }];
+        return engine;
+      },
+    });
+    const points = watcher.getHistory();
+    assert.deepEqual(points.map(wired => Object.hasOwn(wired, 'amberStockL')), [false, true, true]);
+    assert.deepEqual(points.map(wired => wired.amberStockL), [undefined, 71_000.5, null]);
+    assert.deepEqual(Object.keys(points[0]), Object.keys(build().getHistory()[0]), 'an unannotated point keeps today\'s keys');
+  });
+
   test('a history point reports its time as source ISO text a since-filter can parse', () => {
     const stamped = (ts, foldedSeq) => ({
       ts, segment: 0, L: 10, B: 5, x: 2, g: 1, miss: false, cacheRead: 3, cacheWrite: 4, turnSeq: 1, foldedSeq,
@@ -809,6 +828,15 @@ describe('named reads', () => {
     assert.deepEqual(enriched.paths[0].activeSymbols, ['alpha']);
     assert.equal('activeSymbols' in enriched.paths[1], false, 'a non-default-selected row is never enriched');
     assert.equal('activeSymbols' in enriched.skills[0], false, 'a skill row is never enriched');
+  });
+
+  test('getHeldLines answers the Engine\'s held lines of a path, and null for a path it does not hold and for a Skill', () => {
+    const held = new Map([['/repo/a.js', [1, 2, 5]], ['/repo/blank.txt', []], ['skill:tdd', [1]]]);
+    const watcher = build({ createEngine: () => makeEngine({ held }) });
+    assert.deepEqual(watcher.getHeldLines('/repo/a.js'), [1, 2, 5]);
+    assert.deepEqual(watcher.getHeldLines('/repo/blank.txt'), [], 'a held path with no numbered line is held');
+    assert.equal(watcher.getHeldLines('/repo/b.js'), null);
+    assert.equal(watcher.getHeldLines('skill:tdd'), null, 'a Skill key has no file to show');
   });
 
   test('getBucketData maps a tool-kind residual group into residual.tool and no other family', () => {
@@ -975,7 +1003,7 @@ describe('named reads', () => {
     surface.delete('constructor');
     assert.deepEqual([...surface].sort(), [
       'applyHarnessFrame', 'closeCurrentSegment', 'deliverHandoff', 'getBucketData', 'getCurrentCtp',
-      'getCurrentModel', 'getEpochModel', 'getHistory', 'getStatus', 'getTerminalSnapshot', 'getTurnSkeleton',
+      'getCurrentModel', 'getEpochModel', 'getHeldLines', 'getHistory', 'getStatus', 'getTerminalSnapshot', 'getTurnSkeleton',
       'listHandoffCandidates', 'prepareHandoff', 'readRateLampFrame', 'readScenario', 'refreshReadPolicies', 'replaceUserOverrides', 'searchHandoffs',
       'setRatioOverride', 'submitTurnNotes',
     ]);

@@ -7,9 +7,12 @@ import { join } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { composeWatcher, nodeWorkingTree } from '../../dsh/src/composition.js';
-import { INNER_QUOTE } from '../../dsh/src/inner-quote.js';
+import { INNER_QUOTE } from '../../lib/inner-seal/quote.js';
 import { ATTRIBUTION_LIMITS } from '../../lib/constants.js';
-import { CARRIER_WORDING, foldCarried } from '../../lib/harness/dsh/inner-seal-message.js';
+import { CARRIER_WORDING } from '../../lib/inner-seal/carrier.js';
+import { carriedNote, foldCarried } from '../../lib/carried-evidence.js';
+import { CARRIER_TABLE } from '../../lib/harness/dsh/carrier-table.js';
+import { EVENT_READ_TOOL } from '../../lib/harness/dsh/event-read.js';
 import { closeStore, openStore } from '../../lib/store.js';
 import { readTreeWindows, renderFileEvidence } from '../../lib/working-tree-text.js';
 import { CARRIER_KIND, INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, mountShippedLoop, REPLY_PADDING, SEAL_STEPS, SEAL_WAIT_TURNS } from './dsh-shipped-loop.js';
@@ -373,7 +376,7 @@ const SCENARIOS = {
     for (const [name, each] of [['auxiliary call', aux], ['next main request', post]]) {
       assert.equal(JSON.stringify(each.body.input.slice(0, k)), residentBytes, `the ${name} carries the whole prefix as the first request did`);
     }
-    assert.ok(partsOf(post.body.input[k]).map(partText).join('').includes(CARRIER_WORDING.addresses), 'the carrier follows the prefix in the next main request');
+    assert.ok(partsOf(post.body.input[k]).map(partText).join('').includes(CARRIER_TABLE.addresses), 'the carrier follows the prefix in the next main request');
 
     // A second seal over the same session: the prefix stays H, the first carrier is the frontier, and nothing was admitted again for being hidden.
     const second = await untilSeal('before the second seal');
@@ -488,7 +491,7 @@ const SCENARIOS = {
     for (const [name, each] of [['auxiliary call', aux], ['next main request', post]]) {
       assert.equal(JSON.stringify(each.body.input.slice(0, k)), residentBytes, `the ${name} carries the whole prefix as the first request after the clear did`);
     }
-    assert.ok(partsOf(post.body.input[k]).map(partText).join('').includes(CARRIER_WORDING.addresses), 'the carrier follows the prefix in the next main request');
+    assert.ok(partsOf(post.body.input[k]).map(partText).join('').includes(CARRIER_TABLE.addresses), 'the carrier follows the prefix in the next main request');
     closeStore(store);
     await ctx.fiber.dispose();
     await endpoints.close();
@@ -718,7 +721,7 @@ const SCENARIOS = {
       assert.equal(JSON.stringify(each.body.input.slice(0, n)), prefixBytes, `the ${name} carries the first request's input bytes verbatim first`);
       assert.equal(each.body.instructions, firstBody.body.instructions, `the ${name} carries the system prompt verbatim`);
     }
-    assert.ok(partsOf(post.body.input[n]).map(partText).join('').includes(CARRIER_WORDING.carried) || partsOf(post.body.input[n]).map(partText).join('').includes(carrier.data.source.slots[0].text),
+    assert.ok(partsOf(post.body.input[n]).map(partText).join('').includes(carriedNote(CARRIER_TABLE)) || partsOf(post.body.input[n]).map(partText).join('').includes(carrier.data.source.slots[0].text),
       'the carrier follows the prefix in the next main request');
     console.log(JSON.stringify({ prefixKinds: kinds, firstHeader: firstHeader.seq, prefix, range: [range[0], range.at(-1)], firstBodyItems: n, auxItems: aux.body.input.length, postItems: post.body.input.length }));
     await ctx.fiber.dispose();
@@ -730,7 +733,7 @@ const SCENARIOS = {
     const endpoints = await fixtureEndpoints({ padding: REPLY_PADDING });
     // compaction-basic under a threshold the session never reaches, so only the region the case asks for compacts.
     const stock = { compaction: { thresholdRatio: 0.5, retainRatio: 0.2, headroomTokens: 0, maxTokens: 1_000 } };
-    const mount = () => mountShippedLoop({ tools: true, commands: true, persistence: true, sessionTools: true, stock, piAi: piAiOf(endpoints.port) });
+    const mount = () => mountShippedLoop({ tools: true, commands: true, persistence: true, stock, piAi: piAiOf(endpoints.port) });
     const evidence = {};
     let rig = await mount();
     let { ctx, llm } = rig;
@@ -857,17 +860,32 @@ const SCENARIOS = {
     const imagePath = handlePath(carriedText, savedImage.name);
     assert.ok(notesPath !== undefined && imagePath !== undefined, 'the carrier hands both files over as read paths');
     assert.ok(!agent.session.surface.nodes.includes(attachmentMessage.seq), 'the anchor is shadowed');
-    // The three calls in one step: the steps from the second carrier to the load below stay under the seal's step count, so that the load's payload, not a seal, becomes the frontier the next range starts after.
-    const readBack = resultsOf(await turn(inOneStep(
-      ['session_event_read', { seq: attachmentMessage.seq }],
+    // A source the first carrier summarizes rather than quotes: an assistant message of its range.
+    const summarized = agent.session.snapshotEvents().find(event => event.type === 'assistant/message' && first.range.includes(event.seq));
+    assert.ok(summarized !== undefined && !agent.session.surface.nodes.includes(summarized.seq), 'a summarized source is shadowed');
+    // The calls in one step: the steps from the second carrier to the load below stay under the seal's step count, so that the load's payload, not a seal, becomes the frontier the next range starts after.
+    // The first call reads an event the log lacks and the second the anchor, whose text the carrier quotes word for word; the runtime records each failure under its fixed code, a result sharing the tool's name with the read below them, which answers last and is the one `readBack` holds.
+    const readTurn = await turn(inOneStep(
+      [EVENT_READ_TOOL, { seq: 1_000_000 }],
+      [EVENT_READ_TOOL, { seq: attachmentMessage.seq }],
+      [EVENT_READ_TOOL, { seq: summarized.seq, before: 1, after: 1 }],
       ['read', { file_path: notesPath }],
       ['read_image', { file_path: imagePath }],
-    )));
-    const eventRead = readBack.get('session_event_read');
+    ));
+    const readBack = resultsOf(readTurn);
+    const missingRead = readTurn.find(event => event.type === 'tool/result' && event.data.error?.code === 'SESSION_QUERY_EVENT_NOT_FOUND');
+    assert.ok(missingRead !== undefined, `the failed read carries the code of its failure through the tool runtime: ${JSON.stringify(readTurn.filter(event => event.type === 'tool/result').map(event => event.data.error))}`);
+    const heldRead = readTurn.find(event => event.type === 'tool/result' && event.data.error?.code === 'SW_EVENT_CARRIED');
+    assert.ok(heldRead !== undefined, 'the read of the quoted anchor is refused');
+    const eventRead = readBack.get(EVENT_READ_TOOL);
     assert.equal(eventRead.isError ?? false, false, JSON.stringify(eventRead));
-    const eventJson = JSON.parse(/```json\n([\s\S]*)\n```/.exec(textsIn(eventRead))[1]);
-    assert.deepEqual({ seq: eventJson.seq, type: eventJson.type, content: eventJson.data.content }, { seq: attachmentMessage.seq, type: 'user/message', content: attachmentMessage.data.content },
-      'session_event_read on the carrier anchor answers the shadowed source event');
+    const eventJson = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(textsIn(eventRead))[1]);
+    // The window counts raw events: the one before and the one after the target are each listed, whatever they hold, by the service's own extraction.
+    for (const neighbor of [summarized.seq - 1, summarized.seq + 1]) {
+      assert.match(textsIn(eventRead), new RegExp(`^- seq ${neighbor} \\| `, 'm'), `the neighbor at seq ${neighbor} is listed`);
+    }
+    assert.deepEqual({ seq: eventJson.seq, type: eventJson.type, content: eventJson.data.message.content.filter(block => block.type !== 'reasoning') }, { seq: summarized.seq, type: 'assistant/message', content: summarized.data.message.content.filter(block => block.type !== 'reasoning') },
+      'the event read on a summarized source answers the shadowed source event');
     const textRead = readBack.get('read');
     assert.equal(textRead.isError ?? false, false, JSON.stringify(textRead));
     assert.equal(textsIn(textRead), `<path>${realpathSync(notesPath)}</path>\n<type>file</type>\n<content>\n${lines('note', 6).map((row, index) => `${index + 1}: ${row}`).join('\n')}\n\n(End of file - total 6 lines)\n</content>`,
@@ -987,10 +1005,10 @@ const SCENARIOS = {
           assert.ok(`\n${texts[found]}\n`.includes(`\n${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}\n`), `body ${index}: carrier ${carrier.seq}'s slot ${slot.seqs.join(', ')} is a line of its own: ${JSON.stringify(texts[found].slice(0, 600))}`);
           for (const { file, image } of slot.attachments ?? []) {
             assert.ok(rows.includes(carrier.handles.get(file.attachmentId + file.name)), `body ${index}: the handle of ${file.name} is a line of its own`);
-            if (image !== undefined) assert.ok(rows.includes(CARRIER_WORDING.imageSaved(image.name ?? image.attachmentId)), `body ${index}: the sentence of ${file.name} is a line of its own`);
+            if (image !== undefined) assert.ok(rows.includes(CARRIER_WORDING.imageSaved(image.name ?? image.attachmentId, CARRIER_TABLE.imageReadTool)), `body ${index}: the sentence of ${file.name} is a line of its own`);
           }
         }
-        const heading = rows.indexOf(CARRIER_WORDING.carried);
+        const heading = rows.indexOf(carriedNote(CARRIER_TABLE));
         const showsLine = entry => (entry.write ?? []).some(([number]) => !(entry.omit ?? []).includes(number));
         if (carrier.source.paths.some(showsLine)) assert.ok(heading > 0, `body ${index}: carrier ${carrier.seq} has a B section`);
         if (heading >= 0) assert.ok(heading > 0 && rows[heading - 1] === '', `body ${index}: carrier ${carrier.seq}'s B section opens after a blank line`);

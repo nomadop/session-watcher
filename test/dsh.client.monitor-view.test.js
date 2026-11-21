@@ -8,18 +8,19 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
-import { InnerCompactionView, MonitorSplit, MonitorList, MonitorDrawer } from '../dsh/src/client/monitor-view.js';
-import { CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage,
+import { InnerCompactionView, MonitorSplit, MonitorList, MonitorDrawer, MonitorToolbar } from '../dsh/src/client/monitor-view.js';
+import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage,
   HandoffDetail, HandoffOverviewPage, HandoffSummaryPage, HandoffFilesPage, HandoffTurnsPage, HandoffLineagePage } from '../dsh/src/client/monitor-drawer.js';
 import { en, zh } from '../dsh/src/client/locales.js';
-import { SKIP_REASONS } from '../dsh/src/pi-ai-integration.js';
-import { createViewState, reduceView, flattenRows, isOpen, settlementsOf, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
+import { SKIP_REASONS } from '../lib/llm-adapter/carrier-results.js';
+import { createViewState, reduceView, flattenRows, isOpen, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
+import { settlementsOf } from '../public/lib/compactionEconomics.js';
 import { innerMonitorProjection, createMonitorAccess, PREVIEW_SOURCE_CHARS } from '../dsh/src/inner-monitor-read.js';
-import { innerQuote } from '../dsh/src/inner-quote.js';
+import { innerQuote } from '../lib/inner-seal/quote.js';
 import { sourceEventView } from '../lib/harness/dsh/inner-monitor-source.js';
 import { FilesView, CarriedFiles } from '../dsh/src/client/monitor-files.js';
 import { carriedFilesOf, readFilesOf, createFilesState, reduceFiles } from '../dsh/src/client/monitor-files-model.js';
-import { assistantMessage, compactionPrune, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadPayload, loadReads, prunedResult, requestHeader, sessionLog, toolResult, userMessage } from './helpers/dsh-events.js';
+import { assistantMessage, compactionPrune, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadMessage, loadPayload, loadReads, prunedResult, requestHeader, sessionLog, toolResult, userMessage } from './helpers/dsh-events.js';
 import { attemptRow, callPayload, slotRow, slotValue, handoffRow, handoffPayload, HANDOFF_TIME } from './helpers/dsh-monitor-wire.js';
 
 /** The translate: the key itself, followed by its parameters where there are any; `listener`, while set, hears each key asked with the names of its parameters. */
@@ -31,6 +32,12 @@ const t = (key, params) => {
 
 /** A store handle at `result`, as the stores hand it: a retained result and a subscription that never calls back. */
 const handleAt = result => ({ result, subscribe: () => () => {} });
+
+/** The session's store as the stores hand it: a retained result and a subscription that never calls back; each read of either is recorded into `touched`. */
+const sessionAt = (result, touched = []) => ({
+  get result() { touched.push('session.result'); return result; },
+  subscribe: () => { touched.push('session.subscribe'); return () => {}; },
+});
 
 /** The identity a monitor's resource handle is looked up by, as the store keys it. */
 const resourceKey = ({ endpoint, attempt, handoff, slot }) => JSON.stringify([endpoint, attempt ?? handoff, slot ?? null]);
@@ -59,6 +66,9 @@ test('a monitor store that has answered nothing, cannot be reached, is unavailab
     assert.ok(html.includes(text), `${marker}: ${html}`);
     assert.match(html, new RegExp(`data-sw-monitor-notice="${marker}"`), marker);
     assert.equal(html.includes('<table'), false, marker);
+    assert.match(html, /role="toolbar"/);
+    assert.match(html, /<button[^>]+>monitor\.toolbar\.currentSettlement<\/button>/);
+    assert.equal(html.includes('monitor.filter.category'), false, `${marker}: no filters over rows that are none`);
   }
 });
 
@@ -136,7 +146,7 @@ test('a parent row is titled by its display ordinal and carries its seq as meta,
 });
 
 test('an opened committed attempt lists its call row and a slot row per loaded slot in source order below its parent, the selected identity alone is marked selected, and a parent row never is', () => {
-  const slots = { 1: [slotRow(10), slotRow(20, { turn: null, step: null, source: { type: 'user/message', kind: 'user' } }), slotRow(30, { turn: 2, step: null })] };
+  const slots = { 1: [slotRow(10), slotRow(20, { turn: null, step: null, source: { type: 'user/message', kind: 'user', category: 'user' } }), slotRow(30, { turn: 2, step: null })] };
   let state = reduceView(createViewState(), { type: 'toggle', attemptId: 1, open: false });
   state = reduceView(state, { type: 'select', kind: 'slot', attemptId: 1, slotKey: 20 });
 
@@ -381,17 +391,17 @@ test('a parent row previews its call\'s response only while it is folded, the ca
   }
 });
 
-test('a slot row without a turn and step is named by the category of its recorded source, a turn or step still naming it first, and a source a host does not send or no category knows reads as other content', () => {
+test('a slot row without a turn and step is named by the category of its recorded source, a turn or step still naming it first, and a source a host does not send or files under other reads as other content', () => {
   const slots = { 1: [
     slotRow(10),
-    slotRow(20, { turn: null, step: null, source: { type: 'user/message', kind: 'user' } }),
-    slotRow(30, { turn: null, step: null, source: { type: 'user/message', kind: 'runtime-context' } }),
-    slotRow(40, { turn: null, step: null, source: { type: 'system/message', kind: 'system-prompt' } }),
-    slotRow(50, { turn: null, step: null, source: { type: 'developer/message', kind: 'user' } }),
-    slotRow(60, { turn: null, step: null, source: { type: 'tool/result', kind: 'tool' } }),
-    slotRow(70, { turn: null, step: null, source: { type: 'user/message', kind: null } }),
+    slotRow(20, { turn: null, step: null, source: { type: 'user/message', kind: 'user', category: 'user' } }),
+    slotRow(30, { turn: null, step: null, source: { type: 'user/message', kind: 'runtime-context', category: 'injected' } }),
+    slotRow(40, { turn: null, step: null, source: { type: 'system/message', kind: 'system-prompt', category: 'system' } }),
+    slotRow(50, { turn: null, step: null, source: { type: 'developer/message', kind: 'user', category: 'developer' } }),
+    slotRow(60, { turn: null, step: null, source: { type: 'tool/result', kind: 'tool', category: 'tool' } }),
+    slotRow(70, { turn: null, step: null, source: { type: 'user/message', kind: null, category: 'other' } }),
     slotRow(80, { turn: null, step: null, source: undefined }),
-    slotRow(90, { turn: 2, step: null, source: { type: 'user/message', kind: 'user' } }),
+    slotRow(90, { turn: 2, step: null, source: { type: 'user/message', kind: 'user', category: 'user' } }),
   ] };
   const state = reduceView(createViewState(), { type: 'toggle', attemptId: 1, open: false });
 
@@ -404,17 +414,13 @@ test('a slot row without a turn and step is named by the category of its recorde
   for (const row of rows) assert.equal(row.markup.includes('monitor.object.slot'), false, 'no slot label, ordinal or seq');
 });
 
-test('a legacy attempt without a start, one with no terminal evidence and one whose call was never recorded render without throwing, their missing times and usage shown as a dash', () => {
-  const legacy = attemptRow(4, { legacy: true, startedAt: null, endedAt: null, range: { first: 2, last: 3, count: 2 } });
+test('an attempt with no terminal evidence and one whose call was never recorded render without throwing, their missing times and usage shown as a dash', () => {
   const unknown = attemptRow(5, { status: 'unknown', endedAt: null, slots: null, call: { state: 'absent', endedAt: null, finish: null, thrown: null, output: null, usage: null } });
-  let state = reduceView(createViewState(), { type: 'toggle', attemptId: 4, open: false });
-  state = reduceView(state, { type: 'toggle', attemptId: 5, open: true });
+  const state = reduceView(createViewState(), { type: 'toggle', attemptId: 5, open: true });
 
-  const byIdentity = Object.fromEntries(parseRows(renderList([legacy, unknown], { state })).map(row => [row.attributes['data-identity'], row]));
+  const byIdentity = Object.fromEntries(parseRows(renderList([unknown], { state })).map(row => [row.attributes['data-identity'], row]));
 
-  assert.deepEqual(Object.keys(byIdentity), ['attempt:4', 'call:4', 'attempt:5']);
-  assert.equal(byIdentity['attempt:4'].parts.time, '—', 'no start, no span, and none is made up from the end');
-  assert.deepEqual(byIdentity['attempt:4'].parts.title, 'monitor.object.attempt(epoch=1,ordinal=1)');
+  assert.deepEqual(Object.keys(byIdentity), ['attempt:5']);
   assert.deepEqual([byIdentity['attempt:5'].parts.status, byIdentity['attempt:5'].parts.time, byIdentity['attempt:5'].parts.usage], ['monitor.status.unknown', '—', '—']);
   assert.equal(byIdentity['attempt:5'].preview, undefined, 'a call that was never recorded has no text to preview');
 });
@@ -686,13 +692,6 @@ test('a drawer is titled by the display ordinal of its attempt and states the ra
 
 const pageHtml = (Page, detail, props = {}) => renderToString(React.createElement(Page, { detail, now: NOW, t, ...props }));
 
-// An attempt from before the start record: its call record alone, which names none of the log's, and, where `committed`, the carrier that cites it.
-function legacyOver(conv, { stream = answer('["asked","read",""]'), committed = false } = {}) {
-  const call = innerCall({ range: conv.range, tail: PROMPT, stream });
-  const sealed = committed ? [compactionPrune(conv.ask), innerSealCarrier({ sourceEventSeqs: [call.seq, ...conv.range, conv.original.seq], slots: conv.slots })] : [];
-  return { start: call, log: [conv.header, ...conv.source, call, ...sealed] };
-}
-
 /** The section of rendered markup marked `name`, its markup, or undefined. */
 const sectionOf = (html, name) => new RegExp(`<section\\b[^>]*data-sw-section="${name}"[^>]*>(.*?)</section>`, 's').exec(html)?.[1];
 
@@ -747,20 +746,17 @@ test('the request page lists the tool history the call updated, a message id wit
   assert.equal(sectionOf(pageHtml(RequestPage, await callOf(plain.log, plain.start.seq)), 'toolHistory'), undefined);
 });
 
-test('the request page of an attempt from before the start record says the record is partial, shows the selection and the tail its call record kept, and no tool section or message count it never had', { skip }, async () => {
-  const conv = conversation();
-  const { start, log } = legacyOver(conv);
-  const detail = await callOf(log, start.seq);
-  assert.equal(detail.request.recorded, 'partial');
+test('a payload of the retired legacy and partial shapes reads as any other: no legacy note on the overview, no partial note on the request page, and the selection only from the options the request carries', () => {
+  const row = { ...attemptRow(4), legacy: true };
+  const { request } = callPayload(row);
+  const overview = pageHtml(OverviewPage, callPayload(row));
+  assert.equal(overview.includes('monitor.overview.legacy'), false);
 
-  const html = pageHtml(RequestPage, detail);
+  const html = pageHtml(RequestPage, callPayload(row, { request: { ...request, recorded: 'partial', selection: { provider: 'ignored', model: 'ignored' } } }));
 
-  assert.ok(html.includes('monitor.request.partial'));
-  assert.deepEqual(factsOf(sectionOf(html, 'options')), [['provider', 'deepseek'], ['model', 'deepseek-v4-pro']]);
-  assert.ok(textOf(sectionOf(html, 'messages')).includes(PROMPT));
-  assert.equal(sectionOf(html, 'messages').includes('monitor.request.messages('), false, 'no count of earlier messages was recorded');
-  assert.equal(sectionOf(html, 'tools'), undefined);
-  assert.equal(html.includes('monitor.request.projection'), false);
+  assert.equal(html.includes('monitor.request.partial'), false);
+  assert.deepEqual(factsOf(sectionOf(html, 'options')), [['provider', 'p'], ['model', 'm'], ['purpose', 'compaction'], ['sessionId', 's1']]);
+  assert.ok(sectionOf(html, 'messages').includes('monitor.request.messages('), 'the count of earlier messages is shown');
 });
 
 // A response that ran to a tool call: a text, then a call of `bash`, then the stop and the usage.
@@ -904,12 +900,11 @@ test('the overview names the authoritative count of slots the carrier committed,
   const sealed = attemptOver(conv);
   const none = attemptOver({ ...conv, slots: [] });
   const failed = attemptOver(conv, { end: { outcome: 'failed', reason: 'x' }, committed: false });
-  const old = legacyOver(conv, { committed: true });
 
   const counts = [];
-  for (const { start, log } of [sealed, none, failed, old]) counts.push(factOf(pageHtml(OverviewPage, await callOf(log, start.seq)), 'monitor.overview.slots'));
+  for (const { start, log } of [sealed, none, failed]) counts.push(factOf(pageHtml(OverviewPage, await callOf(log, start.seq)), 'monitor.overview.slots'));
 
-  assert.deepEqual(counts, [String(conv.slots.length), '0', undefined, String(conv.slots.length)], 'the count of the committed carrier, 0 for an empty one, no fact without a carrier');
+  assert.deepEqual(counts, [String(conv.slots.length), '0', undefined], 'the count of the committed carrier, 0 for an empty one, no fact without a carrier');
 });
 
 // A response that ended with a finish chunk that carries more than its kind.
@@ -926,9 +921,6 @@ test('the response page shows the finish chunk as recorded, not only its kind, a
   const without = pageHtml(ResponsePage, await callOf(unfinished.log, unfinished.start.seq));
   assert.ok(sectionOf(without, 'finish').includes('monitor.notRecorded'));
   assert.equal(sectionOf(without, 'finish').includes('<pre'), false);
-
-  const old = legacyOver(conv, { stream: finishedStream() });
-  assert.ok(textOf(sectionOf(pageHtml(ResponsePage, await callOf(old.log, old.start.seq)), 'finish')).includes('resume-7'), 'an attempt from before the start record shows its call record\'s finish too');
 
   const bare = attemptOver(conv, { stream: null, end: { outcome: 'failed', reason: 'x' } });
   assert.equal(sectionOf(pageHtml(ResponsePage, await callOf(bare.log, bare.start.seq)), 'finish'), undefined, 'no response, no finish section');
@@ -995,7 +987,7 @@ test('the timing page lists the attempt\'s and the call\'s start, end and span a
   assert.notEqual(isoOf(STREAM_T0), isoOf(start.time), 'the fixture\'s first chunk time differs from the start, so the two are not conflated');
 });
 
-test('the timing page of an attempt in flight reads the clock it is given for the spans still running, and one with no start record or no call shows not recorded and invents no start from the first chunk', { skip }, async () => {
+test('the timing page of an attempt in flight reads the clock it is given for the spans still running, and shows an end it has none of as not recorded', { skip }, async () => {
   const conv = conversation();
   const live = attemptOver(conv, { stream: null, committed: false });
   const entry = { attempt: live.start.seq, phase: 'generating', endedAt: null, request: live.start.data.request, tools: TOOLS, stream: () => streamOf([{ type: 'block-start', index: 0, blockType: 'text' }]) };
@@ -1003,28 +995,6 @@ test('the timing page of an attempt in flight reads the clock it is given for th
   assert.equal(factOf(running, 'monitor.timing.attemptElapsed'), '3.0 s');
   assert.equal(factOf(running, 'monitor.timing.callElapsed'), '3.0 s');
   assert.equal(factOf(running, 'monitor.timing.attemptEnd'), 'monitor.notRecorded');
-
-  const old = legacyOver(conv);
-  const html = pageHtml(TimingPage, await callOf(old.log, old.start.seq));
-  assert.deepEqual(factsOf(html).slice(0, 6).map(([, value]) => value), Array(6).fill('monitor.notRecorded'), 'no start, no end, no span');
-  assert.equal(factOf(html, 'monitor.timing.firstChunk'), isoOf(STREAM_T0), 'the first chunk is still shown as observed');
-});
-
-test('the overview of an attempt from before the start record says so, reads its selection from the call record\'s selection with no effort made up, and shows not recorded for the records it lacks', { skip }, async () => {
-  const conv = conversation();
-  const { start, log } = legacyOver(conv, { committed: true });
-  const detail = await callOf(log, start.seq);
-  assert.equal(detail.row.legacy, true);
-
-  const html = pageHtml(OverviewPage, detail);
-
-  assert.ok(html.includes('monitor.overview.legacy'));
-  assert.equal(factOf(html, 'monitor.overview.recordStart'), 'monitor.notRecorded');
-  assert.equal(factOf(html, 'monitor.overview.recordCall'), `monitor.overview.seq(seq=${start.seq})`);
-  assert.equal(factOf(html, 'monitor.overview.provider'), 'deepseek');
-  assert.equal(factOf(html, 'monitor.overview.model'), 'deepseek-v4-pro');
-  assert.equal(factOf(html, 'monitor.overview.effort'), undefined);
-  assert.equal(factOf(html, 'monitor.overview.status'), 'monitor.status.committed');
 });
 
 test('the failure reason and the thrown text are shown whole on the overview and the response page, past the length the list previews them at', { skip }, async () => {
@@ -1144,7 +1114,7 @@ test('a slot opens at its summary page and offers the overview and the original 
 
 test('the slot pages show what the slot detail holds: the overview its seqs, turn, step, the first event\'s source with its raw type and kind, and how many source events the call saw; the summary the whole C; the original text the events and the raw JSON', () => {
   const detail = slotValue(10, {
-    seqs: [10, 11, 12], turn: null, step: null, source: { type: 'user/message', kind: 'runtime-context' }, c: '',
+    seqs: [10, 11, 12], turn: null, step: null, source: { type: 'user/message', kind: 'runtime-context', category: 'injected' }, c: '',
     events: [
       { seq: 10, type: 'user/message', visible: true, blocks: [{ type: 'text', text: 'seen' }], raw: { seq: 10 } },
       { seq: 11, type: 'tool/result', visible: false, blocks: [], raw: { seq: 11 } },
@@ -1179,7 +1149,7 @@ test('the slot pages show what the slot detail holds: the overview its seqs, tur
 
 function renderSplit(attempts, resources, { state = createViewState(), handoffs = [] } = {}) {
   const touched = [];
-  const html = renderToString(React.createElement(MonitorSplit, { attempts, handoffs, monitor: monitorAt({ kind: 'ready', attempts, handoffs }, resources, touched), state, dispatch: () => {}, t }));
+  const html = renderToString(React.createElement(MonitorSplit, { attempts, handoffs, monitor: monitorAt({ kind: 'ready', attempts, handoffs }, resources, touched), session: sessionAt(null, touched), state, dispatch: () => {}, t }));
   return { html, touched };
 }
 
@@ -1402,8 +1372,8 @@ test('the call drawer opens at the overview, reading the call\'s own handle alon
   assert.deepEqual(touched, [callKey(start.seq)]);
 });
 
-test('the quote page lists the quote the attempt record keeps, its inputs, parameters, preset and results with a missing one not made up, apart from the B its carrier committed; an attempt with no quote says none was recorded', () => {
-  const quote = { n: 8, lA: 12400, bEst: 0, cEst: 2400, sEst: 9880, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.868902300206646, q: 1.0377949146956498, arm: 'left', trigger: 'quote', missing: null };
+test('the quote page lists the quote the attempt record keeps, its inputs, parameters, preset and results, apart from the B its carrier committed; an attempt with no quote says none was recorded', () => {
+  const quote = { n: 8, lA: 12400, bEst: 0, cEst: 2400, sEst: 9880, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.868902300206646, q: 1.0377949146956498, arm: 'left', trigger: 'quote' };
   const html = renderToString(React.createElement(QuotePage, { detail: callPayload(attemptRow(1), { quote, carried: { text: 'B as committed', note: 'The note.', files: [], removed: [], skills: [] } }), t }));
   assert.deepEqual(factsOf(html), [
     ['monitor.quote.n', '8'], ['monitor.quote.lA', '12400'], ['monitor.quote.bEst', '0'], ['monitor.quote.cEst', '2400'], ['monitor.quote.sEst', '9880'],
@@ -1412,12 +1382,6 @@ test('the quote page lists the quote the attempt record keeps, its inputs, param
   ]);
   assert.ok(html.includes('monitor.quote.note'), 'the page says the quote is the estimate before the summary');
   assert.equal(html.includes('B as committed'), false, 'the committed B is the carried page\'s');
-
-  const missing = { ...quote, cRatio: null, nRef: null, N: null, jRef: null, q: null, arm: null, n: 24, trigger: 'hard', missing: 'ratio_unavailable' };
-  const hard = renderToString(React.createElement(QuotePage, { detail: callPayload(attemptRow(2), { quote: missing }), t }));
-  assert.equal(factOf(hard, 'monitor.quote.missingReason'), 'monitor.quote.missing.ratio_unavailable');
-  assert.deepEqual(factsOf(hard).slice(0, 2), [['monitor.quote.missingReason', 'monitor.quote.missing.ratio_unavailable'], ['monitor.quote.n', '24']], 'the reason leads, a quote with trigger `hard` adds no row');
-  for (const term of ['monitor.quote.cRatio', 'monitor.quote.q', 'monitor.quote.arm']) assert.equal(factOf(hard, term), 'monitor.notRecorded', term);
 
   const { preset, ...recorded } = quote;
   const older = renderToString(React.createElement(QuotePage, { detail: callPayload(attemptRow(4), { quote: recorded }), t }));
@@ -1446,7 +1410,7 @@ test('in each locale the call drawer names its summaries and evidence tabs by th
 });
 
 test('in each locale the quote page labels its facts in the user\'s words, names the preset it was priced under and lists none of the formula\'s intermediates', () => {
-  const quote = { n: 8, lA: 12400, bEst: 0, cEst: 2400, sEst: 9880, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.868902300206646, q: 1.0377949146956498, arm: 'left', trigger: 'quote', missing: null };
+  const quote = { n: 8, lA: 12400, bEst: 0, cEst: 2400, sEst: 9880, cRatio: 30, fee: 5000, kappa: 1.1, preset: 'E2', nRef: 15, N: 21.96, jRef: 28.868902300206646, q: 1.0377949146956498, arm: 'left', trigger: 'quote' };
   const pageOf = (dictionary, overrides = {}) => factsOf(renderToString(React.createElement(QuotePage, { detail: callPayload(attemptRow(1), { quote: { ...quote, ...overrides } }), t: localized(dictionary) })));
   assert.deepEqual(pageOf(zh), [
     ['步数', '8'], ['待压缩 token', '12400'], ['估算证据 token', '0'], ['估算摘要 token', '2400'], ['估算节省 token', '9880'],
@@ -1465,8 +1429,7 @@ test('in each locale the quote page labels its facts in the user\'s words, names
     assert.deepEqual(pageOf(zh, { preset }).find(([term]) => term === '压缩策略'), ['压缩策略', '未记录']);
     assert.deepEqual(pageOf(en, { preset }).find(([term]) => term === 'Compaction policy'), ['Compaction policy', 'Not recorded']);
   }
-  assert.deepEqual(pageOf(zh, { trigger: 'hard', n: 24, cRatio: null, q: null, arm: null, missing: 'ratio_unavailable' }).slice(0, 3), [['无结果原因', '缓存写读价比不可用。'], ['步数', '24'], ['待压缩 token', '12400']]);
-  assert.deepEqual(pageOf(en, { trigger: 'hard' }), pageOf(en), 'a quote with trigger `hard` lists as any other');
+  assert.deepEqual(pageOf(en, { trigger: null }), pageOf(en), 'a quote with no trigger lists as any other');
 });
 
 test('the carried page of a committed attempt lists the evidence its carrier states as the host answers it in structure, each file folded to its row, the removed paths and the skills after them, and has the carrier\'s wording and its whole text as two folds at its foot', { skip }, async () => {
@@ -1908,18 +1871,21 @@ test('the files page lists the files read folded to their rows under the root th
   assert.ok(none.includes('monitor.handoff.files.none'));
 });
 
-test('the files page over the files the host answers for a load the log holds: a rendered file reads as its lines, an older read block as a file with none, and the handoff\'s own detail keeps its shape', { skip }, async () => {
-  const rendered = '/repo/src/a.js (total lines: 12)\n1: a\n2: b\n--\n9: i\n';
+test('the files page over the files the host answers for a load the log holds: a read message with paths reads as its lines, one with none as a file with none, and the handoff\'s own detail keeps its shape', { skip }, async () => {
   const older = '<path>/repo/src/old.js</path>\n<type>file</type>\n<content>\n1: a\n\n(End of file - total 1 lines)\n</content>\n';
-  const log = sessionLog([
-    loadPayload({ handoffId: null, paths: ['/repo/src/a.js'] }),
-    loadReads({ files: [{ path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }, { offset: 9, limit: 1 }], text: rendered }, { path: '/repo/src/old.js', ranges: [{ offset: 1, limit: 1 }], text: older }] }),
-  ]);
-  const access = createMonitorAccess({
-    sessionOf: id => (id === SESSION ? {} : undefined), readMonitor: () => fold(log), live: () => [], kit,
-    readSession: async () => ({ events: structuredClone(log) }), readStored: async () => undefined, nextTaskOf: () => null,
-  });
-  const detail = wire(await access.handoff(SESSION, log[0].seq));
+  const rendered = '/repo/src/a.js (total lines: 12)\n1: a\n2: b\n--\n9: i\n';
+  const file = { path: '/repo/src/a.js', ranges: [{ offset: 1, limit: 2 }, { offset: 9, limit: 1 }], text: rendered, totalLines: 12, windows: [{ offset: 1, lines: [{ number: 1, text: 'a' }, { number: 2, text: 'b' }] }, { offset: 9, lines: [{ number: 9, text: 'i' }] }] };
+  const detailOf = async (reads) => {
+    const log = sessionLog([loadPayload({ handoffId: null, paths: ['/repo/src/a.js'] }), reads]);
+    const access = createMonitorAccess({
+      sessionOf: id => (id === SESSION ? {} : undefined), readMonitor: () => fold(log), live: () => [], kit,
+      readSession: async () => ({ events: structuredClone(log) }), readStored: async () => undefined, nextTaskOf: () => null,
+    });
+    return wire(await access.handoff(SESSION, log[0].seq));
+  };
+  const withLines = await detailOf(loadReads({ files: [file] }));
+  const withoutLines = await detailOf(loadMessage({ calls: [{ id: 'sw-load-0000aaaa-1', name: 'read', arguments: JSON.stringify({ file_path: '/repo/src/old.js', ranges: [{ offset: 1, limit: 1 }] }), text: older }] }));
+  const detail = { ...withLines, files: [...withLines.files, ...withoutLines.files] };
 
   const html = pageHtml(HandoffFilesPage, detail);
 
@@ -1975,7 +1941,7 @@ test('the turn drawer reads a missing note and an empty one as their neutral mar
 // Three compactions of one segment, the last without a price ratio, and the continue that cleared the segment after two more steps: 518000 read-price tokens saved of 296000 spent, by the two compactions with figures.
 const SETTLING = { contextChange: { before: 100_000, after: 26_000, delta: -74_000, miss: 8_000 }, cRatio: 12, call: { usage: { input: 400, output: 2_400, cacheRead: 48_000, cacheWrite: 600 } } };
 const settlingAttempts = () => [attemptRow(1, { ...SETTLING, stepN: 8 }), attemptRow(2, { ...SETTLING, stepN: 1 }), attemptRow(3, { ...SETTLING, stepN: 1, cRatio: null })];
-const clearingHandoff = (overrides = {}) => handoffRow(5, { type: 'continue', epoch: 1, tailSteps: 2, contextChange: { before: 460, after: 710, delta: 250, miss: 510 }, ...overrides });
+const clearingHandoff = (overrides = {}) => handoffRow(5, { type: 'continue', epoch: 1, tailCalls: 2, contextChange: { before: 460, after: 710, delta: 250, miss: 510 }, ...overrides });
 const settlementKey = handoffId => reduceView(createViewState(), { type: 'select', kind: 'settlement', handoffId });
 
 function renderSettlementDrawer(state, settlements, { dictionary } = {}) {
@@ -2007,7 +1973,7 @@ test('the settlement of a cleared segment is a row of its own in front of the co
 });
 
 test('the settlement row is no warning: a segment whose compactions did not pay back reads its loss with the minus sign and no mark of attention', () => {
-  const html = renderHandoffList([attemptRow(1, { ...SETTLING, stepN: 8 })], [clearingHandoff({ tailSteps: 0 })]);
+  const html = renderHandoffList([attemptRow(1, { ...SETTLING, stepN: 8 })], [clearingHandoff({ tailCalls: 0 })]);
   const row = parseRows(html).find(each => each.attributes['data-sw-row'] === 'settlement');
   assert.equal(row.parts.net, 'monitor.settlement.net(count=\u2212148.0k)');
   assert.equal(row.parts.payback, 'monitor.settlement.payback(percent=0%)');
@@ -2038,24 +2004,34 @@ test('a click or the enter or space key on a settlement row selects it by its id
   assert.equal(render('settlement:5').find(element => element.props['data-identity'] === 'settlement:5').props['aria-selected'], true);
 });
 
-test('in each locale the settlement drawer is titled by the segment with the handoff id beside it, has no tabs, and shows the settlement\'s text whole in one preformatted block', () => {
+test('in each locale the settlement drawer is titled by the segment with the handoff id beside it, with the payback and context tabs, the payback page selected over its panel', () => {
   const settled = settlementsOf(settlingAttempts(), [clearingHandoff()]);
   const zhHtml = renderSettlementDrawer(settlementKey(5), settled, { dictionary: zh });
   assert.match(zhHtml, /<h2\b[^>]*>分段#1压缩结算<\/h2>/);
   assert.equal(subtitleOf(zhHtml), '交接ID：5');
   assert.match(zhHtml, /data-kind="settlement"/);
-  assert.equal(zhHtml.includes('role="tablist"'), false);
+  assert.deepEqual([...zhHtml.matchAll(/<button[^>]*role="tab"[^>]*>(.*?)<\/button>/g)].map(match => [/aria-selected="(\w+)"/.exec(match[0])[1], /data-page="(\w+)"/.exec(match[0])[1], match[1]]), [['true', 'payback', '回本'], ['false', 'context', '上下文']]);
+  assert.match(zhHtml, /<div class="sw-mon-page" role="tabpanel" data-page="payback"><div class="sw-pb">/);
   const enHtml = renderSettlementDrawer(settlementKey(5), settled, { dictionary: en });
   assert.match(enHtml, /<h2\b[^>]*>Compaction settlement of segment #1<\/h2>/);
   assert.equal(subtitleOf(enHtml), 'Handoff ID: 5');
+  assert.deepEqual([...enHtml.matchAll(/<button[^>]*role="tab"[^>]*>(.*?)<\/button>/g)].map(match => match[1]), ['Payback', 'Context']);
   const echoed = renderSettlementDrawer(settlementKey(5), settled);
-  assert.equal([...echoed.matchAll(/<pre\b/g)].length, 1);
-  const text = textOf(/<pre\b[^>]*>(.*?)<\/pre>/s.exec(echoed)[1]);
-  assert.deepEqual(text.split('\n').map(line => line.split(' · ')[0]), [
-    'monitor.object.attempt(epoch=1,ordinal=1)', 'monitor.object.attempt(epoch=1,ordinal=2)', 'monitor.object.attempt(epoch=1,ordinal=3)', 'monitor.settlement.total', 'monitor.settlement.unit',
-  ]);
-  assert.match(text.split('\n')[2], /saved\(count=—\)/, 'a compaction with no figures reads dashes');
-  assert.match(text.split('\n')[3], /^monitor\.settlement\.total · monitor\.settlement\.count\(count=3\) · monitor\.settlement\.steps\(count=12\) · monitor\.settlement\.saved\(count=518000\) · monitor\.settlement\.cost\(count=296000\) · monitor\.settlement\.net\(count=\+222000\) · monitor\.settlement\.payback\(percent=175%\)$/);
+  assert.equal(echoed.includes('<pre'), false, 'the settlement drawer sets no preformatted block');
+  assert.equal(echoed.includes('monitor.settlement.total'), false);
+  assert.deepEqual([...echoed.matchAll(/<span>(monitor\.settlement\.[a-z]+\(.*?\))[ ·]*<\/span>/g)].map(match => match[1]), [
+    'monitor.settlement.count(count=3)', 'monitor.settlement.steps(count=12)', 'monitor.settlement.saved(count=518.0k)', 'monitor.settlement.cost(count=296.0k)', 'monitor.settlement.net(count=+222.0k)', 'monitor.settlement.payback(percent=175%)',
+  ], 'the same compact totals as the list row');
+  assert.equal([...echoed.matchAll(/<li class="sw-pb-li"/g)].length, 3, 'a row for each compaction, the one with no figures included');
+  assert.equal([...echoed.matchAll(/<li class="sw-pb-li"[^>]*\bdata-unknown=""/g)].length, 1);
+});
+
+test('the drawer keys the settlement page by its selected identity so another settlement starts on its first tab', () => {
+  const settled = settlementsOf(settlingAttempts(), [clearingHandoff()]);
+  const drawer = identity => MonitorDrawer({ state: settlementKey(identity), monitor: monitorAt(null), ordinals: {}, handoffs: [], settlements: settled, now: NOW, dispatch: () => {}, t });
+  const body = identity => drawer(identity).props.children.find(child => child?.props?.className === 'sw-mon-drawer-body').props.children;
+  assert.equal(body(5).key, 'settlement:5');
+  assert.equal(body(9).key, 'settlement:9', 'another identity is another key');
 });
 
 test('the settlement drawer of a selection the settlements do not list names no segment and shows nothing', () => {
@@ -2063,6 +2039,8 @@ test('the settlement drawer of a selection the settlements do not list names no 
   assert.match(html, /<h2\b[^>]*>分段#—压缩结算<\/h2>/);
   assert.equal(subtitleOf(html), '交接ID：9');
   assert.equal(html.includes('<pre'), false);
+  assert.equal(html.includes('role="tablist"'), false);
+  assert.equal(html.includes('sw-pb'), false);
 });
 
 test('the split lists the settlement before its continue and opens its drawer from the selection alone, the compactions reading the steps the clear cut off', () => {
@@ -2070,10 +2048,65 @@ test('the split lists the settlement before its continue and opens its drawer fr
   const { html, touched } = renderSplit(settlingAttempts(), {}, { handoffs, state: settlementKey(5) });
   assert.deepEqual(rowIds(html), ['attempt:1', 'attempt:2', 'attempt:3', 'settlement:5', 'handoff:5']);
   assert.match(html, /data-sw-monitor-drawer="" data-kind="settlement"/);
-  assert.ok(html.includes('monitor.settlement.total'));
-  assert.equal(touched.some(key => key.includes('inner-monitor/')), false, 'no read of the host');
+  assert.ok(html.includes('role="tablist"') && html.includes('class="sw-pb"'), 'the tab strip and the payback page');
+  assert.equal(html.includes('monitor.settlement.total'), false);
+  assert.deepEqual(touched.filter(key => key.includes('inner-monitor/')), [resourceKey({ endpoint: 'inner-monitor/settlement', handoff: 5 })]);
   assert.deepEqual(parseRows(html).filter(row => row.attributes['data-sw-row'] === 'attempt').map(row => row.parts.status), ['monitor.status.paid', 'monitor.status.paid', 'monitor.status.committed']);
   assert.equal(parseRows(html).find(row => row.attributes['data-identity'] === 'settlement:5').attributes['aria-selected'], 'true');
+});
+
+test('a row-selected historical drawer stays hidden when the monitor cannot list its events', () => {
+  const html = renderToString(React.createElement(MonitorSplit, {
+    attempts: [], handoffs: [], monitor: monitorAt(null), state: settlementKey(5),
+    listNotice: React.createElement('p', null, 'Events are unavailable.'), dispatch: () => {}, t,
+  }));
+  assert.match(html, /Events are unavailable\./);
+  assert.doesNotMatch(html, /data-sw-monitor-drawer/);
+});
+
+test('the settlement drawer opens on the payback page and reads recall evidence by its handoff without reading the session store', () => {
+  const touched = [];
+  const settlement = settlementsOf(settlingAttempts(), [clearingHandoff()]).get(5);
+  const monitor = monitorAt(null, {}, touched);
+  const session = sessionAt(null, touched);
+  const html = renderToString(React.createElement(SettlementDetail, { settlement, monitor, session, handoffId: 5, t }));
+  assert.match(html, /<div class="sw-mon-page" role="tabpanel" data-page="payback"><div class="sw-pb">/);
+  assert.equal(html.includes('sw-cx'), false, 'the context page is not mounted');
+  assert.deepEqual(touched, [resourceKey({ endpoint: 'inner-monitor/settlement', handoff: 5 })]);
+});
+
+test('the settlement detail hands its pages the settlement, the handoff and the stores, the payback page first and the context page after it', () => {
+  const settled = settlementsOf(settlingAttempts(), [clearingHandoff()]);
+  const monitor = monitorAt(null);
+  const session = sessionAt(null);
+  const { props } = SettlementDetail({ settlement: settled.get(5), handoffId: 5, monitor, session, t });
+  assert.deepEqual(Object.keys(props.pages), ['payback', 'context']);
+  assert.equal(props.first, 'payback');
+  assert.equal(props.labels, 'monitor.settlementPage');
+  assert.deepEqual([props.settlement, props.handoffId, props.monitor, props.session], [settled.get(5), 5, monitor, session]);
+  assert.equal(SettlementDetail({ settlement: undefined, handoffId: 5, monitor, session, t }), null);
+  const drawer = MonitorDrawer({ state: settlementKey(5), monitor, session, ordinals: {}, handoffs: [], settlements: settled, now: NOW, dispatch: () => {}, t });
+  const body = drawer.props.children.find(child => child?.props?.className === 'sw-mon-drawer-body').props.children;
+  assert.deepEqual([body.props.handoffId, body.props.monitor, body.props.session], [5, monitor, session], 'the drawer hands the selected settlement\'s handoff and its own stores on');
+});
+
+test('the tab strip hands the page it opens the settlement, the handoff and the stores: the context page asks for the settlement\'s calls by the handoff and reads the line from the session', () => {
+  const settlement = settlementsOf(settlingAttempts(), [clearingHandoff()]).get(5);
+  const identity = { endpoint: 'inner-monitor/settlement', handoff: 5 };
+  const calls = settlement.rows.flatMap((_, at) => [{ seq: 10 * at + 1, stock: 1000 + at, post: false }, { seq: 10 * at + 2, stock: 1100 + at, post: true }]);
+  const touched = [];
+  // A server render reads the session store's `subscribe` to hand it to the hook and does not call it.
+  const session = {
+    get result() { touched.push('session.result'); return { kind: 'live', snapshot: { history: [{ segment: settlement.epoch - 1, amberStockL: 1050 }] } }; },
+    get subscribe() { touched.push('session.subscribe'); return () => () => {}; },
+  };
+  const monitor = monitorAt(null, { [resourceKey(identity)]: { kind: 'ready', value: { calls } } }, touched);
+  const html = renderToString(React.createElement(PagedDetail, { pages: SETTLEMENT_PAGES, first: 'context', labels: 'monitor.settlementPage', settlement, handoffId: 5, monitor, session, t }));
+  assert.match(html, /<div class="sw-mon-page" role="tabpanel" data-page="context"><div class="sw-cx">/);
+  assert.deepEqual(touched.filter(key => key.includes('inner-monitor/')), [resourceKey(identity)], 'the settlement\'s calls, by the handoff');
+  assert.deepEqual([touched.includes('session.result'), touched.includes('session.subscribe')], [true, true], 'the session\'s store');
+  assert.equal(html.includes('sw-cx-svg') && html.includes('sw-cx-warnline'), true, 'the chart over the calls read and the line the session\'s history holds');
+  assert.equal(html.includes('sw-pb'), false, 'the payback page is not mounted');
 });
 
 test('the overview of a compaction in a cleared segment reads the progress that includes the steps the clear cut off', () => {
@@ -2109,6 +2142,124 @@ const READ_FILES = [
   { path: '/work/d.js', total: 5, runs: [] },
 ];
 
+// ── The filter toolbar ───────────────────────────────────────────────────────
+
+const filterBy = (...actions) => actions.reduce(reduceView, createViewState());
+const WARNED = { type: 'warned', warned: true };
+const buttonsOf = element => (element?.type === 'button' ? [element] : [element?.props?.children].flat(Infinity).filter(Boolean).flatMap(buttonsOf));
+
+test('the toolbar groups the category filters and exposes the current settlement separately', () => {
+  const toolbar = MonitorToolbar({ filter: createViewState().filter, dispatch: () => {}, t });
+  assert.equal(toolbar.props.role, 'toolbar');
+  assert.equal(toolbar.props['aria-label'], 'monitor.toolbar.label');
+  assert.match(renderToString(toolbar), /<div(?=[^>]*role="group")(?=[^>]*aria-label="monitor\.filter\.category")/);
+  const texts = state => buttonsOf(MonitorToolbar({ filter: state.filter, dispatch: () => {}, t })).map(button => [button.props.children, button.props['aria-pressed']]);
+  assert.deepEqual(texts(createViewState()), [
+    ['monitor.filter.all', true], ['monitor.filter.handoff', false], ['monitor.filter.compaction', false], ['monitor.filter.collapseAll', undefined], ['monitor.filter.warned', false], ['monitor.toolbar.currentSettlement', undefined],
+  ]);
+  assert.deepEqual(texts(filterBy({ type: 'category', category: 'handoff' }, WARNED)).map(([, pressed]) => pressed), [false, true, false, undefined, true, undefined]);
+  for (const button of buttonsOf(toolbar)) assert.equal(button.props.type, 'button');
+});
+
+test('a click on a category, the collapse button or the warning toggle dispatches its action, and the toggle of a filter that is on switches it off', () => {
+  const dispatched = [];
+  const press = (state) => {
+    const toolbar = MonitorToolbar({ filter: state.filter, dispatch: action => dispatched.push(action), t });
+    for (const button of buttonsOf(toolbar)) {
+      if (button.props.children !== 'monitor.toolbar.currentSettlement') button.props.onClick();
+    }
+  };
+  press(createViewState());
+  assert.deepEqual(dispatched, [
+    { type: 'category', category: 'all' }, { type: 'category', category: 'handoff' }, { type: 'category', category: 'compaction' }, { type: 'collapse' }, { type: 'warned', warned: true },
+  ]);
+  dispatched.length = 0;
+  press(filterBy(WARNED));
+  assert.deepEqual(dispatched.at(-1), { type: 'warned', warned: false });
+});
+
+test('the split puts the toolbar above its list and its drawer, and reads the slots and the turns of the groups the filter lists alone', () => {
+  const attempts = settlingAttempts();
+  const handoffs = [clearingHandoff()];
+  const resources = {
+    [slotsKey(1)]: readySlots([slotRow(10)]), [slotsKey(2)]: readySlots([slotRow(20)]), [slotsKey(3)]: readySlots([slotRow(30)]), [handoffKey(5)]: readyHandoff(handoffs[0]),
+  };
+  const opened = [1, 2, 3].reduce((state, attemptId) => reduceView(state, { type: 'toggle', attemptId, open: false }), openingHandoffs(5));
+  const split = (...actions) => renderSplit(attempts, resources, { handoffs, state: actions.reduce(reduceView, opened) });
+  const reads = ({ touched }, endpoint) => touched.filter(key => key.includes(endpoint)).sort();
+  const slotKeys = ids => ids.map(slotsKey).sort();
+
+  const everything = split();
+  assert.ok(everything.html.indexOf('role="toolbar"') < everything.html.indexOf('data-sw-monitor-split'));
+  assert.deepEqual(reads(everything, 'inner-monitor/slots'), slotKeys([1, 2, 3]));
+  assert.deepEqual(reads(everything, 'inner-monitor/handoff'), [handoffKey(5)]);
+  const handoffsOnly = split({ type: 'category', category: 'handoff' });
+  assert.deepEqual(reads(handoffsOnly, 'inner-monitor/slots'), []);
+  assert.deepEqual(reads(handoffsOnly, 'inner-monitor/handoff'), [handoffKey(5)]);
+  assert.deepEqual(rowIds(handoffsOnly.html), ['settlement:5', 'handoff:5', 'content:5', 'turn:5:0', 'turn:5:1']);
+  const compactions = split({ type: 'category', category: 'compaction' });
+  assert.deepEqual(reads(compactions, 'inner-monitor/slots'), slotKeys([1, 2, 3]));
+  assert.deepEqual(reads(compactions, 'inner-monitor/handoff'), []);
+  const warned = split(WARNED);
+  assert.deepEqual(rowIds(warned.html), ['attempt:2', 'call:2', 'attempt:3', 'call:3']);
+  assert.deepEqual(reads(warned, 'inner-monitor/slots'), [], 'cost warnings need no slot list');
+  assert.deepEqual(reads(warned, 'inner-monitor/handoff'), []);
+  const calls = html => parseRows(html).filter(row => row.attributes['data-sw-row'] === 'call').map(row => [row.attributes['data-sw-attention'], row.attributes['aria-description']]);
+  const miss = ['', 'monitor.meta.miss.unexpected'];
+  assert.deepEqual(calls(warned.html), [miss, miss], 'cache comparisons still see the hidden predecessor');
+  assert.deepEqual(calls(everything.html), [[undefined, undefined], miss, miss], 'the filter does not change the marks');
+});
+
+test('the warning filter lists the rows the list marks with a warning, the compaction whose context grew and the one whose cache rebuild was unexpected alike', () => {
+  const attempts = [...settlingAttempts(), attemptRow(9, { epoch: 1 })];
+  const marked = parseRows(renderList(attempts)).filter(row => row.attributes['data-sw-attention'] !== undefined).map(row => row.attributes['data-identity']);
+  assert.deepEqual(marked, ['attempt:2', 'attempt:3', 'attempt:9']);
+  assert.deepEqual(rowIds(renderList(attempts, { state: filterBy(WARNED) })), marked);
+});
+
+const SLOT_WARNINGS = { 40: ['state-check', 'verbatim-recall'], 45: ['state-mixed', 'state-write', 'handoff-recall', 'carrier-recall'] };
+
+test('slot warnings keep the closed parent and, when opened, only the warned slots and any warned call under the warning filter', () => {
+  const attempts = [
+    attemptRow(1, { contextChange: null }),
+    attemptRow(2, { contextChange: null, slotWarnings: SLOT_WARNINGS }),
+    attemptRow(3, { contextChange: { before: 100, after: 120, delta: 20, miss: 25 }, slotWarnings: { 60: ['state-write'] } }),
+  ];
+  const resources = {
+    [slotsKey(2)]: readySlots([slotRow(40), slotRow(45), slotRow(50)]),
+    [slotsKey(3)]: readySlots([slotRow(60), slotRow(65)]),
+  };
+  const closed = renderSplit(attempts, resources, { state: filterBy(WARNED) });
+  const [parent] = parseRows(closed.html);
+  assert.deepEqual(rowIds(closed.html), ['attempt:2', 'attempt:3']);
+  assert.equal(parent.attributes['data-sw-attention'], '');
+  const plain = parseRows(renderList([attempts[0], attemptRow(2, { contextChange: null })]))[1];
+  assert.equal(textOf(parent.markup), textOf(plain.markup), 'no additional parent text');
+  assert.deepEqual(closed.touched, [], 'the parent warning does not load details');
+
+  const filtered = reduceView(opening(2, 3), WARNED);
+  const { html, touched } = renderSplit(attempts, resources, { state: filtered });
+  const group = parseRows(html);
+  assert.deepEqual(rowIds(html), ['attempt:2', 'slot:2:40', 'slot:2:45', 'attempt:3', 'call:3', 'slot:3:60']);
+  assert.deepEqual(touched, [slotsKey(2), slotsKey(3)]);
+  assert.deepEqual(group.map(row => row.attributes['data-sw-attention']), ['', '', '', '', '', '']);
+  assert.equal(group[1].attributes['aria-description'], 'monitor.warning.state-check · monitor.warning.verbatim-recall');
+  assert.equal(group[1].parts.mark, undefined, 'the reason adds no row text');
+  assert.equal(group[4].attributes['aria-description'], 'monitor.meta.context.grew');
+
+  const restored = renderSplit(attempts, resources, { state: reduceView(filtered, { type: 'warned', warned: false }) });
+  assert.deepEqual(rowIds(restored.html), ['attempt:1', 'attempt:2', 'call:2', 'slot:2:40', 'slot:2:45', 'slot:2:50', 'attempt:3', 'call:3', 'slot:3:60', 'slot:3:65']);
+  assert.deepEqual(parseRows(restored.html).filter(row => row.attributes['data-sw-attention'] !== undefined).map(row => row.attributes['data-identity']), rowIds(html));
+});
+
+test('a filter that lists nothing keeps the toolbar and puts one neutral line in the list\'s place', () => {
+  const { html } = renderSplit([], {}, { handoffs: [handoffRow(5)], state: filterBy(WARNED) });
+  assert.match(html, /data-sw-monitor-notice="filter-empty"[^>]*>monitor\.filter\.empty</);
+  assert.deepEqual(rowIds(html), []);
+  assert.equal(html.includes('role="tree"'), false);
+  assert.match(html, /<button(?=[^>]*data-act="warned")(?=[^>]*aria-pressed="true")/);
+});
+
 const placeholdersOf = text => new Set([...text.matchAll(/\{(\w+)\}/g)].map(([, name]) => name));
 
 test('every locale key the view and its drawer ask for, over the states of the monitor store, the list, the pages and the slot, is defined in both dictionaries with the placeholders it is given', async () => {
@@ -2124,6 +2275,7 @@ test('every locale key the view and its drawer ask for, over the states of the m
     const pair = paidPair();
     renderSplit(pair, { [callKey(1)]: { kind: 'ready', value: callPayload(pair[0]) } }, { state: selectCall(1) });
     renderSplit(attempts, { [slotsKey(13)]: readySlots([slotRow(10), ...categories.map(([type, kind], at) => slotRow(20 + at, { turn: null, step: null, source: { type, kind } }))]) }, { state });
+    renderSplit([attemptRow(2, { slotWarnings: SLOT_WARNINGS })], { [slotsKey(2)]: readySlots([slotRow(40), slotRow(45)]) }, { state: opening(2) });
     for (const result of [null, { kind: 'unavailable' }, { kind: 'unreachable', message: 'x' }]) renderDrawer(selectCall(7), { [callKey(7)]: result });
     const slotSelected = reduceView(createViewState(), { type: 'select', kind: 'slot', attemptId: 1, slotKey: 2 });
     renderDrawer(slotSelected);
@@ -2138,6 +2290,7 @@ test('every locale key the view and its drawer ask for, over the states of the m
     renderHandoffList(settlingAttempts(), [clearingHandoff()]);
     renderSettlementDrawer(settlementKey(5), settlementsOf(settlingAttempts(), [clearingHandoff()]));
     renderSettlementDrawer(settlementKey(9), new Map());
+    renderSplit([], {}, { handoffs: [handoffRow(5)], state: filterBy(WARNED) });
     for (const Page of [HandoffDetail, HandoffOverviewPage, HandoffSummaryPage, HandoffFilesPage, HandoffTurnsPage, HandoffLineagePage]) for (const row of handoffs) pageHtml(Page, turned[handoffKey(row.id)].value);
     for (const type of ['minutes', 'hours', 'days']) renderHandoffList([], [handoffRow(5, { createdAt: HANDOFF_TIME - { minutes: 5 * 60_000, hours: 5 * 3_600_000, days: 5 * 86_400_000 }[type] })]);
     renderSummaries(callPayload(attemptRow(7)), 7, { [slotsKey(7)]: readySlots([slotRow(10), slotRow(20, { turn: null, step: null, output: '' })]) });
@@ -2156,11 +2309,10 @@ test('every locale key the view and its drawer ask for, over the states of the m
       const full = attemptOver(conv, { request: requestOf(conv, { options: { ...OPTIONS, reasoningEffort: 'low' }, toolHistory: { updates: [{ messageId: 'message-4', additions: ['read'] }] } }) });
       const failedCall = attemptOver(conv, { stream: toolCallStream('["a"'), end: { outcome: 'failed', reason: 'the response called a tool' }, committed: false, thrown: 'socket hang up' });
       const noCall = attemptOver(conv, { stream: null, end: { outcome: 'failed', reason: 'refused' }, request: requestOf(conv, { headerSeq: 9999, tools: { count: 2 } }) });
-      const old = legacyOver(conv, { committed: true });
       const bare = attemptOver(conv, { stream: refusedStream(), end: { outcome: 'failed', reason: 'x' }, committed: false, request: { options: OPTIONS, headerSeq: null } });
       const live = attemptOver(conv, { stream: null, committed: false });
       const entry = { attempt: live.start.seq, phase: 'generating', endedAt: null, request: live.start.data.request, tools: TOOLS, stream: () => streamOf([{ type: 'block-start', index: 0, blockType: 'text' }]) };
-      for (const [attempt, liveEntries] of [[full, undefined], [failedCall], [noCall], [old], [bare], [live, [entry]]]) {
+      for (const [attempt, liveEntries] of [[full, undefined], [failedCall], [noCall], [bare], [live, [entry]]]) {
         const detail = await callOf(attempt.log, attempt.start.seq, liveEntries);
         for (const Page of [OverviewPage, RequestPage, ResponsePage, CarriedPage, UsagePage, TimingPage]) pageHtml(Page, detail);
         renderDrawer(selectCall(attempt.start.seq), { [callKey(attempt.start.seq)]: readyOf(detail) });

@@ -1,5 +1,7 @@
 // dsh/src/inner-monitor.js — the monitor of the inner seal's attempts: the records an attempt leaves around its auxiliary call and the registry of the attempts still in flight.
 // It knows no Cordis and imports no DSH package: the record appender and the publish reach it by parameter.
+import { attemptRecordOf } from '../../lib/inner-seal/attempt-record.js';
+import { endRecordOf } from '../../lib/inner-seal/end-record.js';
 import { requestDisplayOf } from './inner-summary.js';
 import { INNER_ATTEMPT_RECORD_TYPE, INNER_END_RECORD_TYPE, messageOf } from './inner-seal.js';
 import { hostDiagnostic, writeDiagnostic } from './watcher-table.js';
@@ -47,7 +49,7 @@ export function createInnerMonitor({ appendPluginRecord, publish }) {
           guard('inner_monitor_start_failed', () => {
             const request = requestDisplayOf(options, input);
             const recorded = { first: range[0], last: range.at(-1), count: range.length };
-            attempt.startSeq = appendPluginRecord(session, INNER_ATTEMPT_RECORD_TYPE, { v: 1, range: recorded, request, quote });
+            attempt.startSeq = appendPluginRecord(session, INNER_ATTEMPT_RECORD_TYPE, attemptRecordOf({ range: recorded, request, quote }));
             owner = { sessionId, entry: { attempt: attempt.startSeq, phase: 'generating', endedAt: null, request, tools: options.tools, stream } };
             active.add(owner);
           });
@@ -70,9 +72,9 @@ export function createInnerMonitor({ appendPluginRecord, publish }) {
         failed(error, circumstances) {
           if (attempt.startSeq === null) return;
           guard('inner_monitor_end_failed', () => {
-            appendPluginRecord(session, INNER_END_RECORD_TYPE, {
-              v: 1, attempt: attempt.startSeq, outcome: circumstances.cancelled ? 'cancelled' : 'failed', reason: reasonOf(error, circumstances),
-            });
+            appendPluginRecord(session, INNER_END_RECORD_TYPE, endRecordOf({
+              attempt: attempt.startSeq, outcome: circumstances.cancelled ? 'cancelled' : 'failed', reason: reasonOf(error, circumstances),
+            }));
           });
           active.delete(owner);
           changed();

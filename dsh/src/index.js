@@ -1,8 +1,9 @@
 // dsh/src/index.js — the Cordis plugin face of the session watcher: the one module that imports a DSH package, declaring the user's compaction settings as the plugin's Config and binding them, the production paths, `defineTool`, the `commandKit` values and the `innerKit` values into `applyHost`.
 import { fileURLToPath } from 'node:url';
 import { CompactionId, compactCheckpointSource, toolPairingBalancedAfter, toolPairingBalancedBefore } from '@deepseek-ai/dsh-compaction';
-import { AssistantStreamAccumulator, BlockAssembler, assembleAssistantStream, createUserMessage, errorChain, lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm';
+import { AssistantStreamAccumulator, BlockAssembler, HarnessError, assembleAssistantStream, createUserMessage, errorChain, lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm';
 import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
+import { extractSessionEventText } from '@deepseek-ai/dsh-session-query';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import z from '@deepseek-ai/schemastery';
 import { loads } from 'ai-json-repair';
@@ -13,7 +14,7 @@ import { loadIsIgnored } from '../../gitignore-loader.js';
 import { applyHost, HOST_INJECT } from './host.js';
 import { OFFICIAL_CARRIER_BUNDLE } from './carrier-cache-switch.js';
 import { DSH_TURN_NOTES_ROOT } from './composition.js';
-import { KAPPA_PRESETS } from './inner-quote.js';
+import { KAPPA_PRESETS } from '../../lib/inner-seal/quote.js';
 
 // The official bundle is versioned on its own and released only when it changes, so the install target takes the version of its package.json (inlined at build time), never `PLUGIN_VERSION`.
 const CARRIER_INSTALL_TARGET = { spec: `${OFFICIAL_CARRIER_BUNDLE}@${carrierCachePackage.version}`, version: carrierCachePackage.version };
@@ -40,6 +41,7 @@ export function apply(ctx, config) {
   applyHost(ctx, {
     defineTool,
     commandKit: { CompactionId, compactCheckpointSource, createUserMessage },
+    queryKit: { extractSessionEventText, HarnessError },
     innerKit: {
       appendPluginRecord, pluginRecordOf, AssistantStreamAccumulator, BlockAssembler, assembleAssistantStream, lastAssistantStreamChunk, errorChain,
       createUserMessage, toolPairingBalancedBefore, toolPairingBalancedAfter, loads,

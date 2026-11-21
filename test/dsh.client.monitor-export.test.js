@@ -16,7 +16,6 @@ const attemptRow = (id, overrides = {}) => ({
   id,
   revision: id + 2,
   status: 'committed',
-  legacy: false,
   startedAt: 1_000,
   endedAt: 1_900,
   range: { first: 1, last: 4, count: 4 },
@@ -41,11 +40,11 @@ const COMMITTED_LINE = 'monitor.status.committed · 900 ms · monitor.meta.step(
 const FAILED_LINE = 'monitor.status.failed · 802 ms · — · — · — · — · — · — · monitor.overview.seq(seq=6)';
 
 /** A slot's row as `inner-monitor/slots` lists it; the export reads only its `key` from the list. */
-const slotRow = key => ({ key, turn: null, step: null, source: { type: 'user/message', kind: 'user' }, input: 'listed', inputDisplay: 'listed', output: 'listed' });
+const slotRow = key => ({ key, turn: null, step: null, source: { type: 'user/message', kind: 'user', category: 'user' }, input: 'listed', inputDisplay: 'listed', output: 'listed' });
 
 /** A slot's detail in the shape `inner-monitor/slot` answers: `number` is the slot's 1-based place in the carrier. */
 const slotDetail = (key, number, overrides = {}) => ({
-  key, number, seqs: [key], turn: null, step: null, source: { type: 'user/message', kind: 'user' }, c: 'a note', events: [], ...overrides,
+  key, number, seqs: [key], turn: null, step: null, source: { type: 'user/message', kind: 'user', category: 'user' }, c: 'a note', events: [], ...overrides,
 });
 const eventOf = (seq, type, visible, blocks, raw = { RAW: `raw-marker-${seq}` }) => ({ seq, type, visible, blocks, raw });
 
@@ -55,7 +54,7 @@ const ASK = slotDetail(10, 1, {
   events: [eventOf(10, 'user/message', true, [{ type: 'text', text: 'please work' }])],
 });
 const STEP = slotDetail(11, 2, {
-  seqs: [11, 12, 13], turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model' }, c: 'read the file',
+  seqs: [11, 12, 13], turn: 1, step: 1, source: { type: 'assistant/message', kind: 'model', category: 'assistant' }, c: 'read the file',
   events: [
     eventOf(11, 'assistant/message', true, [
       { type: 'reasoning', text: 'HIDDEN-REASONING' },
@@ -71,7 +70,7 @@ const STEP = slotDetail(11, 2, {
   ],
 });
 const SHOT = slotDetail(14, 3, {
-  turn: 1, step: 2, source: { type: 'user/message', kind: null }, c: '',
+  turn: 1, step: 2, source: { type: 'user/message', kind: null, category: 'other' }, c: '',
   events: [eventOf(14, 'user/message', true, [{ type: 'image', attachment: { name: 'shot.png' } }])],
 });
 
@@ -148,7 +147,7 @@ const SETTLING_ROWS = () => [attemptRow(1, { contextChange: CUT, cRatio: 12 }), 
 const SETTLEMENT_LINE = '- monitor.object.settlement(epoch=1) · monitor.settlement.count(count=2) · monitor.settlement.steps(count=11) · monitor.settlement.saved(count=370.0k) · monitor.settlement.cost(count=179.6k) · monitor.settlement.net(count=+190.4k) · monitor.settlement.payback(percent=206%)';
 
 test('the settlement of the segment a continue cleared is a line of its own in front of that continue, among the lines in the order of their ids, and the compactions\' statuses read the steps the clear cut off', async () => {
-  const continued = handoffRow(5, { type: 'continue', epoch: 1, tailSteps: 2 });
+  const continued = handoffRow(5, { type: 'continue', epoch: 1, tailCalls: 2 });
   const reader = readerOf({ rows: [...SETTLING_ROWS(), attemptRow(9, { epoch: 1 })], handoffs: [continued, handoffRow(7, { epoch: 1 })] });
   const exported = (await exportSession({ reader, t, now: NOW })).trimEnd().split('\n');
   assert.deepEqual(exported.map(line => line.split(' · ').slice(0, 2).join(' · ')), [
@@ -164,9 +163,9 @@ test('the settlement of the segment a continue cleared is a line of its own in f
 
 test('a load and a segment with no figures export no settlement line, and the document of one attempt reads the steps its segment\'s clear cut off in its title', async () => {
   const rows = SETTLING_ROWS();
-  assert.equal((await exportSession({ reader: readerOf({ rows, handoffs: [handoffRow(5, { epoch: 1, tailSteps: 2 })] }), t, now: NOW })).includes('monitor.object.settlement'), false);
-  assert.equal((await exportSession({ reader: readerOf({ rows: [attemptRow(1, { contextChange: CUT, cRatio: null })], handoffs: [handoffRow(5, { type: 'continue', epoch: 1, tailSteps: 2 })] }), t, now: NOW })).includes('monitor.object.settlement'), false);
-  const reader = readerOf({ rows, handoffs: [handoffRow(5, { type: 'continue', epoch: 1, tailSteps: 2 })], slots: { 2: [] } });
+  assert.equal((await exportSession({ reader: readerOf({ rows, handoffs: [handoffRow(5, { epoch: 1, tailCalls: 2 })] }), t, now: NOW })).includes('monitor.object.settlement'), false);
+  assert.equal((await exportSession({ reader: readerOf({ rows: [attemptRow(1, { contextChange: CUT, cRatio: null })], handoffs: [handoffRow(5, { type: 'continue', epoch: 1, tailCalls: 2 })] }), t, now: NOW })).includes('monitor.object.settlement'), false);
+  const reader = readerOf({ rows, handoffs: [handoffRow(5, { type: 'continue', epoch: 1, tailCalls: 2 })], slots: { 2: [] } });
   assert.match(await exportAttempt({ reader, attemptId: 2, t, now: NOW }), /^# monitor\.object\.attempt\(epoch=1,ordinal=2\) · monitor\.status\.paid\n/);
   assert.match(await exportAttempt({ reader: readerOf({ rows, slots: { 2: [] } }), attemptId: 2, t, now: NOW }), /^# monitor\.object\.attempt\(epoch=1,ordinal=2\) · monitor\.status\.committed\n/, 'without the clear the last compaction has no step after it');
 });
