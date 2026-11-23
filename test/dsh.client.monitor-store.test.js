@@ -87,7 +87,7 @@ test('for answers the same handles for one session, and a frame reads that sessi
   const stores = createMonitorStores({ call: host.call });
   assert.equal(stores.for('s1'), stores.for('s1'), 'one store per session');
   assert.notEqual(stores.for('s1'), stores.for('s2'));
-  assert.deepEqual(Object.keys(stores.for('s1')).sort(), ['readCurrentSettlement', 'resource', 'rows']);
+  assert.deepEqual(Object.keys(stores.for('s1')).sort(), ['readCurrentSettlement', 'resource', 'rows', 'settlementTarget']);
   const sessionsRead = () => host.log.map(({ payload }) => payload.sessionId);
   const unsubscribe = stores.for('s1').rows.subscribe(() => {});
   stores.for('s2').rows.subscribe(() => {});
@@ -111,14 +111,103 @@ test('for answers the same handles for one session, and a frame reads that sessi
 });
 
 test('one-shot current settlement reads distinguish an unavailable session, transport failure and incomplete reply', async () => {
-  const answers = [UNAVAILABLE_REPLY, new Error('transport down'), ok({ epoch: 1, attempts: [], tailCalls: 0 })];
+  const whole = { epoch: 2, attempts: [], tailCalls: 0, calls: [], cut: { segment: 1, through: 9 }, activity: { covered: true, judged: 0, pure: 0, targets: [] } };
+  const answers = [UNAVAILABLE_REPLY, new Error('transport down'), ok({ epoch: 1, attempts: [], tailCalls: 0 }), ok(whole)];
   const host = channel(() => answers.shift());
   const { readCurrentSettlement } = createMonitorStores({ call: host.call }).for('s1');
 
   assert.deepEqual(await readCurrentSettlement(), { kind: 'unavailable' });
   assert.deepEqual(await readCurrentSettlement(), { kind: 'unreachable', message: 'transport down' });
   assert.equal((await readCurrentSettlement()).kind, 'unreachable', 'a snapshot without its calls cannot be displayed');
+  assert.deepEqual(await readCurrentSettlement(), { kind: 'ready', value: whole }, 'the answer whole: the pricing inputs, the calls, the cut and the recall activity, which the two drawers read alike');
 });
+
+// ── The text of one recall target ────────────────────────────────────────────
+
+const CUT = { segment: 1, through: 99 };
+const textOf = seq => ({ seq, type: 'user/message', text: `text of ${seq}` });
+
+test('a target reader reads nothing until a target is chosen, and asks the host once for each choice, for the session and cut it was made for', async () => {
+  const host = manual();
+  const reader = createMonitorStores({ call: host.call }).for('s1').settlementTarget(CUT);
+  const heard = [];
+  reader.subscribe(() => heard.push(reader.state));
+
+  assert.deepEqual(reader.state, { selected: null, result: null });
+  assert.deepEqual(host.held, [], 'no choice, no read');
+  reader.select(128);
+  reader.select(128);
+
+  assert.equal(host.held.length, 1, 'the same choice is one read');
+  assert.deepEqual([host.held[0].endpoint, host.held[0].payload], ['inner-monitor/settlement/target', { sessionId: 's1', segment: 1, through: 99, seq: 128 }]);
+  assert.deepEqual(reader.state, { selected: 128, result: null }, 'pending');
+  await settle(host, ok(textOf(128)));
+  assert.deepEqual(reader.state, { selected: 128, result: { kind: 'ready', value: textOf(128) } });
+  assert.deepEqual(heard.map(({ selected, result }) => [selected, result?.kind ?? null]), [[128, null], [128, 'ready']]);
+});
+
+test('a choice that is made while another is read leaves the answer of the first nowhere, whichever answers first', async () => {
+  for (const order of ['first first', 'second first']) {
+    const host = manual();
+    const reader = createMonitorStores({ call: host.call }).for('s1').settlementTarget(CUT);
+    reader.select(1);
+    reader.select(2);
+    assert.deepEqual(host.held.map(({ payload }) => payload.seq), [1, 2]);
+
+    const [one, two] = host.held.map(({ payload }) => payload.seq);
+    for (const seq of order === 'first first' ? [one, two] : [two, one]) await settle(host, ok(textOf(seq)), host.held.findIndex(({ payload }) => payload.seq === seq));
+
+    assert.deepEqual(reader.state, { selected: 2, result: { kind: 'ready', value: textOf(2) } }, order);
+  }
+});
+
+test('choosing nothing clears the target and its text, and the answer that was in flight applies nothing', async () => {
+  const host = manual();
+  const reader = createMonitorStores({ call: host.call }).for('s1').settlementTarget(CUT);
+  reader.select(5);
+  reader.select(null);
+  await settle(host, ok(textOf(5)));
+
+  assert.deepEqual(reader.state, { selected: null, result: null });
+  assert.equal(host.held.length, 0);
+});
+
+test('another cut is another reader: a choice of one is read for its own cut and its answer reaches no other', async () => {
+  const host = manual();
+  const handles = createMonitorStores({ call: host.call }).for('s1');
+  const first = handles.settlementTarget(CUT);
+  const second = handles.settlementTarget({ segment: 1, through: 120 });
+  const heard = [];
+  first.subscribe(() => heard.push('first'));
+  second.subscribe(() => heard.push('second'));
+  first.select(1);
+  second.select(1);
+  heard.length = 0;
+
+  assert.deepEqual(host.held.map(({ payload }) => [payload.through, payload.seq]), [[99, 1], [120, 1]]);
+  await settle(host, ok({ ...textOf(1), text: 'the later cut' }), 1);
+  assert.deepEqual([first.state, heard], [{ selected: 1, result: null }, ['second']], 'the answer of the later cut is the later reader\'s alone');
+  assert.equal(second.state.result.value.text, 'the later cut');
+  await settle(host, ok(textOf(1)));
+  assert.equal(first.state.result.value.text, 'text of 1');
+});
+
+test('a read that fails is a result of the choice, never an exception: not the owner, not a target at that cut, an unavailable monitor and a transport failure', async () => {
+  const answers = [fail('forbidden', 'Only the owner'), fail('inner_monitor_not_recalled', 'not a target'), UNAVAILABLE_REPLY, new Error('transport down')];
+  const host = channel(() => answers.shift());
+  const reader = createMonitorStores({ call: host.call }).for('s1').settlementTarget(CUT);
+  const kinds = [];
+  for (const seq of [1, 2, 3, 4]) {
+    reader.select(seq);
+    await flush();
+    kinds.push(reader.state.result);
+  }
+
+  assert.deepEqual(kinds, [
+    { kind: 'unreachable', message: 'Only the owner' }, { kind: 'unreachable', message: 'not a target' }, { kind: 'unavailable' }, { kind: 'unreachable', message: 'transport down' },
+  ]);
+});
+
 
 test('signals that arrive while a rows read is in flight cost one more read, and the last answer is the latest', async () => {
   const host = manual();

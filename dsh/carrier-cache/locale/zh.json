@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Watcher 压缩点缓存",
-    "description": "关闭原 llm-pi-ai 行，改挂载 Session Watcher 的 pi-ai 适配器入口，在最后一个内层压缩载体的末尾多加一个缓存点。需要同一 profile 中已安装 @nomadop/session-watcher-dsh。"
+    "description": "关闭原 llm-pi-ai 行，改挂载 Session Watcher 的压缩点缓存适配器，在最后一个内层压缩载体的末尾多加一个缓存点。适配器由本包自带；在 Session Watcher 的设置页查看和切换。"
   }
 }

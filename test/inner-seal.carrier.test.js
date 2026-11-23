@@ -225,6 +225,17 @@ describe('assembleCarrierSource', () => {
     });
   });
 
+  test('a slot holds the reads it was given as metadata beside its note, none where it has none or none were given, and the rendered body is the same', () => {
+    const READS = [{ toolUseId: '1:2:call-a', seq: 5, oldLines: 19, newLines: 1 }, { toolUseId: '1:2:call-b', seq: 5, oldLines: 3, newLines: 0 }];
+    const parts = { slots: SLOTS, summaries: ['first', 'second'], questions: [[], []], attachments: [[], []], changes: CHANGES, state: null };
+    const without = assembleCarrierSource(parts);
+    const source = assembleCarrierSource({ ...parts, oldReads: [READS, []] });
+    assert.deepEqual(source, { ...without, slots: [{ ...without.slots[0], oldReads: READS }, without.slots[1]] });
+    assert.equal(Object.hasOwn(assembleCarrierSource({ ...parts, oldReads: [[], []] }).slots[0], 'oldReads'), false);
+    assert.equal(Object.hasOwn(without.slots[0], 'oldReads'), false);
+    assert.deepEqual(renderCarrier(source, CARRIER_TABLE), renderCarrier(without, CARRIER_TABLE));
+  });
+
   test('a null state is no field, and a slot with no question and no attachment holds neither field', () => {
     const source = assembleCarrierSource({
       slots: SLOTS, summaries: ['first', 'second'], questions: [[], []], attachments: [[], []], changes: { paths: [] }, state: null,

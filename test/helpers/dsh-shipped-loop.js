@@ -198,6 +198,30 @@ export function loopAdapter(LlmAdapter, {
 }
 
 /**
+ * The services the shipped host entry injects, each the checkout's real one, on `ctx`: the local fs (cwd the fixture's `TMPDIR`), the agent loop's prerequisites with the working directory, the token meter, the local attachment store under the fixture's `DSH_HOME`, the session-query engine, and the WebServer and Connection on a loopback port; the `skills` registry is a double that registers nothing.
+ * The llm service comes with the loop's prerequisites, so a context that mounts this holds no other `llm`.
+ */
+export async function mountHostServices(ctx) {
+  const [{ WebServer }, connectionPlugin, testkit, fsLocal, tokenMeter, attachmentLocal, sessionQuery] = await Promise.all([
+    'packages/host/webserver/lib/index.js',
+    'packages/client/connection/lib/index.js',
+    'packages/test-support/agent-loop-testkit/lib/index.js',
+    'packages/fs/fs-local/lib/index.js',
+    'packages/llm/token-meter/lib/index.js',
+    'packages/attachment/attachment-local/lib/index.js',
+    'packages/session-query/session-query/lib/index.js',
+  ].map(fromCheckout));
+  await ctx.plugin(fsLocal.default, { cwd: process.env.TMPDIR });
+  await testkit.mountAgentLoopTestDependencies(ctx, { workingDirectory: true });
+  await ctx.plugin(tokenMeter.default);
+  await ctx.plugin(attachmentLocal.default);
+  await ctx.plugin(sessionQuery.default);
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 });
+  await ctx.plugin(connectionPlugin);
+  ctx.provide('skills', { register() { return () => {}; } });
+}
+
+/**
  * The shipped entry over the real loop: the profile's runtime resolution loads the built entry, mounted beside the real session store, projection registry, agent registry, agent loop, local fs (cwd the fixture's `TMPDIR`) and working directory, tool runtime, token meter, local attachment store under the fixture's `DSH_HOME`, session-query engine, Connection and WebServer, and an adapter of `loopAdapter` on the `mock` route.
  * With `subagents`, the real subagent runtime and its in-process `spawn` and `fork` providers mount before the entry.
  * With `commands`, the real command runtime mounts before the entry, which registers `/sw-continue` and `/sw-load` on it.

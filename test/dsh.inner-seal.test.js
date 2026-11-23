@@ -19,8 +19,12 @@ import { STATE_WORDING } from '../lib/inner-seal/state-block.js';
 import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { renderCarried } from '../lib/carried-evidence.js';
 import { eventFactOf } from '../lib/harness/dsh/event-facts.js';
+import { composeWatcher } from '../dsh/src/composition.js';
+import { openStore, closeStore } from '../lib/store.js';
+import { fingerprintOf, normalizeLine } from '../lib/line-align.js';
 import { createNodeWorkingTree } from '../lib/working-tree.js';
 import { readTreeWindows } from '../lib/working-tree-text.js';
+import { editableTree } from './helpers/attribution-fixtures.js';
 import { fakeTokenMeter } from './helpers/dsh-fake-context.js';
 import { withoutEventAt } from './helpers/dsh-mode-kit.js';
 import {
@@ -209,7 +213,7 @@ function sealOver(session, { settings, ...overrides } = {}) {
     readMode: () => ({ mode: 'on', locked: true }),
     eventFacts: () => new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)])),
     readSession: async () => ({ events: session.snapshotEvents() }),
-    heldView: () => ({ paths: new Map(), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map(), skills: new Map(), effects: [], oldReads: [] }),
     readFile: emptyRead,
     readUnobserved: emptyRead,
     readState: () => ({ asOfSeq: 0, items: {} }),
@@ -314,7 +318,7 @@ test('the seal follows its quote: a range the quote finds worth sealing seals wi
 
   const short = sessionOver([systemMessage(), ...turnOf({ steps: INNER_QUOTE.minSteps - 1 }).events], 'short').session;
   let quoted = 0;
-  const { seal: idle } = sealOver(short, { heldView: () => { quoted += 1; return { paths: new Map(), skills: new Map(), effects: [] }; }, readUnobserved: async (...args) => { quoted += 1; return emptyRead(...args); } });
+  const { seal: idle } = sealOver(short, { heldView: () => { quoted += 1; return { paths: new Map(), skills: new Map(), effects: [], oldReads: [] }; }, readUnobserved: async (...args) => { quoted += 1; return emptyRead(...args); } });
   const shortBefore = short.seq;
   assert.equal((await preStep(idle, short)).answer, NEXT_DECISION);
   assert.equal(quoted, 0, 'below the minimum nothing is read for a quote');
@@ -562,7 +566,7 @@ test('the quote reads the held files without recording an observation and the co
   };
   const later = 'the held line as the commit reads it, rewritten after the quote and longer than before';
   const { seal } = sealOver(session, {
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }),
     readUnobserved: at('x', 'quote'),
     readFile: at(later, 'commit'),
   });
@@ -595,6 +599,7 @@ test('the summary tail names the held files and skills the range touched, while 
         { seq: outside, kind: 'skill', key: 'tdd' },
         { seq: inside, kind: 'skill', key: 'grill' },
       ],
+      oldReads: [],
     }),
     readUnobserved: readable,
     readFile: readable,
@@ -622,7 +627,7 @@ test('a held view whose effects all lie outside the range leaves the summary tai
   const { services, seal } = sealOver(session, {
     heldView: () => ({
       paths: new Map([[HELD_PATH, [1]]]), skills: new Map([['tdd', 'TDD body']]),
-      effects: [{ seq: outside, kind: 'path', key: HELD_PATH }, { seq: outside, kind: 'skill', key: 'tdd' }],
+      effects: [{ seq: outside, kind: 'path', key: HELD_PATH }, { seq: outside, kind: 'skill', key: 'tdd' }], oldReads: [],
     }),
   });
   await preStep(seal, session);
@@ -644,7 +649,7 @@ test('the effects of the original result a pruner replacement in the range stand
     // The effect of the read belongs to the original, as the projection attributes it: the replacement yields no observation.
     heldView: () => ({
       paths: new Map([[HELD_PATH, [1]]]), skills: new Map(),
-      effects: [{ seq: seqOf(original), kind: 'path', key: HELD_PATH }],
+      effects: [{ seq: seqOf(original), kind: 'path', key: HELD_PATH }], oldReads: [],
     }),
     readUnobserved: readable,
     readFile: readable,
@@ -664,7 +669,7 @@ test('a cancel while the quote reads ends the turn as the abort before any attem
   // The read itself survives the abort, as the unobserved read does when the execution world refuses: the quote alone does not end the turn.
   const { seal } = sealOver(session, {
     llm,
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }),
     readUnobserved: async (...args) => { controller.abort(cause); return emptyRead(...args); },
   });
   const { error, nextCalls } = await failingPreStep(seal, session, { signal: controller.signal });
@@ -1008,7 +1013,7 @@ test('each request of a seal asks the same thing and states its own point: the h
   const signal = new AbortController().signal;
   const { seal } = sealOver(session, {
     llm,
-    heldView: () => { reads.held += 1; return { paths: new Map(), skills: new Map(), effects: [] }; },
+    heldView: () => { reads.held += 1; return { paths: new Map(), skills: new Map(), effects: [], oldReads: [] }; },
     readUnobserved: async (...args) => { reads.unobserved += 1; return emptyRead(...args); },
     readFile: async (...args) => { reads.committed += 1; return emptyRead(...args); },
     readState: () => { reads.state += 1; return { asOfSeq: 0, items: {} }; },
@@ -1300,7 +1305,7 @@ test('a cancel is never followed by another rung: one that arrives while a filte
 test('a reply that answered in the format is never asked again whatever fails after it: a held file that cannot be read, a range whose surface changed, unbalanced tool pairing, a carrier that cannot be assembled and a commit append that throws each end the attempt failed after the one request', { skip }, async () => {
   const refused = new Error('the prune was refused');
   const cases = [
-    ['a held file that cannot be read', {}, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }), readFile: async () => { throw new Error('the file is gone'); } }, /the file is gone/],
+    ['a held file that cannot be read', {}, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }), readFile: async () => { throw new Error('the file is gone'); } }, /the file is gone/],
     ['a range whose surface changed', {
       during: (session) => {
         const result = session.snapshotEvents().find(event => event.type === 'tool/result');
@@ -1540,7 +1545,7 @@ function commitRig({ during = () => {}, kit, services = {}, tools } = {}) {
   const { seal } = sealOver(session, {
     ...(kit === undefined ? {} : { kit }),
     ...services,
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }),
     readFile: async (_agent, key) => {
       during(session);
       return { read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key };
@@ -1927,7 +1932,7 @@ test('a second seal whose range holds an old carrier, kept in a checkpoint\'s ta
   assert.deepEqual(session.surface.nodes.slice(0, 3), [0, seqOf(checkpoint), seqOf(old)], 'the checkpoint keeps the old carrier in its tail');
   const before = session.seq;
   const { seal } = sealOver(session, {
-    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }),
     readFile: async (_agent, key) => ({ read: { status: 'readable', totalLines: 1, windows: [{ offset: 1, lines: [{ number: 1, text: 'x' }] }] }, displayPath: key }),
   });
   await preStep(seal, session);
@@ -1941,7 +1946,7 @@ const SHOWN_BODY = ['first line of the held block, long enough', 'second line of
 const shownAt = first => ({ path: HELD_PATH, displayPath: HELD_PATH, totalLines: 40, state: 'readable', write: SHOWN_BODY.map((text, at) => [first + at, text]) });
 // A seal whose held view holds `texts` from line `first` of a 40-line file, read as it stands on disk.
 const heldAt = (first, texts) => ({
-  heldView: () => ({ paths: new Map([[HELD_PATH, texts.map((_, at) => first + at)]]), skills: new Map(), effects: [] }),
+  heldView: () => ({ paths: new Map([[HELD_PATH, texts.map((_, at) => first + at)]]), skills: new Map(), effects: [], oldReads: [] }),
   readFile: async (_agent, key) => ({
     read: { status: 'readable', totalLines: 40, windows: [{ offset: first, lines: texts.map((text, at) => ({ number: first + at, text })) }] }, displayPath: key,
   }),
@@ -2055,7 +2060,7 @@ test('the surface capture and the slice read share one synchronous stretch: an e
       queueMicrotask(() => { late.seq = session.append('user/message', { role: 'user', content: [{ type: 'text', text: 'late' }], source: { kind: 'user' }, id: 'late' }, { surfaceOp: 'append' }).seq; });
       return new Map(session.snapshotEvents().map(event => [event.seq, eventFactOf(event)]));
     },
-    heldView: (_id, events) => { slices.push(events.map(event => event.seq)); return { paths: new Map(), skills: new Map(), effects: [] }; },
+    heldView: (_id, events) => { slices.push(events.map(event => event.seq)); return { paths: new Map(), skills: new Map(), effects: [], oldReads: [] }; },
   });
   await preStep(seal, session);
   assert.notEqual(late.seq, null);
@@ -2111,7 +2116,7 @@ test('the question supplement is optional and nothing else is: over a range that
   const cases = [
     ['a carrier factory that throws', { kit: kitOf({ createUserMessage: () => { throw new Error('the message is not well formed'); } }) }, {}, error => /the message is not well formed/.test(error.message)],
     ['a cancel while the commit reads', {
-      heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }),
+      heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }),
       readFile: async (...args) => { controller.abort(reason); return emptyRead(...args); },
     }, { signal: controller.signal }, error => error === reason],
     ['an unbalanced tool pairing', { kit: kitOf({ toolPairingBalancedAfter: () => false }) }, {}, error => /tool pairing is unbalanced/.test(error.message)],
@@ -2287,7 +2292,7 @@ test('a cancel the loop made ends the attempt as cancelled with its cause readab
     });
     for (const [where, { session }, controller, overrides] of [
       ['in the stream', streaming, midStream, { llm: streamed }],
-      ['in a held-file read', reading, whileReading, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [] }), readFile: read }],
+      ['in a held-file read', reading, whileReading, { heldView: () => ({ paths: new Map([[HELD_PATH, [1]]]), skills: new Map(), effects: [], oldReads: [] }), readFile: read }],
     ]) {
       const before = session.seq;
       const { seal, monitor } = sealOver(session, overrides);
@@ -2708,6 +2713,97 @@ test('the monitor warns only when a later slot seals a direct read of text the r
   }], 'mark whole user text and the result of an injected question; not the message that asked it, whose own text the carrier does not hold, nor truncated, unsealed or other result text');
 });
 
+// ── The old reads a seal keeps on its slots ──────────────────────────────────────────────────────────────
+
+const heldWith = oldReads => ({ heldView: () => ({ paths: new Map(), skills: new Map(), effects: [], oldReads }) });
+const readOf = (toolUseId, seq, oldLines = 19, newLines = 1) => ({ toolUseId, seq, oldLines, newLines });
+
+test('a committed seal keeps each old read on the slot holding the result it belongs to, a pruned result\'s original and two reads of one step included, and nothing the carrier says or the summary call sees changes', { skip }, async () => {
+  const { events, replies } = turnOf({ toolSteps: [2, 3] });
+  const resultOf = step => events.find(event => event.type === 'tool/result' && event.data.step === step);
+  // A second call in step 2, and a replacement the pruner made of step 3's result.
+  replies[1].data.message.content.push({ type: 'tool-call', id: 'extra', name: 'read', arguments: '{}' });
+  const second = resultOf(2);
+  const extra = toolResult({ callId: 'extra', text: 'extra result', turn: 1, step: 2 });
+  events.splice(events.indexOf(second) + 1, 0, toolCall({ callId: 'extra', name: 'read', turn: 1, step: 2 }), extra);
+  const third = resultOf(3);
+  const replacement = prunedResult(third, { text: 'pruned' });
+  events.splice(events.indexOf(third) + 1, 0, replacement);
+  const system = systemMessage();
+  const { session, seqOf } = sessionOver([system, ...events]);
+  const slotOf = event => (carrier, seq = seqOf(event)) => carrier.data.source.slots.find(slot => slot.seqs.includes(seq));
+
+  const reads = [readOf('1:2:call-1-2', seqOf(second), 19, 1), readOf('1:2:extra', seqOf(extra), 3, 0), readOf('1:3:call-1-3', seqOf(third), 5, 0), readOf('0:0:outside', 0, 8, 0)];
+  const llm = answeringSlots();
+  const before = session.seq;
+  await preStep(sealOver(session, { ...heldWith(reads), llm }).seal, session);
+  const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
+  assert.deepEqual(slotOf(second)(carrier).oldReads, [reads[0], reads[1]], 'both reads of the step on its one slot');
+  assert.deepEqual(slotOf(third)(carrier).oldReads, [reads[2]], 'the original\'s seq finds the slot the replacement stands in');
+  assert.deepEqual(carrier.data.source.slots.filter(slot => slot.oldReads !== undefined).length, 2, 'every other slot holds none, and so does a read outside the range');
+
+  const control = sessionOver([system, ...events], 'inner-seal');
+  const controlLlm = answeringSlots();
+  const controlBefore = control.session.seq;
+  await preStep(sealOver(control.session, { ...heldWith([]), llm: controlLlm }).seal, control.session);
+  const controlCarrier = appendedSince(control.session, controlBefore).find(event => event.type === 'user/message');
+  assert.deepEqual(carrier.data.content, controlCarrier.data.content, 'the body is the one a seal without them writes');
+  assert.deepEqual(llm.calls.map(call => call.messages), controlLlm.calls.map(call => call.messages), 'the summary request is too');
+  assert.equal(controlCarrier.data.source.slots.some(slot => Object.hasOwn(slot, 'oldReads')), false, 'a seal with none holds no field');
+});
+
+test('only a committed carrier holds them: a seal whose attempt failed or was cancelled, a quote that did not trigger and a session whose mode is off write none, and the seal after a failed one that commits carries the reads of its range', { skip }, async () => {
+  const { events } = turnOf({ toolSteps: [2] });
+  const result = events.find(event => event.type === 'tool/result');
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const reads = [readOf('1:2:call-1-2', seqOf(result))];
+  const slotsOf = since => appendedSince(session, since).filter(event => event.type === 'user/message').flatMap(event => event.data.source.slots);
+
+  const failed = session.seq;
+  const { error } = await failingPreStep(sealOver(session, { ...heldWith(reads), llm: sequencedLlm(wrongFormat) }).seal, session);
+  assert.match(error.message, /failed/);
+  assert.deepEqual(slotsOf(failed), [], 'a failed attempt appends no carrier');
+
+  const declined = session.seq;
+  await preStep(sealOver(session, { ...heldWith(reads), ctpOf: () => SMALL_CTP }).seal, session);
+  await preStep(sealOver(session, { ...heldWith(reads), readMode: () => ({ mode: 'off', locked: true }) }).seal, session);
+  assert.equal(session.seq, declined, 'a quote that does not trigger and a session with the mode off append nothing');
+
+  const committed = session.seq;
+  await preStep(sealOver(session, heldWith(reads)).seal, session);
+  assert.deepEqual(slotsOf(committed).flatMap(slot => slot.oldReads ?? []), reads);
+});
+
+test('over the real composition and the session\'s saved records, the re-reads of lines the epoch held reach the carrier\'s slots and the monitor\'s rows as one warning each', { skip }, async (t) => {
+  const store = openStore(':memory:');
+  t.after(() => closeStore(store));
+  const A_PATH = '/repo/src/a.js';
+  const lines = ['export const alpha = 1;', 'export const beta = 2;', 'export const gamma = 3;'];
+  const entries = lines.map((text, at) => ({ key: at + 1, chars: text.length, cjk: 0, fp: fingerprintOf(normalizeLine(text)) }));
+  const reading = path => ({ v: 1, effects: [{ access: 'read', impacts: [{ resourceKey: path, kind: 'merge-fragments', entries }] }], residual: null });
+  const { events } = turnOf({ steps: LONG_STEPS, bulk: BULK, toolSteps: [1, 2, 3, 4] });
+  const system = systemMessage();
+  const { session, seqOf } = sessionOver([system, ...events], 'inner-seal-old-reads');
+  const resultOf = step => events.find(event => event.type === 'tool/result' && event.data.step === step);
+  // Steps 1, 2 and 4 read a.js and step 3 reads another file: step 2 and 4's reads are of lines held when they began.
+  [[1, A_PATH], [2, A_PATH], [3, '/repo/src/b.js'], [4, A_PATH]].forEach(([step, path]) => store.rememberAttribution(session.id, `1:${step}:call-1-${step}`, reading(path)));
+  const composition = composeWatcher({
+    sessionId: session.id, cwd: '/repo', store, turnNotesRoot: join(tmpdir(), 'sw-inner-seal-notes'),
+    readSession: async () => ({ events: [] }), isIgnored: null, cacheTtl: () => null, workingTree: editableTree({}).workingTree,
+  });
+  const { seal, monitor } = sealOver(session, { heldView: (_id, held) => composition.heldView(held) });
+  const access = accessAfter(session, monitor);
+  const before = session.seq;
+  await preStep(seal, session);
+  const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
+  const oldReadsOf = step => carrier.data.source.slots.find(slot => slot.seqs.includes(seqOf(resultOf(step)))).oldReads;
+  assert.deepEqual(oldReadsOf(2), [{ toolUseId: '1:2:call-1-2', seq: seqOf(resultOf(2)), oldLines: 3, newLines: 0 }]);
+  assert.deepEqual(oldReadsOf(4), [{ toolUseId: '1:4:call-1-4', seq: seqOf(resultOf(4)), oldLines: 3, newLines: 0 }]);
+  assert.deepEqual([1, 3].map(oldReadsOf), [undefined, undefined], 'the first read and the read of a file not held are no hits');
+  const slotOf = step => carrier.data.source.slots.find(slot => slot.seqs.includes(seqOf(resultOf(step)))).seqs[0];
+  assert.deepEqual((await access.rows(session.id)).attempts.map(row => row.slotWarnings), [{ [slotOf(2)]: ['old-attribution'], [slotOf(4)]: ['old-attribution'] }]);
+});
+
 test('the details of a sealed attempt read from the facts the seal wrote: the request as it was sent with the definitions of the header\'s tools, the response and its usage, and slots that tell the sources the call saw from the original a pruner replaced', { skip }, async () => {
   const { events } = turnOf({ toolSteps: [1] });
   const original = events.find(event => event.type === 'tool/result');
@@ -2896,7 +2992,7 @@ test('the seal of a session that started with a load builds B against the eviden
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
     // What the session holds of the files: the lines the load showed, one line the model read later, and a line of the other file past what the load showed.
-    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8, 12]], [keyOf(root, 'other.js'), [1, 2, 4]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8, 12]], [keyOf(root, 'other.js'), [1, 2, 4]]]), skills: new Map(), effects: [], oldReads: [] }),
   });
   const shownBefore = JSON.stringify(read.data.source);
   writeFileSync(key, `${fileRows('kept.js', 20).map((row, index) => (index + 1 === 5 ? 'kept.js line 5 rewritten' : row)).join('\n')}\n`);
@@ -2920,7 +3016,7 @@ test('a path the load kept follows the carried semantics against the evidence it
   const before = session.seq;
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
-    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [], oldReads: [] }),
   });
   rmSync(key);
 
@@ -2934,7 +3030,7 @@ test('a path the load kept follows the carried semantics against the evidence it
 test('the quote and the commit read B against the same evidence the load showed: the attempt keeps the estimate of the B the commit then writes, nothing for kept lines that stand and the price of the rewritten line alone', { skip }, async (t) => {
   const root = directoryWith(t, { 'kept.js': fileRows('kept.js', 20) });
   const key = keyOf(root, 'kept.js');
-  const held = () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] });
+  const held = () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [], oldReads: [] });
 
   const standing = await loadedSession(root, [{ path: 'kept.js', lines: [[3, 8]] }]);
   const standingBefore = standing.session.seq;
@@ -2959,7 +3055,7 @@ test('B₂ is built by the machinery of B₁: the second seal of a session that 
   const key = keyOf(root, 'kept.js');
   const rewrite = (row5, row6 = 'kept.js line 6') => writeFileSync(key, `${fileRows('kept.js', 20).map((row, index) => (index + 1 === 5 ? row5 : index + 1 === 6 ? row6 : row)).join('\n')}\n`);
   const { session } = await loadedSession(root, [{ path: 'kept.js', lines: [[3, 8]] }]);
-  const services = { readFile: readFromDisk, readUnobserved: readFromDisk, heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [] }) };
+  const services = { readFile: readFromDisk, readUnobserved: readFromDisk, heldView: () => ({ paths: new Map([[key, [3, 4, 5, 6, 7, 8]]]), skills: new Map(), effects: [], oldReads: [] }) };
   const { seal } = sealOver(session, services);
   rewrite('kept.js line 5 second');
   const first = session.seq;
@@ -2989,7 +3085,7 @@ test('evidence inside the victim range is no baseline: a later load\'s read mess
   const before = session.seq;
   const { seal } = sealOver(session, {
     readFile: readFromDisk, readUnobserved: readFromDisk,
-    heldView: () => ({ paths: new Map([[keyOf(root, 'kept.js'), [3, 4, 5, 6, 7, 8]], [keyOf(root, 'later.js'), [1, 2, 3, 4]]]), skills: new Map(), effects: [] }),
+    heldView: () => ({ paths: new Map([[keyOf(root, 'kept.js'), [3, 4, 5, 6, 7, 8]], [keyOf(root, 'later.js'), [1, 2, 3, 4]]]), skills: new Map(), effects: [], oldReads: [] }),
   });
 
   await preStep(seal, session);

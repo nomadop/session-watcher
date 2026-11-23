@@ -11,6 +11,7 @@ import {
 import { DEFAULT_CHART_WIDTH } from '../dsh/src/client/monitor-state.js';
 import { PaybackView, PaybackPage } from '../dsh/src/client/monitor-settlement.js';
 import { en, zh } from '../dsh/src/client/locales.js';
+import { paying } from './helpers/dsh-monitor-wire.js';
 
 const localized = dictionary => (key, params) => dictionary[key].replace(/\{(\w+)\}/g, (_, name) => String(params?.[name]));
 const t = localized(zh);
@@ -45,7 +46,10 @@ const SINGLE = settlementOf(10, [knownRow(1, { steps: 10, sealAt: 4, cost: 100, 
 // The same compaction in a segment of 40 steps, which climbs to +980: past `CLIP_DEPTH_RATIO` times its depth.
 const CLIMBING = settlementOf(40, [knownRow(1, { steps: 40, sealAt: 4, cost: 100, cut: 30, rebuild: 40 })]);
 
-const pageOf = (settlement, translate = t) => settlementPageOf(settlement, translate);
+// Only an adjusted settlement is shown: these tests of the figures read it from an answer that is evidence of recall (the activity here has a judged step to its share), the status pages are tested apart.
+const ACTIVITY = { covered: true, judged: 8, pure: 3, targets: [] };
+const READY = { kind: 'ready', value: { calls: [], activity: ACTIVITY } };
+const pageOf = (settlement, translate = t) => settlementPageOf(settlement, translate, READY);
 const geometryOf = (settlement, width, clipped = false) => curveGeometryOf(paybackCurveOf(settlement), width, clipped, t);
 
 // ── The header and the facts ──────────────────────────────────────────────────
@@ -73,6 +77,13 @@ test('the chart is spoken in one text: the lowest net, the steps below zero and 
   assert.equal(pageOf(SINGLE).chart.label, '累计盈亏曲线。最低 −100（第 4 步）。低于 0：第 4–7 步。段末 +80。压缩成本在封存步计入。');
   assert.equal(pageOf(FIVE).chart.label, '累计盈亏曲线。最低 −30.0k（第 5 步）。低于 0：第 5–7 步。段末 +51.7k。压缩成本在封存步计入。');
   assert.equal(pageOf(SINGLE, localized(en)).chart.label, 'Cumulative net curve. Lowest −100 (step 4). Below 0: steps 4–7. End +80. Each compaction’s cost is counted at its seal.', 'the locale joins the sentences');
+});
+
+test('the chart says it includes adjustments only where the answer has recall to adjust by', () => {
+  const recall = { steps: [{ at: 5, seq: 50, usage: { input: 10, output: 1, cacheRead: 20, cacheWrite: 0 }, ratio: 2 }], cuts: [] };
+  const withRecall = settlementPageOf(SINGLE, t, { kind: 'ready', value: { calls: [], activity: ACTIVITY, recall } });
+  assert.ok(withRecall.chart.label.endsWith(zh['monitor.payback.chart.recallTail']));
+  assert.ok(pageOf(SINGLE).chart.label.endsWith(zh['monitor.payback.chart.tail']), 'a ready answer with nothing to adjust by');
 });
 
 test('the axis may be clipped only when the curve goes above `CLIP_DEPTH_RATIO` times the depth of its lowest point', () => {
@@ -300,7 +311,7 @@ test('a new page sorts by ordinal and clips the axis; controls can change either
 // ── The view ─────────────────────────────────────────────────────────────────
 
 const noop = () => {};
-const view = (settlement, { state = createPaybackState(), width = 392, translate = t, dispatch = noop } = {}) => renderToString(React.createElement(PaybackView, { model: settlementPageOf(settlement, translate), state, dispatch, width, t: translate }));
+const view = (settlement, { state = createPaybackState(), width = 392, translate = t, dispatch = noop, result = READY } = {}) => renderToString(React.createElement(PaybackView, { model: settlementPageOf(settlement, translate, result), state, dispatch, width, t: translate }));
 const tagsOf = (html, className) => [...html.matchAll(new RegExp(`<[a-z0-9]+\\s[^>]*class="${className}"[^>]*>`, 'g'))].map(([tag]) => tag);
 const attr = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
 const withClass = (html, className) => [...html.matchAll(new RegExp(`<([a-z0-9]+)\\s[^>]*class="${className}"[^>]*>(.*?)</\\1>`, 'gs'))].map(match => match[2]);
@@ -431,7 +442,7 @@ test('the sort and axis controls dispatch their actions; the appendix uses the b
     }
     return found;
   };
-  const tree = expand(PaybackView({ model: settlementPageOf(CLIMBING, t), state: createPaybackState(), dispatch: action => dispatched.push(action), width: 392, t }));
+  const tree = expand(PaybackView({ model: settlementPageOf(CLIMBING, t, READY), state: createPaybackState(), dispatch: action => dispatched.push(action), width: 392, t }));
   const press = className => findAll(tree, node => node.props?.className === className);
   press('sw-pb-axisbtn')[0].props.onClick();
   press('sw-pb-sortbtn').forEach(node => node.props.onClick());
@@ -440,13 +451,14 @@ test('the sort and axis controls dispatch their actions; the appendix uses the b
   assert.equal(press('sw-pb-table')[0].props.onToggle, undefined, 'the table keeps its own open state');
 });
 
-const monitorWithSettlement = value => ({ resource: () => ({ subscribe: () => () => {}, result: { kind: 'ready', value } }) });
+// An answer carries the recall activity unless the test says it is an older host's.
+const monitorWithSettlement = value => ({ resource: () => ({ subscribe: () => () => {}, result: { kind: 'ready', value: { activity: ACTIVITY, ...value } } }) });
 
 test('the page draws at the default width where no width was measured, which a server render has none of, and holds the same markup as the view over that width', () => {
   const html = renderToString(React.createElement(PaybackPage, { settlement: SINGLE, monitor: monitorWithSettlement({ calls: [] }), handoffId: 31, t }));
   assert.equal(attr(/<svg\b[^>]*>/.exec(html)[0], 'width'), String(DEFAULT_CHART_WIDTH));
   assert.equal(html.includes('sw-pb-chart'), true);
-  assert.equal(html, view(SINGLE, { width: DEFAULT_CHART_WIDTH }));
+  assert.equal(html, view(SINGLE, { width: DEFAULT_CHART_WIDTH, result: { kind: 'ready', value: { calls: [], activity: ACTIVITY } } }));
 });
 
 test('the payback page charges a pure event-read request once, removes its credit and resident rent, and does not earn the same copy again when sealed', () => {
@@ -489,17 +501,78 @@ test('the payback formula identifies rounded terms without presenting them as an
   assert.ok(textOf(html).includes('成本 12 ≈ 原压缩成本 10 + 召回请求成本 1 − 已计入的缓存重建 0'));
 });
 
+// ── The share of pure recall steps ──────────────────────────────────────────
+
+const shareText = html => textOf(/<p class="sw-pb-share">(.*?)<\/p>/.exec(html)?.[1] ?? '');
+const pageWith = (value, settlement = SINGLE) => renderToString(React.createElement(PaybackPage, {
+  settlement, monitor: { resource: () => ({ subscribe: () => () => {}, result: value }) }, handoffId: 31, t,
+}));
+const answerOf = activity => ({ kind: 'ready', value: { calls: [], ...(activity === undefined ? {} : { activity }) } });
+
+test('the payback page shows the share of pure recall steps once the evidence proves its axis, and a dash where it does not; no evidence, no line', () => {
+  assert.equal(shareText(pageWith(answerOf({ covered: true, judged: 8, pure: 3, targets: [] }))), '纯召回步占比 37.5%（3/8 步）');
+  assert.equal(shareText(pageWith(answerOf({ covered: true, judged: 8, pure: 0, targets: [] }))), '纯召回步占比 0.0%（0/8 步）', 'confirmed to hold none');
+  assert.equal(shareText(pageWith(answerOf({ covered: false, judged: 8, pure: 3, targets: [] }))), '纯召回步占比 —', 'coverage not proved');
+  assert.equal(shareText(pageWith(answerOf({ covered: true, judged: 0, pure: 0, targets: [] }))), '纯召回步占比 —', 'nothing judged to share over');
+  for (const value of [null, { kind: 'unreachable', message: 'x' }, { kind: 'unavailable' }, answerOf(undefined)]) {
+    assert.equal(pageWith(value).includes('sw-pb-share'), false, JSON.stringify(value)?.slice(0, 30));
+  }
+});
+
+test('the share does not wait for the figures: a settlement whose compactions are not all priced has it all the same', () => {
+  const half = settlementOf(10, [knownRow(1, { steps: 10, sealAt: 3, cost: 100, cut: 30 }), unknownRow(2, { steps: 10, sealAt: 6, cut: 5 })]);
+  assert.equal(shareText(pageWith(answerOf({ covered: true, judged: 4, pure: 1, targets: [] }), half)), '纯召回步占比 25.0%（1/4 步）');
+});
+
+// What a page of figures is made of: the header, the formula facts, the curve, the plot rows, the appendix and the unit.
+const FIGURES = ['sw-pb-head', 'sw-pb-facts', 'sw-pb-chart', 'sw-pb-curve', 'sw-pb-list', 'sw-pb-equations', 'sw-pb-table', 'sw-pb-unit'];
+
+test('only an adjusted settlement is shown: a page whose answer is not yet there, failed or an older host\'s says its status and nothing of the unadjusted figures', () => {
+  const statuses = [[null, 'recall-pending'], [{ kind: 'unreachable', message: 'x' }, 'recall-unavailable'], [{ kind: 'unavailable' }, 'recall-unavailable'], [answerOf(undefined), 'recall-unavailable']];
+  for (const [value, status] of statuses) {
+    const html = pageWith(value);
+    assert.match(html, new RegExp(`data-sw-monitor-notice="${status}"`), status);
+    for (const name of FIGURES) assert.equal(html.includes(name), false, `${status} ${name}`);
+    const bare = view(SINGLE, { result: value });
+    for (const name of FIGURES) assert.equal(bare.includes(name), false, `${status} ${name} of the view`);
+  }
+  const ready = pageWith(answerOf(ACTIVITY));
+  for (const name of FIGURES) assert.equal(ready.includes(name), true, name);
+  assert.equal(ready.includes('data-sw-monitor-notice'), false, 'an adjusted page with every step priced says nothing');
+});
+
+test('a page adjusted by partial recall evidence keeps the figures it has and says so; one whose answer prices no compaction shows its rate and a status, no figure', () => {
+  const partial = { ...answerOf(ACTIVITY), value: { calls: [], activity: ACTIVITY, recall: { steps: [{ at: 5, seq: 50, usage: null, ratio: 2 }], cuts: [] } } };
+  const html = pageWith(partial);
+  assert.match(html, /data-sw-monitor-notice="recall-partial"/);
+  for (const name of ['sw-pb-head', 'sw-pb-chart', 'sw-pb-list']) assert.equal(html.includes(name), true, name);
+  const unpriced = pageWith({ kind: 'ready', value: { epoch: 1, attempts: [paying(1, { stepN: 3, contextChange: null })], tailCalls: 3, calls: [], cut: { segment: 0, through: 50 }, activity: ACTIVITY } });
+  assert.match(unpriced, /data-sw-monitor-notice="recall-unpriced"/);
+  assert.equal(shareText(unpriced), '纯召回步占比 37.5%（3/8 步）');
+  for (const name of FIGURES) assert.equal(unpriced.includes(name), false, name);
+});
+
+test('the page prices from the answer\'s own attempts at its cut where it has them, as the current drawer does', () => {
+  const value = { epoch: 1, attempts: [paying(1, { stepN: 3 }), paying(2, { stepN: 4 })], tailCalls: 3, calls: [], cut: { segment: 0, through: 50 }, activity: ACTIVITY };
+  const html = pageWith({ kind: 'ready', value }, SINGLE);
+  assert.match(textOf(html), /压缩 2 次/);
+  assert.match(textOf(html), /步数 10/);
+});
+
 // ── The words ────────────────────────────────────────────────────────────────
 
 test('every text the page asks for, whichever of its shapes it draws, has a text in both locales', () => {
   const asked = new Set();
   const spy = (key, params) => { asked.add(key); return localized(zh)(key, params); };
   for (const settlement of [FIVE, SINGLE, CLIMBING, settlementOf(8, [knownRow(1, { steps: 8, sealAt: 2, cost: 10, cut: 20 }), knownRow(2, { steps: 8, sealAt: 6, cost: 100, cut: 0 })]), settlementOf(8, [knownRow(1, { steps: 8, sealAt: 3, cost: 40, cut: 0 })])]) {
-    const model = settlementPageOf(settlement, spy);
+    const model = settlementPageOf(settlement, spy, READY);
     const state = createPaybackState();
     renderToString(React.createElement(PaybackView, { model, state, dispatch: noop, width: 392, t: spy }));
     renderToString(React.createElement(PaybackView, { model, state: reducePayback(state, { type: 'axis' }), dispatch: noop, width: 392, t: spy }));
     renderToString(React.createElement(PaybackPage, { settlement, monitor: monitorWithSettlement({ calls: [] }), handoffId: 31, t: spy }));
+    for (const activity of [{ covered: false, judged: 0, pure: 0, targets: [] }, undefined]) {
+      renderToString(React.createElement(PaybackPage, { settlement, monitor: { resource: () => ({ subscribe: () => () => {}, result: answerOf(activity) }) }, handoffId: 31, t: spy }));
+    }
   }
   assert.equal(asked.has('monitor.payback.chart.separator'), true, 'the page asked for texts at all');
   for (const key of asked) {

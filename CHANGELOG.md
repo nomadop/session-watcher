@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.2 (2026-11-23) — The carrier cache bundle carries its own adapter, and the monitor reads old attribution and recall
+
+### DSH plugin
+
+- **The official carrier cache bundle carries its own adapter** — `@nomadop/session-watcher-dsh-carrier-cache` 0.2.0 ships the adapter as its `./pi-ai` export, the same compiled file this package ships under that name, and its replacement row names its own package, so a profile that holds the bundle needs no Session Watcher package for the route to be served. It declares the host packages its entry imports as required peers and depends on nothing. This package's `./pi-ai` export and its peer contract are unchanged. An installed copy of the bundle from before is not updated with Session Watcher: update it on the Plugins page first, then Session Watcher; the DSH page describes the order. The bundle's first install from Settings now takes 0.2.0.
+- **A slot's Tools page shows the calls the seal's source held** — each call with its input and result, marked failed, empty or not recorded where it was, and, where the summary call saw a pruned version, with a link to that event in Source text. State queries and writes are told apart, and a direct read of a handoff payload, the compaction carrier or text the carrier quotes verbatim is shown as an attempt.
+- **A slot warns of a high share of old attribution in file reads** — a read that returned mostly lines its epoch already held shows its old and new lines; "old" means attributed before the step began, not necessarily still in the model's context.
+- **The settlement lists the events a session read back, and shows their original text** — each recall target with the steps that read it and where the original sits relative to the seals; its text opens on demand, owner of the host only. The settlement cost is split into compaction summaries, cache rebuild and recall requests net, with the rebuild overpay trial and the share of steps that are pure recall.
+
+---
+
 ## 0.11.1 (2026-11-22) — The plugin's own event read, and the inner seal's settlement in the monitor
 
 ### DSH plugin

@@ -9919,8 +9919,8 @@ var repairJson = Object.assign(jsonRepair, { parse: jsonParse });
 // dsh/carrier-cache/package.json
 var package_default = {
   name: "@nomadop/session-watcher-dsh-carrier-cache",
-  version: "0.1.0",
-  description: "Activation bundle of Session Watcher's carrier cache adapter for DeepSeek Harness",
+  version: "0.2.0",
+  description: "Session Watcher's carrier cache adapter for DeepSeek Harness, with the profile layer that activates it",
   type: "module",
   license: "MIT",
   author: "Longju Cheng",
@@ -9937,15 +9937,27 @@ var package_default = {
     dsh: ">=0.2.2-rc.1"
   },
   exports: {
+    "./pi-ai": "./dist/pi-ai-index.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   files: [
+    "dist/pi-ai-index.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md"
   ],
+  peerDependencies: {
+    "@deepseek-ai/dsh-credentials": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-launch-environment": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-timeout": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-util-values": ">=0.2.2-rc.1",
+    "@deepseek-ai/schemastery": ">=3.19.0",
+    "@earendil-works/pi-ai": "^1.3.0"
+  },
   dsh: {
     bundle: {
       patch: "./cordis.patch.yml"
@@ -19602,6 +19614,92 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   };
 }
 
+// lib/old-attribution.js
+var OLD_SHARE_ABOVE = 0.9;
+function createOldAttributionScorer() {
+  const hits = [];
+  let step = null;
+  let gapSeen = false;
+  const startStep = (key) => {
+    step = { key, scored: !gapSeen, undo: /* @__PURE__ */ new Map() };
+  };
+  const startEpoch = () => {
+    step = null;
+    gapSeen = false;
+  };
+  function freeze(record, scratch) {
+    for (const { impacts } of record.effects) {
+      for (const { resourceKey, kind, entries } of impacts) {
+        const before = scratch.get(resourceKey);
+        const undone = step.undo.get(resourceKey) ?? /* @__PURE__ */ new Map();
+        if (kind === "replace-fragments") {
+          for (const [line, entry] of before ?? []) if (!undone.has(line)) undone.set(line, entry);
+        }
+        for (const { key } of entries) if (!undone.has(key)) undone.set(key, before?.get(key) ?? null);
+        step.undo.set(resourceKey, undone);
+      }
+    }
+  }
+  function heldIn(resourceKey, scratch) {
+    const undone = step.undo.get(resourceKey);
+    let overview = null;
+    const overviewOf = () => {
+      const lines = new Map(scratch.get(resourceKey));
+      for (const [line, entry] of undone ?? []) {
+        if (entry === null) lines.delete(line);
+        else lines.set(line, entry);
+      }
+      const fps = /* @__PURE__ */ new Set();
+      let unfingerprinted = false;
+      for (const entry of lines.values()) {
+        if (entry.fp === void 0) unfingerprinted = true;
+        else fps.add(entry.fp);
+      }
+      return { fps, unfingerprinted };
+    };
+    return {
+      entryAt: (line) => undone?.has(line) ? undone.get(line) ?? void 0 : scratch.get(resourceKey)?.get(line),
+      mayHaveMoved(fp) {
+        overview ??= overviewOf();
+        return overview.unfingerprinted || overview.fps.has(fp);
+      }
+    };
+  }
+  function returnedBy(record) {
+    const byResource = /* @__PURE__ */ new Map();
+    for (const { access, impacts } of record.effects) {
+      if (access !== "read") continue;
+      for (const { resourceKey, entries } of impacts) {
+        const lines = byResource.get(resourceKey) ?? /* @__PURE__ */ new Map();
+        for (const { key, fp, moved } of entries) if (moved !== true && fp !== void 0) lines.set(key, fp);
+        byResource.set(resourceKey, lines);
+      }
+    }
+    return byResource;
+  }
+  function score({ pending, observation, record, scratch }) {
+    let oldLines = 0;
+    let newLines = 0;
+    for (const [resourceKey, lines] of returnedBy(record)) {
+      const held = heldIn(resourceKey, scratch);
+      for (const [key, fp] of lines) {
+        if (held.entryAt(key)?.fp === fp) oldLines += 1;
+        else if (!held.mayHaveMoved(fp)) newLines += 1;
+      }
+    }
+    if (oldLines > 0 && oldLines / (oldLines + newLines) > OLD_SHARE_ABOVE) {
+      hits.push({ toolUseId: pending.toolUseId, seq: observation.sourceOrdinal, oldLines, newLines });
+    }
+  }
+  function observe(call) {
+    if (!call.recalled) gapSeen = true;
+    if (step === null || !step.scored) return;
+    if (call.recalled && call.observation.isError !== true && call.observation.stepKey === step.key) score(call);
+    freeze(call.record, call.scratch);
+  }
+  return { hits, startStep, startEpoch, observe };
+}
+
 // lib/held-view.js
 var SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
 function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
@@ -19614,14 +19712,23 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
         return answer;
       }
     });
+    const scorer = createOldAttributionScorer();
+    const scoringCtx = { ...frameCtx, observeRecord: scorer.observe };
     const engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED });
     let skills = /* @__PURE__ */ new Map();
     const effects = [];
     for (const observation of observations) {
+      if (observation.type === "step-start") {
+        scorer.startStep(observation.stepKey);
+        continue;
+      }
       completed = [];
-      const { records } = projection.project(observation, frameCtx);
+      const { records } = projection.project(observation, scoringCtx);
       engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch"));
-      if (records.some((record) => record.type === "epoch")) skills = /* @__PURE__ */ new Map();
+      if (records.some((record) => record.type === "epoch")) {
+        skills = /* @__PURE__ */ new Map();
+        scorer.startEpoch();
+      }
       for (const { effects: answered, text, seq } of completed) {
         for (const { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
           const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
@@ -19632,7 +19739,7 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
       }
     }
     const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, effects };
+    return { paths, skills, effects, oldReads: scorer.hits };
   };
 }
 
@@ -19690,7 +19797,7 @@ function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
 // package.json
 var package_default2 = {
   name: "@nomadop/session-watcher",
-  version: "0.11.1",
+  version: "0.11.2",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -20808,10 +20915,10 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
   }
   function recordOf2(pending, observation, frameCtx, scratch) {
     const recalled = typeof frameCtx.recall === "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
-    if (recalled !== null) return recalled;
+    if (recalled !== null) return { record: recalled, recalled: true };
     const record = partition(pending, observation, scratch);
     if (typeof frameCtx.remember === "function") frameCtx.remember(pending.toolUseId, record);
-    return record;
+    return { record, recalled: false };
   }
   function emit(record, pending, observation, telemetry, scratch) {
     const effects = priced(record.effects, pending.issuingPolicy.ctp);
@@ -20872,7 +20979,10 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
       pathEvents: []
     };
     if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
-    return emit(recordOf2(pending, observation, frameCtx ?? {}, scratch), pending, observation, telemetry, scratch);
+    const ctx = frameCtx ?? {};
+    const { record, recalled } = recordOf2(pending, observation, ctx, scratch);
+    if (typeof ctx.observeRecord === "function") ctx.observeRecord({ pending, observation, record, recalled, scratch });
+    return emit(record, pending, observation, telemetry, scratch);
   }
   function resourceKeysOf(pair, capture) {
     try {
@@ -21101,7 +21211,7 @@ function renderState({ asOfSeq, items }, stateItems) {
 var INNER_SEAL_KIND = "session-watcher-inner-seal";
 var sourceEventSeqsOf = ({ callSeq, pruneSeq, replaced }) => [callSeq, pruneSeq, ...replaced];
 var callSeqOf = (seqs) => seqs[0];
-function assembleCarrierSource({ slots, summaries, questions, attachments, verbatimSeqs = [], changes, state }) {
+function assembleCarrierSource({ slots, summaries, questions, attachments, oldReads = [], verbatimSeqs = [], changes, state }) {
   const injected = [.../* @__PURE__ */ new Set([...verbatimSeqs, ...questions.flat().flatMap(({ seqs }) => seqs ?? [])])];
   return {
     kind: INNER_SEAL_KIND,
@@ -21110,7 +21220,8 @@ function assembleCarrierSource({ slots, summaries, questions, attachments, verba
       seqs,
       text: summaries[index],
       ...questions[index].length > 0 ? { questions: questions[index].map(({ question, user }) => ({ question, user })) } : {},
-      ...attachments[index].length > 0 ? { attachments: attachments[index] } : {}
+      ...attachments[index].length > 0 ? { attachments: attachments[index] } : {},
+      ...oldReads[index]?.length > 0 ? { oldReads: oldReads[index] } : {}
     })),
     ...injected.length > 0 ? { verbatimSeqs: injected } : {},
     ...changes,
@@ -21206,6 +21317,10 @@ function usageOf(usage) {
     cacheRead: usage.cacheReadTokens ?? 0,
     cacheWrite: usage.cacheWriteTokens ?? 0
   };
+}
+function dispatchedCallIdOf(event) {
+  const data = event?.type === "tool/call" ? event.data : void 0;
+  return isIndex(data?.turn) && isIndex(data?.step) && isId2(data?.callId) ? callIdOf(data.turn, data.step, data.callId) : null;
 }
 function callUsageOf(usage) {
   return isUsage(usage) ? usageOf(usage) : null;
@@ -21392,6 +21507,15 @@ function reduceDshSnapshot(events) {
     diagnostics.push(...reduced.diagnostics);
   }
   return { batches, observations: batches.flat(), diagnostics };
+}
+var stepKeyOf = (data) => isIndex(data?.turn) && isIndex(data?.step) ? `${data.turn}:${data.step}` : null;
+function heldObservationsOf(events) {
+  return events.flatMap((event) => {
+    const stepKey3 = stepKeyOf(event.data);
+    if (event.type === "step/start") return stepKey3 === null ? [] : [{ type: "step-start", stepKey: stepKey3 }];
+    const { observations } = reduceDshEvent(event);
+    return event.type === "tool/result" ? observations.map((observation) => ({ ...observation, stepKey: stepKey3 })) : observations;
+  });
 }
 
 // lib/harness/dsh/dialogue-source.js
@@ -21984,7 +22108,7 @@ function composeWatcher({
     resolveModelPolicy: policyFor,
     frameCtx: sessionId ? { recall } : {}
   });
-  const heldView = (events) => view(reduceDshSnapshot(events).observations);
+  const heldView = (events) => view(heldObservationsOf(events));
   return { watcher, dialogueSource, dialogueProjection, heldView };
 }
 
@@ -23166,6 +23290,9 @@ var MONITOR_UNAVAILABLE = failure("inner_monitor_unavailable", "The inner compac
 var FORBIDDEN = failure("forbidden", "Only the owner of this host can manage the carrier cache.");
 var CARRIER_CACHE_UNAVAILABLE = failure("carrier_cache_unavailable", "The carrier cache switch is not available in this host.");
 var MONITOR_NOT_COMMITTED = failure("inner_monitor_not_committed", "The inner compaction attempt has no committed seal, so it has no slots.");
+var TARGET_FORBIDDEN = failure("forbidden", "Only the owner of this host can read the text of a recalled event.");
+var TARGET_NOT_RECALLED = failure("inner_monitor_not_recalled", "The event is not a recall target of this settlement at this cut.");
+var NO_CARRIER = { not_committed: MONITOR_NOT_COMMITTED };
 function createRpcHandler({
   table,
   store,
@@ -23282,18 +23409,24 @@ function createRpcHandler({
     "inner-monitor/slot": { addresses: ["attempt", "slot"], read: (access, { sessionId, attempt, slot }) => access?.slot(sessionId, attempt, slot) },
     "inner-monitor/handoff": { addresses: ["handoff"], read: (access, { sessionId, handoff }) => access?.handoff(sessionId, handoff) },
     "inner-monitor/settlement": { addresses: ["handoff"], read: (access, { sessionId, handoff }) => access?.settlement(sessionId, handoff) },
-    "inner-monitor/settlement/current": { addresses: [], read: (access, { sessionId }) => access?.currentSettlement(sessionId) }
+    "inner-monitor/settlement/current": { addresses: [], read: (access, { sessionId }) => access?.currentSettlement(sessionId) },
+    "inner-monitor/settlement/target": {
+      addresses: ["segment", "through", "seq"],
+      owner: TARGET_FORBIDDEN,
+      closed: { not_target: TARGET_NOT_RECALLED },
+      read: (access, { sessionId, segment, through, seq }) => access?.settlementTarget(sessionId, { segment, through, seq })
+    }
   };
   const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
   async function answerMonitor(endpoint, body2) {
-    const { addresses, read } = monitorEndpoints[endpoint];
+    const { addresses, read, closed = NO_CARRIER } = monitorEndpoints[endpoint];
     if (!addresses.every((name3) => isAddress(body2[name3]))) {
       return failure("invalid_body", `Body must contain { sessionId: string${addresses.map((name3) => `, ${name3}: non-negative integer`).join("")} }`);
     }
     try {
       const value = await read(innerMonitor(), body2);
       if (value === void 0) return MONITOR_UNAVAILABLE;
-      return value.kind === "not_committed" ? MONITOR_NOT_COMMITTED : { ok: true, value };
+      return Object.hasOwn(closed, value.kind) ? closed[value.kind] : { ok: true, value };
     } catch (error) {
       const diagnostic3 = hostDiagnostic("inner_monitor_read_failed", error);
       writeDiagnostic(body2.sessionId, diagnostic3);
@@ -23324,6 +23457,8 @@ function createRpcHandler({
     if (!Object.hasOwn(endpoints, endpoint) && !Object.hasOwn(modeEndpoints, endpoint) && !Object.hasOwn(monitorEndpoints, endpoint)) {
       return failure("unknown_endpoint", `unknown endpoint ${endpoint}`);
     }
+    const owner = monitorEndpoints[endpoint]?.owner;
+    if (owner !== void 0 && peer?.principal?.kind !== "owner") return owner;
     const body2 = payload || {};
     if (typeof body2.sessionId !== "string") return failure("invalid_body", "Body must contain { sessionId: string }");
     if (Object.hasOwn(modeEndpoints, endpoint)) return modeEndpoints[endpoint](body2);
@@ -25466,8 +25601,8 @@ function slotMessagesOf({ slots, session, events, range }) {
 var NO_OBSERVER = Object.freeze({ dispatch() {
 }, chunk() {
 } });
-var NO_CARRIER = Object.freeze({ scope: () => ({ run: (body2) => body2(), evidence: () => null }) });
-async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, observer = NO_OBSERVER, carrier = NO_CARRIER }) {
+var NO_CARRIER2 = Object.freeze({ scope: () => ({ run: (body2) => body2(), evidence: () => null }) });
+async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, observer = NO_OBSERVER, carrier = NO_CARRIER2 }) {
   const { provider, model, reasoningEffort } = selection;
   const chosen = { provider, model, ...reasoningEffort === void 0 ? {} : { reasoningEffort } };
   const tools = session.requestHeader()?.tools;
@@ -25809,6 +25944,7 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
           summaries: summary.summaries,
           questions: questionsOf({ slots, bySeq }),
           attachments: slotAttachments,
+          oldReads: slots.map(({ seqs }) => held.oldReads.filter(({ seq }) => seqs.includes(seq))),
           verbatimSeqs: summary.verbatimSeqs,
           changes: carriedOf(earlier, current),
           state: stateAt(session, readState, earlier, git)
@@ -25926,6 +26062,19 @@ function sourceEventView(event, { visible }) {
   const shown = event.type === "tool/result" ? [{ type: "tool-result", callId: message?.toolCallId, isError: message?.isError === true, blocks }] : blocks;
   return { seq: event.seq, type: event.type, visible, blocks: shown, raw: event };
 }
+function toolCallsOf(event) {
+  if (event.type !== "assistant/message") return [];
+  const uses = reduceDshEvent(event).observations.filter(({ type }) => type === "tool-use");
+  const blocks = sourceEventView(event, { visible: true }).blocks.filter(({ type }) => type === "tool-call");
+  return uses.map(({ toolUseId, name: name3 }, at) => ({ id: toolUseId, name: name3, arguments: blocks[at].arguments }));
+}
+function toolResultOf(event) {
+  if (event.type !== "tool/result") return null;
+  const [result] = reduceDshEvent(event).observations;
+  if (result === void 0) return null;
+  const [{ blocks }] = sourceEventView(event, { visible: true }).blocks;
+  return { id: result.toolUseId, error: result.isError === true, empty: blocks.every((block) => block.type === "text" && block.text === "") };
+}
 var SOURCE_CATEGORIES = { "system/message": "system", "developer/message": "developer", "tool/result": "tool", "assistant/message": "assistant" };
 var HUMAN_SOURCE_KIND = "user";
 function sourceCategoryOf({ type, kind }) {
@@ -25973,39 +26122,73 @@ function eventDisplayText(event) {
 
 // dsh/src/monitor-settlement-recall.js
 var stepKey2 = ({ turn, step } = {}) => `${turn}:${step}`;
-var pureRecall = ({ tools, marked }) => marked.size > 0 && tools.every(({ id }) => marked.has(id));
+var ABORTED_BEFORE_DISPATCH = "ABORTED_BEFORE_DISPATCH";
+var isInitiated = ({ target, dispatched, skipped }) => target !== void 0 && dispatched && !skipped;
+var callRecallOf = (call = {}) => isInitiated(call) ? "recall" : call.target === void 0 || call.dispatched || call.resulted ? "other" : "unknown";
+function judgeOf({ tools, calls }) {
+  const states = tools.map(({ id }) => callRecallOf(calls.get(id)));
+  if (states.includes("other") || states.length === 0) return "other";
+  return states.includes("unknown") ? "unknown" : "pure";
+}
 function reportPositions(seals, samples, tailCalls) {
   const positions = /* @__PURE__ */ new Map();
+  const landing = /* @__PURE__ */ new Map();
+  const sealAt = /* @__PURE__ */ new Map();
   let offset = 0;
-  for (const { attempt, range } of seals.values()) {
+  let proved = true;
+  for (const [carrier, { attempt, range }] of seals) {
     const steps = /* @__PURE__ */ new Map();
     for (const seq of range) {
       const sample = samples.get(seq);
       if (sample?.counted) steps.set(stepKey2(sample.event.data), seq);
     }
     const n = attempt.quote?.n ?? 0;
-    if (steps.size === n) for (const seq of steps.values()) positions.set(seq, offset += 1);
-    else offset += n;
+    if (steps.size === n) {
+      for (const [key, seq] of steps) {
+        positions.set(seq, offset += 1);
+        landing.set(key, offset);
+      }
+    } else {
+      offset += n;
+      if (sealAt.size > 0) proved = false;
+    }
+    sealAt.set(carrier, offset);
   }
   const lastCarrier = [...seals.keys()].at(-1);
-  const tail = [...samples.values()].filter(({ event, counted }) => counted && event.seq > lastCarrier);
-  if (tail.length === tailCalls) for (const { event } of tail) positions.set(event.seq, offset += 1);
-  return positions;
+  const tail = [...samples.values()].filter(({ counted, event }) => counted && event.seq > lastCarrier);
+  if (tail.length === tailCalls) {
+    for (const { event } of tail) {
+      positions.set(event.seq, offset += 1);
+      landing.set(stepKey2(event.data), offset);
+    }
+  } else {
+    proved = false;
+  }
+  const firstCarrier = seals.keys().next().value;
+  const covered = proved && [...samples.values()].every(({ counted, event }) => !counted || event.seq <= firstCarrier || positions.has(event.seq));
+  return { positions, landing, sealAt, covered };
 }
+var placeOf = (seq, owners, { landing, sealAt }) => sealAt.get(seq) ?? landing.get(owners.get(seq)) ?? null;
 function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, sessionId, isNoise }) {
   const seals = new Map(attempts.map((attempt) => {
     const call = log.get(attempt.call?.seq)?.data;
     return [attempt.carrier.seq, { attempt, range: isCallRecord(call) ? call.range : [] }];
   }));
-  if (seals.size === 0) return void 0;
+  if (seals.size === 0) return {};
   const starts = new Set(attempts.map(({ id }) => id));
   const samples = /* @__PURE__ */ new Map();
   const before = /* @__PURE__ */ new Map();
   const active = /* @__PURE__ */ new Map();
+  const owners = /* @__PURE__ */ new Map();
   let ctp;
   let lastMeasured;
   let seal;
   let sample;
+  let open = null;
+  const targetOf2 = (call, requestSeq) => {
+    const target = eventReadTargetOf(call);
+    return target && (target.sessionId === void 0 || target.sessionId === sessionId) && target.seq >= events[0].seq && target.seq < requestSeq && log.has(target.seq) ? target.seq : void 0;
+  };
   for (const event of events) {
     const { seq, type, data } = event;
     if (starts.has(seq)) before.set(seq, lastMeasured);
@@ -26014,25 +26197,37 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
       for (const replaced of seal.range) active.delete(replaced);
       lastMeasured = void 0;
     }
+    if (type === "step/start") open = stepKey2(data);
+    else if (type === "step/end") open = null;
+    else if (type === "user/message" && eventFactOf(event).marker === null && open !== null) owners.set(seq, open);
+    else if (type === "assistant/message" || type === "tool/call" || type === "tool/result") {
+      if (Number.isSafeInteger(data?.turn) && Number.isSafeInteger(data?.step)) owners.set(seq, stepKey2(data));
+    }
     if (isMainCall(event)) {
       const usage = callUsageOf(data?.usage);
       if (usage !== null) ctp ??= modelPolicyFor(data?.message?.source?.model).ctp;
       const resident = [...active.values()].reduce((sum, tokens) => sum + tokens, 0);
       const content = data?.message?.content;
       const tools = Array.isArray(content) ? content.filter((block) => block?.type === "tool-call") : [];
-      sample = { event, counted: eventFactOf(event).step !== null, usage, resident, seal: seal?.attempt, tools, marked: /* @__PURE__ */ new Set() };
+      const calls = new Map(tools.map((block) => [block.id, { target: targetOf2(block, seq), dispatched: false, skipped: false, resulted: false }]));
+      sample = { event, counted: eventFactOf(event).step !== null, usage, resident, seal: seal?.attempt, tools, calls };
       if (!isNoise(event)) lastMeasured = usage === null ? void 0 : sample;
       samples.set(seq, sample);
     }
     if (seal === void 0 || sample === void 0) continue;
-    if (type === "tool/call" && stepKey2(data) === stepKey2(sample.event.data) && sample.tools.some(({ id }) => id === data.callId)) {
-      const target = eventReadTargetOf(data);
-      if (target && (target.sessionId === void 0 || target.sessionId === sessionId) && target.seq >= events[0].seq && target.seq < sample.event.seq && log.has(target.seq)) sample.marked.add(data.callId);
+    if (type === "tool/call" && stepKey2(data) === stepKey2(sample.event.data)) {
+      const call = sample.calls.get(data.callId);
+      if (call !== void 0) call.dispatched = true;
     }
     if (type === "tool/result") {
       const op = event.surfaceOp;
+      const call = stepKey2(data) === stepKey2(sample.event.data) ? sample.calls.get(data.message?.toolCallId) : void 0;
+      if (call !== void 0) {
+        call.resulted = true;
+        if (data.error?.code === ABORTED_BEFORE_DISPATCH) call.skipped = true;
+      }
       const replaced = op?.op === "replace" && op.startSeq === op.endSeq && active.delete(op.startSeq);
-      const returned = op === "append" && data.message?.isError !== true && stepKey2(data) === stepKey2(sample.event.data) && sample.marked.has(data.message?.toolCallId);
+      const returned = op === "append" && data.message?.isError !== true && call !== void 0 && isInitiated(call);
       if (!replaced && !returned) continue;
       const content = data.message?.content;
       const text = Array.isArray(content) ? content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("") : "";
@@ -26040,26 +26235,44 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
       if (tokens > 0) active.set(seq, tokens);
     }
   }
+  for (const sample2 of samples.values()) sample2.verdict = judgeOf(sample2);
   const cuts = attempts.flatMap(({ id }) => {
     const pre = before.get(id);
-    const output = pre && pureRecall(pre) ? pre.usage.output : 0;
+    const output = pre?.verdict === "pure" ? pre.usage.output : 0;
     const tokens = (pre?.resident ?? 0) + output - (samples.get(postByAttempt.get(id))?.resident ?? 0);
     return tokens === 0 ? [] : [{ id, tokens }];
   });
   const steps = [];
   let partial = false;
-  const positions = reportPositions(seals, samples, tailCalls);
+  const axis = reportPositions(seals, samples, tailCalls);
+  const { positions } = axis;
+  const reads = /* @__PURE__ */ new Map();
+  let judged = 0;
+  let pure = 0;
   for (const sample2 of samples.values()) {
-    const { event, counted, usage, resident, seal: parent } = sample2;
-    const pure = pureRecall(sample2);
-    if (!counted || !pure && resident === 0) continue;
+    const { event, counted, usage, resident, seal: parent, verdict } = sample2;
     const { seq } = event;
     const at = positions.get(seq);
+    if (counted && parent !== void 0) {
+      if (verdict === "pure") {
+        for (const { id } of sample2.tools) {
+          const { target } = sample2.calls.get(id);
+          const landings = reads.get(target) ?? /* @__PURE__ */ new Map();
+          reads.set(target, landings);
+          if (at !== void 0) landings.set(at, { at, seq });
+        }
+      }
+      if (at !== void 0 && verdict !== "unknown") {
+        judged += 1;
+        if (verdict === "pure") pure += 1;
+      }
+    }
+    if (!counted || verdict !== "pure" && resident === 0) continue;
     if (at === void 0) {
       partial = true;
       continue;
     }
-    if (pure) {
+    if (verdict === "pure") {
       const ratio = parent?.quote?.cRatio ?? null;
       const post = postByAttempt.get(parent?.id) === seq ? parent.id : void 0;
       steps.push({ at, seq, usage, ratio, ...post === void 0 ? {} : { post } });
@@ -26067,7 +26280,89 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
       steps.push({ at, seq, resident });
     }
   }
-  return steps.length === 0 && cuts.length === 0 && !partial ? void 0 : { steps, cuts, ...partial ? { partial } : {} };
+  const targets = [...reads].sort(([a], [b]) => a - b).map(([seq, landings]) => ({
+    seq,
+    type: log.get(seq).type,
+    at: placeOf(seq, owners, axis),
+    reads: [...landings.values()].sort((a, b) => a.at - b.at)
+  }));
+  const recall = steps.length === 0 && cuts.length === 0 && !partial ? void 0 : { steps, cuts, ...partial ? { partial } : {} };
+  return { recall, activity: { covered: axis.covered, judged, pure, targets } };
+}
+
+// dsh/src/inner-monitor-tools.js
+var STATE_WARNING = Object.freeze({ check: "state-check", mixed: "state-mixed", write: "state-write" });
+var OLD_ATTRIBUTION_WARNING = "old-attribution";
+var STEP_LEVEL = Object.values(STATE_WARNING);
+var THRESHOLD_PERCENT = Math.round(OLD_SHARE_ABOVE * 100);
+function groupBy(list, key) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const item of list) groups.set(key(item), [...groups.get(key(item)) ?? [], item]);
+  return groups;
+}
+var soleOf = (groups, id) => groups.get(id)?.length === 1 ? groups.get(id)[0] : null;
+function standsFor(event, seq, log) {
+  try {
+    return originalsOf(event, log).includes(seq);
+  } catch {
+    return false;
+  }
+}
+function shareOf({ oldLines, newLines }) {
+  const total = oldLines + newLines;
+  if (total === 0) return { percent: null, over: false };
+  const percent = Math.floor(oldLines * 100 / total);
+  return { percent, over: oldLines / total > OLD_SHARE_ABOVE && percent <= THRESHOLD_PERCENT };
+}
+var warn = (card, warning) => {
+  if (!card.warnings.some(({ kind }) => kind === warning.kind)) card.warnings.push(warning);
+};
+function slotToolsOf({ events, range, log, kinds, dispatches, oldReads }) {
+  const calls = events.flatMap(toolCallsOf);
+  const results = events.flatMap((event) => {
+    const result = toolResultOf(event);
+    return result === null ? [] : [{ ...result, seq: event.seq }];
+  });
+  const callsById = groupBy(calls, ({ id }) => id);
+  const resultsById = groupBy(results, ({ id }) => id);
+  const resultOf = (id) => {
+    const result = soleOf(callsById, id) === null ? null : soleOf(resultsById, id);
+    return result === null ? null : { seq: result.seq, error: result.error, empty: result.empty };
+  };
+  const replacements = events.filter((event) => isPrunedResult(event) && range.has(event.seq));
+  const prunedOf = (result) => {
+    const seen = result === null ? [] : replacements.filter((event) => standsFor(event, result.seq, log));
+    return seen.length === 1 ? { seq: seen[0].seq } : null;
+  };
+  const cards = calls.map((call) => {
+    const result = resultOf(call.id);
+    return { id: call.id, name: call.name, input: call.arguments, result, pruned: prunedOf(result), warnings: [] };
+  });
+  const paired = new Set(cards.map((card) => card.result?.seq));
+  const lone = results.filter(({ seq }) => !paired.has(seq)).map(({ id, seq, error, empty }) => ({ id, name: null, input: null, result: { seq, error, empty }, pruned: prunedOf({ seq }), warnings: [] }));
+  const all = [...cards, ...lone];
+  const unplaced = /* @__PURE__ */ new Set();
+  const settle = (kind, card, warning) => {
+    if (card === null) unplaced.add(kind);
+    else warn(card, warning);
+  };
+  for (const { kind, seq } of dispatches) {
+    const dispatched = log.get(seq);
+    const id = dispatchedCallIdOf(dispatched);
+    const holders = cards.filter((card) => card.id === id);
+    const [holder] = holders;
+    const exact = holders.length === 1 && holder.name === dispatched.data.name && holder.input === dispatched.data.arguments;
+    settle(kind, exact ? holder : null, { kind });
+  }
+  for (const hit of oldReads) {
+    settle(
+      OLD_ATTRIBUTION_WARNING,
+      all.find((card) => card.id === hit.toolUseId && card.result?.seq === hit.seq) ?? null,
+      { kind: OLD_ATTRIBUTION_WARNING, oldLines: hit.oldLines, newLines: hit.newLines, ...shareOf(hit) }
+    );
+  }
+  const warnings = kinds.filter((kind) => STEP_LEVEL.includes(kind) || unplaced.has(kind));
+  return { warnings, calls: all };
 }
 
 // dsh/src/inner-monitor-read.js
@@ -26088,6 +26383,8 @@ var isSeq5 = (value) => Number.isSafeInteger(value) && value >= 0;
 var isText5 = (value) => typeof value === "string";
 var isMessage = (value) => isObject8(value) && Array.isArray(value.content);
 var orNull2 = (holds) => (value) => value === null || holds(value);
+var isOldRead = (value) => isObject8(value) && isText5(value.toolUseId) && isSeq5(value.seq) && isSeq5(value.oldLines) && isSeq5(value.newLines);
+var oldReadsOf = (slot) => Array.isArray(slot?.oldReads) ? slot.oldReads.filter(isOldRead) : [];
 var isCarrierShape = (event) => Array.isArray(event.sourceEventSeqs) && isSeq5(callSeqOf(event.sourceEventSeqs)) && Array.isArray(event.data.source.slots);
 var bounded = (text) => text.length > PREVIEW_SOURCE_CHARS ? text.slice(0, PREVIEW_SOURCE_CHARS) : text;
 var messageTextOf = (message) => bounded(message.content.filter((block) => block.type === "text").map((block) => block.text).join(""));
@@ -26192,18 +26489,21 @@ function foldCarrier(state, event) {
   if (at < 0) return sealed;
   const carrier = { seq: event.seq, time: event.time, slots: slots.length };
   const slotWarnings = {};
-  const pending = state.postSeal?.pending;
-  if (pending !== void 0) {
-    for (const slot of slots) {
-      const seqs = slot?.seqs;
-      if (!Array.isArray(seqs) || seqs.length === 0 || !seqs.every(isSeq5)) continue;
-      const warnings = new Set(seqs.flatMap((seq) => pending[seq] ?? []));
-      if (warnings.size > 0) slotWarnings[seqs[0]] = [...warnings];
-    }
+  const slotDispatches = {};
+  const pending = state.postSeal?.pending ?? {};
+  for (const slot of slots) {
+    const seqs = slot?.seqs;
+    if (!Array.isArray(seqs) || seqs.length === 0 || !seqs.every(isSeq5)) continue;
+    const dispatches = seqs.flatMap((seq) => pending[seq] ?? []);
+    const warnings = new Set(dispatches.map(({ kind }) => kind));
+    if (oldReadsOf(slot).length > 0) warnings.add(OLD_ATTRIBUTION_WARNING);
+    if (warnings.size > 0) slotWarnings[seqs[0]] = [...warnings];
+    if (dispatches.length > 0) slotDispatches[seqs[0]] = dispatches;
   }
   return amended({ ...sealed, postSeal: { first: true, request: null, pending: {} } }, at, {
     carrier,
-    ...Object.keys(slotWarnings).length > 0 && { slotWarnings }
+    ...Object.keys(slotWarnings).length > 0 && { slotWarnings },
+    ...Object.keys(slotDispatches).length > 0 && { slotDispatches }
   });
 }
 function foldPostSealRequest(state, event) {
@@ -26229,7 +26529,7 @@ function heldInContext(state, seq) {
 function stateWarningOf(request, call) {
   if (!request.first) return;
   const operation = stateOperationOf(call);
-  if (operation !== void 0) return operation === "write" ? "state-write" : request.count === 1 ? "state-check" : "state-mixed";
+  if (operation !== void 0) return operation === "write" ? STATE_WARNING.write : request.count === 1 ? STATE_WARNING.check : STATE_WARNING.mixed;
 }
 function foldToolCall(state, event) {
   const { postSeal } = state;
@@ -26237,9 +26537,8 @@ function foldToolCall(state, event) {
   if (!request || request.turn !== event.data?.turn || request.step !== event.data?.step) return state;
   const warning = recallWarningOf(state, event) ?? stateWarningOf(request, event.data);
   if (warning === void 0) return state;
-  const warnings = postSeal.pending[request.seq] ?? [];
-  if (warnings.includes(warning)) return state;
-  return { ...state, postSeal: { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...warnings, warning] } } };
+  const dispatches = postSeal.pending[request.seq] ?? [];
+  return { ...state, postSeal: { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...dispatches, { kind: warning, seq: event.seq }] } } };
 }
 function payloadOf(message) {
   let payload;
@@ -26304,9 +26603,10 @@ var isCarrierState = (value) => isObject8(value) && isSeq5(value.seq) && Number.
 var isAfterState = (value) => isObject8(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.stock) && orNull2(Number.isFinite)(value.miss);
 var isHandoffState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.time) && (value.type === "load" || value.type === "continue") && isText5(value.token) && orNull2(isSeq5)(value.handoffId) && orNull2(Number.isFinite)(value.createdAt) && isSeq5(value.epoch) && orNull2(isSeq5)(value.kept) && isSeq5(value.skills) && orNull2(isSeq5)(value.lineage) && orNull2(isSeq5)(value.read) && orNull2(isSeq5)(value.readSeq) && orNull2(isSeq5)(value.followSeq) && orNull2(Number.isFinite)(value.before) && orNull2(isAfterState)(value.after) && orNull2(isSeq5)(value.tailCalls);
 var isWarningsBySeq = (value) => isObject8(value) && Object.entries(value).every(([seq, warnings]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(warnings) && warnings.length > 0 && warnings.every(isText5));
-var isAttemptState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.startedAt) && isRange(value.range) && isText5(value.input) && orNull2(isCallState)(value.call) && orNull2(isEndState)(value.end) && orNull2(isCarrierState)(value.carrier) && orNull2(Number.isFinite)(value.before) && (value.estimatedBefore === void 0 || Number.isFinite(value.estimatedBefore)) && orNull2(isQuote)(value.quote) && isSeq5(value.epoch) && (value.slotWarnings === void 0 || isWarningsBySeq(value.slotWarnings));
+var isDispatchesBySeq = (value) => isObject8(value) && Object.entries(value).every(([seq, dispatches]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(dispatches) && dispatches.length > 0 && dispatches.every((dispatch) => isObject8(dispatch) && isText5(dispatch.kind) && isSeq5(dispatch.seq)));
+var isAttemptState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.startedAt) && isRange(value.range) && isText5(value.input) && orNull2(isCallState)(value.call) && orNull2(isEndState)(value.end) && orNull2(isCarrierState)(value.carrier) && orNull2(Number.isFinite)(value.before) && (value.estimatedBefore === void 0 || Number.isFinite(value.estimatedBefore)) && orNull2(isQuote)(value.quote) && isSeq5(value.epoch) && (value.slotWarnings === void 0 || isWarningsBySeq(value.slotWarnings)) && (value.slotDispatches === void 0 || isDispatchesBySeq(value.slotDispatches));
 var isPostSealRequest = orNull2((value) => isObject8(value) && isSeq5(value.seq) && isSeq5(value.turn) && isSeq5(value.step) && isSeq5(value.count) && typeof value.first === "boolean");
-var isPostSeal = orNull2((value) => isObject8(value) && typeof value.first === "boolean" && isPostSealRequest(value.request) && isWarningsBySeq(value.pending));
+var isPostSeal = orNull2((value) => isObject8(value) && typeof value.first === "boolean" && isPostSealRequest(value.request) && isDispatchesBySeq(value.pending));
 var stateSchema2 = {
   parse(value) {
     if (!isObject8(value) || !Array.isArray(value.attempts) || !value.attempts.every(isAttemptState) || !orNull2(isUsageState)(value.lastMainUsage) || !isSourceFacts(value.source) || !Array.isArray(value.handoffs) || !value.handoffs.every(isHandoffState) || !orNull2(isText5)(value.lastCheckpointToken) || !isSeq5(value.lastCheckpointCalls) || !isSeq5(value.openCalls) || !orNull2(Number.isFinite)(value.settlementBefore) || !isPostSeal(value.postSeal) || !orNull2(isText5)(value.sessionId) || !Array.isArray(value.verbatimSeqs) || !value.verbatimSeqs.every(isSeq5)) {
@@ -26338,7 +26638,7 @@ function innerMonitorProjection(kit) {
   };
   return {
     key: MONITOR_PROJECTION_KEY,
-    stateVersion: 16,
+    stateVersion: 18,
     stateSchema: stateSchema2,
     init: (header) => ({ attempts: [], lastMainUsage: null, settlementBefore: null, source: initialSourceFacts(), handoffs: [], lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: header?.id ?? null }),
     apply(state, event) {
@@ -26535,12 +26835,13 @@ function committedOf(attempt, log, kit) {
   const { slots } = carrierAt(log, attempt.carrier.seq).data.source;
   return { slots, range: new Set(recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit).range) };
 }
-function placeOf(slot, log) {
+function placeOf2(slot, log) {
   const events = slot.seqs.map((seq) => loggedEvent(log, seq));
   const step = events.map((event) => eventFactOf(event).step).find((counted) => counted !== null) ?? null;
   return { key: slot.seqs[0], seqs: slot.seqs, turn: step?.turn ?? null, step: step?.step ?? null, source: slotSourceOf(events[0]), events };
 }
 var NOT_COMMITTED = Object.freeze({ kind: "not_committed" });
+var NOT_TARGET = Object.freeze({ kind: "not_target" });
 function handoffOf(state, id) {
   const handoff = state.handoffs.find((each) => each.id === id);
   if (handoff === void 0) throw new Error(`the inner monitor holds no handoff ${id}`);
@@ -26551,32 +26852,65 @@ function clearingOf(state, id) {
   if (handoff.type !== "continue") throw new Error(`the handoff ${id} is no /sw-continue clear`);
   return handoff;
 }
-function settlementEvidenceOf(state, log, sessionId, segment, tailCalls) {
-  const attempts = state.attempts.filter((attempt) => attempt.epoch === segment && attempt.carrier !== null);
-  const postByAttempt = new Map(attempts.map((attempt) => [attempt.id, afterOf(state.source, attempt)?.seq]));
-  const posts = new Set(postByAttempt.values());
-  const calls = [];
+var atCut = (attempt, cut) => ({
+  ...attempt,
+  call: attempt.call !== null && attempt.call.seq <= cut ? attempt.call : null,
+  end: attempt.end !== null && attempt.end.seq <= cut ? attempt.end : null,
+  carrier: attempt.carrier !== null && attempt.carrier.seq <= cut ? attempt.carrier : null
+});
+var pricingOf = (state, segment, kit, cut) => rowsOf2({
+  ...state,
+  attempts: state.attempts.filter((attempt) => attempt.epoch === segment && attempt.id <= cut).map((attempt) => atCut(attempt, cut))
+}, [], kit).map(({ id, status, epoch, contextChange, estimatedBefore, call, stepN, cRatio }) => ({ id, status, epoch, contextChange, estimatedBefore, call: { usage: call.usage }, stepN, cRatio }));
+function segmentEventsOf(log, segment, through) {
   const events = [];
   let epoch = 0;
+  for (const event of log.values()) {
+    if (startsEpoch(foldInputOf(event))) epoch += 1;
+    if (epoch > segment || event.seq > through) break;
+    if (epoch === segment) events.push(event);
+  }
+  return events;
+}
+function settlementEvidenceOf(state, log, sessionId, segment, kit, { tailCalls, through = Number.POSITIVE_INFINITY } = {}) {
+  const events = segmentEventsOf(log, segment, through);
+  const cut = events.at(-1)?.seq ?? -1;
+  const attempts = state.attempts.filter((attempt) => attempt.epoch === segment && attempt.carrier !== null && attempt.carrier.seq <= cut);
+  const postByAttempt = new Map(attempts.map((attempt) => {
+    const seq = afterOf(state.source, attempt)?.seq;
+    return [attempt.id, seq <= cut ? seq : void 0];
+  }));
+  const posts = new Set(postByAttempt.values());
+  const calls = [];
   let pendingPost = false;
   let countedTail = 0;
   const lastCarrier = attempts.at(-1)?.carrier.seq ?? -1;
-  for (const event of log.values()) {
-    if (startsEpoch(foldInputOf(event))) epoch += 1;
-    if (epoch > segment) break;
-    if (epoch !== segment) continue;
-    events.push(event);
+  for (const event of events) {
     if (isCarrier2(event)) pendingPost = false;
     if (!isMainCall(event)) continue;
-    if (tailCalls === void 0 && event.seq > lastCarrier) countedTail = callsAfter(countedTail, event);
+    if (event.seq > lastCarrier) countedTail = callsAfter(countedTail, event);
     pendingPost ||= posts.has(event.seq);
     if (isSettlementNoise(event)) continue;
     const usage = callUsageOf(event.data?.usage);
     calls.push({ seq: event.seq, stock: usage === null ? null : stockOf(usage), post: pendingPost });
     pendingPost = false;
   }
-  const recall = settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls: tailCalls ?? countedTail, sessionId, isNoise: isSettlementNoise });
-  return { calls, ...recall === void 0 ? {} : { recall }, ...tailCalls === void 0 ? { tailCalls: countedTail } : {} };
+  const tail = tailCalls ?? countedTail;
+  const { recall, activity } = settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls: tail, sessionId, isNoise: isSettlementNoise });
+  return {
+    epoch: segment + 1,
+    attempts: pricingOf(state, segment, kit, cut),
+    tailCalls: tail,
+    calls,
+    cut: { segment, through: cut },
+    ...recall === void 0 ? {} : { recall },
+    ...activity === void 0 ? {} : { activity }
+  };
+}
+function plainTextOf(event) {
+  const content = (event.data?.message ?? event.data)?.content;
+  const text = Array.isArray(content) ? content.filter((block) => block?.type === "text" && isText5(block.text)).map((block) => block.text).join("") : "";
+  return text === "" ? null : text;
 }
 function filesOf(message) {
   if (carriesEvidence(message.source)) return (carriedEvidence(message.source)?.files ?? []).map(({ path: path3, total, state, runs }) => ({ path: path3, total: state === "empty" ? 0 : total, runs }));
@@ -26635,15 +26969,19 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
       const facts = await factsOf(sessionId);
       if (facts === void 0) return void 0;
       const handoff = clearingOf(facts.state, id);
-      return settlementEvidenceOf(facts.state, await facts.log(), sessionId, handoff.epoch - 1, handoff.tailCalls);
+      return settlementEvidenceOf(facts.state, await facts.log(), sessionId, handoff.epoch - 1, kit, { tailCalls: handoff.tailCalls });
     },
     async currentSettlement(sessionId) {
       const snapshot = await readStored(sessionId);
       if (snapshot === void 0) return void 0;
-      const { state } = snapshot;
-      const segment = state.source.epoch;
-      const attempts = rowsOf2({ ...state, attempts: state.attempts.filter((attempt) => attempt.epoch === segment) }, [], kit).map(({ id, status, epoch, contextChange, estimatedBefore, call, stepN, cRatio }) => ({ id, status, epoch, contextChange, estimatedBefore, call: { usage: call.usage }, stepN, cRatio }));
-      return { epoch: segment + 1, attempts, ...settlementEvidenceOf(state, logOf(snapshot), sessionId, segment) };
+      return settlementEvidenceOf(snapshot.state, logOf(snapshot), sessionId, snapshot.state.source.epoch, kit);
+    },
+    async settlementTarget(sessionId, { segment, through, seq }) {
+      const snapshot = await readStored(sessionId);
+      if (snapshot === void 0) return void 0;
+      const log = logOf(snapshot);
+      const target = settlementEvidenceOf(snapshot.state, log, sessionId, segment, kit, { through }).activity?.targets.find((each) => each.seq === seq);
+      return target === void 0 ? NOT_TARGET : { seq, type: target.type, text: plainTextOf(log.get(seq)) };
     },
     async call(sessionId, id) {
       const facts = await factsOf(sessionId);
@@ -26661,7 +26999,7 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
       const { slots, range } = committedOf(attempt, log, kit);
       return {
         slots: slots.map((slot) => {
-          const { events, seqs, ...place } = placeOf(slot, log);
+          const { events, seqs, ...place } = placeOf2(slot, log);
           const seen = events.filter((event) => range.has(event.seq));
           const joined = (texts) => texts.filter((text) => text !== "").join("\n");
           return { ...place, input: bounded(joined(seen.map(eventPreviewText))), inputDisplay: bounded(joined(seen.map(eventDisplayText))), output: slot.text };
@@ -26678,8 +27016,16 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
       const at = slots.findIndex((each) => each.seqs[0] === key);
       if (at < 0) throw new Error(`the carrier of attempt ${id} holds no slot ${key}`);
       const slot = slots[at];
-      const { events, ...place } = placeOf(slot, log);
-      return { ...place, number: at + 1, c: slot.text, events: events.map((event) => sourceEventView(event, { visible: range.has(event.seq) })) };
+      const { events, ...place } = placeOf2(slot, log);
+      const tools = slotToolsOf({
+        events,
+        range,
+        log,
+        kinds: attempt.slotWarnings?.[key] ?? [],
+        dispatches: attempt.slotDispatches?.[key] ?? [],
+        oldReads: oldReadsOf(slot)
+      });
+      return { ...place, number: at + 1, c: slot.text, events: events.map((event) => sourceEventView(event, { visible: range.has(event.seq) })), tools };
     }
   };
 }

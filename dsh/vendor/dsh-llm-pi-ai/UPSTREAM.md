@@ -5,7 +5,7 @@ A temporary copy of the bootstrap of the DeepSeek Harness plugin `@deepseek-ai/d
 ## Source
 
 - Repository `deepseek-harness`, commit `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`, package version `0.2.2-rc.1`, path `packages/llm/llm-pi-ai/src/`.
-- License: MIT, `LICENSE` here is the repository's copy. The package ships `dist/` only, so the `pi-ai-index.js` build step in `scripts/build.js` carries this file's text into `dsh/dist/pi-ai-index.js`.
+- License: MIT, `LICENSE` here is the repository's copy. The package ships `dist/` only, so the `pi-ai-index.js` build step in `scripts/build.js` carries this file's text into `dsh/dist/pi-ai-index.js`, which the build mirrors as `dsh/carrier-cache/dist/pi-ai-index.js`: the companion bundle package ships the same compiled file, so the notice reaches both packages.
 - Local tests ran against the checkout's installed `@earendil-works/pi-ai` `1.3.0`, its pnpm-patched build, and that checkout's built libraries; the vendored `provider-data.generated.ts` is the snapshot that commit generated for that SDK.
 
 ## Scope
@@ -24,10 +24,10 @@ Each delta is a place where `src/` differs from the commit above; nothing else d
 
 ## Updating
 
-Copy the files again from the new commit, re-apply each local delta above, and run `test/dsh.pi-ai-carrier-cache.test.js` with `SW_DSH_CHECKOUT` set to that checkout. A change to `PiAiAdapterOptions` or to what `resolveProfiles` returns is what breaks the bootstrap.
+Copy the files again from the new commit, re-apply each local delta above, and run `test/dsh.pi-ai-carrier-cache.test.js` with `SW_DSH_CHECKOUT` set to that checkout. A change to `PiAiAdapterOptions` or to what `resolveProfiles` returns is what breaks the bootstrap. A change of the compiled adapter artifact, whatever source it comes from, calls for a version review of `dsh/carrier-cache/package.json` (the bundle's `./pi-ai` export carries the artifact, and an installed bundle updates only to a newer version); a change of the packages the entry imports calls for the bundle's `peerDependencies` to follow them.
 
 ## Removing
 
-Delete this directory, `dsh/src/pi-ai-index.js`, the `PI_AI_SERVICE` side of `dsh/src/pi-ai-integration.js`, `dsh/src/carrier-cache.js`, the host's read of `PI_AI_SERVICE` and its `pi-ai/status` endpoint, the Settings page's failure notice, the `./pi-ai` export and the optional peers it added in `dsh/package.json`, and the `pi-ai-index.js` build step in `scripts/build.js`. The carrier cache switch (`dsh/src/carrier-cache-switch.js`, its `carrier-cache/*` endpoints and the Settings row) takes the original adapter's routes over for this entry, so it goes with it. A profile that mounted the entry turns the original `llm-pi-ai` row on again first.
+Delete this directory, `dsh/src/pi-ai-index.js`, the `PI_AI_SERVICE` side of `dsh/src/pi-ai-integration.js`, `dsh/src/carrier-cache.js`, the host's read of `PI_AI_SERVICE` and its `pi-ai/status` endpoint, the Settings page's failure notice, the `./pi-ai` export and the optional peers it added in `dsh/package.json`, the `./pi-ai` export, `dist/` and peers of `dsh/carrier-cache/package.json`, and the `pi-ai-index.js` build step in `scripts/build.js` with its mirror into `dsh/carrier-cache/dist/`. The carrier cache switch (`dsh/src/carrier-cache-switch.js`, its `carrier-cache/*` endpoints and the Settings row) takes the original adapter's routes over for this entry, so it goes with it. A profile that mounted the entry turns the original `llm-pi-ai` row on again first.
 
 Kept: the carrier point writers (`lib/llm-adapter/`, which import no SW, DSH or pi-ai module), the per-request carrier evidence (`dsh/src/carrier-evidence.js`, `CARRIER_EVIDENCE_SERVICE` and the call record's `carrierCache` field in `lib/inner-seal/call-record.js` with the drawer's row) and the Responses breakpoint setting (the `carrierResponsesBreakpoint` field of the plugin's Config, its Settings row and `CARRIER_SETTINGS_SERVICE`). A replacement entry has to call the writer on the request-sending path, ask `CARRIER_SETTINGS_SERVICE` for the Responses switch at each request, and report each result through `CARRIER_EVIDENCE_SERVICE` inside the summary request's scope; one that never asks sends no Responses breakpoint.

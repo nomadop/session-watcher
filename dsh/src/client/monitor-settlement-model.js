@@ -1,8 +1,8 @@
-// dsh/src/client/monitor-settlement-model.js — the payback page's texts, plot rows, appendix, cumulative net geometry and view state.
+// dsh/src/client/monitor-settlement-model.js — the payback page's texts, the share of pure recall steps, plot rows, appendix, cumulative net geometry and view state.
 import { NOT_AVAILABLE } from './monitor-state.js';
 import { compactCount } from './monitor-files-model.js';
 import { settlementFigures, settlementMetaParts, signedText } from './monitor-model.js';
-import { paybackCurveOf, settlementWithRecall } from '../../../public/lib/compactionEconomics.js';
+import { settlementViewOf, shareOf } from './monitor-recall-model.js';
 import { formatTokenCount } from '../../../public/lib/format.js';
 
 const PERCENT = 100;
@@ -136,14 +136,23 @@ function formulaRowsOf(base, { saved, cost, recall }, t, format) {
   return rows;
 }
 
-/** Builds the historical payback page from the base settlement and its optional recall evidence. */
-export function settlementPageOf(base, t, evidence) {
-  const report = settlementWithRecall(base, evidence);
-  return paybackModelOf(base, report, paybackCurveOf(report), t);
+/** The payback page over the list's settlement `listed` (none for the current segment) and the answer `result` of its settlement read; see `paybackPageOf`. */
+export function settlementPageOf(listed, t, result = null) {
+  return paybackPageOf(settlementViewOf(listed, result), t);
 }
 
-/** Formats the payback figures without repricing the settlement. */
-export function paybackModelOf(base, settlement, curve, t, current = false) {
+/**
+ * The payback page of a settlement `view` (`settlementViewOf`): the one the closed and the current drawer both draw. Only an adjusted report has figures; any other view has `{ adjusted: false, evidence, priced, share }`, the status and the share of pure recall steps, which rests on the evidence of the steps and not on the figures.
+ */
+export function paybackPageOf(view, t, current = false) {
+  if (!view.adjusted) return { adjusted: false, evidence: view.evidence, priced: view.priced, share: shareOf(view.evidence) };
+  return paybackModelOf(view.base, view.report, view.curve, t, current, view.evidence);
+}
+
+/**
+ * Formats the adjusted payback figures without repricing the settlement, `adjusted` and `priced` true. `evidence` is `evidenceOf`'s ready one, with it the share of pure recall steps the page gives (`share`, null unless the evidence proves it, shown as a dash where the evidence is there and the share is not).
+ */
+export function paybackModelOf(base, settlement, curve, t, current, evidence) {
   const { steps, net, lowest, below, medianNeeded } = curve;
   const { recall } = settlement;
   const equations = formulaRowsOf(base, settlement, t, formatTokenCount);
@@ -152,9 +161,13 @@ export function paybackModelOf(base, settlement, curve, t, current = false) {
     return `${left} ${left === wholeLeft && right === wholeRight ? sign : '≈'} ${right}`;
   });
   return {
+    adjusted: true,
+    priced: true,
     epoch: settlement.epoch,
     curve,
     current,
+    evidence,
+    share: shareOf(evidence),
     header: settlementMetaParts(settlement, t, compactTokens).map(({ text }) => text),
     recallPartial: recall?.partial,
     facts: [

@@ -1,6 +1,4 @@
 // dsh/src/client/monitor-store.js — per-session access to the monitor's live rows, detail resources and on-demand settlement.
-import { paybackCurveOf, settlementForSegment, settlementWithRecall } from '../../../public/lib/compactionEconomics.js';
-
 /** The statuses of an attempt still in progress, whose detail moves with its stream. */
 export const ACTIVE_STATUSES = ['generating', 'validating'];
 
@@ -27,16 +25,14 @@ function foldRows(reply) {
 
 const foldResource = reply => fold(reply, value => ({ kind: 'ready', value }));
 
+// The answer whole, which both drawers read alike (`settlementViewOf`); one that lacks what a drawer prices and draws from is unreachable like a rejection.
 function foldCurrentSettlement(reply) {
   return fold(reply, (value) => {
-    const { epoch, tailCalls, attempts, calls, recall } = value ?? {};
+    const { epoch, tailCalls, attempts, calls } = value ?? {};
     if (!Number.isSafeInteger(epoch) || epoch < 1 || !Number.isSafeInteger(tailCalls) || tailCalls < 0 || !Array.isArray(attempts) || !Array.isArray(calls)) {
       throw new Error('the inner monitor answered an incomplete settlement snapshot');
     }
-    const base = settlementForSegment(attempts, { epoch, tailCalls });
-    const report = base.rows.some(row => row.saved !== null) ? settlementWithRecall(base, recall) : null;
-    const curve = report === null ? null : paybackCurveOf(report);
-    return { kind: 'ready', value: { snapshot: { kind: 'ready', value: { calls } }, base, report, curve } };
+    return { kind: 'ready', value };
   });
 }
 
@@ -86,10 +82,41 @@ function createReadLoop({ pull, apply, repeat }) {
 }
 
 /**
+ * The reader of the text of the targets a settlement shows, over `read(seq)`, which answers a result and never rejects. It reads nothing until a target is chosen and one read for each choice: a choice made while another is read and a choice of nothing leave the answer of a read no longer wanted nowhere. `state` is `{ selected, result }`, the chosen seq or null and its read as a resource result, null while it is read; the object is replaced at each change, which `subscribe(listener)` calls back and answers the unsubscribe of. It is the page's own, kept nowhere else: another cut or another session is another reader, which an answer of this one never reaches, and a page that is gone leaves it with no listener.
+ */
+function createTargetReader(read) {
+  let state = { selected: null, result: null };
+  let turn = 0;
+  const listeners = new Set();
+  const move = (next) => {
+    state = next;
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    get state() { return state; },
+    select(seq) {
+      if (seq === state.selected) return;
+      turn += 1;
+      const mine = turn;
+      move({ selected: seq, result: null });
+      if (seq === null) return;
+      void read(seq).then((result) => {
+        if (mine === turn) move({ selected: seq, result });
+      });
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  };
+}
+
+/**
  * One store per session over `call(endpoint, payload)`, the channel-bound RPC call: it carries the session in `payload`, answers the channel's `{ ok: true, value }` or `{ ok: false, error }` and rejects on a transport failure.
- * `stores.for(id)` creates a session's store on first use and answers its `{ rows, resource, readCurrentSettlement }` after; stores are never dropped. `stores.signal(id)` signals an existing store and ignores an unknown id; `stores.openAll()` signals every store. No timer runs.
+ * `stores.for(id)` creates a session's store on first use and answers its `{ rows, resource, readCurrentSettlement, settlementTarget }` after; stores are never dropped. `stores.signal(id)` signals an existing store and ignores an unknown id; `stores.openAll()` signals every store. No timer runs.
  *
- * `readCurrentSettlement()` returns the prepared settlement snapshot or a read failure without retaining it in the store or subscribing to updates.
+ * `readCurrentSettlement()` returns the current segment's settlement answer whole or a read failure without retaining it in the store or subscribing to updates.
+ * `settlementTarget({ segment, through })` is a new target reader (`createTargetReader`) for the cut a settlement answer named, over `inner-monitor/settlement/target`; the store keeps none.
  * `rows.result` is null before the first read, then as the last read of `inner-monitor` answered: `{ kind: 'ready', attempts, handoffs }`, `{ kind: 'unavailable' }` for `inner_monitor_unavailable`, or `{ kind: 'unreachable', message }` for any other failure, a rejection or an answer without an attempts list; only a read sets it.
  * A store's signal is ignored without a listener on its session, rows or resource; otherwise it reads the rows at once or, with a read in flight, marks one more read after it, so signals that arrive meanwhile cost one read. `subscribe(listener)` signals and answers the unsubscribe; it never calls `listener` synchronously, so a new subscriber reads `result` first. The listener hears each completed read.
  *
@@ -189,6 +216,9 @@ export function createMonitorStores({ call }) {
         },
         readCurrentSettlement() {
           return settle(() => call('inner-monitor/settlement/current', { sessionId }), foldCurrentSettlement);
+        },
+        settlementTarget({ segment, through }) {
+          return createTargetReader(seq => settle(() => call('inner-monitor/settlement/target', { sessionId, segment, through, seq }), foldResource));
         },
         resource({ endpoint, attempt, handoff, slot }) {
           const identity = JSON.stringify([endpoint, attempt ?? handoff, slot ?? null]);

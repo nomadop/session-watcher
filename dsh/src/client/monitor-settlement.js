@@ -1,4 +1,4 @@
-// dsh/src/client/monitor-settlement.js — the settlement drawer's payback page: summary, cumulative net curve, per-seal payback plots and folded appendix.
+// dsh/src/client/monitor-settlement.js — the settlement drawer's payback page: for an adjusted report its summary, share of pure recall steps, cumulative net curve, per-seal payback plots and folded appendix, otherwise its status and the share alone.
 import React from 'react';
 import { RecallNotice, useSettlementResult } from './monitor-handle.js';
 import { PART_SEPARATOR } from './monitor-state.js';
@@ -121,13 +121,19 @@ function Appendix({ appendix: { equations, head, rows }, t }) {
 
 /**
  * The payback page over a `model` (`settlementPageOf`) under the view `state` of `reducePayback` and its `dispatch`, the chart `width` it draws at and the `chartRef` of the element that measures it, the unit line pinned at its foot.
+ * A model that is not adjusted has no figures: the page is its status (`notice`) and the share of pure recall steps where the evidence gives one.
  * It is a function of its props: the page that holds the state and measures the width is `PaybackPage`.
  */
 export function PaybackView({ model, state, dispatch, width, chartRef, notice, t }) {
+  const share = model.evidence.state !== 'ready' ? null : h('p', { className: 'sw-pb-share' }, model.share === null
+    ? t('monitor.payback.share.none')
+    : t('monitor.payback.share', { percent: model.share.percent, pure: model.share.pure, judged: model.share.judged }));
+  if (!model.adjusted) return h('div', { className: 'sw-pb' }, notice, share);
   const geometry = curveGeometryOf(model.curve, width, model.chart.clippable && !state.full, t, model.current);
   return h('div', { className: 'sw-pb' },
     h('p', { className: 'sw-pb-head' }, model.header.map((text, at) => h('span', { key: at }, at < model.header.length - 1 ? `${text}${PART_SEPARATOR.trimEnd()}` : text))),
     notice,
+    share,
     h('div', { className: 'sw-pb-facts' }, model.facts.map((text, at) => h('p', { key: at }, text))),
     h(Curve, { model, geometry, state, dispatch, chartRef, t }),
     h(Rows, { model, state, dispatch, t }),
@@ -136,17 +142,16 @@ export function PaybackView({ model, state, dispatch, width, chartRef, notice, t
 }
 
 /**
- * The payback page reads recall evidence from the same closed-segment resource as the context page. Only the report applies it to the base settlement.
+ * The payback page reads the same answer as the context page from the closed segment's settlement resource and prices from it (`settlementViewOf`); the list's settlement stands only where the answer holds no pricing inputs, and only an adjusted report has figures.
  */
 export function PaybackPage({ settlement, monitor, handoffId, t }) {
   const result = useSettlementResult(monitor, handoffId);
-  const model = settlementPageOf(settlement, t, result?.kind === 'ready' ? result.value.recall : undefined);
-  return h(PaybackReport, { model, result, t });
+  return h(PaybackReport, { model: settlementPageOf(settlement, t, result), t });
 }
 
-export function PaybackReport({ model, result, t }) {
+export function PaybackReport({ model, t }) {
   const [state, dispatch] = React.useReducer(reducePayback, undefined, createPaybackState);
   const [chartRef, width] = useElementWidth();
-  const notice = h(RecallNotice, { result, partial: model.recallPartial, pending: true, t });
+  const notice = h(RecallNotice, { evidence: model.evidence, partial: model.recallPartial, priced: model.priced, pending: true, t });
   return h(PaybackView, { model, state, dispatch, width, chartRef, notice, t });
 }

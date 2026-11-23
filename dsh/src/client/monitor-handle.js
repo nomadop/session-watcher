@@ -17,7 +17,12 @@ export function Notice({ state, children }) {
   return h('p', { className: 'sw-mon-notice', 'data-sw-monitor-notice': state, role: 'status' }, children);
 }
 
-export function RecallNotice({ result, partial, pending = false, t }) {
-  const state = result === null ? (pending ? 'pending' : null) : result.kind !== 'ready' ? 'unavailable' : partial ? 'partial' : null;
+/**
+ * The short status of the recall evidence under a page: while it is read (where `pending`), when the adjusted settlement is not to be had (the read failed, or the host gives no recall activity), when the answer prices no compaction (`priced` false), and when an adjusted report holds steps it could not price. An adjusted report with every step priced says nothing.
+ * `evidence` is `evidenceOf`'s.
+ */
+export function RecallNotice({ evidence, partial, priced = true, pending = false, t }) {
+  const state = evidence.state === 'pending' ? (pending ? 'pending' : null)
+    : evidence.state !== 'ready' ? 'unavailable' : !priced ? 'unpriced' : partial ? 'partial' : null;
   return state === null ? null : h(Notice, { state: `recall-${state}` }, t(`monitor.settlement.recall.${state}`));
 }

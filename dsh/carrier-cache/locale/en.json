@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Watcher carrier cache",
-    "description": "Turns the stock llm-pi-ai row off and mounts Session Watcher's pi-ai adapter entry in its place, which adds a cache point at the end of the last inner-compaction carrier. Needs @nomadop/session-watcher-dsh in the same profile."
+    "description": "Turns the stock llm-pi-ai row off and mounts Session Watcher's carrier cache adapter in its place, which adds a cache point at the end of the last inner-compaction carrier. The adapter is carried by this package; Session Watcher's Settings page is where it is shown and switched."
   }
 }

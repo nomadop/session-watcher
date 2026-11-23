@@ -411,7 +411,7 @@ test('the revision is the greatest seq of the start, call, end and carrier facts
 test('the projection is keyed session-watcher/inner-monitor, versioned, and starts from a new empty state each time', { skip }, () => {
   assert.equal(projection.key, 'session-watcher/inner-monitor');
   assert.equal(MONITOR_PROJECTION_KEY, projection.key);
-  assert.equal(projection.stateVersion, 16, 'the version of the state that holds injected text sources');
+  assert.equal(projection.stateVersion, 18, 'the version of the state that keeps the dispatches a slot warns of');
   assert.deepEqual(projection.init(), { attempts: [], handoffs: [], lastMainUsage: null, settlementBefore: null, lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: null, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
   assert.notEqual(projection.init(), projection.init());
 });
@@ -510,6 +510,40 @@ test('recall warnings follow the slot that seals the call, not the prior seal or
     [local[0].seq]: ['verbatim-recall'],
     [direct[0].seq]: ['handoff-recall', 'carrier-recall'],
   }, undefined, undefined], 'a later carrier does not hide an earlier carrier’s verbatim text in the same epoch');
+});
+
+// A seal over `steps` whose slot at each index of `reads` holds the old reads of it, as the seal keeps them.
+function sealWithOldReads(steps, reads) {
+  const seal = sealSteps(...steps);
+  const carrier = seal.at(-1);
+  reads.forEach((value, at) => { if (value !== undefined) carrier.data.source.slots[at].oldReads = value; });
+  return seal;
+}
+
+const resultStep = (id, step) => [...dispatchedStep([{ id, name: 'read' }], { step }), toolResult({ callId: id, step, text: 'result' })];
+const hitAt = (event, toolUseId, oldLines = 19, newLines = 1) => ({ toolUseId, seq: event.seq, oldLines, newLines });
+
+test('a slot whose carrier holds old reads has one old-attribution warning however many it holds, beside the direct-read warnings of the same slot, and a carrier without the field or with one that does not read as reads has none', { skip }, async () => {
+  const first = [resultStep('a', 1), resultStep('b', 2)];
+  const firstHits = [[hitAt(first[0][2], '1:1:a'), hitAt(first[0][2], '1:1:a-again', 1, 5)], [{ toolUseId: 7, seq: first[1][2].seq, oldLines: 1, newLines: 0 }]];
+  const sealed = sealWithOldReads(first, firstHits);
+  const recall = dispatchedStep([{ id: 'peek', name: 'sw_event_read', arguments: JSON.stringify({ seq: sealed.at(-1).seq }) }], { step: 3 });
+  const second = [recall, resultStep('c', 4), resultStep('d', 5), resultStep('e', 6), resultStep('f', 7)];
+  const secondSeal = sealWithOldReads(second, [undefined, [hitAt(second[1][2], '1:4:c')], undefined, [], 'old']);
+  const { access, id, reads } = detailsOver([...first.flat(), ...sealed, ...recall, ...second.slice(1).flat(), ...secondSeal]);
+  const { attempts } = await access.rows(id);
+  assert.deepEqual(reads, [], 'listing warnings needs no detail or full-log read');
+  assert.deepEqual(attempts.map(row => row.slotWarnings), [
+    { [first[0][0].seq]: ['old-attribution'] },
+    { [recall[0].seq]: ['carrier-recall'], [second[1][0].seq]: ['old-attribution'] },
+  ], 'the first carrier of an epoch, a slot of several reads and a slot that holds a direct-read warning and old reads');
+});
+
+test('the folded warnings are the carrier\'s own record of what the seal committed: a hit below any threshold still warns', { skip }, async () => {
+  const steps = [resultStep('a', 1)];
+  const sealed = sealWithOldReads(steps, [[hitAt(steps[0][2], '1:1:a', 1, 40)]]);
+  const { access, id } = detailsOver([...steps.flat(), ...sealed]);
+  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [{ [steps[0][0].seq]: ['old-attribution'] }]);
 });
 
 test('a read by the native tool name warns the slot that seals it as the DSH tool name does, for a verbatim, a carrier and a handoff target', { skip }, async () => {
@@ -1808,4 +1842,309 @@ test('a state persisted before the evidence existed seeds a fold that reads it, 
   const damaged = structuredClone(withEvidence);
   damaged.attempts[0].call.carrierCache = { results: [{}], omitted: 0 };
   assert.throws(() => projection.stateSchema.parse(damaged));
+});
+
+// ── The tools of a slot ──────────────────────────────────────────────────────────────────────────────────
+
+// The log of `steps` (each the events of one counted step slot, the dispatch records among them) sealed by one carrier, `lead` before them, with the detail of the slot that opens at `key`.
+async function toolsOver(steps, { lead = [], seal = sealSteps(...steps), key = steps[0][0].seq } = {}) {
+  const { access, id, reads } = detailsOver([...lead, ...steps.flat(), ...seal]);
+  return { access, id, reads, start: seal[0], seal, detail: await access.slot(id, seal[0].seq, key) };
+}
+
+const readCall = (id, path) => ({ id, name: 'read', arguments: JSON.stringify({ file_path: path }) });
+const cardsOf = detail => detail.tools.calls.map(({ id, name, input, result }) => [id, name, input, result?.seq ?? null]);
+
+test('a slot\'s tools are one card per structured tool call in the assistant\'s block order, each paired by the turn- and step-qualified call identity with its result whatever order the results were written in, and a call with no result and a result with no call stay as cards of their own', { skip }, async () => {
+  const calls = [readCall('r1', 'a.js'), readCall('r2', 'b.js'), { id: 'b1', name: 'bash', arguments: '{"command":"ls"}' }];
+  const [assistant, ...dispatches] = dispatchedStep(calls, { text: 'looking' });
+  const second = toolResult({ callId: 'r2', text: 'file b' });
+  const third = toolResult({ callId: 'b1', text: 'a.js\nb.js' });
+  const stray = toolResult({ callId: 'zz', text: 'a result nobody called' });
+  const { detail, reads, id } = await toolsOver([[assistant, ...dispatches, third, second, stray]]);
+
+  assert.deepEqual(cardsOf(detail), [
+    ['1:1:r1', 'read', calls[0].arguments, null],
+    ['1:1:r2', 'read', calls[1].arguments, second.seq],
+    ['1:1:b1', 'bash', calls[2].arguments, third.seq],
+    ['1:1:zz', null, null, stray.seq],
+  ], 'calls in the order the assistant issued them, the unpaired result after them');
+  assert.deepEqual(detail.tools.calls.map(({ result }) => result && [result.error, result.empty]), [null, [false, false], [false, false], [false, false]]);
+  assert.deepEqual(detail.tools.warnings, []);
+  assert.deepEqual(reads, [id], 'the one read of the log the slot already makes');
+});
+
+test('the tools of a slot pair a result to a call by its turn, step and call id alone: a bare id reused by another step, another turn or another slot is no pairing, and neither side is dropped or guessed', { skip }, async () => {
+  const [assistant, ...dispatches] = dispatchedStep([readCall('x', 'a.js')]);
+  const laterStep = toolResult({ callId: 'x', text: 'the step 2 answer', step: 2 });
+  const otherTurn = toolResult({ callId: 'x', text: 'the turn 2 answer', turn: 2, step: 1 });
+  const elsewhere = toolResult({ callId: 'x', text: 'answers a call of another slot' });
+  const seal = sealSteps([assistant, ...dispatches, laterStep, otherTurn], [elsewhere]);
+  const { access, id } = detailsOver([assistant, ...dispatches, laterStep, otherTurn, elsewhere, ...seal]);
+
+  const [calling, apart] = await Promise.all([assistant.seq, elsewhere.seq].map(key => access.slot(id, seal[0].seq, key)));
+
+  assert.deepEqual(cardsOf(calling), [
+    ['1:1:x', 'read', JSON.stringify({ file_path: 'a.js' }), null],
+    ['1:2:x', null, null, laterStep.seq],
+    ['2:1:x', null, null, otherTurn.seq],
+  ]);
+  assert.deepEqual(cardsOf(apart), [['1:1:x', null, null, elsewhere.seq]], 'no pairing across slots');
+});
+
+test('a result is empty only when its content holds no text and no other block, a failure only when the result says it failed, and a call or a result nobody recorded is neither: the three read apart', { skip }, async () => {
+  const calls = ['none', 'blank', 'fine', 'broke', 'broke-empty', 'image', 'gone'].map(id => readCall(id, `${id}.js`));
+  const [assistant, ...dispatches] = dispatchedStep(calls);
+  const results = [
+    toolResult({ callId: 'none' }),
+    toolResult({ callId: 'blank', text: '' }),
+    toolResult({ callId: 'fine', text: 'ok' }),
+    toolResult({ callId: 'broke', text: 'ENOENT', isError: true }),
+    toolResult({ callId: 'broke-empty', isError: true }),
+    toolResult({ callId: 'image' }),
+  ];
+  results[5].data.message.content = [{ type: 'image', attachment: { name: 'a.png' } }];
+  const { detail } = await toolsOver([[assistant, ...dispatches, ...results]]);
+
+  assert.deepEqual(detail.tools.calls.map(({ id, result }) => [id.slice(4), result === null ? 'unrecorded' : { error: result.error, empty: result.empty }]), [
+    ['none', { error: false, empty: true }],
+    ['blank', { error: false, empty: true }],
+    ['fine', { error: false, empty: false }],
+    ['broke', { error: true, empty: false }],
+    ['broke-empty', { error: true, empty: true }],
+    ['image', { error: false, empty: false }],
+    ['gone', 'unrecorded'],
+  ]);
+});
+
+test('the tools of a slot read structured records only: text that resembles a call or a result, a dispatch record the slot does not cite and a block the reducer refuses make no card, and a slot with none of them has no tools to show', { skip }, async () => {
+  const looks = assistantMessage({ text: 'read {"file_path":"a.js"} then bash {"command":"ls"}' });
+  const quoted = userMessage({ text: 'tool-call read {"file_path":"a.js"}' });
+  const logged = toolCall({ callId: 'only-logged', name: 'read', arguments: '{}', step: 1 });
+  const { detail } = await toolsOver([[looks, quoted, logged]]);
+  assert.deepEqual(detail.tools, { warnings: [], calls: [] });
+
+  const reads = loadReads();
+  assert.deepEqual((await toolsOver([[reads]])).detail.tools, { warnings: [], calls: [] }, 'the calls a handoff load ran are no call of the model');
+
+  const [broken, ...dispatches] = dispatchedStep([readCall('ok', 'a.js'), { id: '', name: 'read', arguments: '{}' }]);
+  const refused = await toolsOver([[broken, ...dispatches]]);
+  assert.deepEqual(refused.detail.tools.calls, [], 'an assistant message the reducer refuses records no call, its raw event stays on the source page');
+  assert.deepEqual(refused.detail.events.map(event => event.seq), [broken.seq]);
+});
+
+// The detail of the slot that opens at `key` over the conversation `conv` sealed as `sealedOver` does, the log being `extra` after the conversation's own events.
+async function conversationSlot(conv, { extra = [], slots = conv.slots, key = conv.first.seq, range } = {}) {
+  const sealed = sealedOver(conv, { slots });
+  const start = range === undefined ? sealed.start : innerAttempt({ range, tail: LONG_PROMPT, request: { headerSeq: conv.header.seq, tools: { count: 1 } } });
+  const call = range === undefined ? sealed.call : innerCall({ range, tail: LONG_PROMPT, stream: answer(SUMMARIES), endedAt: CALL_ENDED_AT, attempt: start.seq });
+  const carrier = range === undefined ? sealed.carrier : innerSealCarrier({ sourceEventSeqs: [call.seq, ...range, conv.original.seq], slots });
+  const { access, id } = detailsOver([conv.header, ...conv.source, ...extra, start, call, ...(range === undefined ? [sealed.prune] : []), carrier]);
+  return access.slot(id, start.seq, key);
+}
+
+test('a result the pruner replaced is one card holding the original alone, the replacement the call saw named beside it by its seq and never a second call or a second copy of the output', { skip }, async () => {
+  const conv = conversation();
+  const detail = await conversationSlot(conv);
+
+  assert.deepEqual(detail.tools.calls, [{
+    id: '1:1:call-1', name: 'read', input: '{"file_path":"a.js"}', result: { seq: conv.original.seq, error: false, empty: false }, pruned: { seq: conv.replacement.seq }, warnings: [],
+  }]);
+  assert.equal(JSON.stringify(detail.tools).includes('file pruned'), false, 'the pruned text is not in the tools');
+  assert.equal(JSON.stringify(detail.tools).includes('the whole file'), false, 'the original text stays in the events, which the card names by seq');
+});
+
+test('a result pruned more than once names the replacement the call saw, found through the sources each replacement cites, and never one in between that the range does not hold', { skip }, async () => {
+  const conv = conversation();
+  const once = prunedResult(conv.original, { text: 'pruned once' });
+  const twice = prunedResult(once, { text: 'pruned twice' });
+  const range = [conv.ask.seq, conv.first.seq, twice.seq, conv.last.seq];
+  const slots = [{ seqs: [conv.first.seq, conv.original.seq, once.seq, twice.seq], text: 'read the file' }];
+  const detail = await conversationSlot(conv, { extra: [once, twice], slots, range });
+
+  assert.deepEqual(detail.events.map(({ seq, visible }) => [seq, visible]), [[conv.first.seq, true], [conv.original.seq, false], [once.seq, false], [twice.seq, true]]);
+  assert.deepEqual(detail.tools.calls.map(({ result, pruned }) => [result.seq, pruned?.seq]), [[conv.original.seq, twice.seq]]);
+});
+
+test('a replacement is named only where its sources and the range confirm it: one that cites another result, one the range does not hold, one with no citation and a card without its original name none, and another event never stands in', { skip }, async () => {
+  const conv = conversation();
+  const other = toolResult({ callId: 'other', text: 'another result' });
+  const strayed = { ...prunedResult(conv.original, { text: 'cites another' }), sourceEventSeqs: [other.seq] };
+  const uncited = prunedResult(conv.original, { text: 'cites nothing' });
+  delete uncited.sourceEventSeqs;
+  const unseen = prunedResult(conv.original, { text: 'outside the range' });
+  const cases = [
+    ['a replacement that cites another result', [strayed], [conv.first.seq, strayed.seq]],
+    ['a replacement with no citation', [uncited], [conv.first.seq, uncited.seq]],
+    ['a replacement the range does not hold', [unseen], [conv.first.seq]],
+  ];
+  for (const [why, extra, range] of cases) {
+    const seqs = [conv.first.seq, conv.original.seq, ...extra.map(event => event.seq)];
+    const detail = await conversationSlot(conv, { extra: [other, ...extra], slots: [{ seqs, text: 'read' }], range });
+    assert.deepEqual(detail.tools.calls.map(({ result, pruned }) => [result.seq, pruned]), [[conv.original.seq, null]], why);
+  }
+
+  const lonely = await conversationSlot(conv, { slots: [{ seqs: [conv.first.seq, conv.replacement.seq], text: 'read' }] });
+  assert.deepEqual(lonely.tools.calls.map(({ result, pruned }) => [result, pruned]), [[null, null]], 'a replacement is no result: the call with only that in its slot has none recorded');
+  const unpruned = await conversationSlot(conv, { slots: [{ seqs: [conv.first.seq, conv.original.seq], text: 'read' }] });
+  assert.deepEqual(unpruned.tools.calls.map(({ result, pruned }) => [result.seq, pruned]), [[conv.original.seq, null]]);
+});
+
+// ── The warnings on the tools of a slot ──────────────────────────────────────────────────────────────────
+
+// The detail of the slot that opens at `step[0]`, which a second seal commits after the first seal `first` and the events `between`.
+async function warnedSlot(step, { first = sealOf(), between = [], more = [], key = step[0].seq } = {}) {
+  const second = sealSteps(step, ...more);
+  const log = [...between, ...eventsOfSeal(first), ...step, ...more.flat(), ...second];
+  const { access, id } = detailsOver(log);
+  return { access, id, second, detail: await access.slot(id, second[0].seq, key) };
+}
+
+const kindsOf = detail => detail.tools.calls.map(({ warnings }) => warnings.map(({ kind }) => kind));
+const recallOf = (id, seq, name = 'sw_event_read') => ({ id, name, arguments: JSON.stringify({ seq }) });
+
+test('the fold keeps the seq of each classified dispatch beside the kinds a slot warns of, the list\'s warnings stay as they were and the state version names the new fold', { skip }, async () => {
+  const first = sealOf();
+  const state = { id: 'git', name: 'bash', arguments: '{"command":"git status"}' };
+  const step = dispatchedStep([state, readCall('r', 'a.js')]);
+  const { second, access, id } = await warnedSlot(step, { first });
+
+  const folded = fold([...eventsOfSeal(first), ...step, ...second]);
+  assert.deepEqual(folded.attempts[1].slotDispatches, { [step[0].seq]: [{ kind: 'state-mixed', seq: step[1].seq }] });
+  assert.deepEqual(folded.attempts[1].slotWarnings, { [step[0].seq]: ['state-mixed'] });
+  assert.deepEqual(projection.stateSchema.parse(structuredClone(folded)), folded);
+  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [undefined, { [step[0].seq]: ['state-mixed'] }]);
+  assert.equal((await access.rows(id)).attempts.some(row => 'slotDispatches' in row), false, 'no dispatch reaches the list');
+  for (const damaged of [{ x: [{ kind: 'state-check', seq: 1 }] }, { 1: [] }, { 1: [{ kind: 1, seq: 1 }] }, { 1: [{ kind: 'state-check', seq: -1 }] }]) {
+    const broken = structuredClone(folded);
+    broken.attempts[1].slotDispatches = damaged;
+    assert.throws(() => projection.stateSchema.parse(broken), JSON.stringify(damaged));
+  }
+});
+
+test('a state warning shows on the call that triggered it in its own short kind, state queries apart from a write, and the page header keeps the step\'s kinds once each, the slot row\'s kinds as they were', { skip }, async () => {
+  const list = { id: 'agents', name: 'list_agents' };
+  const todo = { id: 'todo', name: 'todo_write', arguments: '{"todos":[{"content":"continue","status":"in_progress"}]}' };
+  const step = dispatchedStep([readCall('r', 'a.js'), list, todo, { ...list, id: 'again' }]);
+  const { detail, access, id } = await warnedSlot(step);
+
+  assert.deepEqual(kindsOf(detail), [[], ['state-mixed'], ['state-write'], ['state-mixed']]);
+  assert.deepEqual(detail.tools.warnings, ['state-mixed', 'state-write']);
+  assert.deepEqual((await access.rows(id)).attempts.at(-1).slotWarnings, { [step[0].seq]: ['state-mixed', 'state-write'] });
+
+  const only = dispatchedStep([{ id: 'git', name: 'bash', arguments: '{"command":"git status"}' }]);
+  assert.deepEqual(kindsOf((await warnedSlot(only)).detail), [['state-check']]);
+});
+
+test('a direct read warns on the call that made it and stays beside a failed result, and one occurrence of a kind placed on its card leaves another of the kind that no card holds in the header', { skip }, async () => {
+  const handoff = loadPayload();
+  const first = sealOf();
+  const injected = first.source[0].seq;
+  first.carrier.data.source.verbatimSeqs = [injected];
+  const calls = [recallOf('verbatim', injected), recallOf('carrier', first.carrier.seq, 'session_event_read'), recallOf('handoff', handoff.seq), recallOf('ghost-site', first.carrier.seq), readCall('plain', 'a.js')];
+  const step = dispatchedStep(calls);
+  // The dispatch the fold classified for a call the slot's assistant never issued, and one whose arguments are not the block's own.
+  const ghost = toolCall({ callId: 'ghost', name: 'sw_event_read', arguments: JSON.stringify({ seq: first.carrier.seq }) });
+  const reworded = step.find(event => event.type === 'tool/call' && event.data.callId === 'ghost-site');
+  reworded.data.arguments = ` ${reworded.data.arguments}`;
+  const failed = toolResult({ callId: 'verbatim', text: 'read denied', isError: true });
+  const { detail } = await warnedSlot([...step, ghost, failed], { first, between: [handoff] });
+
+  assert.deepEqual(kindsOf(detail), [['verbatim-recall'], ['carrier-recall'], ['handoff-recall'], [], []]);
+  assert.deepEqual(detail.tools.calls[0].result, { seq: failed.seq, error: true, empty: false }, 'the warning does not turn a failed read into a read');
+  assert.deepEqual(detail.tools.warnings, ['carrier-recall'], 'the occurrences no card holds, once');
+});
+
+test('a slot whose warnings no card of it holds shows them in the page header alone: its assistant message is one the reducer refuses, or it holds no call at all', { skip }, async () => {
+  const first = sealOf();
+  const refused = dispatchedStep([recallOf('peek', first.carrier.seq), { id: '', name: 'read', arguments: '{}' }]);
+  const { detail, access, id } = await warnedSlot(refused, { first });
+  assert.deepEqual(detail.tools, { warnings: ['carrier-recall'], calls: [] });
+  assert.deepEqual((await access.rows(id)).attempts.at(-1).slotWarnings, { [refused[0].seq]: ['carrier-recall'] });
+
+  const plain = await warnedSlot([assistantMessage({ text: 'no call' })], { first });
+  assert.deepEqual(plain.detail.tools, { warnings: [], calls: [] }, 'nothing recorded and nothing warned: no tools to show');
+});
+
+// One slot of one step that issues the calls `ids` (reads) and answers each, sealed with the old reads `hits(results)` builds.
+async function oldReadsSlot(ids, hits, { stepNumber = 1 } = {}) {
+  const [assistant, ...dispatches] = dispatchedStep(ids.map(id => readCall(id, `${id}.js`)), { step: stepNumber });
+  const results = ids.map(id => toolResult({ callId: id, text: `${id} text`, step: stepNumber }));
+  const seal = sealWithOldReads([[assistant, ...dispatches, ...results]], [hits(results)]);
+  const { access, id } = detailsOver([assistant, ...dispatches, ...results, ...seal]);
+  return { detail: await access.slot(id, seal[0].seq, assistant.seq), results, access, id };
+}
+
+test('old reads of a carrier slot match the cards by both the qualified call identity and the original result seq, the card showing the share of the lines it could attribute, and a read matched by neither alone stays in the header', { skip }, async () => {
+  const { detail, results, access, id } = await oldReadsSlot(['a', 'b', 'c'], ([a, b, c]) => [
+    { toolUseId: '1:1:a', seq: a.seq, oldLines: 19, newLines: 1 },
+    { toolUseId: '1:1:b', seq: c.seq, oldLines: 20, newLines: 0 },
+    { toolUseId: '1:2:c', seq: c.seq, oldLines: 20, newLines: 0 },
+    { toolUseId: '1:1:a', seq: a.seq, oldLines: 30, newLines: 0 },
+  ]);
+
+  assert.deepEqual(detail.tools.calls.map(({ warnings }) => warnings), [
+    [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }], [], [],
+  ], 'one display of the kind on a card, whatever the carrier lists for it');
+  assert.deepEqual(detail.tools.warnings, ['old-attribution'], 'the hits that matched no card, once');
+  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [{ [detail.key]: ['old-attribution'] }]);
+  assert.deepEqual(results.map(result => result.seq), detail.tools.calls.map(({ result }) => result.seq));
+
+  const matched = await oldReadsSlot(['a'], ([a]) => [{ toolUseId: '1:1:a', seq: a.seq, oldLines: 3, newLines: 1 }]);
+  assert.deepEqual(matched.detail.tools.warnings, [], 'every hit placed on its card leaves the header without it');
+});
+
+test('the share an old read shows is the share of its determinable lines, rounded down so a hit above the threshold never reads as the threshold or below it, and a total the hit does not state has none', { skip }, async () => {
+  const counts = [[901, 99], [91, 9], [999, 1], [19, 1], [9, 1], [1, 40], [0, 0]];
+  const ids = counts.map((_, at) => `c${at}`);
+  const { detail } = await oldReadsSlot(ids, results => results.map((result, at) => ({ toolUseId: `1:1:c${at}`, seq: result.seq, oldLines: counts[at][0], newLines: counts[at][1] })));
+
+  assert.deepEqual(detail.tools.calls.map(({ warnings }) => [warnings[0].percent, warnings[0].over]), [
+    [90, true], [91, false], [99, false], [95, false], [90, false], [2, false], [null, false],
+  ]);
+});
+
+test('an old read names the original result of a pruned call and never the replacement the summary call saw', { skip }, async () => {
+  const conv = conversation();
+  const hit = seq => ({ toolUseId: '1:1:call-1', seq, oldLines: 19, newLines: 1 });
+  const original = await conversationSlot(conv, { slots: [{ ...conv.slots[1], oldReads: [hit(conv.original.seq)] }] });
+  assert.deepEqual(original.tools.calls.map(({ warnings }) => warnings.map(({ kind }) => kind)), [['old-attribution']]);
+  assert.deepEqual(original.tools.warnings, []);
+  const pruned = await conversationSlot(conv, { slots: [{ ...conv.slots[1], oldReads: [hit(conv.replacement.seq)] }] });
+  assert.deepEqual(pruned.tools.calls.map(({ warnings }) => warnings), [[]], 'a read of pruned text is no read of the original');
+  assert.deepEqual(pruned.tools.warnings, ['old-attribution']);
+});
+
+test('a call id that more than one call or more than one result of the slot carries names no single call, so none of them is paired or guessed at', { skip }, async () => {
+  const [twice, ...dispatches] = dispatchedStep([readCall('dup', 'a.js'), readCall('dup', 'b.js'), readCall('sole', 'c.js')]);
+  const answers = [toolResult({ callId: 'dup', text: 'one' }), toolResult({ callId: 'sole', text: 'first' }), toolResult({ callId: 'sole', text: 'second' })];
+  const { detail } = await toolsOver([[twice, ...dispatches, ...answers]]);
+
+  assert.deepEqual(cardsOf(detail), [
+    ['1:1:dup', 'read', JSON.stringify({ file_path: 'a.js' }), null],
+    ['1:1:dup', 'read', JSON.stringify({ file_path: 'b.js' }), null],
+    ['1:1:sole', 'read', JSON.stringify({ file_path: 'c.js' }), null],
+    ['1:1:dup', null, null, answers[0].seq],
+    ['1:1:sole', null, null, answers[1].seq],
+    ['1:1:sole', null, null, answers[2].seq],
+  ]);
+});
+
+test('a replacement the range holds is named only when it is the one the call saw: two that both stand for the result leave the card without one', { skip }, async () => {
+  const conv = conversation();
+  const rival = prunedResult(conv.original, { text: 'a rival replacement' });
+  const slots = [{ seqs: [conv.first.seq, conv.original.seq, conv.replacement.seq, rival.seq], text: 'read' }];
+  const detail = await conversationSlot(conv, { extra: [rival], slots, range: [conv.ask.seq, conv.first.seq, conv.replacement.seq, rival.seq] });
+  assert.deepEqual(detail.tools.calls.map(({ result, pruned }) => [result.seq, pruned]), [[conv.original.seq, null]]);
+});
+
+test('a dispatch the classification kept that the log no longer holds is placed on no card and read from no other event: the kind stays in the header', { skip }, async () => {
+  const first = sealOf();
+  const step = dispatchedStep([recallOf('peek', first.carrier.seq)]);
+  const second = sealSteps(step);
+  const log = [...eventsOfSeal(first), ...step, ...second];
+  const { access, id } = detailsOver(log, { read: log.filter(event => event.seq !== step[1].seq) });
+  const detail = await access.slot(id, second[0].seq, step[0].seq);
+  assert.deepEqual(detail.tools.calls.map(({ warnings }) => warnings), [[]]);
+  assert.deepEqual(detail.tools.warnings, ['carrier-recall']);
 });

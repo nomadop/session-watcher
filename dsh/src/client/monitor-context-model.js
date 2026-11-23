@@ -1,16 +1,15 @@
-// dsh/src/client/monitor-context-model.js — the display model of the settlement drawer's context page: the calls of the cleared segment as the input stock chart's series, the line the stock is measured against, the chart's geometry and texts, the cache section's arithmetic, chart and list, and the page's view state.
-import { settlementWithRecall } from '../../../public/lib/compactionEconomics.js';
+// dsh/src/client/monitor-context-model.js — the display model of the settlement drawer's context page: the calls of the cleared segment as the input stock chart's series, the line the stock is measured against, the chart's geometry and texts, the trial's arithmetic, chart and list of the rebuild extra, and the page's view state.
 import { formatTokenCount } from '../../../public/lib/format.js';
 import { PART_SEPARATOR } from './monitor-state.js';
 import { compactCount } from './monitor-files-model.js';
 import { signedText } from './monitor-model.js';
+import { compositionOf, percentText, settlementViewOf } from './monitor-recall-model.js';
 
 const PERCENT = 100;
 const round1 = value => Math.round(value * 10) / 10;
 const compact = value => compactCount(Math.round(value));
 const signedWhole = value => signedText(Math.round(value), formatTokenCount);
 const signedCompact = value => signedText(Math.round(value), compactCount);
-const percentText = ratio => `${(Math.round(ratio * PERCENT * 10) / 10).toFixed(1)}%`;
 
 // ── The line ─────────────────────────────────────────────────────────────────
 
@@ -111,11 +110,11 @@ const MARK_RADIUS = 5;
 const textWidth = text => [...text].reduce((sum, char) => sum + (char.codePointAt(0) >= WIDE_FROM_CODE_POINT ? WIDE_CHAR_PX : CHAR_PX), 0);
 
 /**
- * The geometry of the input stock chart over a chart `width` wide, as plain numbers and texts: `{ width, height, left, plotWidth, plotTop, plotHeight, foot, ticks, seals, line, actual, uncompressed, uncompressedCross, actualCross, xTicks, xUnit, xAxis, axisPath, hit, sealHit, sealTickTop, points }`.
+ * The geometry of the input stock chart over a chart `width` wide, as plain numbers and texts: `{ width, height, left, plotWidth, plotTop, plotHeight, foot, ticks, seals, line, actual, uncompressed, uncompressedCross, actualCross, xTicks, xUnit, xAxis, axisPath, hit, sealHit, sealTickTop, points, rings }`.
  * The calls lie evenly along the plot, a call without a stock having its place and no point; `ticks` are the vertical scale's `{ value, label, y }`; `seals` the `{ at, x, ordinal, land }` of the compactions. `line` is the threshold's `{ y, label }`, and each crossing is `{ at, x, y, label }`, with the `d` of its diamond for the uncompressed one. These annotations are null when absent or outside the scale. A label is `{ text, x, y, anchor }` and flips to the other side of its point where it would leave the plot. `points` are the drawn calls as `{ at, x, y, uncompressedY }`; the paths `actual` and `uncompressed` follow those coordinates, with the view clipping the dashed path at the plot bounds.
- * `series` is `seriesOf`'s, `line` the stock of the amber line or null, `t` the translate.
+ * `series` is `seriesOf`'s, `line` the stock of the amber line or null, `t` the translate. `rings` marks the calls (by their place in the series) a chosen target's reads link to, `{ at, x, y }` for each that the chart has a point of.
  */
-export function stockGeometryOf(series, line, width, t) {
+export function stockGeometryOf(series, line, width, t, ringAts = []) {
   const scale = stockScaleOf(series);
   const plotWidth = Math.max(PLOT_WIDTH_MIN, width - LEFT - RIGHT);
   const total = LEFT + plotWidth + RIGHT;
@@ -170,6 +169,7 @@ export function stockGeometryOf(series, line, width, t) {
     axisPath: `M${LEFT},${TOP} V${foot} H${LEFT + plotWidth}`,
     hit: { x: LEFT, y: TOP, width: plotWidth, height: plotHeight - SEAL_HIT.height },
     points,
+    rings: points.filter(({ at }) => ringAts.includes(at)).map(({ at, x, y }) => ({ at, x, y })),
     foot,
     sealTickTop: foot - SEAL_TICK,
     sealHit: { ...SEAL_HIT, y: foot - SEAL_HIT.height },
@@ -253,7 +253,6 @@ export function cacheOf(rows, totals) {
     rebuild,
     net0: net + rebuild,
     net1: net,
-    share: rebuild / cost,
     rows: [
       ...ranked.map(each => ({ ordinal: each.ordinal, known: true, rebuild: each.costRebuild, share: each.costRebuild / rebuild })),
       ...rows.filter(each => !known.includes(each)).map(each => ({ ordinal: each.ordinal, known: false, rebuild: null, share: null })),
@@ -337,16 +336,13 @@ function chartLabelOf(series, line, crossings, t) {
   ].join('');
 }
 
-// The cache section's texts: the two figures, the break-even sentence, the chart's spoken text and the list of the compactions, each row naming the call it jumps to where there is a series.
+// The trial's and the list's texts: the break-even sentence, the chart's spoken text and the list of the compactions, each row naming the call it jumps to where there is a series.
 function cacheTextsOf(sums, series, t) {
   const crossShare = crossingShareOf(sums);
   const crossing = crossShare === null ? null : t('monitor.context.cache.crossing', { percent: percentText(crossShare) });
-  const net = Math.round(sums.net1);
   const sealOf = ordinal => series?.seals.find(seal => seal.ordinal === ordinal);
   return {
     sums,
-    share: percentText(sums.share),
-    net: { text: net === 0 ? '0' : `${signedCompact(net)} ${net > 0 ? '▲' : '▼'}`, tone: net > 0 ? 'pos' : net < 0 ? 'neg' : 'zero' },
     crossing,
     chart: sums.rebuild > 0
       ? { label: t(crossing === null ? 'monitor.context.cache.chart' : 'monitor.context.cache.chart.crossing', { none: signedCompact(sums.net0), actual: signedCompact(sums.net1), sentence: crossing }) }
@@ -370,44 +366,53 @@ function cacheTextsOf(sums, series, t) {
 }
 
 /**
- * The settlement's context page keeps the original stock series and uses the same recall-adjusted net as the payback page for the cache comparison. `result` is the closed segment's settlement resource; if it fails, no stock series is drawn and the cache figures retain their base estimate. `line` is the amber line of `amberLineOf`.
+ * The settlement's context page over the closed segment's list settlement `settlement` (none for the current segment) and the answer `result` of its settlement read, `line` the amber line of `amberLineOf`. See `contextModelOf`.
  */
 export function contextPageOf(settlement, result, line, t) {
-  const recall = result?.kind === 'ready' ? result.value.recall : undefined;
-  return contextModelOf(settlement, settlementWithRecall(settlement, recall), result, line, t);
+  return contextModelOf(settlementViewOf(settlement, result), line, t);
 }
 
-/** Draws the original stock series and compares cache costs using the supplied report totals. */
-export function contextModelOf(settlement, report, result, line, t) {
-  const series = result?.kind === 'ready' ? seriesOf(settlement.rows, result.value.calls) : null;
+/**
+ * The context page of a settlement `view` (`settlementViewOf`): the original stock series of the answer's calls, the cost composition of the report (the recall evidence of an adjusted report in it and the same report as the payback page reads) and the trial of the rebuild extra, which varies that report's rebuild alone and changes no figure above it. A failed or older answer draws no stock series and leaves the composition without a total; a view with no priced compaction has no composition, not a composition of nothing. `view` itself is kept for the target graph, which draws on the page's width.
+ */
+export function contextModelOf(view, line, t) {
+  const { base, report, evidence, response } = view;
+  const series = Array.isArray(response?.calls) ? seriesOf(base.rows, response.calls) : null;
   const crossings = series === null ? null : crossingsOf(series, line);
   return {
-    count: t('monitor.settlement.count', { count: settlement.count }),
+    count: t('monitor.settlement.count', { count: base.count }),
     calls: series === null ? null : t('monitor.context.calls', { count: series.count }),
-    loading: result === null,
+    loading: evidence.state === 'pending',
     stock: series === null ? null : { series, line, facts: factsOf(series, line, crossings, t), label: chartLabelOf(series, line, crossings, t) },
-    cache: cacheTextsOf(cacheOf(settlement.rows, report === settlement ? undefined : report), series, t),
+    composition: view.priced ? compositionOf(report, view.adjusted) : null,
+    cache: cacheTextsOf(cacheOf(base.rows, report === base ? undefined : report), series, t),
     recallPartial: report.recall?.partial,
+    priced: view.priced,
+    view,
   };
 }
 
 // ── The view state ───────────────────────────────────────────────────────────
 
-/** A new page: no cursor, no hover, all of the rebuild extra counted and every fold shut. `cursor` and `hover` are the numbers of calls. */
-export const createContextState = () => ({ cursor: null, hover: null, share: 1, folds: { rows: false, note: false } });
+/** A new page: no cursor, no hover, no target chosen, all of the rebuild extra counted and every fold shut. `cursor` and `hover` are the numbers of calls, `target` the seq of the chosen target and `expanded` whether its whole text is shown. */
+export const createContextState = () => ({
+  cursor: null, hover: null, target: null, expanded: false, share: 1, folds: { rows: false, trial: false, note: false },
+});
 
-/** Whether the fold `name` (`rows` or `note`) shows open. */
+/** Whether the fold `name` (`rows`, `trial` or `note`) shows open. */
 export const isFoldOpen = (state, name) => state.folds[name];
 
 /**
  * The state after `action`, never changed in place; an action of an unknown type answers the state it was given.
- * `{ type: 'hover', at }` and `{ type: 'leave' }` set and clear the call under the pointer, `{ type: 'cursor', at }` places the cursor on a call and clears the hover, `{ type: 'share', value }` sets the share of the rebuild extra counted, and `{ type: 'fold', name, open }` records a fold as it was opened or shut.
+ * `{ type: 'hover', at }` and `{ type: 'leave' }` set and clear the call under the pointer, `{ type: 'cursor', at }` places the cursor on a call and clears the hover, `{ type: 'target', seq }` chooses a target or, chosen again, leaves it and shuts its text, `{ type: 'expand' }` opens or shuts the whole text, `{ type: 'share', value }` sets the share of the rebuild extra counted, and `{ type: 'fold', name, open }` records a fold as it was opened or shut.
  */
 export function reduceContext(state, action) {
   switch (action.type) {
     case 'hover': return action.at === state.hover ? state : { ...state, hover: action.at };
     case 'leave': return state.hover === null ? state : { ...state, hover: null };
     case 'cursor': return { ...state, cursor: action.at, hover: null };
+    case 'target': return { ...state, target: action.seq === state.target ? null : action.seq, expanded: false };
+    case 'expand': return { ...state, expanded: !state.expanded };
     case 'share': return { ...state, share: action.value };
     case 'fold': return { ...state, folds: { ...state.folds, [action.name]: action.open } };
     default: return state;

@@ -12,7 +12,7 @@ test('a bundle installed nowhere with an install source is offered and never ins
   runShippedScenario(t, 'carrier-install-gate', CHECKOUT, CHILD);
 });
 
-test('a confirmed first install over the isolated profile and offline pnpm installs the packed official bundle disabled with no registry and no script approval, reads its identity back, selects it and shows the replacement serving the route, the package holding two rows and no configuration; switching off keeps it installed and the next switching on installs nothing', SHIPPED, (t) => {
+test('a confirmed first install over the isolated profile and offline pnpm installs the packed official bundle disabled with no registry and no script approval, reads its identity back, selects it and shows the replacement serving the route from the bundle\'s own package with no Session Watcher package in the profile, the package holding two rows and no configuration; switching off keeps it installed and the next switching on installs nothing', SHIPPED, (t) => {
   runShippedScenario(t, 'carrier-install-flow', CHECKOUT, CHILD);
 });
 
@@ -44,7 +44,7 @@ test('an external manager that installs the package between the switch\'s read a
   runShippedScenario(t, 'carrier-install-race', CHECKOUT, CHILD);
 });
 
-test('the installed official bundle resolves the replacement row to the one Session Watcher the profile holds and brings none of its own: one entry for the name in the profile\'s runtime table, no package under the bundle, and the row\'s specifier resolving from the bundle, from the profile as the Loader anchors it and from the table to the same file of the packed package', SHIPPED, (t) => {
+test('the installed official bundle carries the adapter its replacement row names: the profile holds no Session Watcher package and no copy of a host package, the bundle depends on nothing and asks the host for the packages its entry imports, and the row\'s specifier resolves from the bundle, from the profile as the Loader anchors it and from the profile\'s runtime table to the bundle\'s own file, which is the pi-ai plugin and serves the route', SHIPPED, (t) => {
   runShippedScenario(t, 'carrier-install-resolution', CHECKOUT, CHILD);
 });
 

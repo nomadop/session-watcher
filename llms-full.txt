@@ -777,7 +777,7 @@ A summary call that fails, whose reply still is not the expected notes at the la
 
 #### Marking the last carrier for the provider's cache (opt-in)
 
-An optional pi-ai adapter entry, `@nomadop/session-watcher-dsh/pi-ai`, adds one cache point at the end of the last carrier in each request, beside the points the adapter already writes. The host entry never loads it, and a profile that does not mount it sends the requests it always did. The entry is the Harness's `llm-pi-ai` plugin, vendored with that one change (see `dsh/vendor/dsh-llm-pi-ai/UPSTREAM.md` in the repository), and it is a temporary replacement: it does not follow the installed Harness's own `llm-pi-ai` when that changes.
+An optional pi-ai adapter entry, `@nomadop/session-watcher-dsh/pi-ai`, adds one cache point at the end of the last carrier in each request, beside the points the adapter already writes. The official bundle package (below) ships the same adapter file as its own `/pi-ai` entry. The host entry never loads it, and a profile that does not mount it sends the requests it always did. The entry is the Harness's `llm-pi-ai` plugin, vendored with that one change (see `dsh/vendor/dsh-llm-pi-ai/UPSTREAM.md` in the repository), and it is a temporary replacement: it does not follow the installed Harness's own `llm-pi-ai` when that changes.
 
 The point goes where the request's own serializer already places cache points, so a route that caches nothing gets none:
 
@@ -801,7 +801,7 @@ The adapter's own point already ends a carrier that is the request's last messag
 
 The entry does not detect an expired cache, rewarm one or choose a lifetime, and no provider's reuse of the prefix, latency or cost has been measured with it: the request shapes are checked against loopback endpoints, not against a provider's cache.
 
-To use it, replace the adapter in a bundle's or the profile's patch layer. The Loader's `name` only asserts a row's package, so the original row stays, turned off, and the replacement is a new row under its own id with no configuration of its own:
+To use it from this package, replace the adapter in a bundle's or the profile's patch layer; the profile has to hold this package, whose entry the row names. The Loader's `name` only asserts a row's package, so the original row stays, turned off, and the replacement is a new row under its own id with no configuration of its own:
 
 ```yaml
 - id: llm-pi-ai
@@ -822,7 +822,7 @@ The Models page does not follow the row: its pi-ai editor and its hand-declared 
 
 A profile with a plugin manager gets a switch on Session Watcher's Settings page, in a row only the owner of the host is shown. It acts on one of two bundles that hold the activation above and nothing else, the disabled `llm-pi-ai` row and the replacement row with no configuration: the official `@nomadop/session-watcher-dsh-carrier-cache`, packed beside this package from `dsh/carrier-cache/`, and a local `@local/sw-carrier-cache-web` that the owner installed. Whichever of them the manager lists, readable, is used as it is. Both at once, one the manager lists but cannot read and an inventory it cannot read leave the row unavailable, say which, and install nothing. The switch selects or deselects the bundle through the profile's plugin manager. The host decides who may use it, not the page: a call whose peer is not the owner is refused before the manager is read, and no request can name another bundle.
 
-The official bundle declares no dependency of any kind. Its replacement row names `@nomadop/session-watcher-dsh/pi-ai`, which resolves, as every row of the profile does, to the one Session Watcher the profile has installed, so installing the bundle never adds a second copy. It is versioned on its own, apart from the Session Watcher packages.
+The official bundle carries the adapter itself and does not depend on the Session Watcher package: its replacement row names its own `@nomadop/session-watcher-dsh-carrier-cache/pi-ai`, so the profile needs no Session Watcher package for the route to be served, and the host packages the adapter imports are its peers, which the Harness provides. The adapter is the file this package ships as `/pi-ai`. The bundle is versioned on its own, apart from the Session Watcher packages, and a change of the adapter's file calls for a new version of the bundle. The local bundle's row, as in the recipe above, names this package's entry.
 
 ##### Installing the official bundle
 
@@ -841,6 +841,10 @@ Deselecting reports the original as restored only on the same proof as a rollbac
 One change runs at a time; a second request meanwhile is answered busy, and nothing is queued. Requests are not migrated and no promise is made about those in flight: one sent while the routes change goes to whichever adapter serves them when it is dispatched, and may be interrupted.
 
 The OpenAI Responses breakpoint has a switch of its own under that row. It is a setting of Session Watcher, `carrierResponsesBreakpoint`, off until it is saved on, and the page writes it as it writes its other settings, so DSH decides who may, and the row is shown to the owner alone. It acts at once without Save and changes nothing else: it can be turned off on its own, and the carrier cache point stays as it is. It is usable only while the carrier cache point is on and confirmed; while the point is off, unavailable or not confirmed the control is held off and keeps showing the saved choice, which applies again when the point does. The page says that the endpoint may reject requests that carry the breakpoint or its cache options, and a route whose requests then fail is a reason to switch it off. The host hands the saved value to the replacement at each request, so a change reaches the next request without a restart; a replacement still mounted while the control is held off, as when a switch-off waits for a restart, goes on using the saved value until it leaves. A host that cannot give the replacement the value leaves the switch off for it.
+
+##### Updating a bundle installed before it carried the adapter
+
+An official bundle at a version before it carried the adapter names this package's `/pi-ai` entry in its row, and an installed bundle is not updated with Session Watcher. Update the official bundle on the Plugins page first, then Session Watcher. Under hot reload, updating Session Watcher first can withdraw the entry the old bundle's row names, which leaves the route unavailable and stops the upgrade. After the bundle's update the row names the bundle's own package, and the Session Watcher update leaves the route as it is. Where the bundle was never installed, the Settings install offers the version this package names.
 
 ##### What the call drawer shows
 

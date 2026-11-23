@@ -135,7 +135,7 @@ test('the entry\'s inject hands the session\'s monitor handles and its session s
   const face = inject('s1');
 
   assert.deepEqual(Object.keys(face), ['monitor', 'session']);
-  assert.deepEqual(Object.keys(face.monitor).sort(), ['readCurrentSettlement', 'resource', 'rows']);
+  assert.deepEqual(Object.keys(face.monitor).sort(), ['readCurrentSettlement', 'resource', 'rows', 'settlementTarget']);
   assert.equal(inject('s1').monitor, face.monitor, 'one set of handles per session');
   assert.notEqual(inject('s2').monitor, face.monitor);
   const tab = fake.registrations.find(registration => registration.options.name === 'conversation.view' && registration.options.id === 'session-watcher');

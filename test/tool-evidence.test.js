@@ -258,11 +258,12 @@ describe('a resource that is not a file', () => {
   // `note:<id>` is the profile's: the result's text is that resource's content and nothing in it is matched.
   const note = { name: 'note', input: { id: 'n1' }, content: 'abcdefgh' };
 
-  test('is priced from its result text, never reaches the matcher, and neither recalls nor keeps a record', () => {
+  test('is priced from its result text, never reaches the matcher, and neither recalls, keeps nor shows a record', () => {
     const touched = [];
     const frameCtx = {
       recall: toolUseId => { touched.push(['recall', toolUseId]); return null; },
       remember: (toolUseId, record) => touched.push(['remember', toolUseId, record]),
+      observeRecord: call => touched.push(['observeRecord', call]),
     };
     const done = partitionOf(answer(), note, { frameCtx });
     // 8 characters under the first policy's divisor of 4.
@@ -492,6 +493,25 @@ describe('the record', () => {
     assert.equal('hadError' in RECORD.residual, false);
     assert.equal(partitionOf(answer(), { isError: true }, { frameCtx: store.frameCtx }).residuals[0].hadError, true);
     assert.equal(partitionOf(answer(), { isError: false }, { frameCtx: store.frameCtx }).residuals[0].hadError, false);
+  });
+
+  test('observeRecord is handed the record the call stands on once, a recall hit\'s or a fresh partition\'s, with the scratch as it is before the record is folded into it', () => {
+    for (const recalled of [null, structuredClone(RECORD)]) {
+      const seen = [];
+      const frameCtx = {
+        recall: () => recalled,
+        observeRecord: (call) => { seen.push({ ...call, held: call.scratch.size }); },
+      };
+      const done = partitionOf(REPLY, {}, { frameCtx });
+      assert.equal(seen.length, 1);
+      const [call] = seen;
+      assert.deepEqual(Object.keys(call).sort(), ['held', 'observation', 'pending', 'recalled', 'record', 'scratch']);
+      assert.equal(call.recalled, recalled !== null);
+      assert.deepEqual(call.record, RECORD);
+      assert.equal(call.pending.toolUseId, 'call-1');
+      assert.equal(call.held, 0, 'nothing of the call is in the scratch yet');
+      assert.equal(done.effects.length, 2, 'the record is still priced and folded');
+    }
   });
 
   // Every row yields a record this version cannot read. Each is a miss: the call is partitioned afresh, and the

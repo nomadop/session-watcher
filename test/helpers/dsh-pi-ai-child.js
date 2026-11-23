@@ -1,5 +1,5 @@
 // test/helpers/dsh-pi-ai-child.js — one scenario of the opt-in pi-ai adapter entry (`dsh/dist/pi-ai-index.js`) on a real Cordis context, run in a fresh Node process by `test/dsh.pi-ai-carrier-cache.test.js`.
-// The process starts with `HOME`, `DSH_HOME` and `TMPDIR` inside the fixture the parent made and the Bedrock switches the parent passes; the adapter resolves the built entry and its peers through the temporary profile's runtime resolution (`dsh-shipped-entry.js`), every endpoint is a loopback fixture of this process (`dsh-pi-ai-fixture.js`) and credentials are placeholders. A scenario that fails an assertion exits non-zero with it on stderr.
+// The process starts with `HOME`, `DSH_HOME` and `TMPDIR` inside the fixture the parent made and the Bedrock switches the parent passes; the adapter resolves the built entry and its peers through the temporary profile's runtime resolution (`dsh-shipped-entry.js`), and a scenario that boots a Loader profile of its own (`mountComposition`) resolves what its rows name from that profile and the installation; every endpoint is a loopback fixture of this process (`dsh-pi-ai-fixture.js`) and credentials are placeholders. A scenario that fails an assertion exits non-zero with it on stderr.
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -22,7 +22,7 @@ import { reusedCallIdAcrossSteps } from './dsh-events.js';
 
 import { channelOn, CHECKOUT, DSH_HOME, fromCheckout, INNER_CALL_RECORD_TYPE, loaderOf, loaderWith, mountShippedLoop, ORIGINAL_ROW, REPLY_PADDING, SEAL_STEPS, SLOT_COUNT, slotNotes, turnOf } from './dsh-shipped-loop.js';
 import {
-  activation, addOffline, BUNDLE_PACKAGE, CARRIER_TABLE, carriedNote, carrierOf, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, REPLACEMENT_SPECIFIER, send, STATE_WORDING, SW_PACKAGE, waitFor,
+  activation, BUNDLE_PACKAGE, CARRIER_TABLE, carriedNote, carrierOf, COMPANION_SPECIFIER, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, send, STATE_WORDING, SW_PACKAGE, waitFor,
 } from './dsh-pi-ai-fixture.js';
 
 const [scenario] = process.argv.slice(2);
@@ -136,12 +136,11 @@ async function ratiosOf(real, routes) {
 // ── The switch over the real Loader, plugin manager and Connection ─────────────
 const OWNER_PEER = { principal: { kind: 'owner' } };
 
-// The isolated profile of the activation composition with the local carrier bundle installed and not selected, the real plugin manager over it, the real Connection on a loopback port and the switch's channel on it, the handler built from the source modules over the services of this one context. `wrap(manager)` answers the manager the switch is handed, a spy or a double around the real one; `started` has the profile start with the bundle selected, as after a restart that applied it; `installed: false` leaves the profile without the local bundle.
+// The isolated profile of the activation composition with the local carrier bundle installed and not selected, the real plugin manager over it, the real Connection on a loopback port and the switch's channel on it, the handler built from the source modules over the services of this one context. `wrap(manager)` answers the manager the switch is handed, a spy or a double around the real one; `started` has the profile start with the bundle selected, as after a restart that applied it; `installed: false` leaves the profile without the local bundle, and with it without any Session Watcher package: the local bundle's row names the Session Watcher package a local activation holds, and a profile that has only the official bundle holds nothing the bundle does not bring.
 // `target` is the fixed install target the switch is injected with, none by default; the manager's pnpm then runs offline (`offlinePnpm`), whichever it is.
-// `software` is the tarball of the Session Watcher package the profile holds before anything else, installed by pnpm as a profile's owner would.
-async function managedRig({ providers, hmr = true, wrap = manager => manager, manager = true, installed = true, started = false, target, software }) {
+async function managedRig({ providers, hmr = true, wrap = manager => manager, manager = true, installed = true, started = false, target }) {
   const { bundleLayer, layer } = activation({ providers });
-  const mounted = await mountComposition({ layer, installed: installed ? [{ name: LOCAL_CARRIER_BUNDLE, patch: bundleLayer }] : [], selected: started ? [LOCAL_CARRIER_BUNDLE] : [], manager, hmr, connection: true, packageManager: offlinePnpm, prepare: software === undefined ? undefined : ({ dir, home }) => addOffline(dir, home, software) });
+  const mounted = await mountComposition({ layer, installed: installed ? [{ name: LOCAL_CARRIER_BUNDLE, patch: bundleLayer }] : [], selected: started ? [LOCAL_CARRIER_BUNDLE] : [], manager, hmr, connection: true, packageManager: offlinePnpm, linkSoftware: installed });
   const { ctx } = mounted;
   const carrier = createCarrierCacheSwitch({ ...carrierCacheDepsOf(ctx, { installTarget: () => target ?? null }), manager: () => (ctx.get('pluginManager') === undefined ? undefined : wrap(ctx.get('pluginManager'))) });
   const handler = createRpcHandler({ table: { get: () => ({ state: 'unobserved' }), live: () => [] }, store: {}, carrierCache: () => carrier });
@@ -1452,7 +1451,7 @@ const SCENARIOS = {
     assert.equal(bundle.enabled, true);
     assert.equal(bundle.version, target.version);
     assert.equal(bundle.error, undefined);
-    assert.deepEqual(bundle.rows.map(({ rowId, moduleName }) => ({ rowId, moduleName })), [{ rowId: REPLACEMENT_ID, moduleName: REPLACEMENT_SPECIFIER }], 'the bundle inserts the replacement row only');
+    assert.deepEqual(bundle.rows.map(({ rowId, moduleName }) => ({ rowId, moduleName })), [{ rowId: REPLACEMENT_ID, moduleName: COMPANION_SPECIFIER }], 'the bundle inserts the replacement row only, from its own package');
     assert.deepEqual(bundle.overrides, ['llm-pi-ai'], 'and changes the original row only');
     assert.match(rig.manifest().dependencies[OFFICIAL_CARRIER_BUNDLE], /^file:.*\.tgz$/);
     assert.equal(rig.selected(OFFICIAL_CARRIER_BUNDLE), true);
@@ -1464,6 +1463,10 @@ const SCENARIOS = {
     assert.notEqual(original.fiber?.state, FIBER_ACTIVE);
     assert.equal(rig.ctx.loader.resolve(`include:${REPLACEMENT_ID}`).options.config, undefined);
     assert.deepEqual(rig.ctx.get(PI_AI_SERVICE).routes(), ['sw-anthropic']);
+    // The profile holds no Session Watcher package, so the adapter that serves the route is the bundle's own.
+    assert.equal(existsSync(join(rig.profileDir, 'node_modules', '@nomadop', 'session-watcher-dsh')), false);
+    const bundleDir = realpathSync(join(rig.profileDir, 'node_modules', ...OFFICIAL_CARRIER_BUNDLE.split('/')));
+    assert.equal(realpathSync(rig.ctx.pluginPackages.packageOf(COMPANION_SPECIFIER, rig.ctx.baseUrl).dir), bundleDir);
     assert.equal(await requestMarks(rig, served, ANTHROPIC), native + 1);
     assert.deepEqual(await rig.call('carrier-cache/status', {}), { ok: true, value: { state: 'on' } });
 
@@ -1791,32 +1794,40 @@ const SCENARIOS = {
     await served.close();
   },
 
-  // The package the manager installed resolves the replacement row to the one Session Watcher the profile holds, and brings none of its own: the profile's runtime resolution names one package for the name, from the profile's own manifest, the bundle has no package under it, and the specifier the row names resolves from the bundle's directory, from the profile as the Loader's own resolver anchors it and from the profile's runtime table to the same file of the installed package.
+  // The package the manager installed carries the adapter its replacement row names: the profile holds no Session Watcher package and no copy of a host package, the bundle depends on nothing and asks the host for the packages its entry imports, and the specifier the row names resolves from the bundle's directory, from the profile as the Loader's own resolver anchors it and from the runtime table the running profile publishes to the bundle's own file, which is the pi-ai plugin and serves the route.
   async 'carrier-install-resolution'() {
     const served = await endpoints();
-    const root = process.env.TMPDIR;
-    const software = packOffline(SW_PACKAGE, join(root, 'pack-sw'));
-    const official = packOffline(BUNDLE_PACKAGE, join(root, 'pack'));
-    const rig = await managedRig({ providers: { 'sw-anthropic': anthropicRoute(served.origin) }, installed: false, target: { spec: official.spec, version: official.version }, software: software.spec });
+    const official = packOffline(BUNDLE_PACKAGE, join(process.env.TMPDIR, 'pack'));
+    const rig = await managedRig({ providers: { 'sw-anthropic': anthropicRoute(served.origin) }, installed: false, target: { spec: official.spec, version: official.version } });
     assert.deepEqual(await rig.call('carrier-cache/set', { enabled: true, confirmInstall: true }), { ok: true, value: { outcome: 'enabled', installed: true } });
 
-    const swDir = join(rig.profileDir, 'node_modules', '@nomadop', 'session-watcher-dsh');
-    const bundleDir = join(rig.profileDir, 'node_modules', ...OFFICIAL_CARRIER_BUNDLE.split('/'));
-    const entry = realpathSync(join(swDir, 'dist', 'pi-ai-index.js'));
-    assert.equal(realpathSync(swDir) !== realpathSync(join(process.cwd(), 'dsh')), true, 'the profile holds a packed copy, not a link to this checkout');
+    const modules = join(rig.profileDir, 'node_modules');
+    const bundleDir = join(modules, ...OFFICIAL_CARRIER_BUNDLE.split('/'));
+    const entry = realpathSync(join(bundleDir, 'dist', 'pi-ai-index.js'));
+    assert.equal(existsSync(join(modules, '@nomadop', 'session-watcher-dsh')), false, 'no Session Watcher package in the profile');
+    assert.deepEqual(['@deepseek-ai', '@earendil-works'].filter(scope => existsSync(join(modules, scope))), [], 'no copy of a host package in the profile');
     assert.equal(existsSync(join(bundleDir, 'node_modules')), false, 'no package of its own under the bundle');
-    assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(bundleDir, 'package.json'), 'utf8'))).filter(key => key.toLowerCase().includes('ependencies')), [], 'the bundle declares no dependency of any kind');
 
-    // The profile's runtime table, as the Harness computes it for this profile: the package is one of the profile's own installed names, which Node resolves first, and the bundle adds no entry for it.
+    // The manifest as packed and installed: peers only, the ranges of the Session Watcher package for the packages its adapter entry imports, all required.
+    const manifest = JSON.parse(readFileSync(join(bundleDir, 'package.json'), 'utf8'));
+    const sw = JSON.parse(readFileSync(join(SW_PACKAGE, 'package.json'), 'utf8'));
+    assert.deepEqual(Object.keys(manifest).filter(key => key.toLowerCase().includes('ependencies')), ['peerDependencies'], 'peers alone, none optional');
+    assert.deepEqual(Object.keys(manifest.peerDependencies).sort(), [
+      '@deepseek-ai/dsh-credentials', '@deepseek-ai/dsh-launch-environment', '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-llm-pi-ai', '@deepseek-ai/dsh-timeout', '@deepseek-ai/dsh-util-values', '@deepseek-ai/schemastery', '@earendil-works/pi-ai',
+    ]);
+    for (const [name, range] of Object.entries(manifest.peerDependencies)) assert.equal(range, sw.peerDependencies[name], name);
+    assert.equal(Object.hasOwn(manifest, 'scripts'), false, 'no install script');
+
+    // The profile's runtime table, as the Harness computes it for this profile: the bundle is one of the profile's own installed names, and the table holds no entry for the Session Watcher package.
     const appBoot = await fromCheckout('packages/boot/app-boot/lib/index.js');
     const installAnchor = join(CHECKOUT, 'apps/cli/package.json');
     const profile = appBoot.loadProfileDirectory('sw-install-resolution', rig.profileDir, installAnchor, { userLayer: false });
     const resolution = await appBoot.createRuntimeResolution({ installAnchor, profile, home: DSH_HOME });
-    assert.ok(resolution.localPackageNames.includes('@nomadop/session-watcher-dsh'));
-    assert.deepEqual(resolution.entries.filter(each => each.name === '@nomadop/session-watcher-dsh'), [], 'no second entry for the name');
+    assert.ok(resolution.localPackageNames.includes(OFFICIAL_CARRIER_BUNDLE));
+    assert.deepEqual(resolution.entries.filter(each => each.name === '@nomadop/session-watcher-dsh'), [], 'no entry for the Session Watcher package');
 
-    // The specifier the replacement row names, resolved three ways.
-    const specifier = REPLACEMENT_SPECIFIER;
+    // The specifier the replacement row names, resolved four ways.
+    const specifier = COMPANION_SPECIFIER;
     assert.equal(realpathSync(createRequire(join(bundleDir, 'package.json')).resolve(specifier)), entry, 'from the bundle');
     const resolver = join(rig.profileDir, '.cordis', 'resolve.mjs');
     mkdirSync(join(rig.profileDir, '.cordis'), { recursive: true });
@@ -1826,12 +1837,16 @@ const SCENARIOS = {
     const packages = new (await fromCheckout('vendor/cordis/lib/index.js')).Context();
     await packages.plugin(appBoot.PluginPackages, { resolution });
     for (const base of [pathToFileURL(join(bundleDir, 'package.json')), pathToFileURL(join(rig.profileDir, 'cordis.yml'))]) {
-      assert.equal(realpathSync(packages.pluginPackages.packageOf(specifier, base.href).dir), realpathSync(swDir), `the table answers for ${base.pathname}`);
+      assert.equal(realpathSync(packages.pluginPackages.packageOf(specifier, base.href).dir), realpathSync(bundleDir), `the table answers for ${base.pathname}`);
     }
-    // The row's module is the installed copy's entry: it loads by that file, under the table, and is the pi-ai plugin.
+    // The row's module is the bundle's own file: it loads by that file, under the table, and is the pi-ai plugin; the running row is the one that serves the route.
     const loaded = await import(resolved);
     assert.equal(typeof loaded.apply, 'function');
     assert.deepEqual(loaded.inject, ['llm', 'loader']);
+    const row = rig.ctx.loader.resolve(`include:${REPLACEMENT_ID}`);
+    assert.deepEqual([row.options.name, row.disabled, row.fiber.state], [specifier, false, FIBER_ACTIVE]);
+    assert.equal(realpathSync(rig.ctx.pluginPackages.packageOf(specifier, rig.ctx.baseUrl).dir), realpathSync(bundleDir), 'the running profile publishes the same table');
+    assert.deepEqual(rig.ctx.get(PI_AI_SERVICE).routes(), ['sw-anthropic']);
     await packages.fiber.dispose();
     await rig.ctx.fiber.dispose();
     await served.close();

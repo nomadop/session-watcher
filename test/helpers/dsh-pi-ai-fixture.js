@@ -193,13 +193,6 @@ export const offlinePnpm = (home) => {
   };
 };
 
-/** `pnpm add spec` in the profile at `dir`, offline: the install of a package the profile holds before the plugin manager is involved. */
-export function addOffline(dir, home, spec) {
-  const { env } = offlinePnpm(home);
-  const { status, stdout, stderr } = spawnSync('pnpm', ['add', spec], { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } });
-  if (status !== 0) throw new Error(`pnpm add ${spec} exited ${status}: ${stdout}${stderr}`);
-}
-
 /** Whether pnpm can run here at all; the cases that install a package skip without it. */
 export const pnpmSkip = () => (spawnSync('pnpm', ['--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } }).status === 0 ? false : 'pnpm is not on the PATH');
 
@@ -239,6 +232,8 @@ export function packBundleFixture(directory, { name, version = '1.0.0', scripts 
 /** The Loader entry id the activation composition gives the replacement entry, and the specifier it names it by. */
 export const REPLACEMENT_ID = 'llm-pi-ai-carrier-cache';
 export const REPLACEMENT_SPECIFIER = '@nomadop/session-watcher-dsh/pi-ai';
+/** The specifier the official companion bundle's patch names for the same row: its own package, which holds the adapter. */
+export const COMPANION_SPECIFIER = '@nomadop/session-watcher-dsh-carrier-cache/pi-ai';
 
 const yamlOf = value => JSON.stringify(value);
 
@@ -261,14 +256,16 @@ export function activation({ providers, keepOriginalOn = false }) {
 }
 
 /**
- * The real Loader mounting a profile whose base bundle holds the llm service and the original dormant `llm-pi-ai` row, whose second bundle's patch layer is `bundleLayer`, and whose own patch layer is `layer`, with the real Settings service, the config editor, the timer and HMR reloading the Loader when that layer's file changes.
- * `modules` names every module a row may import: the fixture's llm service, the checkout's `llm-pi-ai` and the built replacement entry, which the profile's runtime resolution loaded by its specifier.
- * `installed` are bundles `{ name, patch }` the profile depends on and holds on disk without selecting them, except the names `selected` lists, which the profile started with; with `manager` the real plugin manager mounts over the profile, which `ctx.pluginManager` then is, and with `hmr: false` the profile is startup-only; with `connection` the real WebServer and Connection mount on a loopback port; `packageManager(home)` answers the package manager invocation the manager runs pnpm with, `offlinePnpm(home)` for a profile that must install without a network, and `prepare({ dir, home })` runs once the profile's files are on disk and before its composition mounts, for a package the profile must already hold.
+ * The real Loader mounting a profile of its own, booted as the Harness boots one: the profile's files on disk, the runtime resolution computed from that profile over the checkout's installation, the Loader's own module import with no stand-in for it, and the real Settings service, the config editor, the timer and HMR reloading the Loader when the patch layer's file changes.
+ * The profile's base bundle holds the llm service and the original dormant `llm-pi-ai` row under the checkout's own package names, its second bundle's patch layer is `bundleLayer` and its own patch layer is `layer`; every module a row names resolves from this profile or from the installation, so a specifier names a package the profile has to hold.
+ * `installed` are bundles `{ name, patch }` the profile depends on and holds on disk without selecting them, except the names `selected` lists, which the profile started with; each is a `link:` dependency, as a local bundle is in a real profile, so pnpm can run in the profile without a registry. The packages they name come from the profile: `linkSoftware` links this repository's Session Watcher package into it, the one a local bundle's row names (`REPLACEMENT_SPECIFIER`), and a profile that must hold no Session Watcher says `false`.
+ * `services(ctx)` mounts the services the profile's rows inject before the Loader reads the profile, the llm service among them: the base bundle then holds no `llm` row of its own.
+ * With `manager` the real plugin manager mounts over the profile under `managerConfig`, which `ctx.pluginManager` then is; with `hmr: false` the profile is startup-only; with `connection` the real WebServer and Connection mount on a loopback port; `packageManager(home)` answers the package manager invocation the manager runs pnpm with, `offlinePnpm(home)` for a profile that must install without a network, and `prepare({ dir, home })` runs once the profile's files are on disk and before its composition mounts, for a package the profile must already hold.
  * Answers the context, the llm package, the layer's file, the profile directory and `rewrite(text)`, which replaces the layer's text, the Loader reloading from it.
  */
-export async function mountComposition({ bundleLayer = '[]\n', layer, installed = [], selected = [], manager = false, hmr: withHmr = true, connection = false, packageManager, prepare }) {
-  const [{ Context }, loaderModule, includeModule, appBoot, llm, settingsModule, configEditor, timer, hmr, fsPromises, osModule, managerModule] = await Promise.all([
-    fromCheckout('vendor/cordis/lib/index.js'), fromCheckout('vendor/loader/lib/index.js'), fromCheckout('vendor/include/lib/index.js'),
+export async function mountComposition({ bundleLayer = '[]\n', layer, installed = [], selected = [], manager = false, managerConfig = {}, hmr: withHmr = true, connection = false, packageManager, prepare, linkSoftware = true, services }) {
+  const [{ Context }, loaderModule, appBoot, llm, settingsModule, configEditor, timer, hmr, fsPromises, osModule, managerModule] = await Promise.all([
+    fromCheckout('vendor/cordis/lib/index.js'), fromCheckout('vendor/loader/lib/index.js'),
     fromCheckout('packages/boot/app-boot/lib/index.js'), fromCheckout('packages/llm/llm/lib/index.js'),
     fromCheckout('packages/settings/settings/lib/index.js'), fromCheckout('packages/boot/config-editor/lib/index.js'),
     fromCheckout('vendor/timer/lib/index.js'), fromCheckout('packages/boot/hmr/lib/index.js'), import('node:fs/promises'), import('node:os'),
@@ -276,31 +273,6 @@ export async function mountComposition({ bundleLayer = '[]\n', layer, installed 
   ]);
   const { loadProfileDirectory, createRuntimeResolution, PluginPackages, initProfile, mountRootInclude, readProfilePatches } = appBoot;
   const installAnchor = join(CHECKOUT, 'apps/cli/package.json');
-  const resolutionProfile = loadProfileDirectory('sw-shipped-fixture', PROFILE_DIR, installAnchor, { userLayer: false });
-  const resolution = await createRuntimeResolution({ installAnchor, profile: resolutionProfile, home: DSH_HOME });
-  const ctx = new Context();
-  ctx.baseUrl = pathToFileURL(`${process.env.TMPDIR}/`).href;
-  await ctx.plugin(PluginPackages, { resolution });
-  ctx.provide('credentials', new RecordCredentials(PLACEHOLDERS));
-
-  const modules = new Map([
-    ['test-llm-service', llm.default],
-    ['@deepseek-ai/dsh-llm-pi-ai', await fromCheckout('packages/llm/llm-pi-ai/lib/index.js')],
-    [REPLACEMENT_SPECIFIER, await (await import(pathToFileURL(IMPORTER).href)).loadPiAiEntry()],
-  ]);
-  await ctx.plugin(loaderModule.default);
-  ctx.loader.builtins.include = includeModule.default;
-  ctx.loader.internal = {
-    version: 'v2', loadCache: new Map(),
-    import: (specifier) => {
-      if (!modules.has(specifier)) throw new Error(`unexpected Loader import: ${specifier}`);
-      return Promise.resolve(modules.get(specifier));
-    },
-    register() { throw new Error('unexpected module hook registration'); },
-    getOrCreateModuleJob() { throw new Error('unexpected module job creation'); },
-    resolveSync() { throw new Error('unexpected synchronous module resolution'); },
-    load() { throw new Error('unexpected module load'); },
-  };
 
   const home = await fsPromises.mkdtemp(join(osModule.tmpdir(), 'sw-pi-ai-composition-'));
   const dir = join(home, 'profile');
@@ -310,24 +282,31 @@ export async function mountComposition({ bundleLayer = '[]\n', layer, installed 
   await fsPromises.writeFile(join(home, 'package.json'), '{"name":"sw-fixture-installation"}\n');
   await fsPromises.writeFile(join(bundle, 'package.json'), JSON.stringify({ name: 'sw-fixture-base-bundle', version: '1.0.0', dsh: { bundle: { patch: 'cordis.patch.yml' } } }));
   // The base layer, as the shipped base bundle holds them: the llm service and the original adapter's dormant row.
-  await fsPromises.writeFile(join(bundle, 'cordis.patch.yml'), ['- insert:', '    - id: llm', "      name: 'test-llm-service'", '    - id: llm-pi-ai', "      name: '@deepseek-ai/dsh-llm-pi-ai'", ''].join('\n'));
+  await fsPromises.writeFile(join(bundle, 'cordis.patch.yml'), [
+    '- insert:', ...services === undefined ? ['    - id: llm', "      name: '@deepseek-ai/dsh-llm'"] : [], '    - id: llm-pi-ai', "      name: '@deepseek-ai/dsh-llm-pi-ai'", '',
+  ].join('\n'));
   const activationBundle = join(dir, 'node_modules', 'sw-fixture-activation-bundle');
   await fsPromises.mkdir(activationBundle, { recursive: true });
   await fsPromises.writeFile(join(activationBundle, 'package.json'), JSON.stringify({ name: 'sw-fixture-activation-bundle', version: '1.0.0', dsh: { bundle: { patch: 'cordis.patch.yml' } } }));
   await fsPromises.writeFile(join(activationBundle, 'cordis.patch.yml'), bundleLayer);
-  // The bundles `installed` are profile dependencies whose files are on disk and which no `dsh.profile.bundles` entry selects: what a preinstalled bundle is until the manager selects it. Each is a `link:` dependency, as a local bundle is in a real profile, so pnpm can run in the profile without a registry.
+  // A package linked into the profile as a `link:` dependency of its manifest; what a bundle installed with `installed` is, and what the Session Watcher package is for a local bundle.
   const dependencies = {};
+  const linkInto = async (name, source) => {
+    const installedDir = join(dir, 'node_modules', ...name.split('/'));
+    await fsPromises.mkdir(dirname(installedDir), { recursive: true });
+    await fsPromises.symlink(source, installedDir, 'dir');
+    dependencies[name] = `link:${source}`;
+  };
+  // The bundles `installed` are profile dependencies whose files are on disk and which no `dsh.profile.bundles` entry selects: what a preinstalled bundle is until the manager selects it.
   for (const { name, patch } of installed) {
     const source = join(home, 'packages', ...name.split('/'));
     await fsPromises.mkdir(source, { recursive: true });
     await fsPromises.writeFile(join(source, 'package.json'), JSON.stringify({ name, version: '1.0.0', dsh: { bundle: { patch: 'cordis.patch.yml' } } }));
     await fsPromises.writeFile(join(source, 'cordis.patch.yml'), patch);
-    const installedDir = join(dir, 'node_modules', ...name.split('/'));
-    await fsPromises.mkdir(dirname(installedDir), { recursive: true });
-    await fsPromises.symlink(source, installedDir, 'dir');
-    dependencies[name] = `link:${source}`;
+    await linkInto(name, source);
   }
-  if (installed.length > 0) {
+  if (linkSoftware) await linkInto('@nomadop/session-watcher-dsh', SW_PACKAGE);
+  if (Object.keys(dependencies).length > 0) {
     const manifest = JSON.parse(await fsPromises.readFile(join(dir, 'package.json'), 'utf8'));
     await fsPromises.writeFile(join(dir, 'package.json'), `${JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, ...dependencies } }, undefined, 2)}\n`);
   }
@@ -335,6 +314,17 @@ export async function mountComposition({ bundleLayer = '[]\n', layer, installed 
   const patchPath = join(dir, 'cordis.patch.yml');
   await fsPromises.writeFile(patchPath, layer);
   await prepare?.({ dir, home });
+
+  // The Harness's own order: the runtime resolution is computed from the profile as it stands on disk and published before anything imports, and the Loader then imports through it.
+  const resolutionProfile = loadProfileDirectory('sw-composition', dir, installAnchor, { userLayer: false });
+  const resolution = await createRuntimeResolution({ installAnchor, profile: resolutionProfile, home: DSH_HOME });
+  const ctx = new Context();
+  ctx.baseUrl = `${pathToFileURL(dir).href}/`;
+  await ctx.plugin(PluginPackages, { resolution });
+  ctx.provide('credentials', new RecordCredentials(PLACEHOLDERS));
+  await services?.(ctx);
+  await ctx.plugin(loaderModule.default);
+
   const profile = {
     name: 'test', startedBundles: ['sw-fixture-base-bundle', 'sw-fixture-activation-bundle', ...selected], dir, patchPath, installAnchor: join(home, 'package.json'),
     cwd: home, home, overlays: [], telemetryDisabledEnv: undefined,
@@ -353,7 +343,7 @@ export async function mountComposition({ bundleLayer = '[]\n', layer, installed 
     await ctx.hmr.runExclusive(async () => {});
   }
   // The real plugin manager over the profile above, as the base bundle mounts it; the isolated profile is the only one it can write.
-  if (manager) await ctx.plugin(managerModule.default, {});
+  if (manager) await ctx.plugin(managerModule.default, managerConfig);
   // The real WebServer and Connection on a loopback port, whose `/session-watcher` channel a scenario registers its handler on.
   if (connection) {
     const [{ WebServer }, connectionPlugin] = await Promise.all(['packages/host/webserver/lib/index.js', 'packages/client/connection/lib/index.js'].map(fromCheckout));

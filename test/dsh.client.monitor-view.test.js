@@ -9,11 +9,11 @@ import { pathToFileURL } from 'node:url';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { InnerCompactionView, MonitorSplit, MonitorList, MonitorDrawer, MonitorToolbar } from '../dsh/src/client/monitor-view.js';
-import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage,
+import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage, SlotToolsPage,
   HandoffDetail, HandoffOverviewPage, HandoffSummaryPage, HandoffFilesPage, HandoffTurnsPage, HandoffLineagePage } from '../dsh/src/client/monitor-drawer.js';
 import { en, zh } from '../dsh/src/client/locales.js';
 import { SKIP_REASONS } from '../lib/llm-adapter/carrier-results.js';
-import { createViewState, reduceView, flattenRows, isOpen, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
+import { createViewState, reduceView, flattenRows, isOpen, NOT_AVAILABLE, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
 import { settlementsOf } from '../public/lib/compactionEconomics.js';
 import { innerMonitorProjection, createMonitorAccess, PREVIEW_SOURCE_CHARS } from '../dsh/src/inner-monitor-read.js';
 import { innerQuote } from '../lib/inner-seal/quote.js';
@@ -1086,6 +1086,166 @@ test('the slot overview names the slot by its number, the place among the carrie
   assert.deepEqual(numbers, [['monitor.slot.number', '1'], ['monitor.slot.number', '2'], ['monitor.slot.number', '3']]);
 });
 
+// ── The tools page of a slot ─────────────────────────────────────────────────
+
+const toolEvent = (seq, { text = 'file text', isError = false, blocks } = {}) => ({
+  seq, type: 'tool/result', visible: false, raw: { seq },
+  blocks: [{ type: 'tool-result', callId: `call-${seq}`, isError, blocks: blocks ?? [{ type: 'text', text }] }],
+});
+const toolCard = (overrides = {}) => ({ id: '1:1:r1', name: 'read', input: '{"file_path":"a.js"}', result: { seq: 11, error: false, empty: false }, pruned: null, warnings: [], ...overrides });
+const toolsSlot = (calls, { warnings = [], events = [toolEvent(11)] } = {}) => slotValue(10, { tools: { warnings, calls }, events });
+
+/** The cards of the tools page's markup: their call identity, the name shown, the states and warnings they show with the I/O collapsed, and their sections. */
+function parseCards(html) {
+  return html.split(/(?=<article\b)/).filter(chunk => chunk.startsWith('<article')).map(chunk => ({
+    id: /data-sw-tool="([^"]*)"/.exec(chunk)?.[1],
+    name: textOf(/<span class="sw-mon-tool-name">(.*?)<\/span>/.exec(chunk)?.[1] ?? ''),
+    states: [...chunk.matchAll(/data-state="([\w-]+)"[^>]*>(.*?)<\/span>/g)].map(([, state, text]) => [state, textOf(text)]),
+    warnings: [...chunk.matchAll(/<li\b[^>]*data-sw-warning="([\w-]+)"[^>]*>(.*?)<\/li>/g)].map(([, kind, text]) => [kind, textOf(text)]),
+    sections: [...chunk.matchAll(/<details\b([^>]*\bdata-sw-tool-section="(\w+)"[^>]*)>(.*?)<\/details>/gs)].map(([, attributes, name, body]) => ({ name, open: /\bopen=/.test(attributes), text: textOf(body) })),
+    pruned: /<p\b[^>]*data-sw-pruned[^>]*>(.*?)<\/p>/s.exec(chunk)?.[1],
+    markup: chunk,
+  }));
+}
+
+const drawerTabs = html => [...html.matchAll(/<button\b[^>]*role="tab"([^>]*)>(.*?)<\/button>/g)].map(([, attributes, label]) => [label, /aria-selected="true"/.test(attributes)]);
+
+test('a slot drawer offers its tools beside the other pages only when the slot has a call, a result or a warning to show, never opens on them, and a host that sends none shows none', () => {
+  const select = reduceView(createViewState(), { type: 'select', kind: 'slot', attemptId: 1, slotKey: 10 });
+  const shown = value => drawerTabs(renderDrawer(select, { [slotKeyOf(1, 10)]: { kind: 'ready', value } }, { ordinals: { 1: { epoch: 1, ordinal: 1 } } }));
+  const withTools = [['monitor.slotPage.overview', false], ['monitor.slotPage.summary', true], ['monitor.slotPage.source', false], ['monitor.slotPage.tools', false]];
+  const without = withTools.slice(0, 3);
+
+  assert.deepEqual(shown(slotValue(10)), without, 'an answer that has no tools at all');
+  assert.deepEqual(shown(slotValue(10, { tools: { warnings: [], calls: [] } })), without, 'nothing to show');
+  assert.deepEqual(shown(toolsSlot([toolCard()])), withTools, 'a call');
+  assert.deepEqual(shown(toolsSlot([toolCard({ name: null, input: null })])), withTools, 'a result alone');
+  assert.deepEqual(shown(slotValue(10, { tools: { warnings: ['old-attribution'], calls: [] } })), withTools, 'a warning is shown though no call is');
+  assert.match(renderDrawer(select, { [slotKeyOf(1, 10)]: { kind: 'ready', value: toolsSlot([toolCard()]) } }, { ordinals: { 1: { epoch: 1, ordinal: 1 } } }), /role="tabpanel"[^>]*data-page="summary"|data-page="summary"[^>]*role="tabpanel"/);
+});
+
+test('a card shows its call and its input and original output as two collapsed sections one above the other, with an unrecorded input, an unrecorded result, an empty result and a tool failure told apart where the card is closed', () => {
+  const cards = parseCards(pageHtml(SlotToolsPage, toolsSlot([
+    toolCard(),
+    toolCard({ id: '1:1:r2', input: null, name: null, result: { seq: 12, error: false, empty: false } }),
+    toolCard({ id: '1:1:r3', result: null }),
+    toolCard({ id: '1:1:r4', result: { seq: 13, error: false, empty: true } }),
+    toolCard({ id: '1:1:r5', result: { seq: 14, error: true, empty: false } }),
+    toolCard({ id: '1:1:r6', result: { seq: 15, error: true, empty: true } }),
+    toolCard({ id: '1:1:r7', input: '' }),
+  ], { events: [toolEvent(11, { text: 'text eleven' }), toolEvent(12, { text: 'text twelve' }), toolEvent(13, { text: '' }), toolEvent(14, { text: 'ENOENT', isError: true }), toolEvent(15, { blocks: [] })] })));
+
+  assert.deepEqual(cards.map(({ id, name, states }) => [id, name, states]), [
+    ['1:1:r1', 'read', []],
+    ['1:1:r2', 'monitor.notRecorded', [['no-input', 'monitor.tool.noInput']]],
+    ['1:1:r3', 'read', [['no-result', 'monitor.tool.noResult']]],
+    ['1:1:r4', 'read', [['empty-result', 'monitor.tool.emptyResult']]],
+    ['1:1:r5', 'read', [['error', 'monitor.tool.failed']]],
+    ['1:1:r6', 'read', [['error', 'monitor.tool.failed']]],
+    ['1:1:r7', 'read', []],
+  ]);
+  assert.deepEqual(cards[0].sections, [
+    { name: 'input', open: false, text: 'monitor.tool.input{"file_path":"a.js"}' },
+    { name: 'output', open: false, text: 'monitor.tool.outputtext eleven' },
+  ], 'input above output, each folded, the output the original result\'s own blocks');
+  assert.deepEqual(cards[1].sections.map(({ name }) => name), ['output'], 'no section for an input nobody recorded');
+  assert.deepEqual(cards[2].sections.map(({ name }) => name), ['input']);
+  assert.deepEqual(cards[3].sections.map(({ name }) => name), ['input'], 'an empty result has no output to unfold');
+  assert.deepEqual(cards[4].sections.map(({ name }) => name), ['input', 'output']);
+  assert.equal(cards[4].markup.includes('data-block="tool-result"'), false, 'the output is the result\'s blocks, not the event around them');
+  assert.ok(cards[4].sections[1].text.includes('ENOENT'));
+  assert.deepEqual(cards[5].sections.map(({ name }) => name), ['input']);
+  assert.ok(cards[6].sections[0].text.includes('monitor.slot.empty'), 'an input recorded as empty text is told from one never recorded');
+  assert.deepEqual(cards.map(card => card.states.filter(([state]) => state === 'error').length), [0, 0, 0, 0, 1, 1, 0], 'only an explicit failure is a failure');
+});
+
+test('a call\'s name, input and output are set as data: markup and links in them are escaped, and an attachment is shown as its reference', () => {
+  const html = pageHtml(SlotToolsPage, toolsSlot([
+    toolCard({ name: '<img src=x onerror=alert(1)>', input: '<script>run()</script>', result: { seq: 11, error: false, empty: false } }),
+  ], { events: [toolEvent(11, { blocks: [{ type: 'text', text: '[link](javascript:alert(1)) <b>bold</b>' }, { type: 'image', attachment: { id: 'att-1', name: 'shot.png' } }] })] }));
+
+  assert.equal(/<(img|script|b)\b/.test(html), false, 'nothing a call holds becomes an element');
+  const text = textOf(html);
+  for (const literal of ['<img src=x onerror=alert(1)>', '<script>run()</script>', '[link](javascript:alert(1)) <b>bold</b>']) assert.ok(text.includes(literal), literal);
+  assert.ok(html.includes('data-block="image"') && text.includes('"name": "shot.png"'), 'the attachment as the reference the log keeps');
+  assert.equal(html.includes('<a '), false);
+});
+
+test('a card shows the warnings it holds beside a collapsed card in their own kind, a state kind as its short query or write, a direct read as the attempt its dispatch was, failed or not, and the others in the words of the slot row, and the header shows each kind it was given once in the same words, the state kinds in full', () => {
+  const cards = parseCards(pageHtml(SlotToolsPage, toolsSlot([
+    toolCard({ id: '1:1:a', warnings: [{ kind: 'state-mixed' }] }),
+    toolCard({ id: '1:1:b', warnings: [{ kind: 'state-check' }, { kind: 'carrier-recall' }] }),
+    toolCard({ id: '1:1:c', warnings: [{ kind: 'state-write' }, { kind: 'verbatim-recall' }, { kind: 'handoff-recall' }] }),
+    toolCard({ id: '1:1:d', warnings: [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }] }),
+    toolCard({ id: '1:1:e', warnings: [{ kind: 'old-attribution', oldLines: 901, newLines: 99, percent: 90, over: true }] }),
+    toolCard({ id: '1:1:f', warnings: [{ kind: 'old-attribution', oldLines: 0, newLines: 0, percent: null, over: false }] }),
+    toolCard({ id: '1:1:g', result: { seq: 12, error: true, empty: false }, warnings: [{ kind: 'carrier-recall' }] }),
+  ], { warnings: ['state-mixed', 'state-write', 'handoff-recall'], events: [toolEvent(11), toolEvent(12, { text: 'denied', isError: true })] })));
+  const html = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'state-write' }] })], { warnings: ['state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall'] }));
+
+  assert.deepEqual(cards.map(card => card.warnings), [
+    [['state-mixed', 'monitor.tool.stateQuery']],
+    [['state-check', 'monitor.tool.stateQuery'], ['carrier-recall', 'monitor.tool.attempt.carrier-recall']],
+    [['state-write', 'monitor.tool.stateWrite'], ['verbatim-recall', 'monitor.tool.attempt.verbatim-recall'], ['handoff-recall', 'monitor.tool.attempt.handoff-recall']],
+    [['old-attribution', 'monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=95%,oldLines=19,newLines=1)']],
+    [['old-attribution', 'monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=>90%,oldLines=901,newLines=99)']],
+    [['old-attribution', `monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=${NOT_AVAILABLE},oldLines=0,newLines=0)`]],
+    [['carrier-recall', 'monitor.tool.attempt.carrier-recall']],
+  ]);
+  assert.ok(cards.every(card => card.sections.length > 0 && card.sections.every(section => section.open === false)), 'every card shows its warnings with its sections folded');
+  assert.deepEqual(cards[6].states, [['error', 'monitor.tool.failed']], 'a direct read that failed shows its failure beside the warning');
+
+  const header = sectionOf(html, 'warnings');
+  assert.deepEqual([...header.matchAll(/data-sw-warning="([\w-]+)"[^>]*>(.*?)<\/li>/g)].map(([, kind, text]) => [kind, textOf(text)]), [
+    ['state-mixed', 'monitor.warning.state-mixed'], ['state-write', 'monitor.warning.state-write'], ['verbatim-recall', 'monitor.tool.attempt.verbatim-recall'],
+    ['handoff-recall', 'monitor.tool.attempt.handoff-recall'], ['carrier-recall', 'monitor.tool.attempt.carrier-recall'],
+  ]);
+  assert.equal(html.includes('data-sw-old-note'), false, 'no explanation of old where nothing says old');
+});
+
+test('the page explains what old means wherever it shows an old-attribution warning, on a card or in the header, and nowhere else', () => {
+  const onCard = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }] })]));
+  const inHeader = pageHtml(SlotToolsPage, toolsSlot([toolCard()], { warnings: ['old-attribution'] }));
+  const absent = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'carrier-recall' }] })], { warnings: ['carrier-recall'] }));
+
+  for (const html of [onCard, inHeader]) assert.ok(textOf(html).includes('monitor.tool.oldNote'));
+  assert.equal(absent.includes('monitor.tool.oldNote'), false);
+  assert.equal(sectionOf(onCard, 'warnings') === undefined || !sectionOf(onCard, 'warnings').includes('data-sw-warning'), true, 'a card\'s warning is not repeated in the header');
+});
+
+test('a card shows pruning as neutral text with a jump to the replacement on the source page, and the source page marks only the event the jump names', () => {
+  const [pruned, plain] = parseCards(pageHtml(SlotToolsPage, toolsSlot([
+    toolCard({ pruned: { seq: 12 } }),
+    toolCard({ id: '1:1:r2', result: { seq: 13, error: false, empty: false } }),
+  ], { events: [toolEvent(11, { text: 'the whole file' }), toolEvent(12, { text: 'file pruned' }), toolEvent(13)] })));
+
+  assert.ok(pruned.pruned.includes('monitor.tool.pruned'));
+  assert.match(pruned.pruned, /<button\b[^>]*data-sw-open-source="12"[^>]*>monitor\.tool\.openPruned\(seq=12\)<\/button>/);
+  assert.equal(pruned.warnings.length + pruned.states.length, 0, 'pruning is neither a warning nor a failure');
+  assert.equal(pruned.markup.includes('file pruned'), false, 'no second copy of the pruned output');
+  assert.ok(pruned.sections[1].text.includes('the whole file'), 'the output is the original');
+  assert.equal(plain.pruned, undefined);
+
+  const detail = slotValue(10, { events: [11, 12, 13].map(seq => ({ ...toolEvent(seq), visible: seq !== 11 })) });
+  const marked = html => [...html.matchAll(/data-sw-event="" data-seq="(\d+)"[^>]*>/g)].map(([tag, seq]) => [seq, /data-sw-opened/.test(tag)]);
+  assert.deepEqual(marked(pageHtml(SlotSourcePage, detail)), [['11', false], ['12', false], ['13', false]]);
+  assert.deepEqual(marked(pageHtml(SlotSourcePage, detail, { opened: { seq: 12 } })), [['11', false], ['12', true], ['13', false]]);
+  assert.deepEqual(marked(pageHtml(SlotSourcePage, detail, { opened: { seq: 99 } })), [['11', false], ['12', false], ['13', false]], 'a seq the page does not hold marks nothing');
+});
+
+test('the tools of a slot the host answers read as the card list the page renders: a pruned call, a failed direct read and an unrecorded result over a real log', { skip }, async () => {
+  const conv = conversation();
+  conv.first.data.message.content.push({ type: 'tool-call', id: 'call-2', name: 'bash', arguments: '{"command":"ls"}' });
+  const { start, log } = attemptOver(conv);
+  const detail = await slotOf(log, start.seq, conv.first.seq);
+
+  const [first, second] = parseCards(pageHtml(SlotToolsPage, detail));
+  assert.deepEqual([first.id, second.id], ['1:1:call-1', '1:1:call-2']);
+  assert.ok(first.pruned.includes(`data-sw-open-source="${conv.replacement.seq}"`), 'the jump names the replacement event of the slot');
+  assert.ok(first.sections[1].text.includes('the whole file') && !first.markup.includes('file pruned'));
+  assert.deepEqual(second.states, [['no-result', 'monitor.tool.noResult']]);
+});
+
 // ── The expanded slots ────────────────────────────────────────────────────────
 
 const slotsKey = attempt => resourceKey({ endpoint: 'inner-monitor/slots', attempt });
@@ -1944,8 +2104,12 @@ const settlingAttempts = () => [attemptRow(1, { ...SETTLING, stepN: 8 }), attemp
 const clearingHandoff = (overrides = {}) => handoffRow(5, { type: 'continue', epoch: 1, tailCalls: 2, contextChange: { before: 460, after: 710, delta: 250, miss: 510 }, ...overrides });
 const settlementKey = handoffId => reduceView(createViewState(), { type: 'select', kind: 'settlement', handoffId });
 
-function renderSettlementDrawer(state, settlements, { dictionary } = {}) {
-  return renderToString(React.createElement(MonitorDrawer, { state, monitor: monitorAt(null), ordinals: {}, handoffs: [], settlements, now: NOW, dispatch: () => {}, t: dictionary === undefined ? t : localized(dictionary) }));
+// The settlement resource's answer the drawer draws figures from: only an adjusted settlement is shown, and one that is evidence of recall adjusts the list's figures by nothing.
+const ADJUSTED = { kind: 'ready', value: { calls: [], activity: { covered: true, judged: 1, pure: 0, targets: [] } } };
+
+function renderSettlementDrawer(state, settlements, { dictionary, result = null } = {}) {
+  const monitor = monitorAt(null, result === null ? {} : { [resourceKey({ endpoint: 'inner-monitor/settlement', handoff: 5 })]: result });
+  return renderToString(React.createElement(MonitorDrawer, { state, monitor, ordinals: {}, handoffs: [], settlements, now: NOW, dispatch: () => {}, t: dictionary === undefined ? t : localized(dictionary) }));
 }
 
 test('the settlement of a cleared segment is a row of its own in front of the continue that cleared it, titled by the segment and carrying the count, the steps and the four figures in their slots, with no seq, no preview and no toggle', () => {
@@ -2016,7 +2180,10 @@ test('in each locale the settlement drawer is titled by the segment with the han
   assert.match(enHtml, /<h2\b[^>]*>Compaction settlement of segment #1<\/h2>/);
   assert.equal(subtitleOf(enHtml), 'Handoff ID: 5');
   assert.deepEqual([...enHtml.matchAll(/<button[^>]*role="tab"[^>]*>(.*?)<\/button>/g)].map(match => match[1]), ['Payback', 'Context']);
-  const echoed = renderSettlementDrawer(settlementKey(5), settled);
+  const pending = renderSettlementDrawer(settlementKey(5), settled);
+  assert.match(pending, /data-sw-monitor-notice="recall-pending"/);
+  assert.equal(pending.includes('sw-pb-head'), false, 'no figure while the adjusted settlement is not there');
+  const echoed = renderSettlementDrawer(settlementKey(5), settled, { result: ADJUSTED });
   assert.equal(echoed.includes('<pre'), false, 'the settlement drawer sets no preformatted block');
   assert.equal(echoed.includes('monitor.settlement.total'), false);
   assert.deepEqual([...echoed.matchAll(/<span>(monitor\.settlement\.[a-z]+\(.*?\))[ ·]*<\/span>/g)].map(match => match[1]), [
@@ -2244,6 +2411,7 @@ test('slot warnings keep the closed parent and, when opened, only the warned slo
   assert.deepEqual(touched, [slotsKey(2), slotsKey(3)]);
   assert.deepEqual(group.map(row => row.attributes['data-sw-attention']), ['', '', '', '', '', '']);
   assert.equal(group[1].attributes['aria-description'], 'monitor.warning.state-check · monitor.warning.verbatim-recall');
+  assert.equal(group[2].attributes['aria-description'], 'monitor.warning.state-mixed · monitor.warning.state-write · monitor.warning.handoff-recall · monitor.warning.carrier-recall', 'the slot row keeps the wording it had');
   assert.equal(group[1].parts.mark, undefined, 'the reason adds no row text');
   assert.equal(group[4].attributes['aria-description'], 'monitor.meta.context.grew');
 
@@ -2281,6 +2449,16 @@ test('every locale key the view and its drawer ask for, over the states of the m
     renderDrawer(slotSelected);
     renderDrawer(slotSelected, { [slotKeyOf(1, 2)]: { kind: 'ready', value: slotValue(2) } });
     for (const page of [SlotOverviewPage, SlotSummaryPage, SlotSourcePage]) pageHtml(page, slotValue(2, { source: undefined }));
+    const everyKind = ['state-check', 'state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall', 'old-attribution'];
+    const toolsDetail = toolsSlot([
+      toolCard({ pruned: { seq: 12 }, warnings: everyKind.map(kind => (kind === 'old-attribution' ? { kind, oldLines: 19, newLines: 1, percent: 95, over: false } : { kind })) }),
+      toolCard({ id: '1:1:r2', name: null, input: null, result: null }),
+      toolCard({ id: '1:1:r3', result: { seq: 13, error: true, empty: true } }),
+      toolCard({ id: '1:1:r4', result: { seq: 14, error: false, empty: true }, warnings: [{ kind: 'old-attribution', oldLines: 901, newLines: 99, percent: 90, over: true }, { kind: 'old-attribution', oldLines: 0, newLines: 0, percent: null, over: false }] }),
+    ], { warnings: everyKind, events: [toolEvent(11), toolEvent(12), toolEvent(13, { blocks: [] }), toolEvent(14, { text: '' })] });
+    pageHtml(SlotToolsPage, toolsDetail);
+    pageHtml(SlotSourcePage, toolsDetail, { opened: { seq: 12 } });
+    renderDrawer(slotSelected, { [slotKeyOf(1, 2)]: { kind: 'ready', value: toolsDetail } });
     const handoffs = [handoffRow(5), handoffRow(6, { type: 'continue', createdAt: null, kept: null, read: null, lineage: null, nextTask: null, contextChange: { before: 460, after: 710, delta: 250, miss: 510 } })];
     const turned = { [handoffKey(5)]: readyHandoff(handoffs[0], { turns: TURNS }), [handoffKey(6)]: readyHandoff(handoffs[1], { turns: TURNS, lineage: null, turnPage: null, followUp: null, files: [] }) };
     renderSplit([attemptRow(1)], turned, { handoffs, state: openingHandoffs(5, 6) });

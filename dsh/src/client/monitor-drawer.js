@@ -1,4 +1,4 @@
-// dsh/src/client/monitor-drawer.js — the inner compaction monitor's drawer contents: the eight pages of a call's detail, a slot's detail, a handoff's pages and one of its turns, settlement reports, and notices for a detail not yet answered.
+// dsh/src/client/monitor-drawer.js — the inner compaction monitor's drawer contents: the eight pages of a call's detail, the pages of a slot's detail, a handoff's pages and one of its turns, settlement reports, and notices for a detail not yet answered.
 // The call, slot and handoff pages show the payloads of the host's `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot` and `inner-monitor/handoff` endpoints as they are, whole: text and JSON are set in `<pre>` through React, which escapes them, so nothing is parsed as Markdown, redacted or run, and a tool call is data to show.
 import React from 'react';
 import { elapsedOf, formatElapsed, slotTitleOf, contextChangeText, tokensOf, NOT_AVAILABLE, TOKEN_UNIT } from './monitor-state.js';
@@ -6,9 +6,10 @@ import { shownStatusOf } from '../../../public/lib/compactionEconomics.js';
 import { blockListParts, quoteFactsOf, slotFactsOf, jsonText, stringOf } from './monitor-model.js';
 import { CarriedFiles, ReadFiles } from './monitor-files.js';
 import { PaybackPage, PaybackReport } from './monitor-settlement.js';
-import { paybackModelOf } from './monitor-settlement-model.js';
+import { paybackPageOf } from './monitor-settlement-model.js';
 import { ContextPage, ContextReport } from './monitor-context.js';
 import { contextModelOf } from './monitor-context-model.js';
+import { settlementViewOf } from './monitor-recall-model.js';
 import { Notice, useResult } from './monitor-handle.js';
 
 const h = React.createElement;
@@ -242,10 +243,14 @@ export function QuotePage({ detail, t }) {
     h(Facts, { entries: quoteFactsOf(detail.quote, t).map(([term, value]) => [term, value ?? h(Missing, { t })]) }));
 }
 
-// One source event of a slot: folded, opened where the call saw it as a surface node, with its structured blocks and, folded below, the event itself as recorded.
-function SourceEvent({ event, t }) {
+// One source event of a slot: folded, opened where the call saw it as a surface node, with its structured blocks and, folded below, the event itself as recorded. The event a jump of the tools page names opens and takes the focus, which brings it into view.
+function SourceEvent({ event, opened, t }) {
   const { seq, type, visible, blocks, raw } = event;
-  return h('details', { className: 'sw-mon-event', 'data-sw-event': '', 'data-seq': seq, 'data-visible': String(visible), open: visible },
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (opened) ref.current.querySelector('summary').focus();
+  }, [opened]);
+  return h('details', { ref, className: 'sw-mon-event', 'data-sw-event': '', 'data-seq': seq, 'data-visible': String(visible), 'data-sw-opened': opened ? '' : undefined, open: visible || opened },
     h('summary', null,
       t('monitor.slot.event', { seq, type }),
       h('span', { className: 'sw-mon-tag', 'data-tag': visible ? 'surface' : 'earlier' }, t(visible ? 'monitor.slot.surface' : 'monitor.slot.earlier'))),
@@ -272,10 +277,71 @@ export function SlotSummaryPage({ detail, t }) {
 /**
  * The events a slot summarizes as the recorded log has them.
  * `detail` is the `inner-monitor/slot` payload, whose events arrive already marked `visible` from the range the call recorded: a visible event is a surface node of the call, any other an earlier original source the call did not receive. The mark is shown as given and decides nothing about the C.
+ * `opened` is `{ seq }` where the tools page jumped here: that event alone opens, comes into view and takes the focus; a seq the page holds no event for marks none.
  */
-export function SlotSourcePage({ detail, t }) {
+export function SlotSourcePage({ detail, opened = null, t }) {
   return h(Section, { name: 'sources', title: t('monitor.slot.sources') },
-    detail.events.map(event => h(SourceEvent, { key: event.seq, event, t })));
+    detail.events.map(event => h(SourceEvent, { key: event.seq, event, opened: opened?.seq === event.seq, t })));
+}
+
+// The words the tools page gives a warning kind, on a card and in its header alike. A direct read is told by the target its dispatch names, whatever the result answered, so it is worded as the attempt it was and never as a read that returned; every other kind is worded as the slot row words it.
+const DIRECT_READS = ['handoff-recall', 'carrier-recall', 'verbatim-recall'];
+const warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
+
+// The words a warning wears on a card: a state kind as the short query or write, an old read with its share and counts, any other kind as `warningText` has it. The header words every kind by `warningText`.
+function cardWarningText(warning, t) {
+  switch (warning.kind) {
+    case 'state-check':
+    case 'state-mixed': return t('monitor.tool.stateQuery');
+    case 'state-write': return t('monitor.tool.stateWrite');
+    case 'old-attribution': {
+      const { percent, over, oldLines, newLines } = warning;
+      return t('monitor.tool.oldAttribution', { label: t('monitor.warning.old-attribution'), percent: percent === null ? NOT_AVAILABLE : `${over ? '>' : ''}${percent}%`, oldLines, newLines });
+    }
+    default: return warningText(warning.kind, t);
+  }
+}
+
+// The blocks of a result event of the slot, the tool result's own and not the one block around them; none where the slot holds no such event.
+const resultBlocksOf = (events, seq) => events.find(event => event.seq === seq)?.blocks.find(block => block.type === 'tool-result')?.blocks ?? [];
+
+// The states a card shows while closed: an input nobody recorded, then the result's own: none recorded, an explicit failure, or empty. A call whose result is missing or empty is no failure, and a failure is only what the result says it is.
+function toolStatesOf({ input, result }) {
+  return [
+    ...(input === null ? [['no-input', 'monitor.tool.noInput']] : []),
+    ...(result === null ? [['no-result', 'monitor.tool.noResult']] : result.error ? [['error', 'monitor.tool.failed']] : result.empty ? [['empty-result', 'monitor.tool.emptyResult']] : []),
+  ];
+}
+
+// One call of the slot: its name, the states and warnings it shows closed, the neutral note and jump of a result the pruner replaced, and its raw input and original output in two folded sections one above the other. Everything in it is data set through React: nothing is parsed or run.
+function ToolCard({ card: { id, name, input, result, pruned, warnings }, events, open, t }) {
+  return h('article', { className: 'sw-mon-tool', 'data-sw-tool': id },
+    h('div', { className: 'sw-mon-tool-head' },
+      h('span', { className: 'sw-mon-tool-name' }, name ?? t('monitor.notRecorded')),
+      toolStatesOf({ input, result }).map(([state, key]) => h('span', { key: state, className: 'sw-mon-tool-state', 'data-state': state }, t(key)))),
+    warnings.length === 0 ? null : h('ul', { className: 'sw-mon-tool-warnings' },
+      warnings.map(warning => h('li', { key: warning.kind, className: 'sw-mon-tool-warning', 'data-sw-warning': warning.kind, 'data-sw-attention': '' }, cardWarningText(warning, t)))),
+    pruned === null ? null : h('p', { className: 'sw-mon-tool-pruned', 'data-sw-pruned': '' },
+      t('monitor.tool.pruned'), ' ',
+      h('button', { type: 'button', className: 'sw-mon-link', 'data-sw-open-source': pruned.seq, onClick: () => { open?.(pruned.seq); } }, t('monitor.tool.openPruned', { seq: pruned.seq }))),
+    input === null ? null : h('details', { className: 'sw-mon-fold', 'data-sw-tool-section': 'input' }, h('summary', null, t('monitor.tool.input')), h(WholeText, { text: input, t })),
+    result === null || result.empty ? null : h('details', { className: 'sw-mon-fold', 'data-sw-tool-section': 'output' },
+      h('summary', null, t('monitor.tool.output')), h(Blocks, { blocks: resultBlocksOf(events, result.seq), t })));
+}
+
+/**
+ * The tool calls of a slot: the warnings the slot's cards do not hold, each kind once in the words of `warningText`, beside the note that "old" means attributed before the step wherever an old-attribution warning is shown, then one card per call in the order the assistant issued them (`ToolCard`).
+ * `detail` is the `inner-monitor/slot` payload, whose `tools` the host builds and whose `events` hold each result's blocks; `open(seq)` is the jump to the source page's event at `seq`.
+ */
+export function SlotToolsPage({ detail, open, t }) {
+  const { warnings, calls } = detail.tools;
+  const explains = warnings.includes('old-attribution') || calls.some(card => card.warnings.some(({ kind }) => kind === 'old-attribution'));
+  return h(React.Fragment, null,
+    warnings.length === 0 && !explains ? null : h(Section, { name: 'warnings' },
+      warnings.length === 0 ? null : h('ul', { className: 'sw-mon-tool-warnings' },
+        warnings.map(kind => h('li', { key: kind, className: 'sw-mon-tool-warning', 'data-sw-warning': kind, 'data-sw-attention': '' }, warningText(kind, t)))),
+      explains ? h('p', { className: 'sw-mon-note', 'data-sw-old-note': '' }, t('monitor.tool.oldNote')) : null),
+    calls.map((card, at) => h(ToolCard, { key: at, card, events: detail.events, open, t })));
 }
 
 /**
@@ -342,13 +408,15 @@ const SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, sourc
 const HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
 export const SETTLEMENT_PAGES = { payback: PaybackPage, context: ContextPage };
 
-// The pages of a detail behind a tab strip, `first` shown to begin with and the page the component's own state: the drawer keys the component by the selected identity, so another item opens at its first page.
-export function PagedDetail({ pages, first, labels, ...props }) {
-  const [page, setPage] = React.useState(first);
+// The pages of a detail behind a tab strip, `first` shown to begin with and the page the component's own state: the drawer keys the component by the selected identity, so another item opens at its first page. A caller that moves the page itself gives `page` and `onPage`; a `page` the pages do not hold shows `first`.
+export function PagedDetail({ pages, first, labels, page: given, onPage, ...props }) {
+  const [own, setOwn] = React.useState(first);
+  const page = pages[given ?? own] === undefined ? first : given ?? own;
+  const select = onPage ?? setOwn;
   const Page = pages[page];
   return h(React.Fragment, null,
     h('div', { className: 'sw-mon-tabs', role: 'tablist' }, Object.keys(pages).map(name => h('button', {
-      key: name, type: 'button', role: 'tab', className: 'sw-mon-tab', 'data-page': name, 'aria-selected': name === page, onClick: () => { setPage(name); },
+      key: name, type: 'button', role: 'tab', className: 'sw-mon-tab', 'data-page': name, 'aria-selected': name === page, onClick: () => { select(name); },
     }, props.t(`${labels}.${name}`)))),
     h('div', { className: 'sw-mon-page', role: 'tabpanel', 'data-page': page }, h(Page, props)));
 }
@@ -358,9 +426,20 @@ export function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
   return h(PagedDetail, { pages: CALL_PAGES, first: 'overview', labels: 'monitor.page', detail, monitor, attemptId, payback, now, t });
 }
 
-/** The three pages of a slot's detail behind a tab strip, the summary first. `detail` is the `inner-monitor/slot` payload. */
+// Whether a slot's tools are anything to show: a call, a result or a warning; an answer without the field, an older host's, has none.
+const hasTools = ({ tools }) => tools !== undefined && (tools.calls.length > 0 || tools.warnings.length > 0);
+
+/**
+ * The pages of a slot's detail behind a tab strip, the summary first: the overview, the summary, the source text and, where the slot has tools to show, the tools. `detail` is the `inner-monitor/slot` payload.
+ * The page is this component's state because a card's jump moves it: it opens the source page with `opened`, the event it names, which the next tab the reader chooses clears.
+ */
 export function SlotDetail({ detail, t }) {
-  return h(PagedDetail, { pages: SLOT_PAGES, first: 'summary', labels: 'monitor.slotPage', detail, t });
+  const [page, setPage] = React.useState('summary');
+  const [opened, setOpened] = React.useState(null);
+  const pages = hasTools(detail) ? { ...SLOT_PAGES, tools: SlotToolsPage } : SLOT_PAGES;
+  const select = (name) => { setOpened(null); setPage(name); };
+  const open = (seq) => { setOpened({ seq }); setPage('source'); };
+  return h(PagedDetail, { pages, first: 'summary', page, onPage: select, labels: 'monitor.slotPage', detail, opened, open, t });
 }
 
 /** The pages of a handoff's detail behind a tab strip, the overview first; the lineage page is a load's alone. `detail` is the `inner-monitor/handoff` payload. */
@@ -377,19 +456,23 @@ export function SettlementDetail({ settlement, handoffId, monitor, session, t })
   return settlement === undefined ? null : h(PagedDetail, { pages: SETTLEMENT_PAGES, first: 'payback', labels: 'monitor.settlementPage', settlement, handoffId, monitor, session, t });
 }
 
-const CURRENT_SETTLEMENT_PAGES = {
-  payback: ({ detail: { base, report, curve, snapshot }, t }) => h(PaybackReport, { model: paybackModelOf(base, report, curve, t, true), result: snapshot, t }),
-  context: ({ detail: { base, report, snapshot }, t }) => h(ContextReport, { model: contextModelOf(base, report, snapshot, null, t), result: snapshot, current: true, t }),
+// The pages of the current segment's snapshot: the same pages of the same answer as a closed segment's, drawn from the view (`settlementViewOf`) of the answer the toolbar read once.
+export const CURRENT_SETTLEMENT_PAGES = {
+  payback: ({ view, t }) => h(PaybackReport, { model: paybackPageOf(view, t, true), t }),
+  context: ({ view, monitor, t }) => h(ContextReport, { model: contextModelOf(view, null, t), current: true, monitor, t }),
 };
 
-export function CurrentSettlementDetail({ result, t }) {
-  return h(DetailBody, { result, t, render: (detail) => {
-    const { base, report } = detail;
-    if (base.count === 0) return h(Notice, { state: 'current-empty' }, t('monitor.settlement.current.empty'));
-    if (report === null) return h(Notice, { state: 'current-pending' }, t('monitor.settlement.current.pending'));
+/**
+ * The current segment's settlement as the toolbar read it: an empty segment, a segment with no compaction priced yet and one priced in part say so; otherwise the two pages, the payback page first, over the one answer. `result` is `readCurrentSettlement`'s and `monitor` hands the reader of a target's text.
+ */
+export function CurrentSettlementDetail({ result, monitor, t }) {
+  return h(DetailBody, { result, t, render: () => {
+    const view = settlementViewOf(null, result);
+    if (view.base.count === 0) return h(Notice, { state: 'current-empty' }, t('monitor.settlement.current.empty'));
+    if (!view.priced) return h(Notice, { state: 'current-pending' }, t('monitor.settlement.recall.unpriced'));
     return h(React.Fragment, null,
-      base.rows.some(row => row.saved === null) ? h(Notice, { state: 'current-partial' }, t('monitor.settlement.current.partial')) : null,
-      h(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: 'payback', labels: 'monitor.settlementPage', detail, t }));
+      view.base.rows.some(row => row.saved === null) ? h(Notice, { state: 'current-partial' }, t('monitor.settlement.current.partial')) : null,
+      h(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: 'payback', labels: 'monitor.settlementPage', view, monitor, t }));
   } });
 }
 

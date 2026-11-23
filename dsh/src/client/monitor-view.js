@@ -7,6 +7,7 @@ import {
   createViewState, reduceView, flattenRows, visibleGroups, isOpen, hasSlotWarnings, FILTER_CATEGORIES, LEAVES_LOADING, LEAVES_FAILED, slotTitleOf, handoffSegmentOf, NOT_AVAILABLE, PART_SEPARATOR, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, DRAWER_KEY_STEP,
 } from './monitor-state.js';
 import { ordinalsOf, paybackOf, settlementsOf } from '../../../public/lib/compactionEconomics.js';
+import { settlementViewOf } from './monitor-recall-model.js';
 import { parentMetaParts, handoffMetaParts, handoffTitle, settlementMetaParts } from './monitor-model.js';
 
 const h = React.createElement;
@@ -209,10 +210,10 @@ export function MonitorDrawer({ state, monitor, session, ordinals, payback, hand
   let subtitle;
   let body;
   if (kind === 'current-settlement') {
-    const value = selected.result?.kind === 'ready' ? selected.result.value : null;
-    title = value === null ? t('monitor.toolbar.currentSettlement') : t('monitor.drawer.settlement', { epoch: value.base.epoch });
-    subtitle = value === null ? null : h('p', { className: 'sw-mon-drawer-sub' }, t('monitor.settlement.current.through', { step: value.base.steps }));
-    body = h(CurrentSettlementDetail, { key: identity, result: selected.result, t });
+    const { base } = selected.result?.kind === 'ready' ? settlementViewOf(null, selected.result) : { base: null };
+    title = base === null ? t('monitor.toolbar.currentSettlement') : t('monitor.drawer.settlement', { epoch: base.epoch });
+    subtitle = base === null ? null : h('p', { className: 'sw-mon-drawer-sub' }, t('monitor.settlement.current.through', { step: base.steps }));
+    body = h(CurrentSettlementDetail, { key: identity, result: selected.result, monitor, t });
   } else if (kind === 'settlement') {
     const settlement = settlements.get(handoffId);
     title = t('monitor.drawer.settlement', { epoch: settlement === undefined ? NOT_AVAILABLE : settlement.epoch });

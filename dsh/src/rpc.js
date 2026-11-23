@@ -22,6 +22,10 @@ const MONITOR_UNAVAILABLE = failure('inner_monitor_unavailable', 'The inner comp
 const FORBIDDEN = failure('forbidden', 'Only the owner of this host can manage the carrier cache.');
 const CARRIER_CACHE_UNAVAILABLE = failure('carrier_cache_unavailable', 'The carrier cache switch is not available in this host.');
 const MONITOR_NOT_COMMITTED = failure('inner_monitor_not_committed', 'The inner compaction attempt has no committed seal, so it has no slots.');
+const TARGET_FORBIDDEN = failure('forbidden', 'Only the owner of this host can read the text of a recalled event.');
+const TARGET_NOT_RECALLED = failure('inner_monitor_not_recalled', 'The event is not a recall target of this settlement at this cut.');
+// The closed answers of the monitor's access, by the `kind` it gives them, that a read answers as the failure and not as a value; an attempt with no carrier is the one most reads have.
+const NO_CARRIER = { not_committed: MONITOR_NOT_COMMITTED };
 
 /**
  * The channel's handler over `table`.
@@ -35,6 +39,7 @@ const MONITOR_NOT_COMMITTED = failure('inner_monitor_not_committed', 'The inner 
  * `inner-monitor` answers from the monitor's access (`innerMonitor()`, null while none is published) at the same place, so the measurement's state changes nothing there either: it answers the access's `rows` as `{ attempts, handoffs }`, and `inner_monitor_unavailable` when no access is published or the access answers `undefined` for a session that is neither held nor stored. Every method of the access is awaited, and a throw or a rejection from it is one `inner_monitor_read_failed` line under the session and the same failure as an envelope, never a failed request. It publishes nothing.
  * `inner-monitor/call`, `inner-monitor/slots`, `inner-monitor/slot`, `inner-monitor/handoff` and `inner-monitor/settlement` answer the access's `call`, `slots`, `slot`, `handoff` and `settlement` the same way, an `attempt`, `slot` or `handoff` (the seq of the handoff's payload message, the `id` of its row) that is not a non-negative safe integer being `invalid_body` with the access not consulted. The access's closed `{ kind: 'not_committed' }` for an attempt with no carrier is `inner_monitor_not_committed`; an address or a fact the access cannot find is its throw, so `inner_monitor_read_failed`, and only an absent access or a session neither held nor stored is `inner_monitor_unavailable`.
  * `inner-monitor/settlement/current` answers the access's `currentSettlement` with only a `sessionId`; no handoff is needed.
+ * `inner-monitor/settlement/target` answers the access's `settlementTarget`, the text of one original event that a settlement shows as a recall target, `{ seq, type, text }`, `text` null where the event holds none. The body names the cut the settlement answered, `{ segment, through }`, and the `seq`, each a non-negative integer. Like the carrier cache it answers the owner alone, the peer checked before the body: a peer whose `principal.kind` is not `owner`, or none, is `forbidden` with the access not consulted. A `seq` that is no confirmed target at that cut is `inner_monitor_not_recalled`.
  * `pi-ai/status` names no session and answers before any session is looked up: `{ failure }`, null or the `{ cause }` of the opt-in pi-ai entry (`pi-ai-integration.js`) that `piAiFailure()` reads at each call, null while that entry is not mounted or serves its routes.
  * `carrier-cache/status` and `carrier-cache/set` name no session and answer for the owner of the host alone: the fourth argument of the channel's handler is the `PeerScope` the connection layer admitted the call for, and a call whose `peer.principal.kind` is not `owner` (or that has no peer) is `forbidden` before the switch (`carrierCache()`, null where the host holds none, `carrier_cache_unavailable`) is read. The bundles the switch acts on and the one package it may install are fixed in the switch; the body of `set` is `{ enabled: boolean, confirmInstall?: boolean }` and nothing else is read, `confirmInstall` counting only as the literal `true`.
  * `bucket/file` answers `heldFilePayload` of the watcher's held lines of the body's `path`, read from `workingTree`; a `path` that is no string is `invalid_body` and one the watcher has no resource at is `not_held`.
@@ -47,7 +52,8 @@ const MONITOR_NOT_COMMITTED = failure('inner_monitor_not_committed', 'The inner 
  *   innerMode?: () => ({ display: (sessionId: string) => Promise<object|undefined>, select: (sessionId: string, enabled: boolean) => string } | null),
  *   innerMonitor?: () => ({ rows: (sessionId: string) => Reply, call: (sessionId: string, attempt: number) => Reply, slots: (sessionId: string, attempt: number) => Reply,
  *     slot: (sessionId: string, attempt: number, slot: number) => Reply, handoff: (sessionId: string, handoff: number) => Reply,
- *     settlement: (sessionId: string, handoff: number) => Reply, currentSettlement: (sessionId: string) => Reply } | null) }} options `Reply` is `(object|undefined|Promise<object|undefined>)`, the payload of the endpoint, `{ kind: 'not_committed' }` or `undefined`
+ *     settlement: (sessionId: string, handoff: number) => Reply, currentSettlement: (sessionId: string) => Reply,
+ *     settlementTarget: (sessionId: string, cut: { segment: number, through: number, seq: number }) => Reply } | null) }} options `Reply` is `(object|undefined|Promise<object|undefined>)`, the payload of the endpoint, `{ kind: 'not_committed' }` or `undefined`
  * @returns {(endpoint: string, payload: unknown, signal?: AbortSignal, peer?: { principal: { kind: string } }) => Promise<object>}
  */
 export function createRpcHandler({
@@ -148,7 +154,7 @@ export function createRpcHandler({
     },
   };
 
-  // Each names the addresses its body carries and reads its access method. `undefined` is what the access answers for a session that is neither held nor stored, and what no published access amounts to.
+  // Each names the addresses its body carries and reads its access method. `undefined` is what the access answers for a session that is neither held nor stored, and what no published access amounts to. `closed` is the closed answers of the read where they are not `NO_CARRIER`, and `owner` the failure that refuses, before the body is read, a peer that is not the owner; no other read has it.
   const monitorEndpoints = {
     'inner-monitor': { addresses: [], read: (access, { sessionId }) => access?.rows(sessionId) },
     'inner-monitor/call': { addresses: ['attempt'], read: (access, { sessionId, attempt }) => access?.call(sessionId, attempt) },
@@ -157,19 +163,25 @@ export function createRpcHandler({
     'inner-monitor/handoff': { addresses: ['handoff'], read: (access, { sessionId, handoff }) => access?.handoff(sessionId, handoff) },
     'inner-monitor/settlement': { addresses: ['handoff'], read: (access, { sessionId, handoff }) => access?.settlement(sessionId, handoff) },
     'inner-monitor/settlement/current': { addresses: [], read: (access, { sessionId }) => access?.currentSettlement(sessionId) },
+    'inner-monitor/settlement/target': {
+      addresses: ['segment', 'through', 'seq'],
+      owner: TARGET_FORBIDDEN,
+      closed: { not_target: TARGET_NOT_RECALLED },
+      read: (access, { sessionId, segment, through, seq }) => access?.settlementTarget(sessionId, { segment, through, seq }),
+    },
   };
   const isAddress = value => Number.isSafeInteger(value) && value >= 0;
 
   // Awaited whatever the access method is, so a throw and a rejection take the one conversion.
   async function answerMonitor(endpoint, body) {
-    const { addresses, read } = monitorEndpoints[endpoint];
+    const { addresses, read, closed = NO_CARRIER } = monitorEndpoints[endpoint];
     if (!addresses.every(name => isAddress(body[name]))) {
       return failure('invalid_body', `Body must contain { sessionId: string${addresses.map(name => `, ${name}: non-negative integer`).join('')} }`);
     }
     try {
       const value = await read(innerMonitor(), body);
       if (value === undefined) return MONITOR_UNAVAILABLE;
-      return value.kind === 'not_committed' ? MONITOR_NOT_COMMITTED : { ok: true, value };
+      return Object.hasOwn(closed, value.kind) ? closed[value.kind] : { ok: true, value };
     } catch (error) {
       const diagnostic = hostDiagnostic('inner_monitor_read_failed', error);
       writeDiagnostic(body.sessionId, diagnostic);
@@ -204,6 +216,8 @@ export function createRpcHandler({
     if (!Object.hasOwn(endpoints, endpoint) && !Object.hasOwn(modeEndpoints, endpoint) && !Object.hasOwn(monitorEndpoints, endpoint)) {
       return failure('unknown_endpoint', `unknown endpoint ${endpoint}`);
     }
+    const owner = monitorEndpoints[endpoint]?.owner;
+    if (owner !== undefined && peer?.principal?.kind !== 'owner') return owner;
     const body = payload || {};
     if (typeof body.sessionId !== 'string') return failure('invalid_body', 'Body must contain { sessionId: string }');
     if (Object.hasOwn(modeEndpoints, endpoint)) return modeEndpoints[endpoint](body);

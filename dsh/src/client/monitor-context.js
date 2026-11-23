@@ -1,4 +1,4 @@
-// dsh/src/client/monitor-context.js — the context page of the settlement drawer: the input stock chart of the cleared segment's calls with its readout, cursor and the line it is measured against, and the cache-rebuild section with its net chart, slider and list. The model is `monitor-context-model.js`; the view state is its reducer's.
+// dsh/src/client/monitor-context.js — the context page of the settlement drawer: the input stock chart of the segment's calls with its readout, cursor and the line it is measured against, the cost composition, the list of the rebuild of each compaction, the recall targets on the settlement axis with the text of the chosen one, and the folded trial of the rebuild extra. The model is `monitor-context-model.js` and `monitor-recall-model.js`; the view state is the reducer's.
 import React from 'react';
 import { NOT_AVAILABLE, PART_SEPARATOR } from './monitor-state.js';
 import { Label, useElementWidth } from './monitor-chart.js';
@@ -6,10 +6,17 @@ import { Notice, RecallNotice, useSettlementResult } from './monitor-handle.js';
 import {
   amberLineOf, stockGeometryOf, lamGeometryOf, callAtX, cursorOf, cursorKeyAt, sealStepAt, readoutOf, shareReadoutOf, contextPageOf, createContextState, reduceContext, isFoldOpen,
 } from './monitor-context-model.js';
+import { targetGraphOf, selectionOf, excerptOf } from './monitor-recall-model.js';
 
 const h = React.createElement;
 
+const PERCENT = 100;
 const SHARE_INPUT_ID = 'sw-cx-share';
+// The heights of a target row's track and of the axis over the rows, in pixels.
+const TRACK_HEIGHT = 20;
+const AXIS_HEIGHT = 18;
+// How much of a target's text shows before it is expanded, in characters.
+const EXCERPT_CHARS = 280;
 
 const MarkLabel = ({ label, className }) => h(Label, { className: `sw-cx-halo ${className}`, x: label.x, y: label.y, anchor: label.anchor }, label.text);
 
@@ -61,6 +68,7 @@ function StockChart({ stock, geometry: g, cursor, shown, dispatch, t }) {
   g.actualCross === null ? null : h(React.Fragment, null,
     h('circle', { className: 'sw-cx-actualcross', cx: g.actualCross.x, cy: g.actualCross.y, r: 3.5 }),
     h(MarkLabel, { label: g.actualCross.label, className: 'sw-cx-ink' })),
+  g.rings.map(ring => h('circle', { key: ring.at, className: 'sw-cx-ring', cx: ring.x, cy: ring.y, r: 6, 'aria-hidden': 'true' })),
   h('path', { className: 'sw-cx-axis', d: g.axisPath }),
   g.xTicks.map(tick => h(React.Fragment, { key: tick.label },
     h('line', { className: 'sw-cx-grid', x1: tick.x, y1: g.foot, x2: tick.x, y2: g.xAxis.tickEnd }),
@@ -149,16 +157,27 @@ function RebuildList({ list, state, dispatch, t }) {
         : h('button', { type: 'button', className: 'sw-cx-rr', 'aria-label': row.label, onClick: () => dispatch({ type: 'cursor', at: row.jump }) }, h(RowCells, { row }))))));
 }
 
-// A figure of the cache section as a small card: its name over its value, the tone of a net as a class beside the text's own sign and glyph.
-const Figure = ({ name, value, tone }) => h('div', { className: 'sw-cx-kv' }, h('div', { className: 'sw-cx-t' }, name), h('div', { className: tone === undefined || tone === 'zero' ? 'sw-cx-v' : `sw-cx-v sw-cx-${tone}` }, value));
+// The cost composition: the three parts of the settlement's cost over one total, as a stacked bar where the shares are known and as a list that is always there; a part or a share that is not known is a dash.
+function CompositionSection({ composition, t }) {
+  const { total, items } = composition;
+  const bar = items.every(({ share }) => share !== null);
+  return h('section', { className: 'sw-cx-comp', 'aria-label': t('monitor.context.comp') },
+    h('div', { className: 'sw-cx-h' }, h('h3', null, t('monitor.context.comp'))),
+    total === null ? null : h('p', { className: 'sw-cx-comp-total' }, t('monitor.context.comp.total', { value: total.text })),
+    bar ? h('div', { className: 'sw-cx-stack', 'aria-hidden': 'true' }, items.map(({ key, share }) => h('i', { key, className: 'sw-cx-seg', 'data-key': key, style: { width: `${(Math.max(0, share) * PERCENT).toFixed(2)}%` } }))) : null,
+    h('ul', { className: 'sw-cx-comp-list' }, items.map(({ key, text, percent }) => h('li', { key, className: 'sw-cx-comp-row', 'data-key': key },
+      h('i', { className: 'sw-cx-swatch', 'data-key': key, 'aria-hidden': 'true' }),
+      h('span', { className: 'sw-cx-comp-name' }, t(`monitor.context.comp.${key}`)),
+      h('span', { className: 'sw-cx-comp-value' }, text ?? NOT_AVAILABLE),
+      h('span', { className: 'sw-cx-comp-percent' }, percent ?? NOT_AVAILABLE)))));
+}
 
-// The cache section: the cache rebuild's share of the cost and the net, then, where there is a rebuild to count, the card with the line chart (which `lamRef` measures), the slider with its readout and the break-even sentence, and the folded list.
-function CacheSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
+// The folded trial of the rebuild extra: the line chart of the net against the share counted, a card with the slider, its readout and the break-even sentence. It varies the report's rebuild alone and moves nothing above it.
+function TrialSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
   const readout = shareReadoutOf(cache.sums, state.share, t);
-  return h('section', { className: 'sw-cx-cache', 'aria-label': t('monitor.context.cache') },
-    h('div', { className: 'sw-cx-h' }, h('h3', null, t('monitor.context.cache'))),
-    h('div', { className: 'sw-cx-sum' }, h(Figure, { name: t('monitor.context.cache.share'), value: cache.share }), h(Figure, { name: t('monitor.context.cache.net'), value: cache.net.text, tone: cache.net.tone })),
-    cache.chart === null ? null : h('div', { className: 'sw-cx-card' },
+  return h('details', { className: 'sw-cx-trial', open: isFoldOpen(state, 'trial'), onToggle: event => dispatch({ type: 'fold', name: 'trial', open: event.currentTarget.open }) },
+    h('summary', null, t('monitor.context.trial')),
+    h('div', { className: 'sw-cx-card' },
       h('div', { className: 'sw-cx-lamchart', role: 'img', 'aria-label': cache.chart.label, ref: lamRef }, h(LamChart, { geometry: lamGeometryOf(cache.sums, state.share, lamWidth), t })),
       h('div', { className: 'sw-cx-sl' },
         h('label', { htmlFor: SHARE_INPUT_ID }, t('monitor.context.cache.slider')),
@@ -166,8 +185,70 @@ function CacheSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
           id: SHARE_INPUT_ID, className: 'sw-cx-slider', type: 'range', min: 0, max: 1, step: 0.01, value: state.share, 'aria-valuetext': readout, onChange: event => dispatch({ type: 'share', value: Number(event.currentTarget.value) }),
         })),
       h('p', { className: 'sw-cx-rd' }, readout),
-      cache.crossing === null ? null : h('p', { className: 'sw-cx-thr' }, cache.crossing)),
-    cache.list === null ? null : h(RebuildList, { list: cache.list, state, dispatch, t }));
+      cache.crossing === null ? null : h('p', { className: 'sw-cx-thr' }, cache.crossing)));
+}
+
+// The marks of one row of the graph, over the seals the graph draws: the original as a ring and each read as a dot, on the settlement axis; the seals as lines and the band of `#0` as a rectangle.
+function TargetTrack({ graph: g, row }) {
+  return h('svg', { className: 'sw-rc-track', width: g.width, height: TRACK_HEIGHT, viewBox: `0 0 ${g.width} ${TRACK_HEIGHT}`, 'aria-hidden': 'true' },
+    h('rect', { className: 'sw-rc-zero', x: g.zero.x0, y: 0, width: Math.max(0, g.zero.x1 - g.zero.x0), height: TRACK_HEIGHT }),
+    g.seals.map(seal => h('line', { key: seal.ordinal, className: 'sw-rc-seal', x1: seal.x, y1: 0, x2: seal.x, y2: TRACK_HEIGHT })),
+    h('line', { className: 'sw-rc-rail', x1: g.plotLeft, y1: TRACK_HEIGHT / 2, x2: g.plotLeft + g.plotWidth, y2: TRACK_HEIGHT / 2 }),
+    row.dots.map(dot => h('circle', { key: dot.at, className: 'sw-rc-dot', cx: dot.x, cy: TRACK_HEIGHT / 2, r: 3 })),
+    row.ring === null ? null : h('circle', { className: 'sw-rc-ring', cx: row.ring.x, cy: TRACK_HEIGHT / 2, r: 4.5 }));
+}
+
+// The seals' lines and the labels of the zones over the rows, one picture the rows' own tracks line up with.
+function TargetAxis({ graph: g, t }) {
+  return h('svg', { className: 'sw-rc-axis', width: g.width, height: AXIS_HEIGHT, viewBox: `0 0 ${g.width} ${AXIS_HEIGHT}`, 'aria-hidden': 'true' },
+    h('rect', { className: 'sw-rc-zero', x: g.zero.x0, y: 0, width: Math.max(0, g.zero.x1 - g.zero.x0), height: AXIS_HEIGHT }),
+    g.seals.map(seal => h('line', { key: seal.ordinal, className: 'sw-rc-seal', x1: seal.x, y1: 0, x2: seal.x, y2: AXIS_HEIGHT })),
+    g.zones.map(zone => h(Label, { key: zone.label, className: 'sw-rc-lbl', x: zone.x + 3, y: AXIS_HEIGHT - 5 }, zone.label)));
+}
+
+// The text of the chosen target: its excerpt first and the whole on request; the states of the read, and none for an event with no text.
+function TargetText({ text, expanded, dispatch, t }) {
+  if (text === null) return h(Notice, { state: 'recall-text-loading' }, t('monitor.recall.text.loading'));
+  if (text.kind !== 'ready') return h(Notice, { state: 'recall-text-failed' }, text.kind === 'unavailable' ? t('monitor.detail.unavailable') : t('monitor.recall.text.failed', { message: text.message }));
+  const excerpt = excerptOf(text.value.text, EXCERPT_CHARS);
+  if (excerpt === null) return h('p', { className: 'sw-mon-note', 'data-sw-recall-text': 'none' }, t('monitor.recall.text.none'));
+  const count = Array.from(excerpt.text).length + excerpt.hidden;
+  return h(React.Fragment, null,
+    h('pre', { className: 'sw-rc-text', 'data-sw-recall-text': expanded || excerpt.hidden === 0 ? 'whole' : 'excerpt' }, expanded || excerpt.hidden === 0 ? text.value.text : `${excerpt.text}…`),
+    excerpt.hidden === 0 ? null : h('button', { type: 'button', className: 'sw-rc-more', 'aria-expanded': expanded, onClick: () => dispatch({ type: 'expand' }) }, t(expanded ? 'monitor.recall.text.collapse' : 'monitor.recall.text.expand', { count })));
+}
+
+// The panel of the chosen target: what it is, where its original stands, its text and the steps that read it, each a button to its call on the stock chart where the chart has one.
+function TargetPanel({ selection, state, text, dispatch, t }) {
+  return h('div', { className: 'sw-rc-panel', 'data-sw-target': selection.seq },
+    h('h4', { className: 'sw-rc-title' }, selection.title),
+    h('p', { className: 'sw-rc-landing' }, selection.landing),
+    h(TargetText, { text, expanded: state.expanded, dispatch, t }),
+    selection.reads.length === 0 ? null : h('ul', { className: 'sw-rc-reads', 'aria-label': t('monitor.recall.reads') }, selection.reads.map(read => h('li', { key: read.at },
+      read.call === null
+        ? h('span', { className: 'sw-rc-read' }, read.label)
+        : h('button', { type: 'button', className: 'sw-rc-read', 'aria-label': t('monitor.recall.read.call', { at: read.at, call: read.call }), onClick: () => dispatch({ type: 'cursor', at: read.call }) }, read.label)))));
+}
+
+// The recall targets of the segment: one row for each original event on the settlement axis of the whole segment, the chosen one's panel under the list.
+function TargetSection({ graph, state, text, dispatch, graphRef, t }) {
+  const selection = selectionOf(graph, state.target, t);
+  return h('section', { className: 'sw-rc', 'aria-label': t('monitor.recall.heading') },
+    h('div', { className: 'sw-cx-h' },
+      h('h3', null, t('monitor.recall.heading')),
+      h('span', { className: 'sw-cx-tag' }, [t('monitor.recall.count', { count: graph.count }), ...(graph.repeated > 0 ? [t('monitor.recall.repeated', { count: graph.repeated })] : [])].join(PART_SEPARATOR))),
+    graph.rows.length === 0 ? h('p', { className: 'sw-mon-note', 'data-sw-recall': 'none' }, t('monitor.recall.none')) : h('div', { className: 'sw-rc-chart', ref: graphRef },
+      h(TargetAxis, { graph, t }),
+      h('ul', { className: 'sw-rc-list', 'aria-label': t('monitor.recall.heading') }, graph.rows.map(row => h('li', { key: row.seq },
+        h('button', {
+          type: 'button', className: 'sw-rc-row', 'data-seq': row.seq, 'aria-pressed': state.target === row.seq, 'aria-label': row.label, onClick: () => dispatch({ type: 'target', seq: row.seq }),
+        },
+        h('span', { className: 'sw-rc-name' }, t('monitor.recall.title', { seq: row.seq, name: row.name }), h('small', null, t('monitor.recall.row.count', { count: row.count }))),
+        h(TargetTrack, { graph, row }))))),
+      h('p', { className: 'sw-rc-keys', 'aria-hidden': 'true' },
+        h('i', { className: 'sw-rc-key sw-rc-ring-key' }), t('monitor.recall.legend.original'), h('i', { className: 'sw-rc-key sw-rc-dot-key' }), t('monitor.recall.legend.read'),
+        h('i', { className: 'sw-rc-key sw-rc-seal-key' }), t('monitor.recall.legend.seal'), h('i', { className: 'sw-rc-key sw-rc-zero-key' }), t('monitor.recall.legend.zero'))),
+    selection === null ? null : h(TargetPanel, { selection, state, text, dispatch, t }));
 }
 
 // The fold that says what the line is, shown where the chart draws one.
@@ -178,19 +259,24 @@ function Note({ state, dispatch, t }) {
 }
 
 /**
- * The context page over a `model` (`contextPageOf`) under the view state `state` of `reduceContext` and its `dispatch`: the readout, the count line, the chart or the notice for the series still being read, the cache section, the note and the unit line pinned at the foot.
- * `width` is the stock chart's width and `lamWidth` the net chart's, and `chartRef` and `lamRef` the refs of the elements that measure them. It is a function of its props: the page that holds the state, reads the series and the line and measures the widths is `ContextPage`.
+ * The context page over a `model` (`contextPageOf`) under the view state `state` of `reduceContext` and its `dispatch`: the readout, the count line, the chart or the notice for the series still being read, the cost composition, the list of the rebuild of each compaction, the recall targets, the folded trial of the rebuild extra, the note and the unit line pinned at the foot.
+ * `width` is the stock chart's width, `lamWidth` the trial chart's and `graphWidth` the target graph's, and `chartRef`, `lamRef` and `graphRef` the refs of the elements that measure them; `text` is the read of the chosen target's text as a resource result, null while it is read. It is a function of its props: the page that holds the state, reads the series, the line and the text and measures the widths is `ContextReport`.
  */
-export function ContextView({ model, state, dispatch, width, lamWidth, chartRef, lamRef, notice, t }) {
+export function ContextView({ model, state, dispatch, width, lamWidth, graphWidth, chartRef, lamRef, graphRef, notice, text = null, t }) {
   const { stock } = model;
   const shown = state.hover ?? state.cursor;
+  const graph = targetGraphOf(model.view, stock === null ? null : stock.series, graphWidth, t);
+  const rings = selectionOf(graph, state.target, t)?.reads.flatMap(({ call }) => (call === null ? [] : [call])) ?? [];
   return h('div', { className: 'sw-cx' },
     stock === null ? null : h(Readout, { lines: readoutOf(stock.series, stock.line, shown, t), t }),
-    h('p', { className: 'sw-cx-ctx' }, [model.count, model.calls].filter(text => text !== null).join(PART_SEPARATOR)),
+    h('p', { className: 'sw-cx-ctx' }, [model.count, model.calls].filter(value => value !== null).join(PART_SEPARATOR)),
     model.loading ? h(Notice, { state: 'context-loading' }, t('monitor.detail.loading')) : null,
-    stock === null ? null : h(StockBlock, { stock, geometry: stockGeometryOf(stock.series, stock.line, width, t), state, shown, chartRef, dispatch, t }),
+    stock === null ? null : h(StockBlock, { stock, geometry: stockGeometryOf(stock.series, stock.line, width, t, rings), state, shown, chartRef, dispatch, t }),
     notice,
-    h(CacheSection, { cache: model.cache, state, dispatch, lamWidth, lamRef, t }),
+    model.composition === null ? null : h(CompositionSection, { composition: model.composition, t }),
+    model.cache.list === null ? null : h(RebuildList, { list: model.cache.list, state, dispatch, t }),
+    graph === null ? null : h(TargetSection, { graph, state, text, dispatch, graphRef, t }),
+    model.cache.chart === null ? null : h(TrialSection, { cache: model.cache, state, dispatch, lamWidth, lamRef, t }),
     stock === null || stock.line === null ? null : h(Note, { state, dispatch, t }),
     h('div', { className: 'sw-cx-pin' }, h('p', { className: 'sw-cx-unit' }, t('monitor.settlement.unit'))));
 }
@@ -201,22 +287,44 @@ function useAmberLine(session, epoch) {
   return React.useSyncExternalStore(session.subscribe, read, read);
 }
 
+const NO_TARGET = Object.freeze({ selected: null, result: null });
+const noSubscription = () => () => {};
+
+// The reader of the chosen target's text for the cut the answer named, made again for another cut or monitor, so an answer of the one the page left reaches nobody. None where the answer names no cut or the page has no monitor.
+function useTargetReader(monitor, cut) {
+  const reader = React.useMemo(
+    () => (monitor === undefined || !Number.isSafeInteger(cut?.segment) || !Number.isSafeInteger(cut?.through) ? null : monitor.settlementTarget({ segment: cut.segment, through: cut.through })),
+    [monitor, cut?.segment, cut?.through],
+  );
+  const read = () => reader?.state ?? NO_TARGET;
+  return { reader, read: React.useSyncExternalStore(reader?.subscribe ?? noSubscription, read, read) };
+}
+
 /**
- * The context page of a settlement, the tab of the settlement drawer: the calls of its segment read from `monitor`'s resource of `handoffId`, the line from `session`'s history, the view state in a reducer of its own and the two widths a resize observer keeps as the drawer is dragged.
+ * The context page of a settlement, the tab of the settlement drawer: the calls of its segment read from `monitor`'s resource of `handoffId`, the line from `session`'s history, the view state in a reducer of its own and the widths a resize observer keeps as the drawer is dragged.
  * It subscribes to the session store for as long as it is mounted, which the drawer does for the selected page alone.
  */
 export function ContextPage({ settlement, handoffId, monitor, session, t }) {
   const result = useSettlementResult(monitor, handoffId);
   const line = useAmberLine(session, settlement.epoch);
-  return h(ContextReport, { model: contextPageOf(settlement, result, line, t), result, t });
+  return h(ContextReport, { model: contextPageOf(settlement, result, line, t), monitor, t });
 }
 
-export function ContextReport({ model, result, current, t }) {
+/**
+ * The page of a settlement model `model`, with the state of its own. `current` marks the current segment's snapshot, which says so where it cannot draw the stock chart; `monitor` hands the reader of a chosen target's text.
+ * A target is read when it is chosen and not before: the reader asks the host once for the choice and drops the answer of any it was moved off.
+ */
+export function ContextReport({ model, current, monitor, t }) {
   const [state, dispatch] = React.useReducer(reduceContext, undefined, createContextState);
   const [chartRef, width] = useElementWidth();
   const [lamRef, lamWidth] = useElementWidth();
+  const [graphRef, graphWidth] = useElementWidth();
+  const { reader, read } = useTargetReader(monitor, model.view.response?.cut);
+  const graph = targetGraphOf(model.view, model.stock === null ? null : model.stock.series, graphWidth, t);
+  const chosen = selectionOf(graph, state.target, t) === null ? null : state.target;
+  React.useEffect(() => { reader?.select(chosen); }, [reader, chosen]);
   const notice = h(React.Fragment, null,
     current && model.stock === null ? h(Notice, { state: 'current-stock-unavailable' }, t('monitor.settlement.current.stockUnavailable')) : null,
-    h(RecallNotice, { result, partial: model.recallPartial, t }));
-  return h(ContextView, { model, state, dispatch, width, lamWidth, chartRef, lamRef, notice, t });
+    h(RecallNotice, { evidence: model.view.evidence, partial: model.recallPartial, priced: model.priced, t }));
+  return h(ContextView, { model, state, dispatch, width, lamWidth, graphWidth, chartRef, lamRef, graphRef, notice, text: read.selected === chosen ? read.result : null, t });
 }

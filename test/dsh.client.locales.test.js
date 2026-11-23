@@ -39,6 +39,28 @@ test('the English and Chinese monitor texts carry the same keys and the same pla
   for (const key of monitorKeys(en)) assert.deepEqual(placeholders(zh[key]), placeholders(en[key]), key);
 });
 
+test('the old-attribution slot warning the monitor folds has its text in both locales, the Chinese one as agreed', () => {
+  assert.equal(zh['monitor.warning.old-attribution'], '文件读取的旧归因占比高');
+  assert.equal(typeof en['monitor.warning.old-attribution'], 'string');
+});
+
+test('the tools page words each direct-read kind as the attempt its dispatch was, in both locales, and the slot row keeps the wording it had', () => {
+  const attempts = {
+    'handoff-recall': ['尝试直读交接载荷', 'Attempted a direct read of the handoff payload'],
+    'carrier-recall': ['尝试直读压缩载体', 'Attempted a direct read of the compaction carrier'],
+    'verbatim-recall': ['尝试回读：目标含封存已携带的原文', 'Attempted a read-back: the target includes verbatim text carried by compaction'],
+  };
+  const rows = {
+    'handoff-recall': ['直读交接载荷', 'Direct handoff payload read'],
+    'carrier-recall': ['直读压缩载体', 'Direct compaction carrier read'],
+    'verbatim-recall': ['回读目标含封存已携带的原文', 'Read target includes verbatim text carried by compaction'],
+  };
+  for (const [kind, [attemptZh, attemptEn]] of Object.entries(attempts)) {
+    assert.deepEqual([zh[`monitor.tool.attempt.${kind}`], en[`monitor.tool.attempt.${kind}`]], [attemptZh, attemptEn], kind);
+    assert.deepEqual([zh[`monitor.warning.${kind}`], en[`monitor.warning.${kind}`]], rows[kind], `${kind}: the row's wording`);
+  }
+});
+
 test('every preset the host prices a quote under has a name in both locales', () => {
   for (const id of Object.keys(KAPPA_PRESETS)) {
     const key = `monitor.quote.preset.${id}`;

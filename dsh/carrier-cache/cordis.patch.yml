@@ -3,4 +3,4 @@
   disabled: true
 - insert:
     - id: llm-pi-ai-carrier-cache
-      name: '@nomadop/session-watcher-dsh/pi-ai'
+      name: '@nomadop/session-watcher-dsh-carrier-cache/pi-ai'

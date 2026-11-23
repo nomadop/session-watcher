@@ -175,6 +175,7 @@ var en = {
   "monitor.warning.verbatim-recall": "Read target includes verbatim text carried by compaction",
   "monitor.warning.handoff-recall": "Direct handoff payload read",
   "monitor.warning.carrier-recall": "Direct compaction carrier read",
+  "monitor.warning.old-attribution": "High share of old attribution in file reads",
   "monitor.filter.collapseAll": "Collapse all",
   "monitor.filter.empty": "No events match the filter",
   "monitor.object.attempt": "Segment #{epoch} Compaction #{ordinal}",
@@ -379,6 +380,22 @@ var en = {
   "monitor.slot.earlier": "Earlier original source (not received by the call)",
   "monitor.slot.noBlocks": "This event has no content blocks.",
   "monitor.slot.raw": "Raw JSON",
+  "monitor.slotPage.tools": "Tools",
+  "monitor.tool.input": "Input",
+  "monitor.tool.output": "Output",
+  "monitor.tool.noInput": "Input not recorded",
+  "monitor.tool.noResult": "Result not recorded",
+  "monitor.tool.emptyResult": "Result is empty",
+  "monitor.tool.failed": "Tool failed",
+  "monitor.tool.pruned": "The summary call saw the pruned version",
+  "monitor.tool.openPruned": "Open event {seq} in Source text",
+  "monitor.tool.stateQuery": "State query",
+  "monitor.tool.stateWrite": "State write",
+  "monitor.tool.attempt.handoff-recall": "Attempted a direct read of the handoff payload",
+  "monitor.tool.attempt.carrier-recall": "Attempted a direct read of the compaction carrier",
+  "monitor.tool.attempt.verbatim-recall": "Attempted a read-back: the target includes verbatim text carried by compaction",
+  "monitor.tool.oldAttribution": "{label} \xB7 {percent} (old {oldLines} lines, new {newLines} lines)",
+  "monitor.tool.oldNote": `"Old" means attributed before the step began, which is not necessarily text still in the model's context.`,
   "monitor.overview.status": "Status",
   "monitor.overview.payback": "Payback progress",
   "monitor.overview.callState": "Call",
@@ -419,7 +436,6 @@ var en = {
   "monitor.drawer.settlement": "Compaction settlement of segment #{epoch}",
   "monitor.settlement.current.through": "Through step {step}",
   "monitor.settlement.current.empty": "No compactions have committed in this segment.",
-  "monitor.settlement.current.pending": "Awaiting measurement: no compaction has complete readings yet.",
   "monitor.settlement.current.partial": "Awaiting measurement: totals include only compactions with complete readings.",
   "monitor.settlement.current.stockUnavailable": "This snapshot does not have enough call readings to draw the input stock chart.",
   "monitor.settlement.count": "Compactions {count}",
@@ -436,7 +452,8 @@ var en = {
   "monitor.settlement.payback.title": "Saved as a share of cost",
   "monitor.settlement.unit": "Unit: read-price tokens, converted at the cache write-to-read price ratio of this session; not a bill.",
   "monitor.settlement.recall.pending": "Loading recall adjustments\u2026",
-  "monitor.settlement.recall.unavailable": "Could not load the settlement detail. Showing unadjusted estimates.",
+  "monitor.settlement.recall.unavailable": "Recall-adjusted settlement is unavailable.",
+  "monitor.settlement.recall.unpriced": "Awaiting measurement: no compaction has complete readings yet.",
   "monitor.settlement.recall.partial": "Some recall adjustments could not be calculated.",
   "monitor.handoffPage.overview": "Overview",
   "monitor.handoffPage.summary": "Summary",
@@ -529,9 +546,6 @@ var en = {
   "monitor.context.legend.assumption": "Assumes growth is unchanged apart from the seals",
   "monitor.context.note": "Note",
   "monitor.context.note.line": 'Deepening line: the input stock position fitted from the measurements at the end of this segment; once the actual stock passes it, the segment is in the "Deepening" zone.',
-  "monitor.context.cache": "Cache rebuild",
-  "monitor.context.cache.share": "Cache rebuild share of cost",
-  "monitor.context.cache.net": "Net",
   "monitor.context.cache.slider": "Rebuild overpay",
   "monitor.context.cache.read.actual": "Rebuild overpay counted as it is",
   "monitor.context.cache.read.none": "Rebuild overpay not counted",
@@ -547,6 +561,42 @@ var en = {
   "monitor.context.cache.rows.share": "Share",
   "monitor.context.cache.row.label": "Compaction #{ordinal}, rebuild overpay {rebuild}, share {share}, go to call {at} on the chart",
   "monitor.context.cache.row.labelNone": "Compaction #{ordinal}, no data, go to call {at} on the chart",
+  "monitor.recall.name.user": "User message",
+  "monitor.recall.name.assistant": "Assistant message",
+  "monitor.recall.name.toolResult": "Tool result",
+  "monitor.recall.name.toolCall": "Tool call",
+  "monitor.recall.name.system": "System message",
+  "monitor.recall.name.developer": "Developer message",
+  "monitor.recall.row.label": "Event #{seq} {name}, read back in {count} steps",
+  "monitor.recall.title": "Event #{seq} {name}",
+  "monitor.recall.landing.zero": "Original at step {at} (#0, before the first seal)",
+  "monitor.recall.landing.at": "Original at step {at} (#{zone})",
+  "monitor.recall.landing.unknown": "Original position unknown",
+  "monitor.recall.read": "Step {at}",
+  "monitor.recall.heading": "Recall targets",
+  "monitor.recall.count": "{count} targets",
+  "monitor.recall.repeated": "{count} read after more than one seal",
+  "monitor.recall.none": "No recall target observed",
+  "monitor.recall.row.count": "Read back in {count} steps",
+  "monitor.recall.legend.original": "Original",
+  "monitor.recall.legend.read": "Read back",
+  "monitor.recall.legend.seal": "Seal",
+  "monitor.recall.legend.zero": "#0 before the first seal",
+  "monitor.recall.reads": "Steps that read this event",
+  "monitor.recall.read.call": "Step {at}, go to call {call} on the chart",
+  "monitor.recall.text.loading": "Loading the text\u2026",
+  "monitor.recall.text.failed": "Could not read the text: {message}",
+  "monitor.recall.text.none": "This event has no text.",
+  "monitor.recall.text.expand": "Show the whole text ({count} characters)",
+  "monitor.recall.text.collapse": "Show the excerpt",
+  "monitor.context.comp": "Settlement cost",
+  "monitor.context.comp.total": "Total {value}",
+  "monitor.context.comp.summary": "Compaction summaries",
+  "monitor.context.comp.rebuild": "Cache rebuild",
+  "monitor.context.comp.recall": "Recall requests, net",
+  "monitor.context.trial": "Rebuild overpay trial",
+  "monitor.payback.share": "Pure recall steps {percent} ({pure} of {judged})",
+  "monitor.payback.share.none": "Pure recall step share \u2014",
   "monitor.handoff.overview.type": "Type",
   "monitor.handoff.overview.token": "Handoff code",
   "monitor.handoff.overview.createdAt": "Prepared at",
@@ -694,6 +744,7 @@ var zh = {
   "monitor.warning.verbatim-recall": "\u56DE\u8BFB\u76EE\u6807\u542B\u5C01\u5B58\u5DF2\u643A\u5E26\u7684\u539F\u6587",
   "monitor.warning.handoff-recall": "\u76F4\u8BFB\u4EA4\u63A5\u8F7D\u8377",
   "monitor.warning.carrier-recall": "\u76F4\u8BFB\u538B\u7F29\u8F7D\u4F53",
+  "monitor.warning.old-attribution": "\u6587\u4EF6\u8BFB\u53D6\u7684\u65E7\u5F52\u56E0\u5360\u6BD4\u9AD8",
   "monitor.filter.collapseAll": "\u5168\u90E8\u6298\u53E0",
   "monitor.filter.empty": "\u6CA1\u6709\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u4E8B\u4EF6",
   "monitor.object.attempt": "\u5206\u6BB5 #{epoch} \u538B\u7F29 #{ordinal}",
@@ -898,6 +949,22 @@ var zh = {
   "monitor.slot.earlier": "\u66F4\u65E9\u7684\u539F\u59CB\u6765\u6E90\uFF08\u8C03\u7528\u672A\u6536\u5230\uFF09",
   "monitor.slot.noBlocks": "\u6B64\u4E8B\u4EF6\u6CA1\u6709\u5185\u5BB9\u5757\u3002",
   "monitor.slot.raw": "\u539F\u59CB JSON",
+  "monitor.slotPage.tools": "\u5DE5\u5177",
+  "monitor.tool.input": "\u8F93\u5165",
+  "monitor.tool.output": "\u8F93\u51FA",
+  "monitor.tool.noInput": "\u672A\u8BB0\u5F55\u8F93\u5165",
+  "monitor.tool.noResult": "\u672A\u8BB0\u5F55\u7ED3\u679C",
+  "monitor.tool.emptyResult": "\u7ED3\u679C\u4E3A\u7A7A",
+  "monitor.tool.failed": "\u5DE5\u5177\u5931\u8D25",
+  "monitor.tool.pruned": "\u538B\u7F29\u6240\u89C1\u4E3A\u526A\u679D\u7248",
+  "monitor.tool.openPruned": "\u5728\u539F\u6587\u4E2D\u6253\u5F00\u4E8B\u4EF6 {seq}",
+  "monitor.tool.stateQuery": "\u72B6\u6001\u67E5\u8BE2",
+  "monitor.tool.stateWrite": "\u72B6\u6001\u5199\u5165",
+  "monitor.tool.attempt.handoff-recall": "\u5C1D\u8BD5\u76F4\u8BFB\u4EA4\u63A5\u8F7D\u8377",
+  "monitor.tool.attempt.carrier-recall": "\u5C1D\u8BD5\u76F4\u8BFB\u538B\u7F29\u8F7D\u4F53",
+  "monitor.tool.attempt.verbatim-recall": "\u5C1D\u8BD5\u56DE\u8BFB\uFF1A\u76EE\u6807\u542B\u5C01\u5B58\u5DF2\u643A\u5E26\u7684\u539F\u6587",
+  "monitor.tool.oldAttribution": "{label} \xB7 {percent}\uFF08\u65E7 {oldLines} \u884C\uFF0C\u65B0 {newLines} \u884C\uFF09",
+  "monitor.tool.oldNote": "\u201C\u65E7\u201D\u6307\u8BE5\u6B65\u5F00\u59CB\u524D\u5DF2\u88AB\u5F52\u56E0\uFF0C\u4E0D\u4E00\u5B9A\u4ECD\u662F\u6A21\u578B\u5F53\u524D\u4E0A\u4E0B\u6587\u4E2D\u7684\u6587\u672C\u3002",
   "monitor.overview.status": "\u72B6\u6001",
   "monitor.overview.payback": "\u56DE\u672C\u8FDB\u5EA6",
   "monitor.overview.callState": "\u8C03\u7528",
@@ -938,7 +1005,6 @@ var zh = {
   "monitor.drawer.settlement": "\u5206\u6BB5#{epoch}\u538B\u7F29\u7ED3\u7B97",
   "monitor.settlement.current.through": "\u622A\u81F3\u7B2C {step} \u6B65",
   "monitor.settlement.current.empty": "\u672C\u6BB5\u6682\u65E0\u5DF2\u63D0\u4EA4\u7684\u538B\u7F29",
-  "monitor.settlement.current.pending": "\u5F85\u6D4B\u91CF\uFF1A\u672C\u6BB5\u8FD8\u6CA1\u6709\u8BFB\u6570\u5B8C\u6574\u7684\u538B\u7F29\u3002",
   "monitor.settlement.current.partial": "\u90E8\u5206\u538B\u7F29\u5F85\u6D4B\u91CF\uFF1B\u5408\u8BA1\u4EC5\u7EB3\u5165\u8BFB\u6570\u5B8C\u6574\u7684\u538B\u7F29\u3002",
   "monitor.settlement.current.stockUnavailable": "\u6B64\u5FEB\u7167\u7684\u8C03\u7528\u8BFB\u6570\u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u7ED8\u5236\u8F93\u5165\u5B58\u91CF\u56FE\u3002",
   "monitor.settlement.count": "\u538B\u7F29 {count} \u6B21",
@@ -955,7 +1021,8 @@ var zh = {
   "monitor.settlement.payback.title": "\u8282\u7701\u5360\u6210\u672C\u7684\u6BD4\u4F8B",
   "monitor.settlement.unit": "\u5355\u4F4D\uFF1A\u8BFB\u4EF7 token\uFF0C\u6309\u672C\u4F1A\u8BDD\u7684\u7F13\u5B58\u5199\u8BFB\u4EF7\u6BD4\u6298\u7B97\uFF0C\u4E0D\u662F\u8D26\u5355\u3002",
   "monitor.settlement.recall.pending": "\u6B63\u5728\u8BFB\u53D6\u53EC\u56DE\u4FEE\u6B63\u2026",
-  "monitor.settlement.recall.unavailable": "\u7ED3\u7B97\u660E\u7EC6\u8BFB\u53D6\u5931\u8D25\uFF0C\u5F53\u524D\u663E\u793A\u672A\u4FEE\u6B63\u7684\u4F30\u7B97\u3002",
+  "monitor.settlement.recall.unavailable": "\u8BA1\u5165\u53EC\u56DE\u7684\u7ED3\u7B97\u6682\u4E0D\u53EF\u7528\u3002",
+  "monitor.settlement.recall.unpriced": "\u5F85\u6D4B\u91CF\uFF1A\u672C\u6BB5\u8FD8\u6CA1\u6709\u8BFB\u6570\u5B8C\u6574\u7684\u538B\u7F29\u3002",
   "monitor.settlement.recall.partial": "\u90E8\u5206\u53EC\u56DE\u4FEE\u6B63\u7F3A\u5C11\u8BA1\u7B97\u4F9D\u636E\u3002",
   "monitor.handoffPage.overview": "\u6982\u89C8",
   "monitor.handoffPage.summary": "\u6458\u8981",
@@ -1048,9 +1115,6 @@ var zh = {
   "monitor.context.legend.assumption": "\u5047\u8BBE\uFF1A\u9664\u5C01\u5B58\u5916\u589E\u957F\u4E0D\u53D8",
   "monitor.context.note": "\u8BF4\u660E",
   "monitor.context.note.line": "\u6E10\u6DF1\u7EBF\uFF1A\u6309\u672C\u6BB5\u672B\u7684\u6D4B\u91CF\u62DF\u5408\u51FA\u7684\u8F93\u5165\u5B58\u91CF\u4F4D\u7F6E\uFF1B\u5B9E\u9645\u5B58\u91CF\u8D8A\u8FC7\u5B83\uFF0C\u5C31\u8FDB\u5165\u300C\u6E10\u6DF1\u300D\u533A\u3002",
-  "monitor.context.cache": "\u7F13\u5B58\u91CD\u5EFA",
-  "monitor.context.cache.share": "\u7F13\u5B58\u91CD\u5EFA\u5360\u6210\u672C",
-  "monitor.context.cache.net": "\u76C8\u4E8F",
   "monitor.context.cache.slider": "\u91CD\u5EFA\u591A\u4ED8",
   "monitor.context.cache.read.actual": "\u91CD\u5EFA\u591A\u4ED8\u6309\u5B9E\u9645\u8BA1",
   "monitor.context.cache.read.none": "\u91CD\u5EFA\u591A\u4ED8\u4E0D\u8BA1",
@@ -1066,6 +1130,42 @@ var zh = {
   "monitor.context.cache.rows.share": "\u5360\u6BD4",
   "monitor.context.cache.row.label": "\u538B\u7F29 #{ordinal}\uFF0C\u91CD\u5EFA\u591A\u4ED8 {rebuild}\uFF0C\u5360\u6BD4 {share}\uFF0C\u5B9A\u4F4D\u5230\u56FE\u4E0A\u7B2C {at} \u6B21\u8C03\u7528",
   "monitor.context.cache.row.labelNone": "\u538B\u7F29 #{ordinal}\uFF0C\u65E0\u6570\u636E\uFF0C\u5B9A\u4F4D\u5230\u56FE\u4E0A\u7B2C {at} \u6B21\u8C03\u7528",
+  "monitor.recall.name.user": "\u7528\u6237\u6D88\u606F",
+  "monitor.recall.name.assistant": "\u52A9\u624B\u6D88\u606F",
+  "monitor.recall.name.toolResult": "\u5DE5\u5177\u7ED3\u679C",
+  "monitor.recall.name.toolCall": "\u5DE5\u5177\u8C03\u7528",
+  "monitor.recall.name.system": "\u7CFB\u7EDF\u6D88\u606F",
+  "monitor.recall.name.developer": "\u5F00\u53D1\u8005\u6D88\u606F",
+  "monitor.recall.row.label": "\u4E8B\u4EF6 #{seq} {name}\uFF0C\u56DE\u8BFB {count} \u6B65",
+  "monitor.recall.title": "\u4E8B\u4EF6 #{seq} {name}",
+  "monitor.recall.landing.zero": "\u539F\u4E8B\u4EF6\u5728\u7B2C {at} \u6B65\uFF08#0 \u9996\u5C01\u5B58\u524D\uFF09",
+  "monitor.recall.landing.at": "\u539F\u4E8B\u4EF6\u5728\u7B2C {at} \u6B65\uFF08#{zone}\uFF09",
+  "monitor.recall.landing.unknown": "\u539F\u4E8B\u4EF6\u4F4D\u7F6E\u4E0D\u660E",
+  "monitor.recall.read": "\u7B2C {at} \u6B65",
+  "monitor.recall.heading": "\u53EC\u56DE\u76EE\u6807",
+  "monitor.recall.count": "{count} \u4E2A\u76EE\u6807",
+  "monitor.recall.repeated": "{count} \u4E2A\u8DE8\u5C01\u5B58\u91CD\u590D",
+  "monitor.recall.none": "\u672A\u89C2\u5BDF\u5230\u53EC\u56DE\u76EE\u6807",
+  "monitor.recall.row.count": "\u56DE\u8BFB {count} \u6B65",
+  "monitor.recall.legend.original": "\u539F\u4E8B\u4EF6",
+  "monitor.recall.legend.read": "\u56DE\u8BFB",
+  "monitor.recall.legend.seal": "\u5C01\u5B58",
+  "monitor.recall.legend.zero": "#0 \u9996\u5C01\u5B58\u524D",
+  "monitor.recall.reads": "\u56DE\u8BFB\u8BE5\u4E8B\u4EF6\u7684\u6B65",
+  "monitor.recall.read.call": "\u7B2C {at} \u6B65\uFF0C\u5B9A\u4F4D\u5230\u56FE\u4E0A\u7B2C {call} \u6B21\u8C03\u7528",
+  "monitor.recall.text.loading": "\u6B63\u5728\u8BFB\u53D6\u539F\u6587\u2026",
+  "monitor.recall.text.failed": "\u539F\u6587\u8BFB\u53D6\u5931\u8D25\uFF1A{message}",
+  "monitor.recall.text.none": "\u8BE5\u4E8B\u4EF6\u6CA1\u6709\u6587\u5B57",
+  "monitor.recall.text.expand": "\u5C55\u5F00\u5168\u6587\uFF08{count} \u5B57\uFF09",
+  "monitor.recall.text.collapse": "\u6536\u8D77",
+  "monitor.context.comp": "\u7ED3\u7B97\u6210\u672C\u6784\u6210",
+  "monitor.context.comp.total": "\u5408\u8BA1 {value}",
+  "monitor.context.comp.summary": "\u538B\u7F29\u6458\u8981",
+  "monitor.context.comp.rebuild": "\u7F13\u5B58\u91CD\u5EFA",
+  "monitor.context.comp.recall": "\u53EC\u56DE\u8BF7\u6C42\u51C0\u589E",
+  "monitor.context.trial": "\u91CD\u5EFA\u8BD5\u7B97",
+  "monitor.payback.share": "\u7EAF\u53EC\u56DE\u6B65\u5360\u6BD4 {percent}\uFF08{pure}/{judged} \u6B65\uFF09",
+  "monitor.payback.share.none": "\u7EAF\u53EC\u56DE\u6B65\u5360\u6BD4 \u2014",
   "monitor.handoff.overview.type": "\u7C7B\u578B",
   "monitor.handoff.overview.token": "\u4EA4\u63A5\u7801",
   "monitor.handoff.overview.createdAt": "\u51C6\u5907\u65F6\u95F4",
@@ -18058,10 +18158,10 @@ var RESIDUAL_FAMILIES = [
   ["tool", (t) => t.name]
 ];
 var RESIDUAL_KINDS = new Set(RESIDUAL_FAMILIES.map(([kind]) => kind));
-function foldResidual(kind, list, nameOf) {
+function foldResidual(kind, list, nameOf2) {
   if (!list || list.length === 0) return [];
   function makeLeaf(item, indent) {
-    const name = nameOf(item);
+    const name = nameOf2(item);
     const isBash = kind === "bash";
     const id = kind + ":" + name;
     const displayName = isBash ? redactCmd(name) : name;
@@ -18158,9 +18258,9 @@ function buildTree(bucketData) {
   }
   tree.push(...foldPaths(bucketData.paths || []));
   let sumResidual = 0;
-  for (const [kind, nameOf] of RESIDUAL_FAMILIES) {
+  for (const [kind, nameOf2] of RESIDUAL_FAMILIES) {
     const list = bucketData.residual?.[kind] || [];
-    tree.push(...foldResidual(kind, list, nameOf));
+    tree.push(...foldResidual(kind, list, nameOf2));
     sumResidual += list.reduce((s, item) => s + (item.tokens ?? 0), 0);
   }
   const totalRaw = bucketData.totalResidualRaw ?? bucketData.totalResidual ?? 0;
@@ -19596,197 +19696,6 @@ function createModeReaders({ call }) {
   };
 }
 
-// public/lib/compactionEconomics.js
-var segmentOf = ({ epoch }) => epoch ?? 0;
-var countOf = (value) => Number.isFinite(value) ? value : 0;
-function ordinalsOf(attempts) {
-  const counts = /* @__PURE__ */ new Map();
-  return Object.fromEntries(attempts.map((attempt) => {
-    const { id } = attempt;
-    const segment = segmentOf(attempt) + 1;
-    const ordinal = (counts.get(segment) ?? 0) + 1;
-    counts.set(segment, ordinal);
-    return [id, { epoch: segment, ordinal }];
-  }));
-}
-var PAID_BACK_PERCENT = 100;
-var PERCENT = 100;
-var paybackPercent = (saved, cost) => Math.floor(saved * PERCENT / cost);
-function clearingsOf(handoffs) {
-  const seen = /* @__PURE__ */ new Set();
-  return [...handoffs].sort((a, b) => a.id - b.id).flatMap(({ id, type, epoch, tailCalls }) => {
-    const segment = epoch - 1;
-    if (type !== "continue" || seen.has(segment)) return [];
-    seen.add(segment);
-    return [{ id, epoch, segment, tailCalls: countOf(tailCalls) }];
-  });
-}
-function followOf(committed, at, tail) {
-  const segment = segmentOf(committed[at]);
-  const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
-  return later + tail;
-}
-function requestCostOf(usage, ratio) {
-  const { input, cacheRead, cacheWrite } = usage ?? {};
-  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
-  return cacheRead + ratio * (input + cacheWrite);
-}
-var neededOf = (cut, cost) => cost === null || cut === null ? null : cut > 0 ? Math.ceil(Math.round(cost) / cut) : Infinity;
-var gapOf = (needed, follow) => Number.isFinite(needed) ? needed - follow : null;
-function figuresOf({ contextChange, call, cRatio }, follow, cut) {
-  const { miss } = contextChange ?? {};
-  const summary = requestCostOf(call.usage, cRatio);
-  if (!Number.isFinite(cut) || !Number.isFinite(miss) || summary === null) return null;
-  const rebuild = (cRatio - 1) * miss;
-  const cost = summary + rebuild;
-  return cost > 0 ? { saved: Math.max(0, follow * cut), cost, rebuild } : null;
-}
-function paybackOf(attempts, handoffs = []) {
-  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
-  const tails = new Map(clearingsOf(handoffs).map(({ segment, tailCalls }) => [segment, tailCalls]));
-  return new Map(committed.map((attempt, at) => {
-    const follow = followOf(committed, at, tails.get(segmentOf(attempt)) ?? 0);
-    const delta = attempt.contextChange?.delta;
-    const figures = figuresOf(attempt, follow, Number.isFinite(delta) ? -delta : null);
-    return [attempt.id, figures === null ? null : paybackPercent(figures.saved, figures.cost)];
-  }));
-}
-function settlementsOf(attempts, handoffs) {
-  const ordinals = ordinalsOf(attempts);
-  const settlements = /* @__PURE__ */ new Map();
-  for (const { id, epoch, tailCalls } of clearingsOf(handoffs)) {
-    const settlement = settlementForSegment(attempts, { epoch, tailCalls }, ordinals);
-    if (settlement.rows.some(({ saved }) => saved !== null)) settlements.set(id, settlement);
-  }
-  return settlements;
-}
-function settlementForSegment(attempts, { epoch, tailCalls }, ordinals = ordinalsOf(attempts)) {
-  const compactions = attempts.filter((attempt) => attempt.status === "committed" && segmentOf(attempt) === epoch - 1).sort((a, b) => a.id - b.id);
-  const steps2 = compactions.reduce((sum, { stepN }) => sum + countOf(stepN), tailCalls);
-  const rows = compactions.map((attempt, at) => {
-    const { before: rawBefore, after, delta } = attempt.contextChange ?? {};
-    const estimated = rawBefore === null && Number.isFinite(attempt.estimatedBefore);
-    const before = estimated ? attempt.estimatedBefore : rawBefore;
-    const cut = Number.isFinite(before) && Number.isFinite(after) ? before - after : null;
-    const follow = followOf(compactions, at, tailCalls);
-    const figures = figuresOf(attempt, follow, estimated ? cut : Number.isFinite(delta) ? -delta : null);
-    const needed = neededOf(cut, figures?.cost ?? null);
-    return {
-      id: attempt.id,
-      ordinal: ordinals[attempt.id].ordinal,
-      saved: figures?.saved ?? null,
-      cost: figures?.cost ?? null,
-      before: Number.isFinite(before) ? before : null,
-      after: Number.isFinite(after) ? after : null,
-      cut,
-      follow,
-      sealAt: steps2 - follow,
-      costRebuild: figures?.rebuild ?? null,
-      needed,
-      gap: gapOf(needed, follow)
-    };
-  });
-  const known = rows.filter(({ saved }) => saved !== null);
-  return { epoch, count: rows.length, steps: steps2, saved: known.reduce((sum, row2) => sum + row2.saved, 0), cost: known.reduce((sum, row2) => sum + row2.cost, 0), rows };
-}
-function settlementWithRecall(settlement, recall) {
-  if (recall === void 0) return settlement;
-  const cuts = new Map(recall.cuts.map(({ id, tokens }) => [id, tokens]));
-  let cutCredit = 0;
-  const rows = settlement.rows.map((row2) => {
-    if (!cuts.has(row2.id) || row2.cut === null) return row2;
-    const cut = row2.cut - cuts.get(row2.id);
-    const saved = row2.saved === null ? null : row2.follow * Math.max(0, cut);
-    cutCredit += (row2.saved ?? 0) - (saved ?? 0);
-    const needed = neededOf(cut, row2.cost);
-    return { ...row2, cut, saved, needed, gap: gapOf(needed, row2.follow) };
-  });
-  const known = rows.filter((row2) => row2.saved !== null);
-  const byId = new Map(known.map((row2) => [row2.id, row2]));
-  const adjustments = /* @__PURE__ */ new Map();
-  let requests = 0;
-  let overlap = 0;
-  let withdrawn = 0;
-  let residence = 0;
-  let partial = Boolean(recall.partial);
-  for (const step of recall.steps) {
-    if ("resident" in step) {
-      residence += step.resident;
-      adjustments.set(step.at, { saving: step.resident, cost: 0 });
-      continue;
-    }
-    const saving = known.reduce((sum, row2) => sum + (row2.sealAt < step.at ? Math.max(0, row2.cut ?? 0) : 0), 0);
-    const cost = requestCostOf(step.usage, step.ratio);
-    const rebuild = cost === null ? 0 : byId.get(step.post)?.costRebuild ?? 0;
-    if (cost === null) partial = true;
-    requests += cost ?? 0;
-    overlap += rebuild;
-    withdrawn += saving;
-    adjustments.set(step.at, { saving, cost: (cost ?? 0) - rebuild });
-  }
-  return {
-    ...settlement,
-    rows,
-    adjustments,
-    saved: settlement.saved - cutCredit - withdrawn - residence,
-    cost: settlement.cost + requests - overlap,
-    recall: { requests, overlap, withdrawn, residence, cutCredit, partial }
-  };
-}
-var MEDIAN_MIN_COUNT = 3;
-function paybackCurveOf({ steps: steps2, rows, adjustments }) {
-  const known = rows.filter(({ saved }) => saved !== null).sort((a, b) => a.sealAt - b.sealAt);
-  const net = [];
-  let earnedPerStep = 0;
-  let earned = 0;
-  let spent = 0;
-  let next = 0;
-  for (let step = 0; step <= steps2; step += 1) {
-    earned += earnedPerStep;
-    while (next < known.length && known[next].sealAt <= step) {
-      spent += known[next].cost;
-      earnedPerStep += Math.max(0, known[next].cut ?? 0);
-      next += 1;
-    }
-    const adjustment = adjustments?.get(step);
-    earned -= adjustment?.saving ?? 0;
-    spent += adjustment?.cost ?? 0;
-    net.push(earned - spent);
-  }
-  let lowest = { value: net[0], at: 0 };
-  const below = [];
-  let first = null;
-  net.forEach((value, step) => {
-    if (value < lowest.value) lowest = { value, at: step };
-    if (value < 0) first ??= step;
-    else if (first !== null) {
-      below.push([first, step - 1]);
-      first = null;
-    }
-  });
-  if (first !== null) below.push([first, steps2]);
-  const needed = rows.map((row2) => row2.needed).filter(Number.isFinite).sort((a, b) => a - b);
-  const middle = Math.floor(needed.length / 2);
-  const medianNeeded = needed.length < MEDIAN_MIN_COUNT ? null : needed.length % 2 === 1 ? needed[middle] : (needed[middle - 1] + needed[middle]) / 2;
-  return { steps: steps2, net, seals: rows.map((row2) => row2.sealAt).sort((a, b) => a - b), lowest, below, medianNeeded };
-}
-var UNEXPECTED_MISS_PERCENT = 30;
-function unexpectedMissOf(attempts) {
-  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
-  const previousAfter = /* @__PURE__ */ new Map();
-  const unexpected = /* @__PURE__ */ new Set();
-  for (const attempt of committed) {
-    const { id, contextChange } = attempt;
-    const segment = segmentOf(attempt);
-    const { after, miss } = contextChange ?? {};
-    const previous = previousAfter.get(segment);
-    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
-    previousAfter.set(segment, Number.isFinite(after) ? after : null);
-  }
-  return unexpected;
-}
-var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
-
 // dsh/src/client/monitor-store.js
 var ACTIVE_STATUSES = ["generating", "validating"];
 var ROWS_ENDPOINT = "inner-monitor";
@@ -19807,14 +19716,11 @@ function foldRows(reply) {
 var foldResource = (reply) => fold3(reply, (value) => ({ kind: "ready", value }));
 function foldCurrentSettlement(reply) {
   return fold3(reply, (value) => {
-    const { epoch, tailCalls, attempts, calls, recall } = value ?? {};
+    const { epoch, tailCalls, attempts, calls } = value ?? {};
     if (!Number.isSafeInteger(epoch) || epoch < 1 || !Number.isSafeInteger(tailCalls) || tailCalls < 0 || !Array.isArray(attempts) || !Array.isArray(calls)) {
       throw new Error("the inner monitor answered an incomplete settlement snapshot");
     }
-    const base = settlementForSegment(attempts, { epoch, tailCalls });
-    const report = base.rows.some((row2) => row2.saved !== null) ? settlementWithRecall(base, recall) : null;
-    const curve = report === null ? null : paybackCurveOf(report);
-    return { kind: "ready", value: { snapshot: { kind: "ready", value: { calls } }, base, report, curve } };
+    return { kind: "ready", value };
   });
 }
 async function settle(send, foldReply) {
@@ -19854,6 +19760,36 @@ function createReadLoop({ pull, apply: apply2, repeat }) {
       epoch += 1;
       inflight = false;
       dirty = false;
+    }
+  };
+}
+function createTargetReader(read) {
+  let state = { selected: null, result: null };
+  let turn = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const move = (next) => {
+    state = next;
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    get state() {
+      return state;
+    },
+    select(seq) {
+      if (seq === state.selected) return;
+      turn += 1;
+      const mine = turn;
+      move({ selected: seq, result: null });
+      if (seq === null) return;
+      void read(seq).then((result) => {
+        if (mine === turn) move({ selected: seq, result });
+      });
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     }
   };
 }
@@ -19947,6 +19883,9 @@ function createMonitorStores({ call }) {
         },
         readCurrentSettlement() {
           return settle(() => call("inner-monitor/settlement/current", { sessionId }), foldCurrentSettlement);
+        },
+        settlementTarget({ segment, through }) {
+          return createTargetReader((seq) => settle(() => call("inner-monitor/settlement/target", { sessionId, segment, through, seq }), foldResource));
         },
         resource({ endpoint, attempt, handoff, slot }) {
           const identity = JSON.stringify([endpoint, attempt ?? handoff, slot ?? null]);
@@ -20335,6 +20274,197 @@ var import_react10 = __toESM(require("react"), 1);
 
 // dsh/src/client/monitor-drawer.js
 var import_react9 = __toESM(require("react"), 1);
+
+// public/lib/compactionEconomics.js
+var segmentOf = ({ epoch }) => epoch ?? 0;
+var countOf = (value) => Number.isFinite(value) ? value : 0;
+function ordinalsOf(attempts) {
+  const counts = /* @__PURE__ */ new Map();
+  return Object.fromEntries(attempts.map((attempt) => {
+    const { id } = attempt;
+    const segment = segmentOf(attempt) + 1;
+    const ordinal = (counts.get(segment) ?? 0) + 1;
+    counts.set(segment, ordinal);
+    return [id, { epoch: segment, ordinal }];
+  }));
+}
+var PAID_BACK_PERCENT = 100;
+var PERCENT = 100;
+var paybackPercent = (saved, cost) => Math.floor(saved * PERCENT / cost);
+function clearingsOf(handoffs) {
+  const seen = /* @__PURE__ */ new Set();
+  return [...handoffs].sort((a, b) => a.id - b.id).flatMap(({ id, type, epoch, tailCalls }) => {
+    const segment = epoch - 1;
+    if (type !== "continue" || seen.has(segment)) return [];
+    seen.add(segment);
+    return [{ id, epoch, segment, tailCalls: countOf(tailCalls) }];
+  });
+}
+function followOf(committed, at, tail) {
+  const segment = segmentOf(committed[at]);
+  const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
+  return later + tail;
+}
+function requestCostOf(usage, ratio) {
+  const { input, cacheRead, cacheWrite } = usage ?? {};
+  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
+  return cacheRead + ratio * (input + cacheWrite);
+}
+var neededOf = (cut, cost) => cost === null || cut === null ? null : cut > 0 ? Math.ceil(Math.round(cost) / cut) : Infinity;
+var gapOf = (needed, follow) => Number.isFinite(needed) ? needed - follow : null;
+function figuresOf({ contextChange, call, cRatio }, follow, cut) {
+  const { miss } = contextChange ?? {};
+  const summary = requestCostOf(call.usage, cRatio);
+  if (!Number.isFinite(cut) || !Number.isFinite(miss) || summary === null) return null;
+  const rebuild = (cRatio - 1) * miss;
+  const cost = summary + rebuild;
+  return cost > 0 ? { saved: Math.max(0, follow * cut), cost, rebuild } : null;
+}
+function paybackOf(attempts, handoffs = []) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const tails = new Map(clearingsOf(handoffs).map(({ segment, tailCalls }) => [segment, tailCalls]));
+  return new Map(committed.map((attempt, at) => {
+    const follow = followOf(committed, at, tails.get(segmentOf(attempt)) ?? 0);
+    const delta = attempt.contextChange?.delta;
+    const figures = figuresOf(attempt, follow, Number.isFinite(delta) ? -delta : null);
+    return [attempt.id, figures === null ? null : paybackPercent(figures.saved, figures.cost)];
+  }));
+}
+function settlementsOf(attempts, handoffs) {
+  const ordinals = ordinalsOf(attempts);
+  const settlements = /* @__PURE__ */ new Map();
+  for (const { id, epoch, tailCalls } of clearingsOf(handoffs)) {
+    const settlement = settlementForSegment(attempts, { epoch, tailCalls }, ordinals);
+    if (settlement.rows.some(({ saved }) => saved !== null)) settlements.set(id, settlement);
+  }
+  return settlements;
+}
+function settlementForSegment(attempts, { epoch, tailCalls }, ordinals = ordinalsOf(attempts)) {
+  const compactions = attempts.filter((attempt) => attempt.status === "committed" && segmentOf(attempt) === epoch - 1).sort((a, b) => a.id - b.id);
+  const steps2 = compactions.reduce((sum, { stepN }) => sum + countOf(stepN), tailCalls);
+  const rows = compactions.map((attempt, at) => {
+    const { before: rawBefore, after, delta } = attempt.contextChange ?? {};
+    const estimated = rawBefore === null && Number.isFinite(attempt.estimatedBefore);
+    const before = estimated ? attempt.estimatedBefore : rawBefore;
+    const cut = Number.isFinite(before) && Number.isFinite(after) ? before - after : null;
+    const follow = followOf(compactions, at, tailCalls);
+    const figures = figuresOf(attempt, follow, estimated ? cut : Number.isFinite(delta) ? -delta : null);
+    const needed = neededOf(cut, figures?.cost ?? null);
+    return {
+      id: attempt.id,
+      ordinal: ordinals[attempt.id].ordinal,
+      saved: figures?.saved ?? null,
+      cost: figures?.cost ?? null,
+      before: Number.isFinite(before) ? before : null,
+      after: Number.isFinite(after) ? after : null,
+      cut,
+      follow,
+      sealAt: steps2 - follow,
+      costRebuild: figures?.rebuild ?? null,
+      needed,
+      gap: gapOf(needed, follow)
+    };
+  });
+  const known = rows.filter(({ saved }) => saved !== null);
+  return { epoch, count: rows.length, steps: steps2, saved: known.reduce((sum, row2) => sum + row2.saved, 0), cost: known.reduce((sum, row2) => sum + row2.cost, 0), rows };
+}
+function settlementWithRecall(settlement, recall) {
+  if (recall === void 0) return settlement;
+  const cuts = new Map(recall.cuts.map(({ id, tokens }) => [id, tokens]));
+  let cutCredit = 0;
+  const rows = settlement.rows.map((row2) => {
+    if (!cuts.has(row2.id) || row2.cut === null) return row2;
+    const cut = row2.cut - cuts.get(row2.id);
+    const saved = row2.saved === null ? null : row2.follow * Math.max(0, cut);
+    cutCredit += (row2.saved ?? 0) - (saved ?? 0);
+    const needed = neededOf(cut, row2.cost);
+    return { ...row2, cut, saved, needed, gap: gapOf(needed, row2.follow) };
+  });
+  const known = rows.filter((row2) => row2.saved !== null);
+  const byId = new Map(known.map((row2) => [row2.id, row2]));
+  const adjustments = /* @__PURE__ */ new Map();
+  let requests = 0;
+  let overlap = 0;
+  let withdrawn = 0;
+  let residence = 0;
+  let partial = Boolean(recall.partial);
+  for (const step of recall.steps) {
+    if ("resident" in step) {
+      residence += step.resident;
+      adjustments.set(step.at, { saving: step.resident, cost: 0 });
+      continue;
+    }
+    const saving = known.reduce((sum, row2) => sum + (row2.sealAt < step.at ? Math.max(0, row2.cut ?? 0) : 0), 0);
+    const cost = requestCostOf(step.usage, step.ratio);
+    const rebuild = cost === null ? 0 : byId.get(step.post)?.costRebuild ?? 0;
+    if (cost === null) partial = true;
+    requests += cost ?? 0;
+    overlap += rebuild;
+    withdrawn += saving;
+    adjustments.set(step.at, { saving, cost: (cost ?? 0) - rebuild });
+  }
+  return {
+    ...settlement,
+    rows,
+    adjustments,
+    saved: settlement.saved - cutCredit - withdrawn - residence,
+    cost: settlement.cost + requests - overlap,
+    recall: { requests, overlap, withdrawn, residence, cutCredit, partial }
+  };
+}
+var MEDIAN_MIN_COUNT = 3;
+function paybackCurveOf({ steps: steps2, rows, adjustments }) {
+  const known = rows.filter(({ saved }) => saved !== null).sort((a, b) => a.sealAt - b.sealAt);
+  const net = [];
+  let earnedPerStep = 0;
+  let earned = 0;
+  let spent = 0;
+  let next = 0;
+  for (let step = 0; step <= steps2; step += 1) {
+    earned += earnedPerStep;
+    while (next < known.length && known[next].sealAt <= step) {
+      spent += known[next].cost;
+      earnedPerStep += Math.max(0, known[next].cut ?? 0);
+      next += 1;
+    }
+    const adjustment = adjustments?.get(step);
+    earned -= adjustment?.saving ?? 0;
+    spent += adjustment?.cost ?? 0;
+    net.push(earned - spent);
+  }
+  let lowest = { value: net[0], at: 0 };
+  const below = [];
+  let first = null;
+  net.forEach((value, step) => {
+    if (value < lowest.value) lowest = { value, at: step };
+    if (value < 0) first ??= step;
+    else if (first !== null) {
+      below.push([first, step - 1]);
+      first = null;
+    }
+  });
+  if (first !== null) below.push([first, steps2]);
+  const needed = rows.map((row2) => row2.needed).filter(Number.isFinite).sort((a, b) => a - b);
+  const middle = Math.floor(needed.length / 2);
+  const medianNeeded = needed.length < MEDIAN_MIN_COUNT ? null : needed.length % 2 === 1 ? needed[middle] : (needed[middle - 1] + needed[middle]) / 2;
+  return { steps: steps2, net, seals: rows.map((row2) => row2.sealAt).sort((a, b) => a - b), lowest, below, medianNeeded };
+}
+var UNEXPECTED_MISS_PERCENT = 30;
+function unexpectedMissOf(attempts) {
+  const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
+  const previousAfter = /* @__PURE__ */ new Map();
+  const unexpected = /* @__PURE__ */ new Set();
+  for (const attempt of committed) {
+    const { id, contextChange } = attempt;
+    const segment = segmentOf(attempt);
+    const { after, miss } = contextChange ?? {};
+    const previous = previousAfter.get(segment);
+    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
+    previousAfter.set(segment, Number.isFinite(after) ? after : null);
+  }
+  return unexpected;
+}
+var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
 
 // dsh/src/client/monitor-state.js
 var DRAWER_DEFAULT_WIDTH = 420;
@@ -21187,8 +21317,8 @@ var h6 = import_react5.default.createElement;
 function Notice({ state, children }) {
   return h6("p", { className: "sw-mon-notice", "data-sw-monitor-notice": state, role: "status" }, children);
 }
-function RecallNotice({ result, partial, pending = false, t }) {
-  const state = result === null ? pending ? "pending" : null : result.kind !== "ready" ? "unavailable" : partial ? "partial" : null;
+function RecallNotice({ evidence, partial, priced = true, pending = false, t }) {
+  const state = evidence.state === "pending" ? pending ? "pending" : null : evidence.state !== "ready" ? "unavailable" : !priced ? "unpriced" : partial ? "partial" : null;
   return state === null ? null : h6(Notice, { state: `recall-${state}` }, t(`monitor.settlement.recall.${state}`));
 }
 
@@ -21212,13 +21342,153 @@ function useElementWidth() {
   return [ref, width];
 }
 
-// dsh/src/client/monitor-settlement-model.js
+// dsh/src/client/monitor-recall-model.js
 var PERCENT3 = 100;
+var percentText = (ratio) => `${(Math.round(ratio * PERCENT3 * 10) / 10).toFixed(1)}%`;
+var isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+var isRead = (value) => value !== null && typeof value === "object" && isCount(value.at) && isCount(value.seq);
+var isTarget = (value) => value !== null && typeof value === "object" && isCount(value.seq) && typeof value.type === "string" && (value.at === null || isCount(value.at)) && Array.isArray(value.reads) && value.reads.every(isRead);
+var isActivity = (value) => value !== null && typeof value === "object" && typeof value.covered === "boolean" && isCount(value.judged) && isCount(value.pure) && Array.isArray(value.targets) && value.targets.every(isTarget);
+function evidenceOf(result) {
+  if (result === null || result === void 0) return { state: "pending" };
+  if (result.kind !== "ready") return { state: "unavailable" };
+  const { activity, recall } = result.value ?? {};
+  return isActivity(activity) ? { state: "ready", activity, recall } : { state: "old" };
+}
+var hasFigures = (settlement) => settlement.rows.some((row2) => row2.saved !== null);
+var isPricing = (response2) => Array.isArray(response2?.attempts) && Number.isSafeInteger(response2.epoch) && response2.epoch >= 1 && isCount(response2.tailCalls);
+function settlementViewOf(listed, result) {
+  const evidence = evidenceOf(result);
+  const response2 = result?.kind === "ready" ? result.value : void 0;
+  const base = isPricing(response2) ? settlementForSegment(response2.attempts, { epoch: response2.epoch, tailCalls: response2.tailCalls }) : listed ?? null;
+  const priced = base !== null && hasFigures(base);
+  const adjusted = priced && evidence.state === "ready";
+  const report = adjusted ? settlementWithRecall(base, evidence.recall) : base;
+  return {
+    base,
+    evidence,
+    report,
+    priced,
+    adjusted,
+    curve: adjusted ? paybackCurveOf(report) : null,
+    response: response2 ?? null
+  };
+}
+function compositionOf(report, adjusted) {
+  const known = report.rows.filter((row2) => row2.saved !== null);
+  const rebuild = known.reduce((sum, row2) => sum + row2.costRebuild, 0);
+  const summary = known.reduce((sum, row2) => sum + row2.cost - row2.costRebuild, 0);
+  const recall = adjusted ? (report.recall?.requests ?? 0) - (report.recall?.overlap ?? 0) : null;
+  const total = adjusted ? report.cost : null;
+  const trusted = adjusted && Number.isFinite(total) && total > 0 && !report.recall?.partial;
+  const shown = { rebuild: Math.round(rebuild), recall: recall === null ? null : Math.round(recall) };
+  shown.summary = total === null ? Math.round(summary) : Math.round(total) - shown.rebuild - shown.recall;
+  const item = (key, value) => ({
+    key,
+    value,
+    text: value === null ? null : formatTokenCount(shown[key]),
+    share: value === null || !trusted ? null : value / total,
+    percent: value === null || !trusted ? null : percentText(value / total)
+  });
+  return {
+    total: total === null ? null : { value: total, text: formatTokenCount(Math.round(total)) },
+    items: [item("summary", summary), item("rebuild", rebuild), item("recall", recall)]
+  };
+}
+function shareOf(evidence) {
+  if (evidence.state !== "ready") return null;
+  const { covered, judged, pure } = evidence.activity;
+  return covered && judged > 0 ? { pure, judged, percent: percentText(pure / judged) } : null;
+}
+var PAD = 12;
+var PLOT_WIDTH_MIN = 150;
+var CHAR_PX = 6.2;
+var LABEL_PAD = 6;
+var round12 = (value) => Math.round(value * 10) / 10;
+var NAME_KEYS = {
+  "user/message": "user",
+  "assistant/message": "assistant",
+  "tool/result": "toolResult",
+  "tool/call": "toolCall",
+  "system/message": "system",
+  "developer/message": "developer"
+};
+var nameOf = (type, t) => Object.hasOwn(NAME_KEYS, type) ? t(`monitor.recall.name.${NAME_KEYS[type]}`) : type;
+function linkOf(read, series) {
+  return series?.calls.find((call) => call.seq === read.seq && call.stock !== null)?.at ?? null;
+}
+function targetGraphOf({ evidence, report }, series, width, t) {
+  if (evidence.state !== "ready" || report === null || report.rows.length === 0) return null;
+  const plotWidth = Math.max(PLOT_WIDTH_MIN, width - 2 * PAD);
+  const span = Math.max(1, report.steps);
+  const stepX = (step) => round12(PAD + Math.max(step - 0.5, 0) / span * plotWidth);
+  const lineX = (step) => round12(PAD + Math.min(step, span) / span * plotWidth);
+  const seals = report.rows.map((row2) => ({ ordinal: row2.ordinal, at: row2.sealAt, x: lineX(row2.sealAt) })).sort((a, b) => a.at - b.at);
+  const firstEnd = seals[0]?.at ?? 0;
+  const zoneOf = (at) => seals.filter((seal) => seal.at < at).length;
+  const zones = [];
+  for (const zone of [{ label: "#0", x: PAD }, ...seals.map((seal) => ({ label: `#${seal.ordinal}`, x: seal.x }))]) {
+    const last = zones.at(-1);
+    if (last === void 0 || zone.x - last.x >= last.label.length * CHAR_PX + LABEL_PAD) zones.push(zone);
+  }
+  const rows = evidence.activity.targets.map((target) => {
+    const name = nameOf(target.type, t);
+    return {
+      seq: target.seq,
+      type: target.type,
+      name,
+      count: target.reads.length,
+      ring: target.at === null ? null : { at: target.at, x: stepX(target.at), zero: target.at <= firstEnd },
+      dots: target.reads.map((read) => ({ at: read.at, seq: read.seq, x: stepX(read.at), call: linkOf(read, series) })),
+      label: t("monitor.recall.row.label", { seq: target.seq, name, count: target.reads.length })
+    };
+  });
+  const repeated = evidence.activity.targets.filter((target) => new Set(target.reads.map((read) => zoneOf(read.at))).size > 1).length;
+  return {
+    count: rows.length,
+    repeated,
+    width: plotWidth + 2 * PAD,
+    plotLeft: PAD,
+    plotWidth,
+    seals,
+    zero: { x0: PAD, x1: lineX(firstEnd), label: "#0" },
+    zones,
+    rows
+  };
+}
+function selectionOf(graph, seq, t) {
+  const row2 = graph?.rows.find((each2) => each2.seq === seq);
+  if (row2 === void 0) return null;
+  let landing = t("monitor.recall.landing.unknown");
+  if (row2.ring !== null) {
+    const { at } = row2.ring;
+    const zone = graph.seals.filter((seal) => seal.at < at).length;
+    landing = row2.ring.zero ? t("monitor.recall.landing.zero", { at }) : t("monitor.recall.landing.at", { at, zone: graph.seals[zone - 1].ordinal });
+  }
+  return { seq, title: t("monitor.recall.title", { seq, name: row2.name }), landing, reads: row2.dots.map(({ at, call }) => ({ at, label: t("monitor.recall.read", { at }), call })) };
+}
+function excerptOf(text, limit) {
+  if (typeof text !== "string" || text === "") return null;
+  if (text.length <= limit) return { text, hidden: 0 };
+  let end = 0;
+  let kept = 0;
+  for (const character of text) {
+    if (kept === limit) break;
+    end += character.length;
+    kept += 1;
+  }
+  let hidden = 0;
+  for (const _ of text.slice(end)) hidden += 1;
+  return { text: text.slice(0, end), hidden };
+}
+
+// dsh/src/client/monitor-settlement-model.js
+var PERCENT4 = 100;
 var UNBOUNDED = "\u221E";
 var ARROW = "\u2192";
 var UP = "\u2191";
 var roundTo = (value, places) => Math.round(value * 10 ** places) / 10 ** places;
-var round12 = (value) => roundTo(value, 1);
+var round13 = (value) => roundTo(value, 1);
 var compactSigned = (value) => signedText(Math.round(value), compactCount);
 var compactTokens = (value) => {
   const whole = Math.round(value);
@@ -21242,7 +21512,7 @@ function chartLabelOf({ steps: steps2, net, lowest, below }, recall, t, current)
   ].join(t("monitor.payback.chart.separator"));
 }
 function plotOf(row2, steps2) {
-  const share = (value) => roundTo(Math.min(value, steps2) / steps2 * PERCENT3, 3);
+  const share = (value) => roundTo(Math.min(value, steps2) / steps2 * PERCENT4, 3);
   const end = share(row2.follow);
   const plot = { end, diamond: null, surplus: null, missing: null, beyond: null, unbounded: false };
   const { needed } = row2;
@@ -21322,11 +21592,14 @@ function formulaRowsOf(base, { saved, cost, recall }, t, format) {
   );
   return rows;
 }
-function settlementPageOf(base, t, evidence) {
-  const report = settlementWithRecall(base, evidence);
-  return paybackModelOf(base, report, paybackCurveOf(report), t);
+function settlementPageOf(listed, t, result = null) {
+  return paybackPageOf(settlementViewOf(listed, result), t);
 }
-function paybackModelOf(base, settlement, curve, t, current = false) {
+function paybackPageOf(view, t, current = false) {
+  if (!view.adjusted) return { adjusted: false, evidence: view.evidence, priced: view.priced, share: shareOf(view.evidence) };
+  return paybackModelOf(view.base, view.report, view.curve, t, current, view.evidence);
+}
+function paybackModelOf(base, settlement, curve, t, current, evidence) {
   const { steps: steps2, net, lowest, below, medianNeeded } = curve;
   const { recall } = settlement;
   const equations = formulaRowsOf(base, settlement, t, formatTokenCount);
@@ -21335,9 +21608,13 @@ function paybackModelOf(base, settlement, curve, t, current = false) {
     return `${left} ${left === wholeLeft && right === wholeRight ? sign2 : "\u2248"} ${right}`;
   });
   return {
+    adjusted: true,
+    priced: true,
     epoch: settlement.epoch,
     curve,
     current,
+    evidence,
+    share: shareOf(evidence),
     header: settlementMetaParts(settlement, t, compactTokens).map(({ text }) => text),
     recallPartial: recall?.partial,
     facts: [
@@ -21363,8 +21640,8 @@ function sortRows(rows, sort) {
 var GUTTER_MIN = 34;
 var RIGHT_MARGIN = 6;
 var LABEL_GAP = 5;
-var CHAR_PX = 6.2;
-var LABEL_PAD = 4;
+var CHAR_PX2 = 6.2;
+var LABEL_PAD2 = 4;
 var PLOT_TOP = 16;
 var PLOT_BOTTOM = 8;
 var PLOT_HEIGHTS = [[620, 200], [380, 170]];
@@ -21378,7 +21655,7 @@ var STEP_SIZES = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500];
 var TICK_MIN_PX = 34;
 var END_TICK_MIN_PX = 30;
 var plotHeightOf = (width) => PLOT_HEIGHTS.find(([from2]) => width >= from2)?.[1] ?? PLOT_HEIGHT_MIN;
-var textWidth = (text) => text.length * CHAR_PX + LABEL_PAD;
+var textWidth = (text) => text.length * CHAR_PX2 + LABEL_PAD2;
 var point = (x, y) => `${x.toFixed(1)},${y.toFixed(1)}`;
 function curveGeometryOf(curve, width, clipped, t, current = false) {
   const { steps: steps2, net, lowest: lowestNet, seals } = curve;
@@ -21388,12 +21665,12 @@ function curveGeometryOf(curve, width, clipped, t, current = false) {
   const top = clipped ? CLIP_TOP_RATIO * -low : high === low ? low + 1 : high;
   const values = [.../* @__PURE__ */ new Set([0, low, top])];
   const labels = values.map(compactSigned);
-  const gutter = Math.max(GUTTER_MIN, Math.ceil(Math.max(...labels.map((label2) => label2.length)) * CHAR_PX) + LABEL_GAP);
+  const gutter = Math.max(GUTTER_MIN, Math.ceil(Math.max(...labels.map((label2) => label2.length)) * CHAR_PX2) + LABEL_GAP);
   const plotWidth = Math.max(0, width - gutter - RIGHT_MARGIN);
   const plotHeight = plotHeightOf(width);
   const y = (value) => PLOT_TOP + (top - value) / (top - low) * (plotHeight - PLOT_TOP - PLOT_BOTTOM);
   const x = (step) => gutter + step / span * plotWidth;
-  const zeroY = round12(y(0));
+  const zeroY = round13(y(0));
   const line = net.map((value, step) => `${step === 0 ? "M" : "L"}${point(x(step), y(value))}`).join("");
   const laneY = plotHeight + LANE_GAP;
   const stepsY = laneY + LANE_HEIGHT + LANE_BELOW;
@@ -21406,20 +21683,20 @@ function curveGeometryOf(curve, width, clipped, t, current = false) {
     const box = { x0, x1: x0 + w, y0: atY - 10, y1: atY + 3 };
     if (boxes.some((other) => !(box.x1 < other.x0 || box.x0 > other.x1 || box.y1 < other.y0 || box.y0 > other.y1))) return null;
     boxes.push(box);
-    return { text, x: round12(anchor === "end" ? x0 + w : x0), y: round12(atY), anchor };
+    return { text, x: round13(anchor === "end" ? x0 + w : x0), y: round13(atY), anchor };
   };
   const lowestX = x(lowestNet.at);
   const lowestY = y(lowestNet.value);
   const lowRight = lowestX > gutter + plotWidth * 0.5;
   const lowest = {
-    x: round12(lowestX),
-    y: round12(lowestY),
+    x: round13(lowestX),
+    y: round13(lowestY),
     label: label(t("monitor.payback.lowestLabel", { value: compactSigned(lowestNet.value) }), lowRight ? lowestX - 7 : lowestX + 7, Math.min(lowestY + 4, plotHeight), lowRight ? "end" : "start")
   };
   const final = net[steps2];
   const endText = t(current ? "monitor.payback.snapshotEndLabel" : "monitor.payback.endLabel", { value: compactSigned(final) });
   const endX = x(steps2);
-  const end = final <= top ? { x: round12(endX), y: round12(y(final)), above: false, label: label(endText, endX - 7, final >= net[Math.max(0, steps2 - 1)] ? Math.max(y(final) - 7, 11) : Math.min(y(final) + 14, plotHeight - 2), "end") } : { x: round12(endX), y: null, above: true, arrow: `M${round12(endX - 4)},${PLOT_TOP + 5}h8l-4,-7z`, label: label(`${endText} ${UP}`, endX - 7, PLOT_TOP + 10, "end") };
+  const end = final <= top ? { x: round13(endX), y: round13(y(final)), above: false, label: label(endText, endX - 7, final >= net[Math.max(0, steps2 - 1)] ? Math.max(y(final) - 7, 11) : Math.min(y(final) + 14, plotHeight - 2), "end") } : { x: round13(endX), y: null, above: true, arrow: `M${round13(endX - 4)},${PLOT_TOP + 5}h8l-4,-7z`, label: label(`${endText} ${UP}`, endX - 7, PLOT_TOP + 10, "end") };
   const tickStep = STEP_SIZES.find((size) => size / span * plotWidth >= TICK_MIN_PX) ?? STEP_SIZES.at(-1);
   const marks = [];
   for (let step = 0; step <= steps2; step += tickStep) marks.push(step);
@@ -21438,13 +21715,13 @@ function curveGeometryOf(curve, width, clipped, t, current = false) {
     clips: {
       plot: { x: gutter, y: 0, width: plotWidth, height: plotHeight },
       above: { x: 0, y: 0, width, height: zeroY },
-      below: { x: 0, y: zeroY, width, height: round12(plotHeight - zeroY) }
+      below: { x: 0, y: zeroY, width, height: round13(plotHeight - zeroY) }
     },
-    ticks: values.map((value, at) => ({ value, label: labels[at], y: round12(y(value)), grid: value !== 0, clip: clipped && value === top })),
-    lane: { y: laneY, height: LANE_HEIGHT, label: t("monitor.payback.seal"), labelY: laneY + 9, seals: seals.map((step) => round12(x(step))) },
+    ticks: values.map((value, at) => ({ value, label: labels[at], y: round13(y(value)), grid: value !== 0, clip: clipped && value === top })),
+    lane: { y: laneY, height: LANE_HEIGHT, label: t("monitor.payback.seal"), labelY: laneY + 9, seals: seals.map((step) => round13(x(step))) },
     lowest,
     end,
-    steps: { unit: t("monitor.payback.stepUnit"), unitX: 0, y: stepsY + STEPS_BASELINE, ticks: marks.map((step) => ({ x: round12(x(step)), label: String(step) })) },
+    steps: { unit: t("monitor.payback.stepUnit"), unitX: 0, y: stepsY + STEPS_BASELINE, ticks: marks.map((step) => ({ x: round13(x(step)), label: String(step) })) },
     clipNote: over < 0 ? null : t("monitor.payback.clipNote", { top: compactSigned(top), step: over })
   };
 }
@@ -21615,12 +21892,15 @@ function Appendix({ appendix: { equations, head, rows }, t }) {
   );
 }
 function PaybackView({ model, state, dispatch, width, chartRef, notice: notice2, t }) {
+  const share = model.evidence.state !== "ready" ? null : h8("p", { className: "sw-pb-share" }, model.share === null ? t("monitor.payback.share.none") : t("monitor.payback.share", { percent: model.share.percent, pure: model.share.pure, judged: model.share.judged }));
+  if (!model.adjusted) return h8("div", { className: "sw-pb" }, notice2, share);
   const geometry = curveGeometryOf(model.curve, width, model.chart.clippable && !state.full, t, model.current);
   return h8(
     "div",
     { className: "sw-pb" },
     h8("p", { className: "sw-pb-head" }, model.header.map((text, at) => h8("span", { key: at }, at < model.header.length - 1 ? `${text}${PART_SEPARATOR.trimEnd()}` : text))),
     notice2,
+    share,
     h8("div", { className: "sw-pb-facts" }, model.facts.map((text, at) => h8("p", { key: at }, text))),
     h8(Curve, { model, geometry, state, dispatch, chartRef, t }),
     h8(Rows, { model, state, dispatch, t }),
@@ -21630,13 +21910,12 @@ function PaybackView({ model, state, dispatch, width, chartRef, notice: notice2,
 }
 function PaybackPage({ settlement, monitor, handoffId, t }) {
   const result = useSettlementResult(monitor, handoffId);
-  const model = settlementPageOf(settlement, t, result?.kind === "ready" ? result.value.recall : void 0);
-  return h8(PaybackReport, { model, result, t });
+  return h8(PaybackReport, { model: settlementPageOf(settlement, t, result), t });
 }
-function PaybackReport({ model, result, t }) {
+function PaybackReport({ model, t }) {
   const [state, dispatch] = import_react7.default.useReducer(reducePayback, void 0, createPaybackState);
   const [chartRef, width] = useElementWidth();
-  const notice2 = h8(RecallNotice, { result, partial: model.recallPartial, pending: true, t });
+  const notice2 = h8(RecallNotice, { evidence: model.evidence, partial: model.recallPartial, priced: model.priced, pending: true, t });
   return h8(PaybackView, { model, state, dispatch, width, chartRef, notice: notice2, t });
 }
 
@@ -21644,12 +21923,11 @@ function PaybackReport({ model, result, t }) {
 var import_react8 = __toESM(require("react"), 1);
 
 // dsh/src/client/monitor-context-model.js
-var PERCENT4 = 100;
-var round13 = (value) => Math.round(value * 10) / 10;
+var PERCENT5 = 100;
+var round14 = (value) => Math.round(value * 10) / 10;
 var compact = (value) => compactCount(Math.round(value));
 var signedWhole = (value) => signedText(Math.round(value), formatTokenCount);
 var signedCompact = (value) => signedText(Math.round(value), compactCount);
-var percentText = (ratio) => `${(Math.round(ratio * PERCENT4 * 10) / 10).toFixed(1)}%`;
 function amberLineOf(result, epoch) {
   if (result?.kind !== "live") return null;
   const history = result.snapshot.history ?? [];
@@ -21699,22 +21977,22 @@ var LEFT = 40;
 var RIGHT = 10;
 var TOP = 14;
 var FOOT = 30;
-var PLOT_WIDTH_MIN = 150;
+var PLOT_WIDTH_MIN2 = 150;
 var NARROW_BELOW = 340;
 var WIDE_FROM = 600;
 var PLOT_HEIGHTS2 = { narrow: 150, normal: 180, wide: 210 };
 var WIDE_CHAR_PX = 11;
-var CHAR_PX2 = 6.2;
+var CHAR_PX3 = 6.2;
 var WIDE_FROM_CODE_POINT = 11904;
 var SEAL_TICK = 11;
 var SEAL_HIT = { width: 7, height: 14 };
 var X_AXIS = { tick: 3, label: 14, unit: 25 };
 var X_TICK_TARGET = 7;
 var MARK_RADIUS = 5;
-var textWidth2 = (text) => [...text].reduce((sum, char) => sum + (char.codePointAt(0) >= WIDE_FROM_CODE_POINT ? WIDE_CHAR_PX : CHAR_PX2), 0);
-function stockGeometryOf(series, line, width, t) {
+var textWidth2 = (text) => [...text].reduce((sum, char) => sum + (char.codePointAt(0) >= WIDE_FROM_CODE_POINT ? WIDE_CHAR_PX : CHAR_PX3), 0);
+function stockGeometryOf(series, line, width, t, ringAts = []) {
   const scale = stockScaleOf(series);
-  const plotWidth = Math.max(PLOT_WIDTH_MIN, width - LEFT - RIGHT);
+  const plotWidth = Math.max(PLOT_WIDTH_MIN2, width - LEFT - RIGHT);
   const total = LEFT + plotWidth + RIGHT;
   const plotHeight = width < NARROW_BELOW ? PLOT_HEIGHTS2.narrow : width >= WIDE_FROM ? PLOT_HEIGHTS2.wide : PLOT_HEIGHTS2.normal;
   const foot = TOP + plotHeight;
@@ -21728,28 +22006,28 @@ function stockGeometryOf(series, line, width, t) {
     let anchor = prefer;
     if (prefer === "end" && x - reach < LEFT + 2) anchor = "start";
     else if (prefer === "start" && x + reach > total - 2) anchor = "end";
-    return { text, x: round13(x), y: round13(y), anchor };
+    return { text, x: round14(x), y: round14(y), anchor };
   };
   const points = series.drawn.map(({ at, stock, uncompressed }) => ({
     at,
-    x: round13(xOf(at)),
-    y: round13(yOf(stock)),
+    x: round14(xOf(at)),
+    y: round14(yOf(stock)),
     uncompressedY: yOf(uncompressed)
   }));
-  const pathOf = (key) => `M${points.map((point2) => `${point2.x.toFixed(1)},${round13(point2[key]).toFixed(1)}`).join(" L")}`;
+  const pathOf = (key) => `M${points.map((point2) => `${point2.x.toFixed(1)},${round14(point2[key]).toFixed(1)}`).join(" L")}`;
   const crossing = (call, kind) => {
     if (call === null || !inPlot(call[kind])) return null;
-    const x = round13(xOf(call.at));
-    const y = round13(yOf(call[kind]));
+    const x = round14(xOf(call.at));
+    const y = round14(yOf(call[kind]));
     if (kind === "uncompressed") {
-      const d = `M${x},${round13(y - MARK_RADIUS)} L${round13(x + MARK_RADIUS)},${y} L${x},${round13(y + MARK_RADIUS)} L${round13(x - MARK_RADIUS)},${y} Z`;
+      const d = `M${x},${round14(y - MARK_RADIUS)} L${round14(x + MARK_RADIUS)},${y} L${x},${round14(y + MARK_RADIUS)} L${round14(x - MARK_RADIUS)},${y} Z`;
       return { at: call.at, x, y, d, label: label(t("monitor.context.mark.uncompressed", { n: call.at }), x + 8, y - 7, "start") };
     }
     return { at: call.at, x, y, label: label(t("monitor.context.mark.actual", { n: call.at }), x - 6, y + 20, "end") };
   };
   const step = Math.max(1, niceStep(series.count / X_TICK_TARGET));
   const xTicks = [];
-  for (let at = step; at <= series.count; at += step) xTicks.push({ x: round13(xOf(at)), label: String(at) });
+  for (let at = step; at <= series.count; at += step) xTicks.push({ x: round14(xOf(at)), label: String(at) });
   return {
     width: total,
     height: foot + FOOT,
@@ -21757,9 +22035,9 @@ function stockGeometryOf(series, line, width, t) {
     plotWidth,
     plotTop: TOP,
     plotHeight,
-    ticks: scale.ticks.map((value) => ({ value, label: value === 0 ? "0" : compact(value), y: round13(yOf(value)) })),
-    seals: series.seals.map(({ at, ordinal, land }) => ({ at, x: round13(xOf(at)), ordinal, land })),
-    line: plotLine === null ? null : { y: round13(yOf(plotLine)), label: { text: t("monitor.context.line", { value: compact(plotLine) }), x: LEFT + 4, y: round13(yOf(plotLine) + 13), anchor: "start" } },
+    ticks: scale.ticks.map((value) => ({ value, label: value === 0 ? "0" : compact(value), y: round14(yOf(value)) })),
+    seals: series.seals.map(({ at, ordinal, land }) => ({ at, x: round14(xOf(at)), ordinal, land })),
+    line: plotLine === null ? null : { y: round14(yOf(plotLine)), label: { text: t("monitor.context.line", { value: compact(plotLine) }), x: LEFT + 4, y: round14(yOf(plotLine) + 13), anchor: "start" } },
     actual: pathOf("y"),
     uncompressed: pathOf("uncompressedY"),
     uncompressedCross: crossing(crossings.uncompressed, "uncompressed"),
@@ -21769,6 +22047,7 @@ function stockGeometryOf(series, line, width, t) {
     axisPath: `M${LEFT},${TOP} V${foot} H${LEFT + plotWidth}`,
     hit: { x: LEFT, y: TOP, width: plotWidth, height: plotHeight - SEAL_HIT.height },
     points,
+    rings: points.filter(({ at }) => ringAts.includes(at)).map(({ at, x, y }) => ({ at, x, y })),
     foot,
     sealTickTop: foot - SEAL_TICK,
     sealHit: { ...SEAL_HIT, y: foot - SEAL_HIT.height },
@@ -21784,7 +22063,7 @@ function cursorOf(geometry, at) {
   const point2 = geometry.points.find((each2) => each2.at === at);
   if (point2 === void 0) return null;
   const { x, y, uncompressedY } = point2;
-  return { x, y, uncompressedY: uncompressedY >= geometry.plotTop && uncompressedY <= geometry.foot ? round13(uncompressedY) : null };
+  return { x, y, uncompressedY: uncompressedY >= geometry.plotTop && uncompressedY <= geometry.foot ? round14(uncompressedY) : null };
 }
 function sealStepAt(series, current, direction) {
   const lands = series.seals.map(({ land }) => land);
@@ -21827,7 +22106,6 @@ function cacheOf(rows, totals) {
     rebuild,
     net0: net + rebuild,
     net1: net,
-    share: rebuild / cost,
     rows: [
       ...ranked.map((each2) => ({ ordinal: each2.ordinal, known: true, rebuild: each2.costRebuild, share: each2.costRebuild / rebuild })),
       ...rows.filter((each2) => !known.includes(each2)).map((each2) => ({ ordinal: each2.ordinal, known: false, rebuild: null, share: null }))
@@ -21838,7 +22116,7 @@ function cacheOf(rows, totals) {
 var netAt = (cache, share) => cache.net0 - share * cache.rebuild;
 var crossingShareOf = (cache) => cache.rebuild > 0 && cache.net0 > 0 && cache.net1 < 0 ? cache.net0 / cache.rebuild : null;
 function shareReadoutOf(cache, share, t) {
-  const lead = share >= 1 ? t("monitor.context.cache.read.actual") : share <= 0 ? t("monitor.context.cache.read.none") : t("monitor.context.cache.read.at", { percent: Math.round(share * PERCENT4) });
+  const lead = share >= 1 ? t("monitor.context.cache.read.actual") : share <= 0 ? t("monitor.context.cache.read.none") : t("monitor.context.cache.read.at", { percent: Math.round(share * PERCENT5) });
   return t("monitor.context.cache.read", { lead, net: signedWhole(netAt(cache, share)) });
 }
 var LAM = { height: 156, left: 10, right: 10, top: 14, foot: 34, plotMin: 60, headroom: 0.2, gridShares: [0, 0.25, 0.5, 0.75, 1], cursorFrom: 4e-3, cursorTo: 0.996 };
@@ -21859,20 +22137,20 @@ function lamGeometryOf(cache, share, width) {
   const segment = (from2, to2, tone) => ({ tone, points: `${pointOf(from2)} ${pointOf(to2)}` });
   const end = (kind, at, anchor, radius) => {
     const value = netAt(cache, at);
-    return { kind, x: round13(xOf(at)), y: round13(yOf(value)), r: radius, label: { text: signedCompact(value), x: round13(xOf(at)), y: round13(value < 0 ? yOf(value) + 16 : yOf(value) - 8), anchor } };
+    return { kind, x: round14(xOf(at)), y: round14(yOf(value)), r: radius, label: { text: signedCompact(value), x: round14(xOf(at)), y: round14(value < 0 ? yOf(value) + 16 : yOf(value) - 8), anchor } };
   };
-  const x = round13(xOf(crossShare ?? 0));
-  const y0 = round13(zeroY);
+  const x = round14(xOf(crossShare ?? 0));
+  const y0 = round14(zeroY);
   return {
     width: left + plotWidth + right,
     height,
-    grid: LAM.gridShares.map((at) => ({ x: round13(xOf(at)), label: `${Math.round(at * PERCENT4)}%`, anchor: at === 0 ? "start" : at === 1 ? "end" : "middle" })),
-    title: { x: round13(left + plotWidth / 2), y: height - 2 },
-    zero: { x1: left, x2: left + plotWidth, y: y0, labelX: left + 2, labelY: round13(zeroY + (cache.net0 >= 0 && cache.net1 >= 0 ? -3 : 11)) },
+    grid: LAM.gridShares.map((at) => ({ x: round14(xOf(at)), label: `${Math.round(at * PERCENT5)}%`, anchor: at === 0 ? "start" : at === 1 ? "end" : "middle" })),
+    title: { x: round14(left + plotWidth / 2), y: height - 2 },
+    zero: { x1: left, x2: left + plotWidth, y: y0, labelX: left + 2, labelY: round14(zeroY + (cache.net0 >= 0 && cache.net1 >= 0 ? -3 : 11)) },
     segments: crossShare === null ? [segment(0, 1, (cache.net0 + cache.net1) / 2 < 0 ? "neg" : "pos")] : [segment(0, crossShare, "pos"), segment(crossShare, 1, "neg")],
-    crossing: crossShare === null ? null : { x, y: y0, d: `M${x} ${round13(y0 - 5)}l5 5l-5 5l-5-5z` },
+    crossing: crossShare === null ? null : { x, y: y0, d: `M${x} ${round14(y0 - 5)}l5 5l-5 5l-5-5z` },
     ends: [end("none", 0, "start", 4), end("all", 1, "end", 4.5)],
-    cursor: share > LAM.cursorFrom && share < LAM.cursorTo ? { x: round13(xOf(share)), y: round13(yOf(netAt(cache, share))) } : null,
+    cursor: share > LAM.cursorFrom && share < LAM.cursorTo ? { x: round14(xOf(share)), y: round14(yOf(netAt(cache, share))) } : null,
     guide: { top, bottom: top + plotHeight }
   };
 }
@@ -21895,12 +22173,9 @@ function chartLabelOf2(series, line, crossings, t) {
 function cacheTextsOf(sums, series, t) {
   const crossShare = crossingShareOf(sums);
   const crossing = crossShare === null ? null : t("monitor.context.cache.crossing", { percent: percentText(crossShare) });
-  const net = Math.round(sums.net1);
   const sealOf = (ordinal) => series?.seals.find((seal) => seal.ordinal === ordinal);
   return {
     sums,
-    share: percentText(sums.share),
-    net: { text: net === 0 ? "0" : `${signedCompact(net)} ${net > 0 ? "\u25B2" : "\u25BC"}`, tone: net > 0 ? "pos" : net < 0 ? "neg" : "zero" },
     crossing,
     chart: sums.rebuild > 0 ? { label: t(crossing === null ? "monitor.context.cache.chart" : "monitor.context.cache.chart.crossing", { none: signedCompact(sums.net0), actual: signedCompact(sums.net1), sentence: crossing }) } : null,
     list: sums.rebuild > 0 ? sums.rows.map(({ ordinal, known, rebuild, share }) => {
@@ -21910,7 +22185,7 @@ function cacheTextsOf(sums, series, t) {
       return {
         ordinal,
         known,
-        bar: known ? (rebuild / sums.max * PERCENT4).toFixed(2) : null,
+        bar: known ? (rebuild / sums.max * PERCENT5).toFixed(2) : null,
         ...text,
         jump,
         label: jump === null ? null : t(known ? "monitor.context.cache.row.label" : "monitor.context.cache.row.labelNone", params)
@@ -21919,22 +22194,32 @@ function cacheTextsOf(sums, series, t) {
   };
 }
 function contextPageOf(settlement, result, line, t) {
-  const recall = result?.kind === "ready" ? result.value.recall : void 0;
-  return contextModelOf(settlement, settlementWithRecall(settlement, recall), result, line, t);
+  return contextModelOf(settlementViewOf(settlement, result), line, t);
 }
-function contextModelOf(settlement, report, result, line, t) {
-  const series = result?.kind === "ready" ? seriesOf(settlement.rows, result.value.calls) : null;
+function contextModelOf(view, line, t) {
+  const { base, report, evidence, response: response2 } = view;
+  const series = Array.isArray(response2?.calls) ? seriesOf(base.rows, response2.calls) : null;
   const crossings = series === null ? null : crossingsOf(series, line);
   return {
-    count: t("monitor.settlement.count", { count: settlement.count }),
+    count: t("monitor.settlement.count", { count: base.count }),
     calls: series === null ? null : t("monitor.context.calls", { count: series.count }),
-    loading: result === null,
+    loading: evidence.state === "pending",
     stock: series === null ? null : { series, line, facts: factsOf(series, line, crossings, t), label: chartLabelOf2(series, line, crossings, t) },
-    cache: cacheTextsOf(cacheOf(settlement.rows, report === settlement ? void 0 : report), series, t),
-    recallPartial: report.recall?.partial
+    composition: view.priced ? compositionOf(report, view.adjusted) : null,
+    cache: cacheTextsOf(cacheOf(base.rows, report === base ? void 0 : report), series, t),
+    recallPartial: report.recall?.partial,
+    priced: view.priced,
+    view
   };
 }
-var createContextState = () => ({ cursor: null, hover: null, share: 1, folds: { rows: false, note: false } });
+var createContextState = () => ({
+  cursor: null,
+  hover: null,
+  target: null,
+  expanded: false,
+  share: 1,
+  folds: { rows: false, trial: false, note: false }
+});
 var isFoldOpen = (state, name) => state.folds[name];
 function reduceContext(state, action) {
   switch (action.type) {
@@ -21944,6 +22229,10 @@ function reduceContext(state, action) {
       return state.hover === null ? state : { ...state, hover: null };
     case "cursor":
       return { ...state, cursor: action.at, hover: null };
+    case "target":
+      return { ...state, target: action.seq === state.target ? null : action.seq, expanded: false };
+    case "expand":
+      return { ...state, expanded: !state.expanded };
     case "share":
       return { ...state, share: action.value };
     case "fold":
@@ -21955,7 +22244,11 @@ function reduceContext(state, action) {
 
 // dsh/src/client/monitor-context.js
 var h9 = import_react8.default.createElement;
+var PERCENT6 = 100;
 var SHARE_INPUT_ID = "sw-cx-share";
+var TRACK_HEIGHT = 20;
+var AXIS_HEIGHT = 18;
+var EXCERPT_CHARS = 280;
 var MarkLabel2 = ({ label, className }) => h9(Label, { className: `sw-cx-halo ${className}`, x: label.x, y: label.y, anchor: label.anchor }, label.text);
 function StockChart({ stock, geometry: g, cursor, shown, dispatch, t }) {
   const { series } = stock;
@@ -22026,6 +22319,7 @@ function StockChart({ stock, geometry: g, cursor, shown, dispatch, t }) {
       h9("circle", { className: "sw-cx-actualcross", cx: g.actualCross.x, cy: g.actualCross.y, r: 3.5 }),
       h9(MarkLabel2, { label: g.actualCross.label, className: "sw-cx-ink" })
     ),
+    g.rings.map((ring2) => h9("circle", { key: ring2.at, className: "sw-cx-ring", cx: ring2.x, cy: ring2.y, r: 6, "aria-hidden": "true" })),
     h9("path", { className: "sw-cx-axis", d: g.axisPath }),
     g.xTicks.map((tick) => h9(
       import_react8.default.Fragment,
@@ -22135,15 +22429,32 @@ function RebuildList({ list, state, dispatch, t }) {
     )
   );
 }
-var Figure = ({ name, value, tone }) => h9("div", { className: "sw-cx-kv" }, h9("div", { className: "sw-cx-t" }, name), h9("div", { className: tone === void 0 || tone === "zero" ? "sw-cx-v" : `sw-cx-v sw-cx-${tone}` }, value));
-function CacheSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
-  const readout = shareReadoutOf(cache.sums, state.share, t);
+function CompositionSection({ composition, t }) {
+  const { total, items } = composition;
+  const bar = items.every(({ share }) => share !== null);
   return h9(
     "section",
-    { className: "sw-cx-cache", "aria-label": t("monitor.context.cache") },
-    h9("div", { className: "sw-cx-h" }, h9("h3", null, t("monitor.context.cache"))),
-    h9("div", { className: "sw-cx-sum" }, h9(Figure, { name: t("monitor.context.cache.share"), value: cache.share }), h9(Figure, { name: t("monitor.context.cache.net"), value: cache.net.text, tone: cache.net.tone })),
-    cache.chart === null ? null : h9(
+    { className: "sw-cx-comp", "aria-label": t("monitor.context.comp") },
+    h9("div", { className: "sw-cx-h" }, h9("h3", null, t("monitor.context.comp"))),
+    total === null ? null : h9("p", { className: "sw-cx-comp-total" }, t("monitor.context.comp.total", { value: total.text })),
+    bar ? h9("div", { className: "sw-cx-stack", "aria-hidden": "true" }, items.map(({ key, share }) => h9("i", { key, className: "sw-cx-seg", "data-key": key, style: { width: `${(Math.max(0, share) * PERCENT6).toFixed(2)}%` } }))) : null,
+    h9("ul", { className: "sw-cx-comp-list" }, items.map(({ key, text, percent: percent2 }) => h9(
+      "li",
+      { key, className: "sw-cx-comp-row", "data-key": key },
+      h9("i", { className: "sw-cx-swatch", "data-key": key, "aria-hidden": "true" }),
+      h9("span", { className: "sw-cx-comp-name" }, t(`monitor.context.comp.${key}`)),
+      h9("span", { className: "sw-cx-comp-value" }, text ?? NOT_AVAILABLE),
+      h9("span", { className: "sw-cx-comp-percent" }, percent2 ?? NOT_AVAILABLE)
+    )))
+  );
+}
+function TrialSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
+  const readout = shareReadoutOf(cache.sums, state.share, t);
+  return h9(
+    "details",
+    { className: "sw-cx-trial", open: isFoldOpen(state, "trial"), onToggle: (event) => dispatch({ type: "fold", name: "trial", open: event.currentTarget.open }) },
+    h9("summary", null, t("monitor.context.trial")),
+    h9(
       "div",
       { className: "sw-cx-card" },
       h9("div", { className: "sw-cx-lamchart", role: "img", "aria-label": cache.chart.label, ref: lamRef }, h9(LamChart, { geometry: lamGeometryOf(cache.sums, state.share, lamWidth), t })),
@@ -22165,8 +22476,102 @@ function CacheSection({ cache, state, dispatch, lamWidth, lamRef, t }) {
       ),
       h9("p", { className: "sw-cx-rd" }, readout),
       cache.crossing === null ? null : h9("p", { className: "sw-cx-thr" }, cache.crossing)
+    )
+  );
+}
+function TargetTrack({ graph: g, row: row2 }) {
+  return h9(
+    "svg",
+    { className: "sw-rc-track", width: g.width, height: TRACK_HEIGHT, viewBox: `0 0 ${g.width} ${TRACK_HEIGHT}`, "aria-hidden": "true" },
+    h9("rect", { className: "sw-rc-zero", x: g.zero.x0, y: 0, width: Math.max(0, g.zero.x1 - g.zero.x0), height: TRACK_HEIGHT }),
+    g.seals.map((seal) => h9("line", { key: seal.ordinal, className: "sw-rc-seal", x1: seal.x, y1: 0, x2: seal.x, y2: TRACK_HEIGHT })),
+    h9("line", { className: "sw-rc-rail", x1: g.plotLeft, y1: TRACK_HEIGHT / 2, x2: g.plotLeft + g.plotWidth, y2: TRACK_HEIGHT / 2 }),
+    row2.dots.map((dot) => h9("circle", { key: dot.at, className: "sw-rc-dot", cx: dot.x, cy: TRACK_HEIGHT / 2, r: 3 })),
+    row2.ring === null ? null : h9("circle", { className: "sw-rc-ring", cx: row2.ring.x, cy: TRACK_HEIGHT / 2, r: 4.5 })
+  );
+}
+function TargetAxis({ graph: g, t }) {
+  return h9(
+    "svg",
+    { className: "sw-rc-axis", width: g.width, height: AXIS_HEIGHT, viewBox: `0 0 ${g.width} ${AXIS_HEIGHT}`, "aria-hidden": "true" },
+    h9("rect", { className: "sw-rc-zero", x: g.zero.x0, y: 0, width: Math.max(0, g.zero.x1 - g.zero.x0), height: AXIS_HEIGHT }),
+    g.seals.map((seal) => h9("line", { key: seal.ordinal, className: "sw-rc-seal", x1: seal.x, y1: 0, x2: seal.x, y2: AXIS_HEIGHT })),
+    g.zones.map((zone) => h9(Label, { key: zone.label, className: "sw-rc-lbl", x: zone.x + 3, y: AXIS_HEIGHT - 5 }, zone.label))
+  );
+}
+function TargetText({ text, expanded, dispatch, t }) {
+  if (text === null) return h9(Notice, { state: "recall-text-loading" }, t("monitor.recall.text.loading"));
+  if (text.kind !== "ready") return h9(Notice, { state: "recall-text-failed" }, text.kind === "unavailable" ? t("monitor.detail.unavailable") : t("monitor.recall.text.failed", { message: text.message }));
+  const excerpt = excerptOf(text.value.text, EXCERPT_CHARS);
+  if (excerpt === null) return h9("p", { className: "sw-mon-note", "data-sw-recall-text": "none" }, t("monitor.recall.text.none"));
+  const count = Array.from(excerpt.text).length + excerpt.hidden;
+  return h9(
+    import_react8.default.Fragment,
+    null,
+    h9("pre", { className: "sw-rc-text", "data-sw-recall-text": expanded || excerpt.hidden === 0 ? "whole" : "excerpt" }, expanded || excerpt.hidden === 0 ? text.value.text : `${excerpt.text}\u2026`),
+    excerpt.hidden === 0 ? null : h9("button", { type: "button", className: "sw-rc-more", "aria-expanded": expanded, onClick: () => dispatch({ type: "expand" }) }, t(expanded ? "monitor.recall.text.collapse" : "monitor.recall.text.expand", { count }))
+  );
+}
+function TargetPanel({ selection, state, text, dispatch, t }) {
+  return h9(
+    "div",
+    { className: "sw-rc-panel", "data-sw-target": selection.seq },
+    h9("h4", { className: "sw-rc-title" }, selection.title),
+    h9("p", { className: "sw-rc-landing" }, selection.landing),
+    h9(TargetText, { text, expanded: state.expanded, dispatch, t }),
+    selection.reads.length === 0 ? null : h9("ul", { className: "sw-rc-reads", "aria-label": t("monitor.recall.reads") }, selection.reads.map((read) => h9(
+      "li",
+      { key: read.at },
+      read.call === null ? h9("span", { className: "sw-rc-read" }, read.label) : h9("button", { type: "button", className: "sw-rc-read", "aria-label": t("monitor.recall.read.call", { at: read.at, call: read.call }), onClick: () => dispatch({ type: "cursor", at: read.call }) }, read.label)
+    )))
+  );
+}
+function TargetSection({ graph, state, text, dispatch, graphRef, t }) {
+  const selection = selectionOf(graph, state.target, t);
+  return h9(
+    "section",
+    { className: "sw-rc", "aria-label": t("monitor.recall.heading") },
+    h9(
+      "div",
+      { className: "sw-cx-h" },
+      h9("h3", null, t("monitor.recall.heading")),
+      h9("span", { className: "sw-cx-tag" }, [t("monitor.recall.count", { count: graph.count }), ...graph.repeated > 0 ? [t("monitor.recall.repeated", { count: graph.repeated })] : []].join(PART_SEPARATOR))
     ),
-    cache.list === null ? null : h9(RebuildList, { list: cache.list, state, dispatch, t })
+    graph.rows.length === 0 ? h9("p", { className: "sw-mon-note", "data-sw-recall": "none" }, t("monitor.recall.none")) : h9(
+      "div",
+      { className: "sw-rc-chart", ref: graphRef },
+      h9(TargetAxis, { graph, t }),
+      h9("ul", { className: "sw-rc-list", "aria-label": t("monitor.recall.heading") }, graph.rows.map((row2) => h9(
+        "li",
+        { key: row2.seq },
+        h9(
+          "button",
+          {
+            type: "button",
+            className: "sw-rc-row",
+            "data-seq": row2.seq,
+            "aria-pressed": state.target === row2.seq,
+            "aria-label": row2.label,
+            onClick: () => dispatch({ type: "target", seq: row2.seq })
+          },
+          h9("span", { className: "sw-rc-name" }, t("monitor.recall.title", { seq: row2.seq, name: row2.name }), h9("small", null, t("monitor.recall.row.count", { count: row2.count }))),
+          h9(TargetTrack, { graph, row: row2 })
+        )
+      ))),
+      h9(
+        "p",
+        { className: "sw-rc-keys", "aria-hidden": "true" },
+        h9("i", { className: "sw-rc-key sw-rc-ring-key" }),
+        t("monitor.recall.legend.original"),
+        h9("i", { className: "sw-rc-key sw-rc-dot-key" }),
+        t("monitor.recall.legend.read"),
+        h9("i", { className: "sw-rc-key sw-rc-seal-key" }),
+        t("monitor.recall.legend.seal"),
+        h9("i", { className: "sw-rc-key sw-rc-zero-key" }),
+        t("monitor.recall.legend.zero")
+      )
+    ),
+    selection === null ? null : h9(TargetPanel, { selection, state, text, dispatch, t })
   );
 }
 function Note({ state, dispatch, t }) {
@@ -22177,18 +22582,23 @@ function Note({ state, dispatch, t }) {
     h9("div", { className: "sw-cx-in" }, h9("p", null, t("monitor.context.note.line")))
   );
 }
-function ContextView({ model, state, dispatch, width, lamWidth, chartRef, lamRef, notice: notice2, t }) {
+function ContextView({ model, state, dispatch, width, lamWidth, graphWidth, chartRef, lamRef, graphRef, notice: notice2, text = null, t }) {
   const { stock } = model;
   const shown = state.hover ?? state.cursor;
+  const graph = targetGraphOf(model.view, stock === null ? null : stock.series, graphWidth, t);
+  const rings = selectionOf(graph, state.target, t)?.reads.flatMap(({ call }) => call === null ? [] : [call]) ?? [];
   return h9(
     "div",
     { className: "sw-cx" },
     stock === null ? null : h9(Readout, { lines: readoutOf(stock.series, stock.line, shown, t), t }),
-    h9("p", { className: "sw-cx-ctx" }, [model.count, model.calls].filter((text) => text !== null).join(PART_SEPARATOR)),
+    h9("p", { className: "sw-cx-ctx" }, [model.count, model.calls].filter((value) => value !== null).join(PART_SEPARATOR)),
     model.loading ? h9(Notice, { state: "context-loading" }, t("monitor.detail.loading")) : null,
-    stock === null ? null : h9(StockBlock, { stock, geometry: stockGeometryOf(stock.series, stock.line, width, t), state, shown, chartRef, dispatch, t }),
+    stock === null ? null : h9(StockBlock, { stock, geometry: stockGeometryOf(stock.series, stock.line, width, t, rings), state, shown, chartRef, dispatch, t }),
     notice2,
-    h9(CacheSection, { cache: model.cache, state, dispatch, lamWidth, lamRef, t }),
+    model.composition === null ? null : h9(CompositionSection, { composition: model.composition, t }),
+    model.cache.list === null ? null : h9(RebuildList, { list: model.cache.list, state, dispatch, t }),
+    graph === null ? null : h9(TargetSection, { graph, state, text, dispatch, graphRef, t }),
+    model.cache.chart === null ? null : h9(TrialSection, { cache: model.cache, state, dispatch, lamWidth, lamRef, t }),
     stock === null || stock.line === null ? null : h9(Note, { state, dispatch, t }),
     h9("div", { className: "sw-cx-pin" }, h9("p", { className: "sw-cx-unit" }, t("monitor.settlement.unit")))
   );
@@ -22197,22 +22607,40 @@ function useAmberLine(session, epoch) {
   const read = () => amberLineOf(session.result, epoch);
   return import_react8.default.useSyncExternalStore(session.subscribe, read, read);
 }
+var NO_TARGET = Object.freeze({ selected: null, result: null });
+var noSubscription = () => () => {
+};
+function useTargetReader(monitor, cut) {
+  const reader = import_react8.default.useMemo(
+    () => monitor === void 0 || !Number.isSafeInteger(cut?.segment) || !Number.isSafeInteger(cut?.through) ? null : monitor.settlementTarget({ segment: cut.segment, through: cut.through }),
+    [monitor, cut?.segment, cut?.through]
+  );
+  const read = () => reader?.state ?? NO_TARGET;
+  return { reader, read: import_react8.default.useSyncExternalStore(reader?.subscribe ?? noSubscription, read, read) };
+}
 function ContextPage({ settlement, handoffId, monitor, session, t }) {
   const result = useSettlementResult(monitor, handoffId);
   const line = useAmberLine(session, settlement.epoch);
-  return h9(ContextReport, { model: contextPageOf(settlement, result, line, t), result, t });
+  return h9(ContextReport, { model: contextPageOf(settlement, result, line, t), monitor, t });
 }
-function ContextReport({ model, result, current, t }) {
+function ContextReport({ model, current, monitor, t }) {
   const [state, dispatch] = import_react8.default.useReducer(reduceContext, void 0, createContextState);
   const [chartRef, width] = useElementWidth();
   const [lamRef, lamWidth] = useElementWidth();
+  const [graphRef, graphWidth] = useElementWidth();
+  const { reader, read } = useTargetReader(monitor, model.view.response?.cut);
+  const graph = targetGraphOf(model.view, model.stock === null ? null : model.stock.series, graphWidth, t);
+  const chosen = selectionOf(graph, state.target, t) === null ? null : state.target;
+  import_react8.default.useEffect(() => {
+    reader?.select(chosen);
+  }, [reader, chosen]);
   const notice2 = h9(
     import_react8.default.Fragment,
     null,
     current && model.stock === null ? h9(Notice, { state: "current-stock-unavailable" }, t("monitor.settlement.current.stockUnavailable")) : null,
-    h9(RecallNotice, { result, partial: model.recallPartial, t })
+    h9(RecallNotice, { evidence: model.view.evidence, partial: model.recallPartial, priced: model.priced, t })
   );
-  return h9(ContextView, { model, state, dispatch, width, lamWidth, chartRef, lamRef, notice: notice2, t });
+  return h9(ContextView, { model, state, dispatch, width, lamWidth, graphWidth, chartRef, lamRef, graphRef, notice: notice2, text: read.selected === chosen ? read.result : null, t });
 }
 
 // dsh/src/client/monitor-drawer.js
@@ -22258,12 +22686,12 @@ function CarrierCache({ evidence, t }) {
   );
 }
 var seqText = (seq, t) => seq === null || seq === void 0 ? h10(Missing, { t }) : t("monitor.overview.seq", { seq });
-var selectionOf = (request) => request.options ?? {};
+var selectionOf2 = (request) => request.options ?? {};
 function OverviewPage({ detail, payback = /* @__PURE__ */ new Map(), t }) {
   const { row: row2, ids, request } = detail;
   const status = shownStatusOf(row2, payback);
   const progress = payback.get(row2.id);
-  const { provider, model, reasoningEffort } = selectionOf(request);
+  const { provider, model, reasoningEffort } = selectionOf2(request);
   const present = (value) => value === void 0 || value === null ? h10(Missing, { t }) : value;
   const entries = [
     [t("monitor.overview.status"), h10("span", { className: "sw-mon-status", "data-status": status }, t(`monitor.status.${status}`))],
@@ -22294,7 +22722,7 @@ function ToolsSection({ tools, t }) {
 }
 function RequestPage({ detail, t }) {
   const { request } = detail;
-  const options = Object.entries(selectionOf(request)).map(([name, value]) => [name, stringOf(value)]);
+  const options = Object.entries(selectionOf2(request)).map(([name, value]) => [name, stringOf(value)]);
   const updates = request.toolHistory?.updates;
   return h10(
     import_react9.default.Fragment,
@@ -22416,11 +22844,15 @@ function QuotePage({ detail, t }) {
     h10(Facts, { entries: quoteFactsOf(detail.quote, t).map(([term, value]) => [term, value ?? h10(Missing, { t })]) })
   );
 }
-function SourceEvent({ event, t }) {
+function SourceEvent({ event, opened, t }) {
   const { seq, type, visible, blocks, raw } = event;
+  const ref = import_react9.default.useRef(null);
+  import_react9.default.useEffect(() => {
+    if (opened) ref.current.querySelector("summary").focus();
+  }, [opened]);
   return h10(
     "details",
-    { className: "sw-mon-event", "data-sw-event": "", "data-seq": seq, "data-visible": String(visible), open: visible },
+    { ref, className: "sw-mon-event", "data-sw-event": "", "data-seq": seq, "data-visible": String(visible), "data-sw-opened": opened ? "" : void 0, open: visible || opened },
     h10(
       "summary",
       null,
@@ -22442,11 +22874,87 @@ function SlotOverviewPage({ detail, t }) {
 function SlotSummaryPage({ detail, t }) {
   return h10(Section, { name: "c" }, h10(WholeText, { text: detail.c, t }));
 }
-function SlotSourcePage({ detail, t }) {
+function SlotSourcePage({ detail, opened = null, t }) {
   return h10(
     Section,
     { name: "sources", title: t("monitor.slot.sources") },
-    detail.events.map((event) => h10(SourceEvent, { key: event.seq, event, t }))
+    detail.events.map((event) => h10(SourceEvent, { key: event.seq, event, opened: opened?.seq === event.seq, t }))
+  );
+}
+var DIRECT_READS = ["handoff-recall", "carrier-recall", "verbatim-recall"];
+var warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
+function cardWarningText(warning, t) {
+  switch (warning.kind) {
+    case "state-check":
+    case "state-mixed":
+      return t("monitor.tool.stateQuery");
+    case "state-write":
+      return t("monitor.tool.stateWrite");
+    case "old-attribution": {
+      const { percent: percent2, over, oldLines, newLines } = warning;
+      return t("monitor.tool.oldAttribution", { label: t("monitor.warning.old-attribution"), percent: percent2 === null ? NOT_AVAILABLE : `${over ? ">" : ""}${percent2}%`, oldLines, newLines });
+    }
+    default:
+      return warningText(warning.kind, t);
+  }
+}
+var resultBlocksOf = (events, seq) => events.find((event) => event.seq === seq)?.blocks.find((block) => block.type === "tool-result")?.blocks ?? [];
+function toolStatesOf({ input, result }) {
+  return [
+    ...input === null ? [["no-input", "monitor.tool.noInput"]] : [],
+    ...result === null ? [["no-result", "monitor.tool.noResult"]] : result.error ? [["error", "monitor.tool.failed"]] : result.empty ? [["empty-result", "monitor.tool.emptyResult"]] : []
+  ];
+}
+function ToolCard({ card: { id, name, input, result, pruned, warnings }, events, open, t }) {
+  return h10(
+    "article",
+    { className: "sw-mon-tool", "data-sw-tool": id },
+    h10(
+      "div",
+      { className: "sw-mon-tool-head" },
+      h10("span", { className: "sw-mon-tool-name" }, name ?? t("monitor.notRecorded")),
+      toolStatesOf({ input, result }).map(([state, key]) => h10("span", { key: state, className: "sw-mon-tool-state", "data-state": state }, t(key)))
+    ),
+    warnings.length === 0 ? null : h10(
+      "ul",
+      { className: "sw-mon-tool-warnings" },
+      warnings.map((warning) => h10("li", { key: warning.kind, className: "sw-mon-tool-warning", "data-sw-warning": warning.kind, "data-sw-attention": "" }, cardWarningText(warning, t)))
+    ),
+    pruned === null ? null : h10(
+      "p",
+      { className: "sw-mon-tool-pruned", "data-sw-pruned": "" },
+      t("monitor.tool.pruned"),
+      " ",
+      h10("button", { type: "button", className: "sw-mon-link", "data-sw-open-source": pruned.seq, onClick: () => {
+        open?.(pruned.seq);
+      } }, t("monitor.tool.openPruned", { seq: pruned.seq }))
+    ),
+    input === null ? null : h10("details", { className: "sw-mon-fold", "data-sw-tool-section": "input" }, h10("summary", null, t("monitor.tool.input")), h10(WholeText, { text: input, t })),
+    result === null || result.empty ? null : h10(
+      "details",
+      { className: "sw-mon-fold", "data-sw-tool-section": "output" },
+      h10("summary", null, t("monitor.tool.output")),
+      h10(Blocks, { blocks: resultBlocksOf(events, result.seq), t })
+    )
+  );
+}
+function SlotToolsPage({ detail, open, t }) {
+  const { warnings, calls } = detail.tools;
+  const explains = warnings.includes("old-attribution") || calls.some((card) => card.warnings.some(({ kind }) => kind === "old-attribution"));
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    warnings.length === 0 && !explains ? null : h10(
+      Section,
+      { name: "warnings" },
+      warnings.length === 0 ? null : h10(
+        "ul",
+        { className: "sw-mon-tool-warnings" },
+        warnings.map((kind) => h10("li", { key: kind, className: "sw-mon-tool-warning", "data-sw-warning": kind, "data-sw-attention": "" }, warningText(kind, t)))
+      ),
+      explains ? h10("p", { className: "sw-mon-note", "data-sw-old-note": "" }, t("monitor.tool.oldNote")) : null
+    ),
+    calls.map((card, at) => h10(ToolCard, { key: at, card, events: detail.events, open, t }))
   );
 }
 function HandoffOverviewPage({ detail, t }) {
@@ -22495,8 +23003,10 @@ var CALL_PAGES = { overview: OverviewPage, request: RequestPage, response: Respo
 var SLOT_PAGES = { overview: SlotOverviewPage, summary: SlotSummaryPage, source: SlotSourcePage };
 var HANDOFF_PAGES = { overview: HandoffOverviewPage, summary: HandoffSummaryPage, files: HandoffFilesPage, turns: HandoffTurnsPage, lineage: HandoffLineagePage };
 var SETTLEMENT_PAGES = { payback: PaybackPage, context: ContextPage };
-function PagedDetail({ pages, first, labels, ...props }) {
-  const [page, setPage] = import_react9.default.useState(first);
+function PagedDetail({ pages, first, labels, page: given, onPage, ...props }) {
+  const [own, setOwn] = import_react9.default.useState(first);
+  const page = pages[given ?? own] === void 0 ? first : given ?? own;
+  const select = onPage ?? setOwn;
   const Page = pages[page];
   return h10(
     import_react9.default.Fragment,
@@ -22509,7 +23019,7 @@ function PagedDetail({ pages, first, labels, ...props }) {
       "data-page": name,
       "aria-selected": name === page,
       onClick: () => {
-        setPage(name);
+        select(name);
       }
     }, props.t(`${labels}.${name}`)))),
     h10("div", { className: "sw-mon-page", role: "tabpanel", "data-page": page }, h10(Page, props))
@@ -22518,8 +23028,20 @@ function PagedDetail({ pages, first, labels, ...props }) {
 function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
   return h10(PagedDetail, { pages: CALL_PAGES, first: "overview", labels: "monitor.page", detail, monitor, attemptId, payback, now, t });
 }
+var hasTools = ({ tools }) => tools !== void 0 && (tools.calls.length > 0 || tools.warnings.length > 0);
 function SlotDetail({ detail, t }) {
-  return h10(PagedDetail, { pages: SLOT_PAGES, first: "summary", labels: "monitor.slotPage", detail, t });
+  const [page, setPage] = import_react9.default.useState("summary");
+  const [opened, setOpened] = import_react9.default.useState(null);
+  const pages = hasTools(detail) ? { ...SLOT_PAGES, tools: SlotToolsPage } : SLOT_PAGES;
+  const select = (name) => {
+    setOpened(null);
+    setPage(name);
+  };
+  const open = (seq) => {
+    setOpened({ seq });
+    setPage("source");
+  };
+  return h10(PagedDetail, { pages, first: "summary", page, onPage: select, labels: "monitor.slotPage", detail, opened, open, t });
 }
 function HandoffDetail({ detail, t }) {
   const pages = detail.row.type === "load" ? HANDOFF_PAGES : Object.fromEntries(Object.entries(HANDOFF_PAGES).filter(([name]) => name !== "lineage"));
@@ -22529,19 +23051,19 @@ function SettlementDetail({ settlement, handoffId, monitor, session, t }) {
   return settlement === void 0 ? null : h10(PagedDetail, { pages: SETTLEMENT_PAGES, first: "payback", labels: "monitor.settlementPage", settlement, handoffId, monitor, session, t });
 }
 var CURRENT_SETTLEMENT_PAGES = {
-  payback: ({ detail: { base, report, curve, snapshot }, t }) => h10(PaybackReport, { model: paybackModelOf(base, report, curve, t, true), result: snapshot, t }),
-  context: ({ detail: { base, report, snapshot }, t }) => h10(ContextReport, { model: contextModelOf(base, report, snapshot, null, t), result: snapshot, current: true, t })
+  payback: ({ view, t }) => h10(PaybackReport, { model: paybackPageOf(view, t, true), t }),
+  context: ({ view, monitor, t }) => h10(ContextReport, { model: contextModelOf(view, null, t), current: true, monitor, t })
 };
-function CurrentSettlementDetail({ result, t }) {
-  return h10(DetailBody, { result, t, render: (detail) => {
-    const { base, report } = detail;
-    if (base.count === 0) return h10(Notice, { state: "current-empty" }, t("monitor.settlement.current.empty"));
-    if (report === null) return h10(Notice, { state: "current-pending" }, t("monitor.settlement.current.pending"));
+function CurrentSettlementDetail({ result, monitor, t }) {
+  return h10(DetailBody, { result, t, render: () => {
+    const view = settlementViewOf(null, result);
+    if (view.base.count === 0) return h10(Notice, { state: "current-empty" }, t("monitor.settlement.current.empty"));
+    if (!view.priced) return h10(Notice, { state: "current-pending" }, t("monitor.settlement.recall.unpriced"));
     return h10(
       import_react9.default.Fragment,
       null,
-      base.rows.some((row2) => row2.saved === null) ? h10(Notice, { state: "current-partial" }, t("monitor.settlement.current.partial")) : null,
-      h10(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: "payback", labels: "monitor.settlementPage", detail, t })
+      view.base.rows.some((row2) => row2.saved === null) ? h10(Notice, { state: "current-partial" }, t("monitor.settlement.current.partial")) : null,
+      h10(PagedDetail, { pages: CURRENT_SETTLEMENT_PAGES, first: "payback", labels: "monitor.settlementPage", view, monitor, t })
     );
   } });
 }
@@ -22741,10 +23263,10 @@ function MonitorDrawer({ state, monitor, session, ordinals, payback, handoffs = 
   let subtitle;
   let body;
   if (kind === "current-settlement") {
-    const value = selected.result?.kind === "ready" ? selected.result.value : null;
-    title = value === null ? t("monitor.toolbar.currentSettlement") : t("monitor.drawer.settlement", { epoch: value.base.epoch });
-    subtitle = value === null ? null : h11("p", { className: "sw-mon-drawer-sub" }, t("monitor.settlement.current.through", { step: value.base.steps }));
-    body = h11(CurrentSettlementDetail, { key: identity, result: selected.result, t });
+    const { base } = selected.result?.kind === "ready" ? settlementViewOf(null, selected.result) : { base: null };
+    title = base === null ? t("monitor.toolbar.currentSettlement") : t("monitor.drawer.settlement", { epoch: base.epoch });
+    subtitle = base === null ? null : h11("p", { className: "sw-mon-drawer-sub" }, t("monitor.settlement.current.through", { step: base.steps }));
+    body = h11(CurrentSettlementDetail, { key: identity, result: selected.result, monitor, t });
   } else if (kind === "settlement") {
     const settlement = settlements.get(handoffId);
     title = t("monitor.drawer.settlement", { epoch: settlement === void 0 ? NOT_AVAILABLE : settlement.epoch });
@@ -26225,6 +26747,7 @@ var MONITOR_CSS = `[data-sw-monitor] {
 }
 [data-sw-monitor] .sw-mon-close:focus-visible,
 [data-sw-monitor] .sw-mon-fbtn:focus-visible,
+[data-sw-monitor] .sw-mon-link:focus-visible,
 [data-sw-monitor] .sw-mon-tab:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: -1px;
@@ -26353,6 +26876,57 @@ var MONITOR_CSS = `[data-sw-monitor] {
 }
 [data-sw-monitor] .sw-mon-tag[data-tag="earlier"] {
   color: var(--dsw-alias-state-warn-primary);
+}
+[data-sw-monitor] .sw-mon-event[data-sw-opened] {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-mon-tool {
+  margin: 0 0 12px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  corner-shape: round;
+}
+[data-sw-monitor] .sw-mon-tool-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin: 0 0 4px;
+}
+[data-sw-monitor] .sw-mon-tool-name {
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-mon-tool-state {
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-tool-state[data-state="error"] {
+  color: var(--dsw-alias-state-error-primary);
+}
+[data-sw-monitor] .sw-mon-tool-warnings {
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] .sw-mon-tool-warning {
+  color: var(--dsw-alias-state-warn-primary);
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-mon-tool-pruned {
+  margin: 0 0 4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-mon-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
 }
 [data-sw-monitor] .sw-mon-fold,
 [data-sw-monitor] .sw-mon-event {
@@ -26712,6 +27286,10 @@ var MONITOR_CSS = `[data-sw-monitor] {
   white-space: nowrap;
 }
 [data-sw-monitor] .sw-pb-facts {
+  margin: 6px 0 0;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-pb-share {
   margin: 6px 0 0;
   color: var(--dsw-alias-label-secondary);
 }
@@ -27339,34 +27917,240 @@ var MONITOR_CSS = `[data-sw-monitor] {
 [data-sw-monitor] .sw-cx-assume {
   color: var(--dsw-alias-label-tertiary);
 }
-[data-sw-monitor] .sw-cx-cache {
+[data-sw-monitor] .sw-cx-comp {
   margin: 12px 0 0;
 }
-[data-sw-monitor] .sw-cx-sum {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
-  margin: 0 0 10px;
-}
-[data-sw-monitor] .sw-cx-kv {
-  padding: 6px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  corner-shape: round;
-}
-[data-sw-monitor] .sw-cx-t {
-  color: var(--dsw-alias-label-tertiary);
-}
-[data-sw-monitor] .sw-cx-v {
+[data-sw-monitor] .sw-cx-comp-total {
+  margin: 0 0 6px;
   font: var(--dsw-font-xs-13);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-[data-sw-monitor] .sw-cx-v.sw-cx-neg {
-  color: var(--dsw-alias-state-error-primary);
+[data-sw-monitor] .sw-cx-stack {
+  display: flex;
+  height: 8px;
+  margin: 0 0 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--dsw-alias-border-l2);
 }
-[data-sw-monitor] .sw-cx-v.sw-cx-pos {
-  color: var(--dsw-alias-state-success-primary);
+[data-sw-monitor] .sw-cx-seg {
+  display: block;
+  height: 100%;
+}
+[data-sw-monitor] .sw-cx-seg[data-key='summary'],
+[data-sw-monitor] .sw-cx-swatch[data-key='summary'] {
+  background: var(--dsw-alias-border-l4);
+}
+[data-sw-monitor] .sw-cx-seg[data-key='rebuild'],
+[data-sw-monitor] .sw-cx-swatch[data-key='rebuild'] {
+  background: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-cx-seg[data-key='recall'],
+[data-sw-monitor] .sw-cx-swatch[data-key='recall'] {
+  background: var(--dsw-alias-state-business-primary);
+}
+[data-sw-monitor] .sw-cx-comp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] .sw-cx-comp-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 52px;
+  gap: 0 8px;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+[data-sw-monitor] .sw-cx-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+[data-sw-monitor] .sw-cx-comp-name {
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-cx-comp-value,
+[data-sw-monitor] .sw-cx-comp-percent {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+[data-sw-monitor] .sw-cx-comp-percent {
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-cx-ring {
+  fill: none;
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-width: 2;
+}
+[data-sw-monitor] .sw-cx-trial {
+  margin: 8px 0 0;
+}
+[data-sw-monitor] .sw-cx-trial > summary {
+  padding: 3px 0;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-rc {
+  margin: 12px 0 0;
+}
+[data-sw-monitor] .sw-rc-axis,
+[data-sw-monitor] .sw-rc-track {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+[data-sw-monitor] .sw-rc-zero {
+  fill: var(--dsw-alias-border-l1, transparent);
+}
+[data-sw-monitor] .sw-rc-seal {
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-rc-rail {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 1;
+}
+[data-sw-monitor] .sw-rc-lbl {
+  fill: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+}
+[data-sw-monitor] .sw-rc-ring {
+  fill: var(--dsw-alias-bg-layer-1);
+  stroke: var(--dsw-alias-state-warn-primary);
+  stroke-width: 1.75;
+}
+[data-sw-monitor] .sw-rc-dot {
+  fill: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-rc-list {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] .sw-rc-row {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 4px 0 2px;
+  border: 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+[data-sw-monitor] .sw-rc-row[aria-pressed='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-business-primary);
+}
+@media (hover: hover) {
+  [data-sw-monitor] .sw-rc-row:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+[data-sw-monitor] .sw-rc-name {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 8px;
+  padding: 0 4px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+[data-sw-monitor] .sw-rc-name small {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-weight: 400;
+}
+[data-sw-monitor] .sw-rc-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin: 6px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+[data-sw-monitor] .sw-rc-key {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  margin: 0 0 0 6px;
+}
+[data-sw-monitor] .sw-rc-ring-key {
+  border: 1.75px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 50%;
+}
+[data-sw-monitor] .sw-rc-dot-key {
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+}
+[data-sw-monitor] .sw-rc-seal-key {
+  width: 1px;
+  background: var(--dsw-alias-label-tertiary);
+}
+[data-sw-monitor] .sw-rc-zero-key {
+  background: var(--dsw-alias-border-l1, transparent);
+}
+[data-sw-monitor] .sw-rc-panel {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-1);
+}
+[data-sw-monitor] .sw-rc-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+[data-sw-monitor] .sw-rc-landing {
+  margin: 2px 0 6px;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-sw-monitor] .sw-rc-text {
+  margin: 0 0 6px;
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+[data-sw-monitor] .sw-rc-more,
+[data-sw-monitor] .sw-rc-read {
+  height: 24px;
+  padding: 0 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: inherit;
+  white-space: nowrap;
+}
+[data-sw-monitor] button.sw-rc-more,
+[data-sw-monitor] button.sw-rc-read {
+  cursor: pointer;
+}
+[data-sw-monitor] .sw-rc-reads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+[data-sw-monitor] span.sw-rc-read {
+  display: inline-flex;
+  align-items: center;
 }
 [data-sw-monitor] .sw-cx-card {
   margin: 0 0 10px;

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createMonitorAccess, innerMonitorProjection } from '../dsh/src/inner-monitor-read.js';
+import { createMonitorAccess } from '../dsh/src/inner-monitor-read.js';
 import { createRpcHandler } from '../dsh/src/rpc.js';
 import { seriesOf, stockGeometryOf } from '../dsh/src/client/monitor-context-model.js';
 import { composeWatcher } from '../dsh/src/composition.js';
@@ -13,20 +13,11 @@ import { createDshSourceDriver } from '../lib/harness/dsh/source-driver.js';
 import { openStore, closeStore } from '../lib/store.js';
 import { paybackOf, settlementsOf } from '../public/lib/compactionEconomics.js';
 import {
-  assistantMessage, attempt, compactionPrune, continueCheckpoint, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, prunedResult, toolCall, toolResult, userMessage,
+  assistantMessage, attempt, compactionPrune, innerAttempt, innerCall, innerSealCarrier, loadPayload, prunedResult, toolCall, toolResult, userMessage,
 } from './helpers/dsh-events.js';
-
-const kit = {
-  pluginRecordOf: event => (event.ignorable === true && event.type.startsWith('plugin:')
-    ? { type: event.type, seq: event.seq, time: event.time, data: event.data }
-    : undefined),
-  assembleAssistantStream: () => { throw new Error('the fixture records no stream'); },
-  lastAssistantStreamChunk: (stream, type) => stream.findLast(record => record.type === 'chunk' && record.chunk.type === type)?.chunk,
-};
-const projection = innerMonitorProjection(kit);
-const fold = events => events.reduce((state, event) => projection.apply(state, event), projection.init());
-
-const SESSION = 's-settlement';
+import {
+  SESSION, kit, fold, tokens, clear, pricedSeal, failedSeal,
+} from './helpers/dsh-settlement.js';
 
 // The access over one session's events, held by the host (state folded from the events, log read whole through `readSession`, whose reads `reads` counts) or stored (state and log from one snapshot).
 function accessOver(events, { held = true } = {}) {
@@ -43,24 +34,13 @@ function accessOver(events, { held = true } = {}) {
   return { access, reads };
 }
 
-// DSH's token usage as an `assistant/message` carries it.
-const tokens = (input, output, cacheRead = 0, cacheWrite = 0) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
-
-// A seal as the host leaves it over `range`: the attempt record, then either the call record and the carrier that cites it (committed) or the end record of a failure.
-function seal(range, { commit = true, quote, stream } = {}) {
+// A committed seal over `range` that records no quote and no usage: the attempt record, the call record and the carrier that cites it. Seals that are priced or failed are the helper's.
+function seal(range) {
   const seqs = range.map(event => event.seq);
-  const start = innerAttempt({ range: seqs, quote });
-  if (!commit) return { start, events: [start, innerEnd({ attempt: start.seq })] };
-  const call = innerCall({ range: seqs, attempt: start.seq, stream, endedAt: 1_700_000_100_000 });
+  const start = innerAttempt({ range: seqs });
+  const call = innerCall({ range: seqs, attempt: start.seq, endedAt: 1_700_000_100_000 });
   const carrier = innerSealCarrier({ sourceEventSeqs: [call.seq, ...seqs], slots: [{ seqs: [seqs[0]], text: 'summary' }] });
   return { start, events: [start, call, carrier] };
-}
-
-// The clear `/sw-continue` leaves behind a segment: the checkpoint that opens the next epoch, the load payload that names its token and the follow-up.
-function clear(token, { from, to, handoffId = 7 }) {
-  const checkpoint = continueCheckpoint({ token, startSeq: from.seq, endSeq: to.seq });
-  const payload = loadPayload({ token, handoffId });
-  return { payload, events: [checkpoint, payload, loadFollowUp({ token })] };
 }
 
 // A segment of six main calls beside the events that are none: two committed seals of the three attempts it starts (the failed one between them), the first seal's post a call with a stock and the second's a call that reports no usage. The attempts' ordinals are 1, 2 and 3, the committed ones 1 and 3.
@@ -72,7 +52,7 @@ function firstSegment() {
   const result = toolResult({ callId: 'c-1', text: 'a result' });
   const sealOne = seal([ask, one, silent]);
   const postOne = assistantMessage({ text: 'three', usage: tokens(50, 5, 600) });
-  const lost = seal([postOne], { commit: false });
+  const lost = failedSeal([postOne]);
   const four = assistantMessage({ text: 'four', usage: tokens(10, 1, 700) });
   const sealThree = seal([postOne, four]);
   const postThree = assistantMessage({ text: 'five' });
@@ -97,10 +77,9 @@ test('a continue\'s settlement lists the main calls of the segment it cleared in
 
   const answer = await access.settlement(SESSION, cleared.payload.seq);
 
-  assert.deepEqual(answer, { calls: callsOf(first, [first.postOne, first.postThree]) });
+  assert.deepEqual(answer.calls, callsOf(first, [first.postOne, first.postThree]));
   assert.deepEqual(answer.calls.map(call => call.stock), [440, null, 650, 710, null, 901]);
   assert.deepEqual(answer.calls.filter(call => call.post).map(call => call.seq), [first.postOne.seq, first.postThree.seq]);
-  assert.deepEqual(Object.keys(answer), ['calls']);
 });
 
 test('the Nth mark is the Nth committed compaction of the segment by row order, whatever ordinals the attempts hold, and the stock beside it is the context that compaction\'s row shows after it', async () => {
@@ -117,11 +96,6 @@ test('the Nth mark is the Nth committed compaction of the segment by row order, 
   assert.equal(marked.length, committed.length);
   assert.deepEqual(marked.map(call => call.stock), committed.map(row => row.contextChange.after), 'the first row shows the stock of the first mark, the second row the second mark\'s, which reports none');
   assert.deepEqual(marked.map(call => call.seq), [first.postOne.seq, first.postThree.seq]);
-});
-
-const pricedSeal = (range, n = 8) => seal(range, {
-  quote: { n, lA: 40_000, bEst: 0, cEst: 1600, sEst: 38_400, cRatio: 2, fee: 10_000, kappa: 1.1, nRef: 0.52, N: 0.56, jRef: 4.12, q: 2.07, arm: 'right', trigger: 'quote' },
-  stream: [{ type: 'chunk', time: range.at(-1).time, chunk: { type: 'usage', usage: tokens(20, 10, 60) } }],
 });
 
 test('the current settlement reads the latest epoch from one committed snapshot, including its tail and recall evidence', async () => {
@@ -291,7 +265,7 @@ test('a cleared segment skips an interrupted call with no usage and restores the
   const ask = userMessage({ text: 'please work' });
   const before = assistantMessage({ text: 'working', interrupted: true, usage: tokens(100, 30, 900) });
   const noise = assistantMessage({ turn: 2, text: 'partial output', interrupted: true });
-  const sealed = pricedSeal([ask, before, noise]);
+  const sealed = pricedSeal([ask, before, noise], 8);
   const post = assistantMessage({ turn: 3, text: 'after the seal', usage: tokens(30, 5, 570) });
   const cleared = clear('amber-falcon', { from: ask, to: post });
   const { access } = accessOver([ask, before, noise, ...sealed.events, post, ...cleared.events]);
@@ -320,7 +294,7 @@ test('a missing or invalid reading on a retained call blocks the estimate throug
   const invalid = assistantMessage({ text: 'reported invalid usage', interrupted: true, usage: { inputTokens: 70 } });
   const noise = assistantMessage({ text: 'partial output', interrupted: true });
   for (const blocker of [silent, invalid]) {
-    const sealed = pricedSeal([before, blocker, noise]);
+    const sealed = pricedSeal([before, blocker, noise], 8);
     const post = assistantMessage({ text: 'post', usage: tokens(30, 5, 570) });
     const cleared = clear('amber-falcon', { from: ask, to: post });
     const { access } = accessOver([ask, before, blocker, noise, ...sealed.events, post, ...cleared.events]);
@@ -334,7 +308,7 @@ test('a missing or invalid reading on a retained call blocks the estimate throug
 test('a retained call does not stand in for the usage of an excluded post, but takes its chart mark', async () => {
   const ask = userMessage({ text: 'please work' });
   const before = assistantMessage({ text: 'working', usage: tokens(100, 30, 900) });
-  const sealed = pricedSeal([ask, before]);
+  const sealed = pricedSeal([ask, before], 8);
   const noise = assistantMessage({ text: 'partial post', interrupted: true });
   const next = assistantMessage({ text: 'ordinary call without usage' });
   const tail = assistantMessage({ text: 'tail', usage: tokens(30, 5, 570) });
@@ -352,13 +326,13 @@ test('a retained call does not stand in for the usage of an excluded post, but t
 test('an estimate and an excluded post mark stop at a carrier or an epoch boundary', async () => {
   const ask = userMessage({ text: 'please work' });
   const before = assistantMessage({ text: 'working', usage: tokens(100, 30, 900) });
-  const first = pricedSeal([ask, before]);
+  const first = pricedSeal([ask, before], 8);
   const noise = assistantMessage({ text: 'partial post', interrupted: true });
-  const second = pricedSeal([noise]);
+  const second = pricedSeal([noise], 8);
   const post = assistantMessage({ text: 'measured', usage: tokens(30, 5, 570) });
   const cleared = clear('amber-falcon', { from: ask, to: post });
   const newNoise = assistantMessage({ text: 'partial head', interrupted: true });
-  const third = pricedSeal([newNoise]);
+  const third = pricedSeal([newNoise], 8);
   const next = assistantMessage({ text: 'new measured', usage: tokens(10, 1, 420) });
   const clearedNext = clear('copper-heron', { from: newNoise, to: next });
   const { access } = accessOver([ask, before, ...first.events, noise, ...second.events, post, ...cleared.events, newNoise, ...third.events, next, ...clearedNext.events]);
@@ -381,14 +355,14 @@ test('a carrier no main call follows in its segment gives no mark, and the calls
 
   const answer = await accessOver([ask, one, two, ...sealed.events, ...cleared.events, next]).access.settlement(SESSION, cleared.payload.seq);
 
-  assert.deepEqual(answer, { calls: [{ seq: one.seq, stock: 440, post: false }, { seq: two.seq, stock: 410, post: false }] });
+  assert.deepEqual(answer.calls, [{ seq: one.seq, stock: 440, post: false }, { seq: two.seq, stock: 410, post: false }]);
 });
 
 test('a segment with no main call settles an empty list', async () => {
   const ask = userMessage({ text: 'please work' });
   const cleared = clear('amber-falcon', { from: ask, to: ask });
 
-  assert.deepEqual(await accessOver([ask, ...cleared.events]).access.settlement(SESSION, cleared.payload.seq), { calls: [] });
+  assert.deepEqual((await accessOver([ask, ...cleared.events]).access.settlement(SESSION, cleared.payload.seq)).calls, []);
 });
 
 test('a call whose usage the monitor reads as none has no stock, whether it reports none or reports one that is not valid', async () => {
@@ -418,14 +392,12 @@ test('each continue settles the segment before its own clear: the epoch it names
   const { handoffs } = await access.rows(SESSION);
   assert.deepEqual(handoffs.map(row => [row.id, row.type, row.epoch]), [[clearedFirst.payload.seq, 'continue', 1], [clearedSecond.payload.seq, 'continue', 2]]);
 
-  assert.deepEqual(await access.settlement(SESSION, clearedFirst.payload.seq), { calls: callsOf(first, [first.postOne, first.postThree]) });
-  assert.deepEqual(await access.settlement(SESSION, clearedSecond.payload.seq), {
-    calls: [
-      { seq: head.seq, stock: 9700, post: false },
-      { seq: post.seq, stock: 5020, post: true },
-      { seq: tail.seq, stock: 5101, post: false },
-    ],
-  });
+  assert.deepEqual((await access.settlement(SESSION, clearedFirst.payload.seq)).calls, callsOf(first, [first.postOne, first.postThree]));
+  assert.deepEqual((await access.settlement(SESSION, clearedSecond.payload.seq)).calls, [
+    { seq: head.seq, stock: 9700, post: false },
+    { seq: post.seq, stock: 5020, post: true },
+    { seq: tail.seq, stock: 5101, post: false },
+  ]);
 });
 
 test('an attempt belongs to the segment it began in, so a carrier that lands after the clear marks the call behind it in no settlement of the next segment', async () => {
@@ -442,8 +414,10 @@ test('an attempt belongs to the segment it began in, so a carrier that lands aft
   const { attempts } = await access.rows(SESSION);
   assert.deepEqual(attempts.map(row => [row.id, row.status, row.epoch]), [[began.seq, 'committed', 0]], 'precondition: the attempt began before the first clear and committed after it');
 
-  assert.deepEqual(await access.settlement(SESSION, secondClear.payload.seq), { calls: [{ seq: behind.seq, stock: 930, post: false }] });
-  assert.deepEqual(await access.settlement(SESSION, firstClear.payload.seq), { calls: [{ seq: one.seq, stock: 440, post: false }] });
+  assert.deepEqual((await access.settlement(SESSION, secondClear.payload.seq)).calls, [{ seq: behind.seq, stock: 930, post: false }]);
+  const closed = await access.settlement(SESSION, firstClear.payload.seq);
+  assert.deepEqual(closed.calls, [{ seq: one.seq, stock: 440, post: false }]);
+  assert.deepEqual(closed.attempts.map(row => [row.id, row.status]), [[began.seq, 'unknown']], 'the seal committed after the clear is an attempt in flight in the segment as it ended');
 });
 
 test('a load clears no segment and a handoff the monitor does not hold names none: both are failures of the read, and a session neither held nor stored answers undefined', async () => {

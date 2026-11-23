@@ -1430,11 +1430,13 @@ test('a session the host stores answers its handoffs and their detail over the c
   assert.deepEqual(lines, ['s-stored-handoff [dsh-host] inner_monitor_read_failed: the inner monitor holds no handoff 9999']);
   assert.deepEqual(await call(handler, 'inner-monitor/handoff', { sessionId: 's-not-listed', handoff: payloadSeq }), monitorUnavailable);
 
-  assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-stored-handoff', handoff: payloadSeq }), { ok: true, value: { calls: [{ seq: events[1].seq, stock: 440, post: false }] } }, 'the calls of the segment the clear cut off, the stock the monitor reads of each');
+  assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-stored-handoff', handoff: payloadSeq }), {
+    ok: true, value: { epoch: 1, attempts: [], tailCalls: 1, calls: [{ seq: events[1].seq, stock: 440, post: false }], cut: { segment: 0, through: events[1].seq } },
+  }, 'the calls of the segment the clear cut off, the stock the monitor reads of each, and the cut that read stood at');
   assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-stored-handoff', handoff: 9999 }), failure('inner_monitor_read_failed', 'the inner monitor holds no handoff 9999'));
   assert.deepEqual(await call(handler, 'inner-monitor/settlement', { sessionId: 's-not-listed', handoff: payloadSeq }), monitorUnavailable);
   assert.deepEqual(await call(handler, 'inner-monitor/settlement/current', { sessionId: 's-stored-handoff' }), {
-    ok: true, value: { epoch: 2, attempts: [], tailCalls: 1, calls: [{ seq: events[6].seq, stock: 710, post: false }] },
+    ok: true, value: { epoch: 2, attempts: [], tailCalls: 1, calls: [{ seq: events[6].seq, stock: 710, post: false }], cut: { segment: 1, through: events[6].seq } },
   });
   assert.deepEqual(await call(handler, 'inner-monitor/settlement/current', { sessionId: 's-not-listed' }), monitorUnavailable);
   ctx.dispose();

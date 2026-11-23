@@ -1,7 +1,7 @@
 {
   "name": "@nomadop/session-watcher-dsh-carrier-cache",
-  "version": "0.1.0",
-  "description": "Activation bundle of Session Watcher's carrier cache adapter for DeepSeek Harness",
+  "version": "0.2.0",
+  "description": "Session Watcher's carrier cache adapter for DeepSeek Harness, with the profile layer that activates it",
   "type": "module",
   "license": "MIT",
   "author": "Longju Cheng",
@@ -18,15 +18,27 @@
     "dsh": ">=0.2.2-rc.1"
   },
   "exports": {
+    "./pi-ai": "./dist/pi-ai-index.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
+    "dist/pi-ai-index.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md"
   ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-credentials": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-launch-environment": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-timeout": ">=0.2.2-rc.1",
+    "@deepseek-ai/dsh-util-values": ">=0.2.2-rc.1",
+    "@deepseek-ai/schemastery": ">=3.19.0",
+    "@earendil-works/pi-ai": "^1.3.0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

@@ -131,6 +131,11 @@ async function main() {
     outfile: join(DSH_DIST, 'pi-ai-index.js'),
     banner: { js: `${piAiNotice}\n${REQUIRE_SHIM}` },
   });
+  // The companion bundle package (`dsh/carrier-cache/`) carries the same adapter: the artifact is compiled once, notice included, and mirrored, so the two publishable packages ship one file.
+  const COMPANION_DIST = join(ROOT, 'dsh', 'carrier-cache', 'dist');
+  rmSync(COMPANION_DIST, { recursive: true, force: true });
+  mkdirSync(COMPANION_DIST, { recursive: true });
+  cpSync(join(DSH_DIST, 'pi-ai-index.js'), join(COMPANION_DIST, 'pi-ai-index.js'));
   // lib/symbol-outline.js loads the WASM files relative to the bundle
   for (const [src, dest] of WASM_SOURCES)
     cpSync(join(ROOT, 'node_modules', src), join(DSH_DIST, dest));
@@ -167,7 +172,7 @@ async function main() {
     plugins: [redirectChart],
   });
 
-  console.log('Build complete → dist/, dsh/dist/');
+  console.log('Build complete → dist/, dsh/dist/, dsh/carrier-cache/dist/');
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

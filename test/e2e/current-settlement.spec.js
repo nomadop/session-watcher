@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { zh } from '../../dsh/src/client/locales.js';
+import { MONITOR_CSS } from '../../dsh/src/client/scope.js';
 
 if (process.env.SW_PLAYWRIGHT_CHANNEL) test.use({ channel: process.env.SW_PLAYWRIGHT_CHANNEL });
 
@@ -41,10 +42,15 @@ const recall = {
     { at: 3, resident: 4 },
   ],
 };
+// The segment's adjusted settlement: the one seal (step 1) and the recall request at step 2 that read the original `tool/result` at seq 3 back, whose request is call 2 of the stock chart.
+const cut = { segment: 1, through: 99 };
+const activity = { covered: true, judged: 2, pure: 1, targets: [{ seq: 3, type: 'tool/result', at: 1, reads: [{ at: 2, seq: 10 }] }] };
 const initial = {
-  epoch: 2, attempts: [attempt], tailCalls: 2, recall,
+  epoch: 2, attempts: [attempt], tailCalls: 2, recall, cut, activity,
   calls: [{ seq: 5, stock: 1000, post: false }, { seq: 10, stock: 600, post: true }, { seq: 13, stock: 620, post: false }],
 };
+// The adjusted cost is 100 for the summary call, 30 for the cache rebuild and 600 for the recall request net of the rebuild it already counted.
+const composition = [/压缩摘要.*100.*13\.7%/, /缓存重建.*30.*4\.1%/, /召回请求净增.*600.*82\.2%/];
 
 async function mount(page, read) {
   await page.exposeFunction('monitorCall', async (endpoint, body) => ({ ok: true, value: await read(endpoint, body) }));
@@ -76,7 +82,8 @@ test('the toolbar opens a frozen current settlement, and only reopening reads a 
   await page.evaluate(() => globalThis.signalRows());
   await expect(page.getByRole('treeitem').first()).toBeVisible();
   await drawer.getByRole('tab', { name: '上下文' }).click();
-  await expect(drawer.getByText('−304 ▼', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('合计 730', { exact: true })).toBeVisible();
+  await expect(drawer.locator('.sw-cx-comp-row')).toHaveText(composition);
   await expect(drawer.getByText('主调用 3 次')).toBeVisible();
   await drawer.getByRole('tab', { name: '回本' }).click();
   await button.click();
@@ -150,5 +157,65 @@ test('a partially measured segment keeps the known balance and explains the miss
   await expect(drawer.getByText('盈亏 −304 = 节省 426 − 成本 730', { exact: true })).toBeVisible();
   await drawer.getByRole('tab', { name: '上下文' }).click();
   await expect(drawer.getByText('此快照的调用读数不足，无法绘制输入存量图。')).toBeVisible();
-  await expect(drawer.getByText('−304 ▼', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('合计 730', { exact: true })).toBeVisible();
+  await expect(drawer.locator('.sw-cx-comp-row')).toHaveText(composition);
+});
+
+test('a target is read once when it is chosen, at the cut the snapshot named, shown as an excerpt and expanded in place', async ({ page }) => {
+  const text = 'abcdefghij'.repeat(40);
+  const requests = [];
+  await mount(page, (endpoint, body) => {
+    if (endpoint === 'inner-monitor') return { attempts: [], handoffs: [] };
+    requests.push([endpoint, body]);
+    return endpoint === 'inner-monitor/settlement/target' ? { seq: body.seq, type: 'tool/result', text } : initial;
+  });
+  await page.getByRole('button', { name: '当前分段结算', exact: true }).click();
+  const drawer = page.getByRole('complementary');
+  await drawer.getByRole('tab', { name: '上下文' }).click();
+  const row = drawer.getByRole('button', { name: '事件 #3 工具结果，回读 1 步' });
+  await expect(row).toBeVisible();
+  const targetReads = () => requests.filter(([endpoint]) => endpoint === 'inner-monitor/settlement/target');
+  expect(targetReads(), 'nothing is read before a target is chosen').toEqual([]);
+
+  await row.click();
+  await expect(drawer.locator('[data-sw-recall-text="excerpt"]')).toHaveText(`${text.slice(0, 280)}…`);
+  expect(targetReads()).toEqual([['inner-monitor/settlement/target', { sessionId: 'session', segment: 1, through: 99, seq: 3 }]]);
+
+  await drawer.getByRole('button', { name: '展开全文（400 字）' }).click();
+  await expect(drawer.locator('[data-sw-recall-text="whole"]')).toHaveText(text);
+  await drawer.getByRole('button', { name: '收起' }).click();
+  await expect(drawer.locator('[data-sw-recall-text="excerpt"]')).toBeVisible();
+  expect(targetReads(), 'expanding reads nothing more').toHaveLength(1);
+});
+
+test('the before-first-seal band and legend stay muted in light and dark themes', async ({ page }) => {
+  await mount(page, endpoint => (endpoint === 'inner-monitor' ? { attempts: [], handoffs: [] } : initial));
+  await page.addStyleTag({ content: MONITOR_CSS });
+  await page.getByRole('button', { name: '当前分段结算', exact: true }).click();
+  const drawer = page.getByRole('complementary');
+  await drawer.getByRole('tab', { name: '上下文' }).click();
+  const bands = drawer.locator('rect.sw-rc-zero');
+  const key = drawer.locator('.sw-rc-zero-key');
+  await expect(bands).toHaveCount(2);
+
+  for (const color of ['rgba(0, 0, 0, 0.04)', 'rgba(255, 255, 255, 0.06)']) {
+    await page.evaluate(value => document.documentElement.style.setProperty('--dsw-alias-border-l1', value), color);
+    expect(await bands.evaluateAll(nodes => nodes.map(node => getComputedStyle(node).fill))).toEqual([color, color]);
+    await expect(key).toHaveCSS('background-color', color);
+  }
+  await page.evaluate(() => document.documentElement.style.removeProperty('--dsw-alias-border-l1'));
+  expect(await bands.evaluateAll(nodes => nodes.map(node => getComputedStyle(node).fill))).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+  await expect(key).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+});
+
+test('a snapshot with no recall activity shows its status on the payback tab and none of the unadjusted figures, the context tab keeping its own', async ({ page }) => {
+  const { activity: _activity, ...older } = initial;
+  await mount(page, endpoint => (endpoint === 'inner-monitor' ? { attempts: [], handoffs: [] } : older));
+  await page.getByRole('button', { name: '当前分段结算', exact: true }).click();
+  const drawer = page.getByRole('complementary');
+  await expect(drawer.locator('[data-sw-monitor-notice="recall-unavailable"]')).toBeVisible();
+  await expect(drawer.getByText(/盈亏|节省|成本/)).toHaveCount(0);
+  await drawer.getByRole('tab', { name: '上下文' }).click();
+  await expect(drawer.getByText('主调用 3 次')).toBeVisible();
+  await expect(drawer.getByText(/^合计/)).toHaveCount(0);
 });
