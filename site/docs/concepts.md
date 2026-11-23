@@ -170,13 +170,13 @@ bp combines two factors: (1) the position penalty, which grows as the session mo
 
 **API field.** `mf`
 
-**Units.** dimensionless fraction (0 to `1/(1+√2)`)
+**Units.** dimensionless fraction (0 to 1)
 
 **Definition.** The proportion of total session cost that is timing-sensitive — could theoretically be avoided by optimal restart timing. The remainder is unavoidable overhead (system floor, irreducible growth cost) that no restart strategy can eliminate.
 
 If mf is small, even bad timing costs little. If mf is large, timing matters significantly. mf scales the bill premium so that sessions where restarts matter get earlier alerts. It is path-weighted over the segment's travelled intervals; the reminder clock instead converts each interval's rent at that interval's own fraction.
 
-**Validity.** In range `[0, 1/(1+√2))` when the baseline is valid — exactly zero until the segment has realized any growth — and null on the segment's first measured call or when the baseline is invalid. The upper bound comes from the AM-GM inequality.
+**Validity.** In range `[0, 1]` when the baseline is valid — exactly zero until the segment has realized any growth — and null on the segment's first measured call or when the baseline is invalid. The AM-GM inequality bounds it at `1/(1+√2)`, except on DSH after an inner compaction: there a request that only reads earlier events back is priced at its own bill and adds no cost that restart timing cannot reach, so the bound is `1`.
 
 ### cRatio (Cost Ratio)
 

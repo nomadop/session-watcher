@@ -1,7 +1,7 @@
 // dsh/src/client/monitor-state.js — the monitor view's pure state: the reducer of what is open, selected, filtered and how wide the drawer is, the rows the list shows, the previews and elapsed times the rows show, and the scroll and width measures.
 // Its defaults and bounds follow the native Stats and Trajectory tables (`totalSpan`, `clampDetailsWidth`, `BOTTOM_FOLLOW_THRESHOLD_PX`), without the trajectory table's tool column; a container too narrow for the drawer is left to a CSS container query.
 import { ACTIVE_STATUSES } from './monitor-store.js';
-import { ordinalsOf, paybackOf, settlementsOf, unexpectedMissOf, shownStatusOf } from '../../../public/lib/compactionEconomics.js';
+import { ordinalsOf, paybackOf, settlementsOf, unexpectedMissOf, isColdCall, shownStatusOf } from '../../../public/lib/compactionEconomics.js';
 
 /** The width the drawer starts at. A resize keeps it between `DRAWER_MIN_WIDTH` and `DRAWER_MAX_WIDTH`, and leaves the list `LIST_MIN_WIDTH`. */
 export const DRAWER_DEFAULT_WIDTH = 420;
@@ -163,18 +163,30 @@ function leafRows(id, owner, list, leafOf, include) {
   return (include === undefined ? list : list.filter(include)).map(leafOf);
 }
 
-/** The warning text keys shared by the parent's cost readings and its call row. */
-export function costWarningsOf({ contextChange }, missWarned) {
+/** The fewest output tokens a committed summary call is expected to answer with; one that answered with less is short. */
+export const SHORT_SUMMARY_OUTPUT = 500;
+
+/** Whether a committed attempt's summary call is short; a call that did not commit, or has no usage, is not. The minimum is the same for every step count. */
+const isShortSummary = ({ status, call }) => status === 'committed' && call.usage !== null && call.usage.output < SHORT_SUMMARY_OUTPUT;
+
+/** The warning text keys of an attempt's cost readings, shared by its parent row and its call row: `context` and `miss` are the parent's own readings, `call` the cold summary call (`isColdCall`) and `short` the short one (`isShortSummary`), which the parent row only carries as a signal and the call row words. */
+export function costWarningsOf(attempt, missWarned) {
+  const { contextChange, call } = attempt;
   return {
     ...(contextChange?.delta > 0 && { context: 'monitor.meta.context.grew' }),
     ...(missWarned && { miss: 'monitor.meta.miss.unexpected' }),
+    ...(isColdCall(call.usage, contextChange?.before) && { call: 'monitor.meta.call.cold' }),
+    ...(isShortSummary(attempt) && { short: 'monitor.meta.call.short' }),
   };
 }
 
-/** Whether an attempt has a slot warning, without loading the slots. */
-export const hasSlotWarnings = ({ slotWarnings }) => slotWarnings !== undefined && Object.keys(slotWarnings).length > 0;
+/** How many slots of an attempt have a warning, without loading the slots. */
+export const slotWarningCount = ({ slotWarnings }) => (slotWarnings === undefined ? 0 : Object.keys(slotWarnings).length);
 
-/** The attempts and handoffs in `filter`'s category, in their given order. The warning filter keeps a compaction with a slot warning, context growth or an unexpected cache rebuild. */
+/** Whether an attempt has a slot warning, without loading the slots. */
+export const hasSlotWarnings = attempt => slotWarningCount(attempt) > 0;
+
+/** The attempts and handoffs in `filter`'s category, in their given order. The warning filter keeps a compaction with a slot warning, context growth, an unexpected cache rebuild, a cold summary call or a short one. */
 export function visibleGroups(attempts, handoffs, { category, warned }) {
   const unexpectedMiss = unexpectedMissOf(attempts);
   return {

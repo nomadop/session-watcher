@@ -1,10 +1,11 @@
 // dsh/src/inner-summary.js — the DSH adapter of the inner seal's auxiliary call: it reads each slot's derived messages into slot facts, builds the request over the session's active history and the tail `lib/inner-seal/summary.js` writes, accumulates and assembles the stream, and tells a content filter's stop apart.
 // It knows no Cordis and imports no DSH package: the stream, assembly and error values reach it by parameter.
-import { slotFactsOf } from '../../lib/harness/dsh/message-blocks.js';
+import { requestTextOf, slotFactsOf } from '../../lib/harness/dsh/message-blocks.js';
 import { callRecordOf } from '../../lib/inner-seal/call-record.js';
 import { FILTER_FAILURE, FORMAT_FAILURE } from '../../lib/inner-seal/ladder.js';
 import { headerSeqIn } from '../../lib/inner-seal/source.js';
 import { mergeNotes, parseNotes, planSummary } from '../../lib/inner-seal/summary.js';
+import { charsToTokens } from '../../lib/token-estimate.js';
 
 /** The request purpose the call declares. */
 export const SUMMARY_PURPOSE = 'inner-compaction';
@@ -52,31 +53,32 @@ const NO_OBSERVER = Object.freeze({ dispatch() {}, chunk() {} });
 const NO_CARRIER = Object.freeze({ scope: () => ({ run: body => body(), evidence: () => null }) });
 
 /**
- * Streams one summary call over `session`'s active history and the tail message naming the slots that are not a user's own message; a user's slot is answered with its verbatim note, the model's notes filling the others in order.
+ * Streams one summary call over `session`'s active history and the tail message naming the slots that are not a user's own message; a user's slot is answered with its verbatim note, the model's notes filling the others in order, an empty note taking its slot's action cue.
  * The call's input is what `session` holds when the function is called, `index` included: the live `seq → eventFactOf` Map of its events, whose latest header (`headerSeqIn`) is the request header the call sends.
  * `held` is the files and skills the tail names as carried beside the notes: those of the seal's held view of `events` that `range` touched.
  * The tail's rows are cued from `events`, the frozen raw slice `slots` and `range` were taken over, as `session` projects each event of a slot that `range` selects.
  * The text of a stream that stopped with no tool call is read for the notes by `parseNotes` with `kit.loads` as its recovery.
  * An outcome that is no success is `{ ok: false, reason, call }`, with `failure` set to `FORMAT_FAILURE` exactly when the stream finished with tool-calls, stopped with a tool call, or stopped with text that is not the notes object, and to `FILTER_FAILURE` exactly when the stream's finish is an error whose message holds `FILTER_TEXT`; these are the two replies the seal may ask for again, the other failures name no category.
+ * `ctp` is the calibrated pair the seal's quote priced the range under; given, a success also answers `sourceTokens`, one estimate for each slot of the tokens of the messages of that very call's `perSlot`, each priced as the quote prices a message (`requestTextOf`, `charsToTokens`), the sum unrounded and a slot with no message zero; without it the success has none. It is the monitor's, decides nothing of the seal and is read by nothing here.
  * The `observer` is handed `{ options, input, stream }` once the request is built and before `llm.stream` is called, `options` the very object `llm.stream` receives and `stream()` the accumulator's snapshot as it stands, and is told of each chunk after it is accumulated. The call's `endedAt` is the time the stream iteration ended, taken before the stream is assembled.
  * The `carrier` record (`carrier-evidence.js`) opens a scope around the call that starts the stream and its whole iteration; the evidence its scope holds when the stream ends is the call's `carrierCache`, `{ results, omitted }`, the closed results the pi-ai entry's wrapped payload hook reported for this request in the order it ran, and the field is absent where it reported none (no such hook, or an adapter that never ran it).
  *
  * @param {{ llm: { stream: (options: object) => AsyncIterable<object> }, session: object, index: Map<number, { header: boolean }>, events: { seq: number }[],
  *   selection: { provider: string, model: string, reasoningEffort?: string },
  *   slots: { seqs: number[], step?: { turn: number, step: number } }[], range: number[],
- *   held: { paths: Map<string, number[]>, skills: Map<string, string> }, signal: AbortSignal,
+ *   held: { paths: Map<string, number[]>, skills: Map<string, string> }, signal: AbortSignal, ctp?: ({ ascii: number, cjk: number }|null),
  *   kit: { AssistantStreamAccumulator: new () => object, BlockAssembler: new () => object, lastAssistantStreamChunk: (stream: object[], type: string) => (object|undefined),
  *     errorChain: (value: unknown) => string, loads: (text: string) => unknown },
  *   observer?: { dispatch: (request: { options: object, input: object, stream: () => object[] }) => void, chunk: () => void },
  *   carrier?: { scope: () => { run: (body: () => Promise<object>) => Promise<object>, evidence: () => ({ results: object[], omitted: number }|null) } }}} options
  */
-export async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, observer = NO_OBSERVER, carrier = NO_CARRIER }) {
+export async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, ctp = null, observer = NO_OBSERVER, carrier = NO_CARRIER }) {
   const { provider, model, reasoningEffort } = selection;
   // The record keeps the route as plain JSON: an explicit `undefined` effort would make the record's append throw.
   const chosen = { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
   const tools = session.requestHeader()?.tools;
   const perSlot = slotMessagesOf({ slots, session, events, range });
-  const { tailText, verbatim, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
+  const { tailText, verbatim, askedCues, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
   const tail = { role: 'user', content: [{ type: 'text', text: tailText }] };
   const input = { throughSeq: session.seq - 1, headerSeq: headerSeqIn(index, { latest: true }), tail };
   const options = {
@@ -137,5 +139,6 @@ export async function summarizeSlots({ llm, session, index, events, selection, s
   if (notes === undefined) {
     return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${askedCount} strings keyed "1" to "${askedCount}"`, call };
   }
-  return { ok: true, summaries: mergeNotes(verbatim, notes), verbatimSeqs: wholeUserSlots.map(at => slots[at].seqs[0]), call };
+  const sourceTokens = ctp === null ? undefined : perSlot.map(messages => messages.reduce((sum, message) => sum + charsToTokens(requestTextOf(message), ctp), 0));
+  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: wholeUserSlots.map(at => slots[at].seqs[0]), sourceTokens, call };
 }

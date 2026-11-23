@@ -13691,7 +13691,7 @@ var SessionWatcher = class {
         const overrides = {};
         for (const row2 of filePaths) overrides[row2.path] = kept.has(row2.path) ? "include" : "exclude";
         const scenario = this._engine.readScenario(overrides);
-        return scenario.reliable ? scenario.gBar : 0;
+        return scenario.reliable ? scenario.gPhys : 0;
       }
     };
     if (stored && stored.deliveredAt == null) {
@@ -18484,44 +18484,62 @@ function mainCallsBetween(prevOrdinal, ordinal) {
 function createPathFold({ dead, R, selector }) {
   const carried = /* @__PURE__ */ new Map();
   let u = 0, lambda = 0, F = 0;
-  let growthSum = 0, spanned = 0;
+  let physical = 0, combined = 0, spanned = 0;
+  let recallPerCall = 0;
   let prev = null;
-  function absorb(growth, calls) {
+  function absorb(frame, calls, closes) {
+    const { growth, recall } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
-    growthSum += Math.max(0, excess);
+    let drift = excess;
+    if (closes) {
+      if ((recall?.unpriced ?? 0) > 0) {
+        recallPerCall = null;
+      } else {
+        const bill = (recall?.net ?? 0) / calls;
+        if (recallPerCall !== null) drift += bill - recallPerCall;
+        recallPerCall = bill;
+      }
+    }
+    physical += excess;
+    combined += drift;
     spanned += calls;
   }
-  const rate = () => spanned > 0 ? growthSum / spanned : 0;
+  const rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0;
+  const physicalRate = () => spanned > 0 ? Math.max(0, physical) / spanned : 0;
   return {
     rate,
+    physicalRate,
     push(frame) {
       const calls = mainCallsBetween(prev?.ordinal, frame.mainCallOrdinal);
       for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       const B = baselineOf(dead, carried, selector);
       const x = frame.L / B;
       if (prev === null) {
-        absorb(frame.growth, calls);
-        prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
+        absorb(frame, calls, false);
+        prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
         return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       }
+      const slots = calls - (frame.recall?.priced ?? 0);
       u += calls * Math.sqrt(prev.g / (2 * R * prev.B));
       const V = Math.sqrt(2 * R * prev.B * prev.g);
-      lambda += calls * V;
-      F += calls * (prev.B + R * prev.g);
-      const mfLocal = V / (prev.B + R * prev.g + V);
+      const lambdaHere = calls * V;
+      const fixedHere = slots * (prev.B + R * prev.gPhys);
+      lambda += lambdaHere;
+      F += fixedHere;
+      const mfLocal = lambdaHere > 0 ? lambdaHere / (fixedHere + lambdaHere) : 0;
       const pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null;
-      const mf = lambda / (F + lambda);
+      const mf = lambda > 0 ? lambda / (F + lambda) : 0;
       const br = pp === null ? null : mf * pp;
       let deltaW = null;
       if (prev.B > 0) {
         const rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R });
         const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
-        deltaW = calls * (0.5 * (rPrev + rNow));
+        deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      absorb(frame.growth, calls);
-      prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
+      absorb(frame, calls, true);
+      prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
       return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
   };
@@ -18817,6 +18835,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   let resourceOverrides = /* @__PURE__ */ new Map();
   let resourcePolicyByKey = /* @__PURE__ */ new Map();
   let frames = [];
+  let heldRecall = null;
   let recordedTokens = /* @__PURE__ */ new Map();
   let defaultFold = null;
   let segmentStartTurn = 0;
@@ -18845,6 +18864,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     resourceOverrides = /* @__PURE__ */ new Map();
     resourcePolicyByKey = /* @__PURE__ */ new Map();
     frames = [];
+    heldRecall = null;
     recordedTokens = /* @__PURE__ */ new Map();
     defaultFold = null;
     segmentStartTurn = turnSeq;
@@ -18925,7 +18945,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal) {
+  function recordFrame(step, growth, mainCallOrdinal, recall) {
     const resourceTokens = /* @__PURE__ */ new Map();
     const totals = ledger.residentTotals();
     const present = /* @__PURE__ */ new Set();
@@ -18940,7 +18960,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       resourceTokens.set(resourceKey, 0);
       recordedTokens.set(resourceKey, 0);
     }
-    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal };
+    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
     frames.push(frame);
     return frame;
   }
@@ -18961,7 +18981,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function scenarioPoints(selector) {
     const fold = foldFor(selector);
-    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate() } : { points: [], gBar: 0 };
+    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate(), gPhys: fold.physicalRate() } : { points: [], gBar: 0, gPhys: 0 };
   }
   function stampNewFrame(step, frame) {
     if (frames.length === 1) defaultFold = foldFor(isSelected);
@@ -19010,6 +19030,17 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       invariant3(isTokenCount2(raw[key]), `step usage ${key} must be a non-negative finite number`);
     }
     return { input: raw.input, output: raw.output, cacheRead: raw.cacheRead, cacheWrite: raw.cacheWrite };
+  }
+  function readRecall(raw) {
+    if (raw === void 0) return null;
+    invariant3(raw !== null && typeof raw === "object", "step recall must be an object");
+    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers");
+    invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number");
+    return { priced: raw.priced, net: raw.net, unpriced: raw.unpriced };
+  }
+  function mergedRecall(held, recall) {
+    if (held === null || recall === null) return held ?? recall;
+    return { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
   }
   function readTimestamp(raw) {
     if (raw === void 0 || raw === null) return null;
@@ -19187,9 +19218,13 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       segmentLastTs = timestamp;
     }
     updateSegmentExtrema(L);
+    const recall = mergedRecall(heldRecall, readRecall(record.recall));
     if (totalStock > 0) {
       settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
-      stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal));
+      heldRecall = null;
+      stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall));
+    } else {
+      heldRecall = recall;
     }
     result.newCalls += 1;
   }
@@ -19589,10 +19624,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const { next, warnings } = parseOverrides(overrides);
     const view = readView();
     if (!view.rateLamp.reliable) return { reliable: false };
-    const { points, gBar } = scenarioPoints(selectorOf(next));
+    const { points, gBar, gPhys } = scenarioPoints(selectorOf(next));
     return {
       reliable: true,
       gBar,
+      gPhys,
       trajectory: points.filter((p) => p.pp !== null).map((p) => ({ seq: p.seq, x: p.x, u: p.u, pp: p.pp })),
       ...describeScenario(points),
       wallP: wallPositionFor(view.cRatio),
@@ -19797,7 +19833,7 @@ function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
 // package.json
 var package_default2 = {
   name: "@nomadop/session-watcher",
-  version: "0.11.2",
+  version: "0.11.3",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -21038,7 +21074,7 @@ var CARRIED_WORDING = {
   skill: (name3, text) => `Skill ${name3}:
 ${text}`
 };
-var carriedNote = (wording) => `Evidence carried from the replaced context as of this summary: file text as read from disk when it was written, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. ${wording.editGuard}`;
+var carriedNote = (wording) => `Evidence carried from the replaced context: file text as read from disk, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. ${wording.editGuard}`;
 function runsOf(numbers) {
   const runs = [];
   for (const number of numbers) {
@@ -21163,7 +21199,7 @@ function carriedEvidence(source) {
 
 // lib/inner-seal/state-block.js
 var STATE_WORDING = {
-  heading: (seq) => `Session state as of session seq ${seq}:`,
+  heading: () => "Session state:",
   unchanged: "unchanged since the last summary that shows it",
   empty: "(empty)"
 };
@@ -21211,7 +21247,7 @@ function renderState({ asOfSeq, items }, stateItems) {
 var INNER_SEAL_KIND = "session-watcher-inner-seal";
 var sourceEventSeqsOf = ({ callSeq, pruneSeq, replaced }) => [callSeq, pruneSeq, ...replaced];
 var callSeqOf = (seqs) => seqs[0];
-function assembleCarrierSource({ slots, summaries, questions, attachments, oldReads = [], verbatimSeqs = [], changes, state }) {
+function assembleCarrierSource({ slots, summaries, questions, attachments, oldReads = [], sourceTokens = [], verbatimSeqs = [], changes, state }) {
   const injected = [.../* @__PURE__ */ new Set([...verbatimSeqs, ...questions.flat().flatMap(({ seqs }) => seqs ?? [])])];
   return {
     kind: INNER_SEAL_KIND,
@@ -21221,7 +21257,8 @@ function assembleCarrierSource({ slots, summaries, questions, attachments, oldRe
       text: summaries[index],
       ...questions[index].length > 0 ? { questions: questions[index].map(({ question, user }) => ({ question, user })) } : {},
       ...attachments[index].length > 0 ? { attachments: attachments[index] } : {},
-      ...oldReads[index]?.length > 0 ? { oldReads: oldReads[index] } : {}
+      ...oldReads[index]?.length > 0 ? { oldReads: oldReads[index] } : {},
+      ...Number.isFinite(sourceTokens[index]) ? { sourceTokens: sourceTokens[index] } : {}
     })),
     ...injected.length > 0 ? { verbatimSeqs: injected } : {},
     ...changes,
@@ -21640,6 +21677,7 @@ function createMeasurementProjection({
   let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   let mainCalls = 0;
+  let recallSince = { priced: 0, net: 0, unpriced: 0 };
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     if (!facts) {
@@ -21727,8 +21765,15 @@ function createMeasurementProjection({
         break;
       case "main-call":
         mainCalls += 1;
+        if (observation.recall !== void 0) {
+          const { net } = observation.recall;
+          if (Number.isFinite(net) && net >= 0) recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net };
+          else recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
+        }
         break;
-      case "usage":
+      case "usage": {
+        const recall = recallSince;
+        recallSince = { priced: 0, net: 0, unpriced: 0 };
         records.push({
           type: "step",
           id: observation.messageId,
@@ -21740,9 +21785,11 @@ function createMeasurementProjection({
             cacheRead: observation.usage.cacheRead,
             cacheWrite: observation.usage.cacheWrite
           },
-          mainCallOrdinal: mainCalls
+          mainCallOrdinal: mainCalls,
+          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
         });
         break;
+      }
       case "tool-use":
         projectToolUse(observation, frameCtx, records, diagnostics);
         break;
@@ -22197,8 +22244,11 @@ function sealedBatch(batch, selected) {
   });
 }
 var changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+var sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net;
+var mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
 function createSourceFold() {
   const kept = [];
+  const keptBySeq = /* @__PURE__ */ new Map();
   let epochStart = 0;
   let facts = initialSourceFacts();
   function push(input) {
@@ -22216,73 +22266,31 @@ function createSourceFold() {
         rewound = true;
       }
     }
-    const batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
+    for (const { seq, recall } of input.recall ?? []) {
+      const entry2 = keptBySeq.get(seq);
+      if (entry2 === void 0) continue;
+      const at = entry2.batch.findIndex((observation) => observation.type === "main-call");
+      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0)) continue;
+      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall));
+      rewound = true;
+    }
+    const own = input.recall?.find((stated) => stated.seq === input.seq)?.recall;
+    const batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
-    kept.push({ seq: input.seq, batch });
+    const entry = { seq: input.seq, batch };
+    kept.push(entry);
+    keptBySeq.set(input.seq, entry);
     return { batch, rewound, diagnostics };
   }
   function batches() {
     return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
   }
-  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts), facts: () => facts };
 }
 
-// lib/harness/dsh/source-driver.js
-function invariant5(ok, message) {
-  if (!ok) throw new Error(`dsh source driver invariant: ${message}`);
-}
-function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => false } = {}) {
-  invariant5(typeof onDiagnostics === "function", "onDiagnostics must be a function");
-  const queue = [];
-  const fold = createSourceFold();
-  let installed = false;
-  let drained = false;
-  let snapshotTail;
-  function report(diagnostics) {
-    if (diagnostics.length > 0) onDiagnostics(diagnostics);
-  }
-  const qualified = (frame) => qualifyCalls() ? { ...frame, qualifiedCalls: fold.qualifiedCalls() } : frame;
-  const replayFrame = () => qualified({
-    transition: "replace",
-    sourceLocator: sessionId,
-    batches: fold.batches(),
-    sourceObserved: true,
-    captureMode: "replay"
-  });
-  function liveFrame(event) {
-    const { batch, rewound, diagnostics } = fold.push(foldInputOf(event));
-    report(diagnostics);
-    if (rewound) return replayFrame();
-    if (batch === null) return null;
-    return qualified({ transition: "append", batches: [batch], sourceObserved: true, captureMode: "live" });
-  }
-  function install(snapshotEvents) {
-    invariant5(!installed, "install runs once");
-    const diagnostics = snapshotEvents.flatMap((event) => fold.push(foldInputOf(event)).diagnostics);
-    installed = true;
-    snapshotTail = snapshotEvents.length === 0 ? -1 : snapshotEvents.at(-1).seq;
-    report(diagnostics);
-    return replayFrame();
-  }
-  function feed(event) {
-    if (drained) return liveFrame(event);
-    queue.push(event);
-    return null;
-  }
-  function drain() {
-    invariant5(installed, "drain follows install");
-    drained = true;
-    const frames = [];
-    for (const event of queue.splice(0)) {
-      if (event.seq <= snapshotTail) continue;
-      const frame = liveFrame(event);
-      if (frame !== null) frames.push(frame);
-    }
-    return frames;
-  }
-  return { install, feed, drain };
-}
+// lib/harness/dsh/plugin-record.js
+var pluginRecordType = (name3) => `plugin:session-watcher/${name3}`;
 
 // lib/harness/dsh/event-facts.js
 var CHECKPOINT_KIND = "compact-checkpoint";
@@ -22316,6 +22324,372 @@ var originalsOf = (event, bySeq) => event.sourceEventSeqs.flatMap((seq) => {
 function eventFactsOf(events) {
   const bySeq = new Map(events.map((event) => [event.seq, event]));
   return new Map(events.map((event) => [event.seq, { ...eventFactOf(event), originals: isPrunedResult(event) ? originalsOf(event, bySeq) : [] }]));
+}
+
+// lib/harness/dsh/event-read.js
+var EVENT_READ_TOOL = "sw_event_read";
+var NATIVE_EVENT_READ = "session_event_read";
+var EVENT_READ_GUIDANCE = `Use ${EVENT_READ_TOOL} when you need exact data from an earlier event.`;
+var isText2 = (value) => typeof value === "string";
+var listOf = (value) => Array.isArray(value) ? value : [];
+function eventReadTargetOf(call) {
+  if (call?.name !== EVENT_READ_TOOL && call?.name !== NATIVE_EVENT_READ) return void 0;
+  try {
+    const { seq, session_id: sessionId } = JSON.parse(call.arguments);
+    if (Number.isSafeInteger(seq) && seq >= 0 && (sessionId === void 0 || isText2(sessionId))) return { seq, sessionId };
+  } catch {
+    return void 0;
+  }
+  return void 0;
+}
+var sourceOf = (source) => isText2(source?.kind) ? { source: { kind: source.kind } } : {};
+function blockOf(block) {
+  switch (block?.type) {
+    case "text":
+    case "reasoning":
+      return isText2(block.text) ? [{ type: block.type, text: block.text }] : [];
+    case "tool-call":
+      return [{ type: "tool-call", id: block.id, name: block.name, arguments: block.arguments }];
+    case "file":
+    case "image":
+      return block.attachment === void 0 ? [] : [{ type: block.type, attachment: block.attachment }];
+    default:
+      return [];
+  }
+}
+var blocksOf = (content) => listOf(content).flatMap(blockOf);
+var BODIES = {
+  "user/message": (data) => ({ content: blocksOf(data.content), ...sourceOf(data.source) }),
+  // `interrupted` marks a prefix a cancellation cut short, which a reader must not take for a finished message.
+  "assistant/message": (data) => ({ message: { content: blocksOf(data.message?.content) }, ...data.interrupted === true ? { interrupted: true } : {} }),
+  "tool/call": (data) => ({ callId: data.callId, name: data.name, arguments: data.arguments }),
+  "tool/result": (data) => {
+    const { message, error } = data;
+    return {
+      message: {
+        ...isText2(message?.toolCallId) ? { toolCallId: message.toolCallId } : {},
+        ...typeof message?.isError === "boolean" ? { isError: message.isError } : {},
+        content: blocksOf(message?.content)
+      },
+      ...error === void 0 || error === null ? {} : { error: { name: error.name, code: error.code } }
+    };
+  }
+};
+function eventTextOf(event) {
+  const { type, seq, time } = event;
+  const body2 = Object.hasOwn(BODIES, type) ? BODIES[type](event.data ?? {}) : void 0;
+  return { type, seq, time, ...body2 === void 0 ? {} : { data: body2 } };
+}
+var NO_TEXT = " | (no semantic text)";
+var CARRIER_KINDS = /* @__PURE__ */ new Set([LOAD_MESSAGE_KIND, INNER_SEAL_KIND, CHECKPOINT_KIND]);
+function neighborLine(event, textOf4) {
+  const identity = `- seq ${event.seq} | ${event.type} | ${new Date(event.time).toISOString()}`;
+  if (event.type === "user/message" && CARRIER_KINDS.has(event.data?.source?.kind)) return identity;
+  const text = textOf4(event);
+  return `${identity}${text.length === 0 ? NO_TEXT : `
+  ${text.replaceAll("\n", "\n  ")}`}`;
+}
+function formatEventRead({ sessionId, title, window: window2, textOf: textOf4 }) {
+  const { target } = window2;
+  const lines = [`Session ${sessionId} \u2014 ${title}`, `Target event seq ${target.seq}:`, "```json", JSON.stringify(eventTextOf(target), null, 2), "```"];
+  for (const [heading, neighbors] of [["Before:", window2.events.filter((event) => event.seq < target.seq)], ["After:", window2.events.filter((event) => event.seq > target.seq)]]) {
+    if (neighbors.length > 0) lines.push("", heading, ...neighbors.map((event) => neighborLine(event, textOf4)));
+  }
+  return lines.join("\n");
+}
+
+// lib/harness/dsh/recall-judge.js
+var ABORTED_BEFORE_DISPATCH = "ABORTED_BEFORE_DISPATCH";
+var stepKey = ({ turn, step } = {}) => `${turn}:${step}`;
+var isInitiated = ({ target, dispatched, skipped }) => target !== void 0 && dispatched && !skipped;
+var callRecallOf = (call = {}) => isInitiated(call) ? "recall" : call.target === void 0 || call.dispatched || call.resulted ? "other" : "unknown";
+function judgeOf({ tools, calls }) {
+  const states = tools.map(({ id }) => callRecallOf(calls.get(id)));
+  if (states.includes("other") || states.length === 0) return "other";
+  return states.includes("unknown") ? "unknown" : "pure";
+}
+function createRecallJudge({ sessionId }) {
+  const seen = /* @__PURE__ */ new Set();
+  let first;
+  let latest;
+  const targetOf2 = (call, requestSeq) => {
+    const target = eventReadTargetOf(call);
+    return target && (target.sessionId === void 0 || target.sessionId === sessionId) && target.seq >= first && target.seq < requestSeq && seen.has(target.seq) ? target.seq : void 0;
+  };
+  function open(event) {
+    const content = event.data?.message?.content;
+    const tools = Array.isArray(content) ? content.filter((block) => block?.type === "tool-call") : [];
+    const calls = new Map(tools.map((block) => [block.id, { target: targetOf2(block, event.seq), dispatched: false, skipped: false, resulted: false }]));
+    return { seq: event.seq, step: stepKey(event.data), tools, calls };
+  }
+  function push(event, { track = true } = {}) {
+    const { seq, type, data } = event;
+    first ??= seq;
+    let touched;
+    if (isMainCall(event)) {
+      latest = open(event);
+      touched = { sample: latest };
+    } else if (track && latest !== void 0) {
+      if (type === "tool/call" && stepKey(data) === latest.step) {
+        const call = latest.calls.get(data.callId);
+        if (call !== void 0) call.dispatched = true;
+        touched = { sample: latest, call };
+      } else if (type === "tool/result") {
+        const call = stepKey(data) === latest.step ? latest.calls.get(data.message?.toolCallId) : void 0;
+        if (call !== void 0) {
+          call.resulted = true;
+          if (data.error?.code === ABORTED_BEFORE_DISPATCH) call.skipped = true;
+        }
+        touched = { sample: latest, call };
+      }
+    }
+    seen.add(seq);
+    return touched;
+  }
+  function reset() {
+    seen.clear();
+    first = void 0;
+    latest = void 0;
+  }
+  return { push, reset };
+}
+
+// lib/inner-seal/quote.js
+var INNER_QUOTE = Object.freeze({ minSteps: 8, cPerStep: 200, fee: 1e4 });
+var KAPPA_PRICE_ANCHOR = 25;
+var KAPPA_WEIGHT_SHIFT = 23;
+var KAPPA_PRESETS = Object.freeze({
+  E2: Object.freeze({ p: 3, alpha: 19 }),
+  W2: Object.freeze({ p: 4, alpha: 9.032 }),
+  M2: Object.freeze({ p: 4, alpha: 2.456 }),
+  S3: Object.freeze({ p: 5, alpha: 0.7706 }),
+  X3: Object.freeze({ p: 5, alpha: 0.22 })
+});
+var powInt = (x, p) => {
+  let power = x;
+  for (let step = 1; step < p; step += 1) power *= x;
+  return power;
+};
+var etaOf = (n, cRatio) => (cRatio - 1) * INNER_QUOTE.cPerStep * n / (cRatio * INNER_QUOTE.fee);
+function kappaOf(n, cRatio, { p, alpha }) {
+  const anchored = alpha * powInt(etaOf(n, KAPPA_PRICE_ANCHOR), p);
+  const compensation = anchored > 0 ? 2 * anchored / (Math.sqrt(anchored * (anchored + 2)) + anchored) : 0;
+  const weight = (cRatio - KAPPA_PRICE_ANCHOR) / (cRatio + KAPPA_WEIGHT_SHIFT);
+  return 1 + alpha * powInt(etaOf(n, cRatio), p) + weight * compensation;
+}
+function estimateInnerA({ n, texts, bText, ctp }) {
+  const lA = texts.reduce((sum, text) => sum + charsToTokens(text, ctp), 0);
+  const bEst = charsToTokens(bText, ctp);
+  const cEst = INNER_QUOTE.cPerStep * n;
+  return { n, lA, bEst, cEst, sEst: lA - bEst - cEst };
+}
+var NO_RESULT = Object.freeze({ nRef: null, N: null, jRef: null, q: null, arm: null });
+function resultsOf(n, { bEst, cEst, sEst }, cRatio, readCost) {
+  const fixed = cRatio * INNER_QUOTE.fee + (cRatio - 1) * bEst + readCost;
+  const nRef = fixed / sEst;
+  const v = (cRatio - 1) * cEst / sEst;
+  const N = nRef + v;
+  const jRef = 2 * Math.sqrt(n * nRef) + v;
+  const q = (n + N) / jRef;
+  if (![nRef, N, jRef, q].every(Number.isFinite) || !(jRef > 0)) return null;
+  return { nRef, N, jRef, q, arm: n >= nRef ? "right" : "left" };
+}
+function innerQuote({ n, estimate, cRatio, preset, summaryReadCost }) {
+  const ratio = Number.isFinite(cRatio) ? cRatio : null;
+  const priced2 = ratio === null ? NaN : kappaOf(n, ratio, KAPPA_PRESETS[preset]);
+  const kappa = Number.isFinite(priced2) ? priced2 : null;
+  const priceable = estimate !== null && ratio !== null && estimate.sEst > 0;
+  const read = Number.isFinite(summaryReadCost) && summaryReadCost >= 0 ? summaryReadCost : null;
+  const found = priceable ? resultsOf(n, estimate, ratio, read ?? 0) : null;
+  const results = kappa === null ? null : found;
+  const quoted2 = results !== null && n >= INNER_QUOTE.minSteps && (results.arm === "right" || results.q < kappa);
+  return {
+    n,
+    lA: estimate?.lA ?? null,
+    bEst: estimate?.bEst ?? null,
+    cEst: estimate?.cEst ?? null,
+    sEst: estimate?.sEst ?? null,
+    cRatio: ratio,
+    fee: INNER_QUOTE.fee,
+    kappa,
+    preset,
+    ...results ?? NO_RESULT,
+    ...results !== null && read !== null ? { summaryReadCost: read } : {},
+    trigger: quoted2 ? "quote" : null
+  };
+}
+var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq = (value) => Number.isSafeInteger(value) && value >= 0;
+var orNull = (holds) => (value) => value === null || holds(value);
+var QUOTE_QUANTITIES = ["lA", "bEst", "cEst", "sEst", "cRatio", "nRef", "N", "jRef", "q"];
+function isQuote(value) {
+  return isObject4(value) && isSeq(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && value.trigger === "quote";
+}
+
+// lib/inner-seal/attempt-record.js
+var ATTEMPT_RECORD_NAME = "inner-attempt";
+var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq2 = (value) => Number.isSafeInteger(value) && value >= 0;
+var attemptRecordOf = ({ range, request, quote }) => ({ v: 1, range, request, quote });
+var isAttemptRecord = (data) => isObject5(data) && data.v === 1 && isObject5(data.range) && isSeq2(data.range.first) && isSeq2(data.range.last) && isSeq2(data.range.count) && isObject5(data.request) && isObject5(data.request.messages) && isObject5(data.request.messages.tail);
+var attemptQuoteOf = (data) => isQuote(data.quote) ? data.quote : null;
+
+// lib/inner-seal/call-record.js
+var CALL_RECORD_NAME = "inner-call";
+var MAX_CARRIER_EVIDENCE = 8;
+var UNCACHED_SHARE_ALERT = 1 / 2;
+var isObject6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isSeq3 = (value) => Number.isSafeInteger(value) && value >= 0;
+var isText3 = (value) => typeof value === "string";
+function callRecordOf({ purpose, selection, input, range, stream, endedAt, attempt, carrierCache, thrown }) {
+  return {
+    v: 1,
+    purpose,
+    selection,
+    input,
+    range,
+    stream,
+    endedAt,
+    ...carrierCache == null ? {} : { carrierCache },
+    ...thrown == null ? {} : { thrown },
+    ...attempt == null ? {} : { attempt }
+  };
+}
+var isCallRecord = (data) => isObject6(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq3) && Array.isArray(data.stream) && isObject6(data.input) && isObject6(data.input.tail) && (data.thrown === void 0 || isObject6(data.thrown) && isText3(data.thrown.message));
+var isCarrierResult = (value) => isObject6(value) && isText3(value.result) && (value.reason === void 0 || isText3(value.reason));
+var isCarrierCache = (value) => isObject6(value) && Array.isArray(value.results) && value.results.length > 0 && value.results.length <= MAX_CARRIER_EVIDENCE && value.results.every(isCarrierResult) && Number.isSafeInteger(value.omitted) && value.omitted >= 0;
+
+// public/lib/requestPrice.js
+function requestCostOf(usage, ratio) {
+  const { input, cacheRead, cacheWrite } = usage ?? {};
+  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
+  return cacheRead + ratio * (input + cacheWrite);
+}
+var rebuildPremiumOf = (miss, ratio) => (ratio - 1) * miss;
+
+// lib/harness/dsh/recall-facts.js
+var ATTEMPT_TYPE = pluginRecordType(ATTEMPT_RECORD_NAME);
+var CALL_TYPE = pluginRecordType(CALL_RECORD_NAME);
+var isTrusted = (ratio) => Number.isFinite(ratio) && ratio > 0;
+var admittedUsageOf = ({ observations }) => observations.find((observation) => observation.type === "usage")?.usage ?? null;
+function createRecallFacts({ sessionId }) {
+  const judge = createRecallJudge({ sessionId });
+  const attempts = /* @__PURE__ */ new Map();
+  const callAttempt = /* @__PURE__ */ new Map();
+  let parent = null;
+  let latest = null;
+  function noteRecord(event, facts) {
+    if (event.ignorable !== true) return;
+    if (event.type === ATTEMPT_TYPE) {
+      const tail = event.data?.request?.messages?.tail;
+      if (isAttemptRecord(event.data) && Array.isArray(tail?.content)) attempts.set(event.seq, { epoch: facts.epoch, ratio: attemptQuoteOf(event.data)?.cRatio ?? null, callSeq: null });
+    } else if (event.type === CALL_TYPE && isCallRecord(event.data)) {
+      const attempt = attempts.get(event.data.attempt);
+      if (attempt === void 0) return;
+      attempt.callSeq = event.seq;
+      callAttempt.set(event.seq, event.data.attempt);
+    }
+  }
+  function noteCarrier(event, input, facts) {
+    if (!Array.isArray(input.sealed) || !Array.isArray(event.data?.source?.slots)) return;
+    const attempt = attempts.get(callAttempt.get(callSeqOf(input.sealed)));
+    if (attempt !== void 0 && attempt.epoch === facts.epoch && attempt.callSeq === callSeqOf(input.sealed)) parent = { carrier: event.seq, ratio: attempt.ratio };
+  }
+  const isPost2 = (call, facts) => facts.carriers.find((carrier) => carrier.seq === call.parent.carrier)?.post?.seq === call.seq;
+  function factOf(call, facts) {
+    if (call.parent === null) return void 0;
+    const judged = judgeOf(call.sample);
+    if (judged === "unknown") return { net: null };
+    if (judged !== "pure") return void 0;
+    const { usage, parent: seal } = call;
+    if (usage === null || !isTrusted(seal.ratio)) return { net: null };
+    const cost = requestCostOf(usage, seal.ratio);
+    const net = isPost2(call, facts) ? cost - rebuildPremiumOf(uncachedOf(usage), seal.ratio) : cost;
+    return Number.isFinite(net) && net >= 0 ? { net } : { net: null };
+  }
+  function push(event, input, facts) {
+    if (startsEpoch(input)) {
+      judge.reset();
+      parent = null;
+      latest = null;
+    }
+    noteRecord(event, facts);
+    noteCarrier(event, input, facts);
+    const judged = judge.push(event);
+    if (judged === void 0) return [];
+    if (isMainCall(event)) {
+      latest = { seq: event.seq, sample: judged.sample, usage: admittedUsageOf(input), parent };
+      const recall = factOf(latest, facts);
+      return recall === void 0 ? [] : [{ seq: event.seq, recall }];
+    }
+    return [{ seq: latest.seq, recall: factOf(latest, facts) ?? null }];
+  }
+  return { push };
+}
+function createFoldInputs({ sessionId, fold }) {
+  const recall = createRecallFacts({ sessionId });
+  return (event) => {
+    const input = foldInputOf(event);
+    const stated = recall.push(event, input, fold.facts());
+    return stated.length === 0 ? input : { ...input, recall: stated };
+  };
+}
+
+// lib/harness/dsh/source-driver.js
+function invariant5(ok, message) {
+  if (!ok) throw new Error(`dsh source driver invariant: ${message}`);
+}
+function createDshSourceDriver({ sessionId, onDiagnostics, qualifyCalls = () => false } = {}) {
+  invariant5(typeof onDiagnostics === "function", "onDiagnostics must be a function");
+  const queue = [];
+  const fold = createSourceFold();
+  const inputOf = createFoldInputs({ sessionId, fold });
+  let installed = false;
+  let drained = false;
+  let snapshotTail;
+  function report(diagnostics) {
+    if (diagnostics.length > 0) onDiagnostics(diagnostics);
+  }
+  const qualified = (frame) => qualifyCalls() ? { ...frame, qualifiedCalls: fold.qualifiedCalls() } : frame;
+  const replayFrame = () => qualified({
+    transition: "replace",
+    sourceLocator: sessionId,
+    batches: fold.batches(),
+    sourceObserved: true,
+    captureMode: "replay"
+  });
+  function liveFrame(event) {
+    const { batch, rewound, diagnostics } = fold.push(inputOf(event));
+    report(diagnostics);
+    if (rewound) return replayFrame();
+    if (batch === null) return null;
+    return qualified({ transition: "append", batches: [batch], sourceObserved: true, captureMode: "live" });
+  }
+  function install(snapshotEvents) {
+    invariant5(!installed, "install runs once");
+    const diagnostics = snapshotEvents.flatMap((event) => fold.push(inputOf(event)).diagnostics);
+    installed = true;
+    snapshotTail = snapshotEvents.length === 0 ? -1 : snapshotEvents.at(-1).seq;
+    report(diagnostics);
+    return replayFrame();
+  }
+  function feed(event) {
+    if (drained) return liveFrame(event);
+    queue.push(event);
+    return null;
+  }
+  function drain() {
+    invariant5(installed, "drain follows install");
+    drained = true;
+    const frames = [];
+    for (const event of queue.splice(0)) {
+      if (event.seq <= snapshotTail) continue;
+      const frame = liveFrame(event);
+      if (frame !== null) frames.push(frame);
+    }
+    return frames;
+  }
+  return { install, feed, drain };
 }
 
 // lib/ledger-schema.js
@@ -23488,31 +23862,6 @@ var CARRIER_SETTINGS_SERVICE = "sessionWatcherCarrierSettings";
 // dsh/src/carrier-evidence.js
 import { AsyncLocalStorage } from "node:async_hooks";
 
-// lib/inner-seal/call-record.js
-var CALL_RECORD_NAME = "inner-call";
-var MAX_CARRIER_EVIDENCE = 8;
-var UNCACHED_SHARE_ALERT = 1 / 2;
-var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var isSeq = (value) => Number.isSafeInteger(value) && value >= 0;
-var isText2 = (value) => typeof value === "string";
-function callRecordOf({ purpose, selection, input, range, stream, endedAt, attempt, carrierCache, thrown }) {
-  return {
-    v: 1,
-    purpose,
-    selection,
-    input,
-    range,
-    stream,
-    endedAt,
-    ...carrierCache == null ? {} : { carrierCache },
-    ...thrown == null ? {} : { thrown },
-    ...attempt == null ? {} : { attempt }
-  };
-}
-var isCallRecord = (data) => isObject4(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq) && Array.isArray(data.stream) && isObject4(data.input) && isObject4(data.input.tail) && (data.thrown === void 0 || isObject4(data.thrown) && isText2(data.thrown.message));
-var isCarrierResult = (value) => isObject4(value) && isText2(value.result) && (value.reason === void 0 || isText2(value.reason));
-var isCarrierCache = (value) => isObject4(value) && Array.isArray(value.results) && value.results.length > 0 && value.results.length <= MAX_CARRIER_EVIDENCE && value.results.every(isCarrierResult) && Number.isSafeInteger(value.omitted) && value.omitted >= 0;
-
 // lib/llm-adapter/carrier-results.js
 var CARRIER_RESULTS = ["added", "native", "skipped"];
 var SKIP_REASONS = ["no-carrier", "no-native-point", "points-full", "responses-off", "unsupported"];
@@ -24270,78 +24619,6 @@ function createTurnReadService({
   };
 }
 
-// lib/harness/dsh/event-read.js
-var EVENT_READ_TOOL = "sw_event_read";
-var NATIVE_EVENT_READ = "session_event_read";
-var EVENT_READ_GUIDANCE = `Use ${EVENT_READ_TOOL} when you need exact data from an earlier event.`;
-var isText3 = (value) => typeof value === "string";
-var listOf = (value) => Array.isArray(value) ? value : [];
-function eventReadTargetOf(call) {
-  if (call?.name !== EVENT_READ_TOOL && call?.name !== NATIVE_EVENT_READ) return void 0;
-  try {
-    const { seq, session_id: sessionId } = JSON.parse(call.arguments);
-    if (Number.isSafeInteger(seq) && seq >= 0 && (sessionId === void 0 || isText3(sessionId))) return { seq, sessionId };
-  } catch {
-    return void 0;
-  }
-  return void 0;
-}
-var sourceOf = (source) => isText3(source?.kind) ? { source: { kind: source.kind } } : {};
-function blockOf(block) {
-  switch (block?.type) {
-    case "text":
-    case "reasoning":
-      return isText3(block.text) ? [{ type: block.type, text: block.text }] : [];
-    case "tool-call":
-      return [{ type: "tool-call", id: block.id, name: block.name, arguments: block.arguments }];
-    case "file":
-    case "image":
-      return block.attachment === void 0 ? [] : [{ type: block.type, attachment: block.attachment }];
-    default:
-      return [];
-  }
-}
-var blocksOf = (content) => listOf(content).flatMap(blockOf);
-var BODIES = {
-  "user/message": (data) => ({ content: blocksOf(data.content), ...sourceOf(data.source) }),
-  // `interrupted` marks a prefix a cancellation cut short, which a reader must not take for a finished message.
-  "assistant/message": (data) => ({ message: { content: blocksOf(data.message?.content) }, ...data.interrupted === true ? { interrupted: true } : {} }),
-  "tool/call": (data) => ({ callId: data.callId, name: data.name, arguments: data.arguments }),
-  "tool/result": (data) => {
-    const { message, error } = data;
-    return {
-      message: {
-        ...isText3(message?.toolCallId) ? { toolCallId: message.toolCallId } : {},
-        ...typeof message?.isError === "boolean" ? { isError: message.isError } : {},
-        content: blocksOf(message?.content)
-      },
-      ...error === void 0 || error === null ? {} : { error: { name: error.name, code: error.code } }
-    };
-  }
-};
-function eventTextOf(event) {
-  const { type, seq, time } = event;
-  const body2 = Object.hasOwn(BODIES, type) ? BODIES[type](event.data ?? {}) : void 0;
-  return { type, seq, time, ...body2 === void 0 ? {} : { data: body2 } };
-}
-var NO_TEXT = " | (no semantic text)";
-var CARRIER_KINDS = /* @__PURE__ */ new Set([LOAD_MESSAGE_KIND, INNER_SEAL_KIND, CHECKPOINT_KIND]);
-function neighborLine(event, textOf4) {
-  const identity = `- seq ${event.seq} | ${event.type} | ${new Date(event.time).toISOString()}`;
-  if (event.type === "user/message" && CARRIER_KINDS.has(event.data?.source?.kind)) return identity;
-  const text = textOf4(event);
-  return `${identity}${text.length === 0 ? NO_TEXT : `
-  ${text.replaceAll("\n", "\n  ")}`}`;
-}
-function formatEventRead({ sessionId, title, window: window2, textOf: textOf4 }) {
-  const { target } = window2;
-  const lines = [`Session ${sessionId} \u2014 ${title}`, `Target event seq ${target.seq}:`, "```json", JSON.stringify(eventTextOf(target), null, 2), "```"];
-  for (const [heading, neighbors] of [["Before:", window2.events.filter((event) => event.seq < target.seq)], ["After:", window2.events.filter((event) => event.seq > target.seq)]]) {
-    if (neighbors.length > 0) lines.push("", heading, ...neighbors.map((event) => neighborLine(event, textOf4)));
-  }
-  return lines.join("\n");
-}
-
 // lib/harness/dsh/turn-recovery.js
 var NOTICE = `Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's id, and a row's T is that session's event seq; read it in full with ${EVENT_READ_TOOL}(session_id, T).`;
 var SEARCH_HIT = `line is the event seq a match sits in, span the events of its fold from its anchor to its results, and transcript_path the session id; read ${EVENT_READ_TOOL} with transcript_path as session_id and line as seq for the full event. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.`;
@@ -25048,7 +25325,7 @@ function foldMode(state, input) {
 }
 
 // dsh/src/inner-mode.js
-var MODE_RECORD_TYPE = "plugin:session-watcher/inner-mode";
+var MODE_RECORD_TYPE = pluginRecordType("inner-mode");
 var MODE_PROJECTION_KEY = "session-watcher/inner-mode";
 var messageOf4 = (error) => error instanceof Error ? error.message : String(error);
 var isModeInput = (event) => event.type === "turn/start" || event.type === MODE_RECORD_TYPE;
@@ -25131,7 +25408,7 @@ function createModeAccess({ sessionOf, readMode, select, readStored }) {
 }
 
 // lib/inner-seal/source.js
-var stepKey = ({ turn, step }) => `${turn}:${step}`;
+var stepKey2 = ({ turn, step }) => `${turn}:${step}`;
 function headerSeqIn(facts, { latest, above }) {
   let found = null;
   for (const [seq, fact] of facts) {
@@ -25162,7 +25439,7 @@ function innerSource(facts, nodes) {
     if (marker !== null && (marker !== "payload" || index >= prefix) && (at < 0 || seq > nodes[at])) at = index;
   });
   const range = nodes.slice(Math.max(prefix, at + 1));
-  const steps = new Set(range.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey));
+  const steps = new Set(range.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey2));
   const lastCall = range.findLastIndex((seq) => facts.get(seq).skeletonCall);
   const lastPayload = range.findLastIndex((seq) => facts.get(seq).marker === "payload");
   return { frontier: at < 0 ? null : nodes[at], range, stepN: steps.size, paused: lastCall > lastPayload };
@@ -25170,12 +25447,12 @@ function innerSource(facts, nodes) {
 function skeletonSlots(facts, nodes, range) {
   const selected = new Set(range);
   const sources = nodes.filter((seq) => selected.has(seq));
-  const counted = new Set(sources.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey));
+  const counted = new Set(sources.map((seq) => facts.get(seq).step).filter((step) => step !== null).map(stepKey2));
   const slots = [];
   const stepSlots = /* @__PURE__ */ new Map();
   for (const seq of sources) {
     const { owner, assistant, originals } = facts.get(seq);
-    const key = stepKey(owner);
+    const key = stepKey2(owner);
     const seqs = [...originals, seq];
     if (!counted.has(key)) {
       if (!assistant) slots.push({ seqs });
@@ -25358,86 +25635,6 @@ function touchedOf({ paths, skills, effects }, seqs) {
   };
 }
 
-// lib/inner-seal/quote.js
-var INNER_QUOTE = Object.freeze({ minSteps: 8, cPerStep: 200, fee: 1e4 });
-var KAPPA_PRICE_ANCHOR = 25;
-var KAPPA_WEIGHT_SHIFT = 23;
-var KAPPA_PRESETS = Object.freeze({
-  E2: Object.freeze({ p: 3, alpha: 19 }),
-  W2: Object.freeze({ p: 4, alpha: 9.032 }),
-  M2: Object.freeze({ p: 4, alpha: 2.456 }),
-  S3: Object.freeze({ p: 5, alpha: 0.7706 }),
-  X3: Object.freeze({ p: 5, alpha: 0.22 })
-});
-var powInt = (x, p) => {
-  let power = x;
-  for (let step = 1; step < p; step += 1) power *= x;
-  return power;
-};
-var etaOf = (n, cRatio) => (cRatio - 1) * INNER_QUOTE.cPerStep * n / (cRatio * INNER_QUOTE.fee);
-function kappaOf(n, cRatio, { p, alpha }) {
-  const anchored = alpha * powInt(etaOf(n, KAPPA_PRICE_ANCHOR), p);
-  const compensation = anchored > 0 ? 2 * anchored / (Math.sqrt(anchored * (anchored + 2)) + anchored) : 0;
-  const weight = (cRatio - KAPPA_PRICE_ANCHOR) / (cRatio + KAPPA_WEIGHT_SHIFT);
-  return 1 + alpha * powInt(etaOf(n, cRatio), p) + weight * compensation;
-}
-function estimateInnerA({ n, texts, bText, ctp }) {
-  const lA = texts.reduce((sum, text) => sum + charsToTokens(text, ctp), 0);
-  const bEst = charsToTokens(bText, ctp);
-  const cEst = INNER_QUOTE.cPerStep * n;
-  return { n, lA, bEst, cEst, sEst: lA - bEst - cEst };
-}
-var NO_RESULT = Object.freeze({ nRef: null, N: null, jRef: null, q: null, arm: null });
-function resultsOf(n, { bEst, cEst, sEst }, cRatio, readCost) {
-  const fixed = cRatio * INNER_QUOTE.fee + (cRatio - 1) * bEst + readCost;
-  const nRef = fixed / sEst;
-  const v = (cRatio - 1) * cEst / sEst;
-  const N = nRef + v;
-  const jRef = 2 * Math.sqrt(n * nRef) + v;
-  const q = (n + N) / jRef;
-  if (![nRef, N, jRef, q].every(Number.isFinite) || !(jRef > 0)) return null;
-  return { nRef, N, jRef, q, arm: n >= nRef ? "right" : "left" };
-}
-function innerQuote({ n, estimate, cRatio, preset, summaryReadCost }) {
-  const ratio = Number.isFinite(cRatio) ? cRatio : null;
-  const priced2 = ratio === null ? NaN : kappaOf(n, ratio, KAPPA_PRESETS[preset]);
-  const kappa = Number.isFinite(priced2) ? priced2 : null;
-  const priceable = estimate !== null && ratio !== null && estimate.sEst > 0;
-  const read = Number.isFinite(summaryReadCost) && summaryReadCost >= 0 ? summaryReadCost : null;
-  const found = priceable ? resultsOf(n, estimate, ratio, read ?? 0) : null;
-  const results = kappa === null ? null : found;
-  const quoted2 = results !== null && n >= INNER_QUOTE.minSteps && (results.arm === "right" || results.q < kappa);
-  return {
-    n,
-    lA: estimate?.lA ?? null,
-    bEst: estimate?.bEst ?? null,
-    cEst: estimate?.cEst ?? null,
-    sEst: estimate?.sEst ?? null,
-    cRatio: ratio,
-    fee: INNER_QUOTE.fee,
-    kappa,
-    preset,
-    ...results ?? NO_RESULT,
-    ...results !== null && read !== null ? { summaryReadCost: read } : {},
-    trigger: quoted2 ? "quote" : null
-  };
-}
-var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var isSeq2 = (value) => Number.isSafeInteger(value) && value >= 0;
-var orNull = (holds) => (value) => value === null || holds(value);
-var QUOTE_QUANTITIES = ["lA", "bEst", "cEst", "sEst", "cRatio", "nRef", "N", "jRef", "q"];
-function isQuote(value) {
-  return isObject5(value) && isSeq2(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && value.trigger === "quote";
-}
-
-// lib/inner-seal/attempt-record.js
-var ATTEMPT_RECORD_NAME = "inner-attempt";
-var isObject6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var isSeq3 = (value) => Number.isSafeInteger(value) && value >= 0;
-var attemptRecordOf = ({ range, request, quote }) => ({ v: 1, range, request, quote });
-var isAttemptRecord = (data) => isObject6(data) && data.v === 1 && isObject6(data.range) && isSeq3(data.range.first) && isSeq3(data.range.last) && isSeq3(data.range.count) && isObject6(data.request) && isObject6(data.request.messages) && isObject6(data.request.messages.tail);
-var attemptQuoteOf = (data) => isQuote(data.quote) ? data.quote : null;
-
 // lib/inner-seal/end-record.js
 var END_RECORD_NAME = "inner-end";
 var isObject7 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -25502,6 +25699,15 @@ function argumentsCueOf(call) {
   const text = valuesOf(parsed).join(" ").trim();
   return text === "" ? "" : `: ${cueText(text)}`;
 }
+function callCueOf(call) {
+  return `${call.name} \u2192 ${call.failed ? "error" : "ok"}${argumentsCueOf(call)}`;
+}
+function actionCueOf(facts) {
+  if (facts.kind === "result") return "tool result";
+  if (facts.kind === "step" && facts.calls.length > 0) return facts.calls.map(callCueOf).join("; ");
+  const text = facts.kind === "step" ? facts.assistantText : facts.text;
+  return text === "" ? "" : cueText(text);
+}
 function rowsOf(slotFacts, verbatim) {
   let number = 0;
   return slotFacts.map((facts, at) => {
@@ -25513,7 +25719,7 @@ function rowsOf(slotFacts, verbatim) {
     return [
       `${label} assistant step`,
       `  text: ${facts.assistantText === "" ? "none" : cueText(facts.assistantText)}`,
-      ...facts.calls.map((call) => `  call ${call.id} ${call.name} \u2192 ${call.failed ? "error" : "ok"}${argumentsCueOf(call)}`)
+      ...facts.calls.map((call) => `  call ${call.id} ${callCueOf(call)}`)
     ].join("\n");
   }).join("\n");
 }
@@ -25550,7 +25756,8 @@ function planSummary(slotFacts, held) {
   const askedCount = verbatim.filter((note) => note === null).length;
   const heldList = [...[...held.paths.keys()].map((key) => `- file ${key}`), ...[...held.skills.keys()].map((name3) => `- skill ${name3}`)].join("\n") || "none";
   const values = { rows: rowsOf(slotFacts, verbatim), N: String(askedCount), held: heldList };
-  return { tailText: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]), verbatim, wholeUserSlots, askedCount };
+  const askedCues = slotFacts.filter((_, at) => verbatim[at] === null).map(actionCueOf);
+  return { tailText: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]), verbatim, askedCues, wholeUserSlots, askedCount };
 }
 function notesOf(parsed, count) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || Object.keys(parsed).length !== count) return void 0;
@@ -25570,9 +25777,13 @@ function parseNotes(text, askedCount, loads2) {
   }
   return notesOf(parsed, askedCount);
 }
-function mergeNotes(verbatim, notes) {
+function mergeNotes(verbatim, notes, askedCues) {
   let next = 0;
-  return verbatim.map((note) => note ?? notes[next++]);
+  return verbatim.map((note) => {
+    if (note !== null) return note;
+    const at = next++;
+    return notes[at] === "" ? askedCues[at] : notes[at];
+  });
 }
 
 // dsh/src/inner-summary.js
@@ -25602,12 +25813,12 @@ var NO_OBSERVER = Object.freeze({ dispatch() {
 }, chunk() {
 } });
 var NO_CARRIER2 = Object.freeze({ scope: () => ({ run: (body2) => body2(), evidence: () => null }) });
-async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, observer = NO_OBSERVER, carrier = NO_CARRIER2 }) {
+async function summarizeSlots({ llm, session, index, events, selection, slots, range, held, signal, kit, ctp = null, observer = NO_OBSERVER, carrier = NO_CARRIER2 }) {
   const { provider, model, reasoningEffort } = selection;
   const chosen = { provider, model, ...reasoningEffort === void 0 ? {} : { reasoningEffort } };
   const tools = session.requestHeader()?.tools;
   const perSlot = slotMessagesOf({ slots, session, events, range });
-  const { tailText, verbatim, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
+  const { tailText, verbatim, askedCues, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
   const tail = { role: "user", content: [{ type: "text", text: tailText }] };
   const input = { throughSeq: session.seq - 1, headerSeq: headerSeqIn(index, { latest: true }), tail };
   const options = {
@@ -25663,14 +25874,14 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
   if (notes === void 0) {
     return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${askedCount} strings keyed "1" to "${askedCount}"`, call };
   }
-  return { ok: true, summaries: mergeNotes(verbatim, notes), verbatimSeqs: wholeUserSlots.map((at) => slots[at].seqs[0]), call };
+  const sourceTokens = ctp === null ? void 0 : perSlot.map((messages) => messages.reduce((sum, message) => sum + charsToTokens(requestTextOf(message), ctp), 0));
+  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: wholeUserSlots.map((at) => slots[at].seqs[0]), sourceTokens, call };
 }
 
 // dsh/src/inner-seal.js
-var PLUGIN_RECORD_NAMESPACE = "plugin:session-watcher/";
-var INNER_CALL_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${CALL_RECORD_NAME}`;
-var INNER_ATTEMPT_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${ATTEMPT_RECORD_NAME}`;
-var INNER_END_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${END_RECORD_NAME}`;
+var INNER_CALL_RECORD_TYPE = pluginRecordType(CALL_RECORD_NAME);
+var INNER_ATTEMPT_RECORD_TYPE = pluginRecordType(ATTEMPT_RECORD_NAME);
+var INNER_END_RECORD_TYPE = pluginRecordType(END_RECORD_NAME);
 var messageOf5 = (error) => error instanceof Error ? error.message : String(error);
 var USAGE_FIELDS = ["inputTokens", "cacheReadTokens", "cacheWriteTokens"];
 function diagnose({ session, recordSeq, call, range, kit }) {
@@ -25805,9 +26016,11 @@ function historyReadOf(meter, session) {
 }
 async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset, history }) {
   let estimate = null;
+  let ctp = null;
   try {
-    const ctp = ctpOf(session.id);
-    if (ctp === null) throw new Error(`session ${session.id} has no model policy to price its range under`);
+    const read = ctpOf(session.id);
+    if (read === null) throw new Error(`session ${session.id} has no model policy to price its range under`);
+    ctp = read;
     const current = await currentOf(held, readUnobserved2, agent, signal);
     const carried = carriedOf(retainedSources(session, range, bySeq), current);
     const texts = range.flatMap((seq) => {
@@ -25825,15 +26038,15 @@ async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, read
     writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", error));
   }
   if (history.error !== void 0) writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", history.error));
-  return innerQuote({ n: stepN, estimate, cRatio: ratio, preset, summaryReadCost: history.tokens });
+  return { quote: innerQuote({ n: stepN, estimate, cRatio: ratio, preset, summaryReadCost: history.tokens }), ctp };
 }
-async function requestSummary({ monitor, session, range, quote, llm, index, events, selection, fallback, slots, held, signal, kit, carrier }) {
+async function requestSummary({ monitor, session, range, quote, ctp, llm, index, events, selection, fallback, slots, held, signal, kit, carrier }) {
   const ladder = createRetryLadder({ selection, fallback });
   for (; ; ) {
     const attempt = monitor.begin(session, { range, quote });
     let again = false;
     try {
-      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder.current(), slots, range, held, signal, kit, observer: attempt, carrier });
+      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder.current(), slots, range, held, signal, kit, ctp, observer: attempt, carrier });
       attempt.responded({ endedAt: summary.call.endedAt });
       let recorded = false;
       const settle = () => {
@@ -25897,7 +26110,7 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
     const originals = range.flatMap((seq) => facts.get(seq).originals);
     const replaced = [...range, ...originals];
     const held = heldView(session.id, events);
-    const quote = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset, history });
+    const { quote, ctp } = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved: readUnobserved2, ctpOf, cRatio, preset, history });
     if (signal.aborted) throw signal.reason;
     if (quote.trigger === null) return next();
     const { attempt, summary, settle, failed: failed2 } = await requestSummary({
@@ -25905,6 +26118,7 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
       session,
       range,
       quote,
+      ctp,
       llm,
       index,
       events,
@@ -25945,6 +26159,7 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
           questions: questionsOf({ slots, bySeq }),
           attachments: slotAttachments,
           oldReads: slots.map(({ seqs }) => held.oldReads.filter(({ seq }) => seqs.includes(seq))),
+          sourceTokens: summary.sourceTokens,
           verbatimSeqs: summary.verbatimSeqs,
           changes: carriedOf(earlier, current),
           state: stateAt(session, readState, earlier, git)
@@ -26121,15 +26336,6 @@ function eventDisplayText(event) {
 }
 
 // dsh/src/monitor-settlement-recall.js
-var stepKey2 = ({ turn, step } = {}) => `${turn}:${step}`;
-var ABORTED_BEFORE_DISPATCH = "ABORTED_BEFORE_DISPATCH";
-var isInitiated = ({ target, dispatched, skipped }) => target !== void 0 && dispatched && !skipped;
-var callRecallOf = (call = {}) => isInitiated(call) ? "recall" : call.target === void 0 || call.dispatched || call.resulted ? "other" : "unknown";
-function judgeOf({ tools, calls }) {
-  const states = tools.map(({ id }) => callRecallOf(calls.get(id)));
-  if (states.includes("other") || states.length === 0) return "other";
-  return states.includes("unknown") ? "unknown" : "pure";
-}
 function reportPositions(seals, samples, tailCalls) {
   const positions = /* @__PURE__ */ new Map();
   const landing = /* @__PURE__ */ new Map();
@@ -26140,7 +26346,7 @@ function reportPositions(seals, samples, tailCalls) {
     const steps = /* @__PURE__ */ new Map();
     for (const seq of range) {
       const sample = samples.get(seq);
-      if (sample?.counted) steps.set(stepKey2(sample.event.data), seq);
+      if (sample?.counted) steps.set(stepKey(sample.event.data), seq);
     }
     const n = attempt.quote?.n ?? 0;
     if (steps.size === n) {
@@ -26159,7 +26365,7 @@ function reportPositions(seals, samples, tailCalls) {
   if (tail.length === tailCalls) {
     for (const { event } of tail) {
       positions.set(event.seq, offset += 1);
-      landing.set(stepKey2(event.data), offset);
+      landing.set(stepKey(event.data), offset);
     }
   } else {
     proved = false;
@@ -26185,10 +26391,7 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
   let seal;
   let sample;
   let open = null;
-  const targetOf2 = (call, requestSeq) => {
-    const target = eventReadTargetOf(call);
-    return target && (target.sessionId === void 0 || target.sessionId === sessionId) && target.seq >= events[0].seq && target.seq < requestSeq && log.has(target.seq) ? target.seq : void 0;
-  };
+  const judge = createRecallJudge({ sessionId });
   for (const event of events) {
     const { seq, type, data } = event;
     if (starts.has(seq)) before.set(seq, lastMeasured);
@@ -26197,35 +26400,26 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
       for (const replaced of seal.range) active.delete(replaced);
       lastMeasured = void 0;
     }
-    if (type === "step/start") open = stepKey2(data);
+    if (type === "step/start") open = stepKey(data);
     else if (type === "step/end") open = null;
     else if (type === "user/message" && eventFactOf(event).marker === null && open !== null) owners.set(seq, open);
     else if (type === "assistant/message" || type === "tool/call" || type === "tool/result") {
-      if (Number.isSafeInteger(data?.turn) && Number.isSafeInteger(data?.step)) owners.set(seq, stepKey2(data));
+      if (Number.isSafeInteger(data?.turn) && Number.isSafeInteger(data?.step)) owners.set(seq, stepKey(data));
     }
+    const judged2 = judge.push(event, { track: seal !== void 0 });
     if (isMainCall(event)) {
       const usage = callUsageOf(data?.usage);
       if (usage !== null) ctp ??= modelPolicyFor(data?.message?.source?.model).ctp;
       const resident = [...active.values()].reduce((sum, tokens) => sum + tokens, 0);
-      const content = data?.message?.content;
-      const tools = Array.isArray(content) ? content.filter((block) => block?.type === "tool-call") : [];
-      const calls = new Map(tools.map((block) => [block.id, { target: targetOf2(block, seq), dispatched: false, skipped: false, resulted: false }]));
+      const { tools, calls } = judged2.sample;
       sample = { event, counted: eventFactOf(event).step !== null, usage, resident, seal: seal?.attempt, tools, calls };
       if (!isNoise(event)) lastMeasured = usage === null ? void 0 : sample;
       samples.set(seq, sample);
     }
     if (seal === void 0 || sample === void 0) continue;
-    if (type === "tool/call" && stepKey2(data) === stepKey2(sample.event.data)) {
-      const call = sample.calls.get(data.callId);
-      if (call !== void 0) call.dispatched = true;
-    }
     if (type === "tool/result") {
       const op = event.surfaceOp;
-      const call = stepKey2(data) === stepKey2(sample.event.data) ? sample.calls.get(data.message?.toolCallId) : void 0;
-      if (call !== void 0) {
-        call.resulted = true;
-        if (data.error?.code === ABORTED_BEFORE_DISPATCH) call.skipped = true;
-      }
+      const call = judged2.call;
       const replaced = op?.op === "replace" && op.startSeq === op.endSeq && active.delete(op.startSeq);
       const returned = op === "append" && data.message?.isError !== true && call !== void 0 && isInitiated(call);
       if (!replaced && !returned) continue;
@@ -26833,12 +27027,32 @@ function carrierAt(log, seq) {
 }
 function committedOf(attempt, log, kit) {
   const { slots } = carrierAt(log, attempt.carrier.seq).data.source;
-  return { slots, range: new Set(recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit).range) };
+  const call = recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit);
+  return { slots, range: new Set(call.range), summary: { seq: attempt.call.seq, stream: call.stream } };
 }
 function placeOf2(slot, log) {
   const events = slot.seqs.map((seq) => loggedEvent(log, seq));
   const step = events.map((event) => eventFactOf(event).step).find((counted) => counted !== null) ?? null;
   return { key: slot.seqs[0], seqs: slot.seqs, turn: step?.turn ?? null, step: step?.step ?? null, source: slotSourceOf(events[0]), events };
+}
+var sourceTokensOf = (slot) => Number.isFinite(slot?.sourceTokens) && slot.sourceTokens >= 0 ? slot.sourceTokens : null;
+function eventsOfSlot(slot, log) {
+  const events = Array.isArray(slot?.seqs) ? slot.seqs.map((seq) => log.get(seq)) : null;
+  return events === null || events.includes(void 0) ? null : events;
+}
+function usageOfSlot({ slots, at, events, log, summary, kit }) {
+  const own = events.find(isMainCall);
+  const current = own === void 0 ? null : { seq: own.seq, usage: callUsageOf(own.data?.usage) };
+  return { current, next: own === void 0 ? null : nextCallOf(slots.slice(at + 1), log, summary, kit), sourceTokens: sourceTokensOf(slots[at]) };
+}
+function nextCallOf(later, log, summary, kit) {
+  for (const slot of later) {
+    const events = eventsOfSlot(slot, log);
+    if (events === null) return null;
+    const call = events.find(isMainCall);
+    if (call !== void 0) return { kind: "main", seq: call.seq, usage: callUsageOf(call.data?.usage) };
+  }
+  return { kind: "summary", seq: summary.seq, usage: usageOfStream(summary.stream, kit).folded };
 }
 var NOT_COMMITTED = Object.freeze({ kind: "not_committed" });
 var NOT_TARGET = Object.freeze({ kind: "not_target" });
@@ -27012,7 +27226,7 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
       const attempt = attemptOf(facts.state, id);
       if (attempt.carrier === null) return NOT_COMMITTED;
       const log = await facts.log();
-      const { slots, range } = committedOf(attempt, log, kit);
+      const { slots, range, summary } = committedOf(attempt, log, kit);
       const at = slots.findIndex((each) => each.seqs[0] === key);
       if (at < 0) throw new Error(`the carrier of attempt ${id} holds no slot ${key}`);
       const slot = slots[at];
@@ -27025,7 +27239,14 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
         dispatches: attempt.slotDispatches?.[key] ?? [],
         oldReads: oldReadsOf(slot)
       });
-      return { ...place, number: at + 1, c: slot.text, events: events.map((event) => sourceEventView(event, { visible: range.has(event.seq) })), tools };
+      return {
+        ...place,
+        number: at + 1,
+        c: slot.text,
+        events: events.map((event) => sourceEventView(event, { visible: range.has(event.seq) })),
+        tools,
+        usage: usageOfSlot({ slots, at, events, log, summary, kit })
+      };
     }
   };
 }

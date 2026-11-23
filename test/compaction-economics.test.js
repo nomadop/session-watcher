@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ordinalsOf, paybackOf, settlementsOf, paybackCurveOf, unexpectedMissOf, shownStatusOf,
+  ordinalsOf, paybackOf, settlementsOf, paybackCurveOf, unexpectedMissOf, isColdCall, MISS_WARNING_PERCENT, shownStatusOf,
 } from '../public/lib/compactionEconomics.js';
 import {
   attemptRow, handoffRow, failedRow, progressRow, CUT, NO_USAGE, paying, rebuilt, clearing,
@@ -433,4 +433,20 @@ test('a segment that ran no step has the one point of the seals that landed on i
   assert.deepEqual(curve.net, [-10]);
   assert.deepEqual(curve.lowest, { value: -10, at: 0 });
   assert.deepEqual(curve.below, [[0, 0]]);
+});
+
+test('a summary call is cold when its cache read falls short of the context before by more than the unexpected-rebuild share, and not at the share itself', () => {
+  const warm = 1_000 * (100 - MISS_WARNING_PERCENT) / 100;
+  assert.equal(isColdCall({ cacheRead: warm }, 1_000), false, 'at the share');
+  assert.equal(isColdCall({ cacheRead: warm - 1 }, 1_000), true, 'beyond it');
+  assert.equal(isColdCall({ cacheRead: 1_200 }, 1_000), false, 'a read above the context is warm');
+});
+
+test('without a context before to compare with, a call is cold only when it read nothing from the cache, and one with no usage is never cold', () => {
+  for (const before of [null, undefined, 0, -5]) {
+    assert.equal(isColdCall({ cacheRead: 0 }, before), true, `before ${before}`);
+    assert.equal(isColdCall({ cacheRead: 1 }, before), false, `before ${before}`);
+  }
+  assert.equal(isColdCall(null, 1_000), false);
+  assert.equal(isColdCall(null, null), false);
 });

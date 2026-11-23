@@ -1,10 +1,11 @@
 // dsh/src/inner-mode.js — the host adapter of the inner compaction session mode: the record a selection appends, the classification of the events the shared fold (`lib/inner-seal/mode.js`) takes, the selection, the plain subagent's inheritance and the access the channel reads.
 // It knows no Cordis and imports no DSH package: the `dsh-session` record functions reach it by parameter.
 import { writeDiagnostic, hostDiagnostic } from './watcher-table.js';
+import { pluginRecordType } from '../../lib/harness/dsh/plugin-record.js';
 import { foldMode, INITIAL_MODE, modeStateOf } from '../../lib/inner-seal/mode.js';
 
 /** The plugin record a selection appends: the SW namespace the log keeps beside the events the model sees. */
-export const MODE_RECORD_TYPE = 'plugin:session-watcher/inner-mode';
+export const MODE_RECORD_TYPE = pluginRecordType('inner-mode');
 /** The projection key the registry keeps the mode under. */
 export const MODE_PROJECTION_KEY = 'session-watcher/inner-mode';
 

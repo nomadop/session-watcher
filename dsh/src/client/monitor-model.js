@@ -1,6 +1,6 @@
 // dsh/src/client/monitor-model.js — the inner compaction monitor's display model: what a parent row's meta, a content block and a slot's overview say, as plain data with the texts already worded.
 // The React pages and the Markdown export each render this one model, so the two never disagree on what a detail says. It imports the pure modules beside it, the economics model's `paybackPercent` (`public/lib/compactionEconomics.js`) and the settings form's `PRESET_IDS` (`public/lib/compactionSettings.js`), nothing else, so Node and the browser bundle load it alike.
-import { NOT_AVAILABLE, elapsedOf, formatElapsed, handoffSegmentOf, contextChangeText, contextRangeText, contextMissText, costWarningsOf } from './monitor-state.js';
+import { NOT_AVAILABLE, elapsedOf, formatElapsed, handoffSegmentOf, contextChangeText, contextRangeText, contextMissText, costWarningsOf, slotWarningCount } from './monitor-state.js';
 import { compactCount } from './monitor-files-model.js';
 import { paybackPercent } from '../../../public/lib/compactionEconomics.js';
 import { PRESET_IDS } from '../../../public/lib/compactionSettings.js';
@@ -11,8 +11,19 @@ export const jsonText = value => JSON.stringify(value, null, 2) ?? String(value)
 /** A value as it is when it is a text, else as indented JSON. */
 export const stringOf = value => (typeof value === 'string' ? value : jsonText(value));
 
+// The badge on the step slot: how many slots of the attempt carry a warning, none where no slot has one. A warning sits only on a slot of a step, and `stepN` counts the slots of steps (`innerSource` and `skeletonSlots` in `lib/inner-seal/source.js` read the same set), so the title can name it as the whole without a slot list.
+function stepBadge(attempt, t) {
+  const count = slotWarningCount(attempt);
+  if (count === 0) return null;
+  const total = attempt.stepN;
+  return { text: `${count}`, title: Number.isFinite(total) ? t('monitor.meta.step.badge', { count, total }) : t('monitor.meta.step.badge.unrated', { count }) };
+}
+
 // The step slot: the count of the range the attempt summarizes, `stepN` being the quote's own n, so it is missing exactly where the quote is.
-const stepPart = (attempt, t) => ({ part: 'step', text: Number.isFinite(attempt.stepN) ? t('monitor.meta.step', { count: attempt.stepN }) : NOT_AVAILABLE, title: t('monitor.meta.step.title') });
+const stepPart = (attempt, t) => {
+  const badge = stepBadge(attempt, t);
+  return { part: 'step', text: Number.isFinite(attempt.stepN) ? t('monitor.meta.step', { count: attempt.stepN }) : NOT_AVAILABLE, title: t('monitor.meta.step.title'), ...(badge && { badge }) };
+};
 
 // The decimals a deviation and a tolerance read to in a row's meta.
 const DECIMALS = 2;
@@ -29,8 +40,8 @@ function estimatePart({ trigger }, t) {
 }
 
 /**
- * The parts of a parent row's meta in the order the row shows them, each `{ part, text, title?, attention? }`: its own `time`, the `step` count of the range it summarizes, the `estimate` deviation of the quote it triggered on, the `usage` of its call (the output alone; the input is the drawer's usage page alone), the `range` of the context before and after the seal and the `context` change in words, the cache `miss` of the next call (the tokens it rebuilt), and the attempt's own `seq`.
- * `text` is what the part reads and `title` the tooltip the row gives it, absent where the part has none; what the row has none of reads as `NOT_AVAILABLE`. `attention` marks the readings the row draws as a warning: a context that grew in the context slot and, where `missWarned` says the rebuild was unexpected (`unexpectedMissOf`), the cache rebuild slot; a reading filter, saying no status, failure or loss; both keep the text they have unmarked, their titles telling the reason. `attempt` is a row of `rowsOf`, `now` the display clock a running span reads.
+ * The parts of a parent row's meta in the order the row shows them, each `{ part, text, title?, attention?, badge? }`: its own `time`, the `step` count of the range it summarizes (with a `badge` `{ text, title }` where slots have warnings, which the row floats over the count's corner and the Markdown export, reading `text` alone, never shows), the `estimate` deviation of the quote it triggered on, the `usage` of its call (the output alone; the input is the drawer's usage page alone), the `range` of the context before and after the seal and the `context` change in words, the cache `miss` of the next call (the tokens it rebuilt), and the attempt's own `seq`.
+ * `text` is what the part reads and `title` the tooltip the row gives it, absent where the part has none; what the row has none of reads as `NOT_AVAILABLE`. `attention` marks the readings the row draws as a warning, none of them a status, failure or loss: a context that grew in the context slot; where `missWarned` says the rebuild was unexpected (`unexpectedMissOf`), the cache rebuild slot; and a cold (`isColdCall`) or short summary call, the usage slot. Each keeps the text it has unmarked; the context and rebuild slots say the reason in their titles, the usage slot keeps its own title, the call row alone wording that warning. `attempt` is a row of `rowsOf`, `now` the display clock a running span reads.
  */
 export function parentMetaParts(attempt, now, t, missWarned = false) {
   const elapsed = elapsedOf(attempt, 'attempt', now);
@@ -46,6 +57,7 @@ export function parentMetaParts(attempt, now, t, missWarned = false) {
         part: 'usage',
         text: t('monitor.usage.cell', { output: usage.output }),
         title: t('monitor.usage.title', { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite }),
+        ...((warnings.call || warnings.short) && { attention: true }),
       },
     { part: 'range', text: contextRangeText(attempt.contextChange, t), title: t('monitor.meta.range.title') },
     warnings.context

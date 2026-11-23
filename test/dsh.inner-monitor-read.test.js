@@ -2148,3 +2148,123 @@ test('a dispatch the classification kept that the log no longer holds is placed 
   assert.deepEqual(detail.tools.calls.map(({ warnings }) => warnings), [[]]);
   assert.deepEqual(detail.tools.warnings, ['carrier-recall']);
 });
+
+// ── The measured usage of a slot's own call and of the call after it ──────────────────────────────────────
+
+// The conversation with a usage on each of its two replies and on nothing else; the usages differ in every bucket so that a swapped one cannot pass.
+function meteredConversation() {
+  const conv = conversation();
+  conv.first.data.usage = tokens(1_000, 40, 5_000, 300);
+  conv.last.data.usage = tokens(2_000, 60, 7_000, 0);
+  return conv;
+}
+const FIRST_USAGE = { input: 1_000, output: 40, cacheRead: 5_000, cacheWrite: 300 };
+const LAST_USAGE = { input: 2_000, output: 60, cacheRead: 7_000, cacheWrite: 0 };
+
+test('a slot\'s usage is its own call\'s measured usage and the next call\'s: the successor of a slot is the main call of the next slot that has one, and the last slot of the carrier is followed by the summary call the carrier cites', { skip }, async () => {
+  const conv = meteredConversation();
+  const { start, call, prune, carrier } = sealedOver(conv);
+  const { access, id, reads } = detailsOver([conv.header, ...conv.source, start, call, prune, carrier]);
+
+  const [ask, first, last] = await Promise.all([conv.ask, conv.first, conv.last].map(event => access.slot(id, start.seq, event.seq)));
+
+  assert.deepEqual(first.usage, { current: { seq: conv.first.seq, usage: FIRST_USAGE }, next: { kind: 'main', seq: conv.last.seq, usage: LAST_USAGE }, sourceTokens: null });
+  assert.deepEqual(last.usage, { current: { seq: conv.last.seq, usage: LAST_USAGE }, next: { kind: 'summary', seq: call.seq, usage: USAGE }, sourceTokens: null });
+  assert.deepEqual(ask.usage, { current: null, next: null, sourceTokens: null }, 'a slot with no main call has no call to measure, and none to look past');
+  assert.deepEqual(reads, [id, id, id], 'each detail is the one read of the log it was');
+});
+
+// The log of `conv` sealed as it is given, and the detail of the slot that opens at `key`.
+const usageSlotOver = (conv, { slots = conv.slots, key } = {}) => {
+  const { start, call, prune, carrier } = sealedOver(conv, { slots });
+  const { access, id, reads } = detailsOver([conv.header, ...conv.source, start, call, prune, carrier]);
+  return { start, call, access, id, reads, detail: () => access.slot(id, start.seq, key) };
+};
+
+test('the successor of a slot skips the slots of the carrier that have no main call, a user message and a tool result among them, and never one that has a call with no usage: that call is the successor and its usage reads as not recorded', { skip }, async () => {
+  const conv = conversation();
+  conv.first.data.usage = tokens(10, 1);
+  const lone = toolResult({ callId: 'call-9', text: 'a late result', step: 9 });
+  const note = userMessage({ text: 'a note between' });
+  const silent = assistantMessage({ text: 'no usage reported', step: 3 });
+  const slots = [conv.slots[1], { seqs: [lone.seq], text: 'a result' }, { seqs: [note.seq], text: 'a note' }, { seqs: [silent.seq], text: 'silent' }, conv.slots[2]];
+  const { detail } = usageSlotOver({ ...conv, source: [...conv.source.slice(0, 4), lone, note, silent, conv.last], range: [...conv.range.slice(0, 3), lone.seq, note.seq, silent.seq, conv.last.seq], slots }, { key: conv.first.seq });
+
+  assert.deepEqual((await detail()).usage.next, { kind: 'main', seq: silent.seq, usage: null });
+});
+
+test('the call of a slot is the assistant message among its events whatever event opens the slot, and a usage the reducer refuses reads as null while a cache bucket the call did not report is zero', { skip }, async () => {
+  const conv = conversation();
+  const lone = toolResult({ callId: 'call-9', text: 'a late result', step: 4 });
+  const reply = assistantMessage({ text: 'a reply behind a result', step: 4, usage: { inputTokens: 7, outputTokens: 3 } });
+  const odd = assistantMessage({ text: 'a reply with a broken usage', step: 5, usage: { inputTokens: 7, outputTokens: 'x' } });
+  const slots = [{ seqs: [lone.seq, reply.seq], text: 'a result and a reply' }, { seqs: [odd.seq], text: 'broken' }];
+  const over = (key) => usageSlotOver({ ...conv, source: [lone, reply, odd], range: [lone.seq, reply.seq, odd.seq], slots }, { key });
+
+  const opened = (await over(lone.seq).detail()).usage;
+  assert.deepEqual(opened.current, { seq: reply.seq, usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } }, 'the first event is a result, the call is the reply');
+  assert.deepEqual(opened.next, { kind: 'main', seq: odd.seq, usage: null }, 'a usage that is no usage is none, not zeros');
+  assert.deepEqual((await over(odd.seq).detail()).usage.current, { seq: odd.seq, usage: null });
+});
+
+test('the call after the last call of a carrier is the summary call the carrier cites, not an earlier failed summary of the same range, not a call recorded after the carrier and not an attempt of a main call: the committed attempt\'s own call record gives its last usage chunk', { skip }, async () => {
+  const conv = meteredConversation();
+  const early = innerAttempt({ range: conv.range, tail: LONG_PROMPT, request: { headerSeq: conv.header.seq, tools: { count: 1 } } });
+  const earlyStream = streamOf([...textChunks('no notes'), { type: 'usage', usage: { inputTokens: 9, outputTokens: 9, cacheReadTokens: 9, cacheWriteTokens: 9 } }, STOP]);
+  const earlyCall = innerCall({ range: conv.range, tail: LONG_PROMPT, stream: earlyStream, endedAt: CALL_ENDED_AT - 5, attempt: early.seq });
+  const earlyEnd = innerEnd({ attempt: early.seq, reason: 'the summary text is not the notes' });
+  // The committed call streams two usage chunks: the last one stands.
+  const second = [{ type: 'usage', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 1, cacheWriteTokens: 1 } }, { type: 'usage', usage: { inputTokens: 55, outputTokens: 66, cacheReadTokens: 77, cacheWriteTokens: 88 } }];
+  const stream = streamOf([...textChunks(SUMMARIES), ...second, STOP]);
+  const sealed = sealedOver(conv, { stream });
+  const afterwards = [attempt({ usageChunk: { inputTokens: 3, outputTokens: 3 }, finish: { kind: 'error' } }), assistantMessage({ text: 'after the seal', step: 3, usage: tokens(4_000, 4) })];
+  const { access, id } = detailsOver([conv.header, ...conv.source, early, earlyCall, earlyEnd, sealed.start, sealed.call, sealed.prune, sealed.carrier, ...afterwards]);
+
+  const detail = await access.slot(id, sealed.start.seq, conv.last.seq);
+
+  assert.deepEqual(detail.usage.next, { kind: 'summary', seq: sealed.call.seq, usage: { input: 55, output: 66, cacheRead: 77, cacheWrite: 88 } });
+});
+
+test('a summary call that reported no usage is a summary successor with no usage, and a slot with no main call has no successor to look for even when the carrier has later calls', { skip }, async () => {
+  const conv = meteredConversation();
+  const bare = streamOf([...textChunks(SUMMARIES), STOP]);
+  const { detail } = usageSlotOver(conv, { key: conv.last.seq });
+  assert.equal((await detail()).usage.next.kind, 'summary');
+
+  const sealed = sealedOver(conv, { stream: bare });
+  const { access, id } = detailsOver([conv.header, ...conv.source, sealed.start, sealed.call, sealed.prune, sealed.carrier]);
+  assert.deepEqual((await access.slot(id, sealed.start.seq, conv.last.seq)).usage.next, { kind: 'summary', seq: sealed.call.seq, usage: null });
+  assert.deepEqual((await access.slot(id, sealed.start.seq, conv.ask.seq)).usage, { current: null, next: null, sourceTokens: null }, 'the ask comes before calls, and looks past none');
+});
+
+test('another slot whose records cannot be read leaves the successor unconfirmed as null, never skipped or taken for the summary, and changes no failure of the slot itself: its own events and the other slots are read as before', { skip }, async () => {
+  const conv = meteredConversation();
+  const lone = toolResult({ callId: 'call-9', text: 'a late result', step: 9 });
+  const slots = [conv.slots[1], { seqs: [lone.seq], text: 'a result' }, conv.slots[2]];
+  const whole = { ...conv, source: [...conv.source.slice(0, 4), lone, conv.last], range: [...conv.range.slice(0, 3), lone.seq, conv.last.seq], slots };
+  const { start, call, prune, carrier } = sealedOver(whole, { slots });
+  const log = [conv.header, ...whole.source, start, call, prune, carrier];
+  const { access, id } = detailsOver(log, { read: log.filter(event => event.seq !== lone.seq) });
+
+  const first = await access.slot(id, start.seq, conv.first.seq);
+  assert.deepEqual([first.usage.current.seq, first.usage.next], [conv.first.seq, null], 'the middle slot may hold the successor, and cannot say');
+  assert.deepEqual(first.events.map(event => event.seq), conv.slots[1].seqs, 'the slot itself reads as before');
+  assert.equal((await access.slot(id, start.seq, conv.last.seq)).usage.next.kind, 'summary', 'no slot after it to fail');
+  await assert.rejects(access.slot(id, start.seq, lone.seq), /holds no event at seq/, 'a slot whose own event is missing still fails as before');
+
+  const damaged = usageSlotOver({ ...conv, slots: [conv.slots[1], { seqs: 'broken', text: 'x' }, conv.slots[2]] }, { key: conv.first.seq });
+  assert.equal((await damaged.detail()).usage.next, null, 'a slot that holds no seq list cannot be read either');
+});
+
+test('the estimate of a slot is the one its carrier kept, whole and unrounded, zero included, and none where the carrier kept none or a value that is no non-negative finite number', { skip }, async () => {
+  const conv = meteredConversation();
+  const kept = [12.375, 0, undefined];
+  const readAll = async slotsKept => {
+    const slots = conv.slots.map((slot, at) => (slotsKept[at] === undefined ? slot : { ...slot, sourceTokens: slotsKept[at] }));
+    const { access, id, start } = usageSlotOver(conv, { slots });
+    return Promise.all(conv.slots.map(slot => access.slot(id, start.seq, slot.seqs[0]))).then(details => details.map(detail => detail.usage.sourceTokens));
+  };
+
+  assert.deepEqual(await readAll(kept), [12.375, 0, null], 'a zero the seal observed is not a missing value');
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY, '7', null, {}]) assert.deepEqual(await readAll([bad, bad, bad]), [null, null, null], `${String(bad)}`);
+});

@@ -1034,6 +1034,26 @@ export const MONITOR_CSS = `[data-sw-monitor] {
 [data-sw-monitor] .sw-mon-meta-item[data-sw-attention] {
   color: var(--dsw-alias-state-warn-primary);
 }
+[data-sw-monitor] .sw-mon-meta-item[data-part="step"] {
+  position: relative;
+}
+[data-sw-monitor] .sw-mon-badge {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  box-sizing: border-box;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 [data-sw-monitor] .sw-mon-drawer {
   position: relative;
   display: flex;
@@ -1155,6 +1175,12 @@ export const MONITOR_CSS = `[data-sw-monitor] {
   margin: 0;
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
+}
+[data-sw-monitor] [data-sw-usage="output"] {
+  color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 80%, var(--dsw-alias-label-primary));
+}
+[data-sw-monitor] [data-sw-usage="cacheWrite"] {
+  color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
 }
 [data-sw-monitor] .sw-mon-note {
   margin: 12px 0 0;

@@ -49,10 +49,12 @@ function Preview({ preview: { input, output }, empty }) {
     shown === null ? null : h('span', empty === null ? { className: 'sw-mon-out' } : { className: 'sw-mon-out sw-mon-empty', 'data-sw-empty': '' }, shown));
 }
 
-// A parent row's meta, which wraps with the width: the parts the model gives, each in a span of its own, a warning's span carrying `data-sw-attention` and a handoff's type its `data-type`, which the style colours by.
+// A parent row's meta, which wraps with the width: the parts the model gives, each in a span of its own, a warning's span carrying `data-sw-attention`, a handoff's type its `data-type`, which the style colours by, and a part's `badge` a child span of its own.
 function Meta({ parts }) {
   return h('span', { className: 'sw-mon-meta' },
-    parts.map(({ part, text, title, attention, type }) => h('span', { key: part, className: 'sw-mon-meta-item', 'data-part': part, 'data-sw-attention': attention ? '' : undefined, 'data-type': type, title }, text)));
+    parts.map(({ part, text, title, attention, type, badge }) => h('span', { key: part, className: 'sw-mon-meta-item', 'data-part': part, 'data-sw-attention': attention ? '' : undefined, 'data-type': type, title },
+      text,
+      badge === undefined ? null : h('span', { className: 'sw-mon-badge', role: 'img', title: badge.title, 'aria-label': badge.title }, badge.text))));
 }
 
 // A parent row only toggles its group, never selects; a call, slot, settlement, content or turn row selects, from the keyboard too; a placeholder row does neither. A settlement row shows its title and its meta and no preview.

@@ -91,6 +91,37 @@ test('only text whose JSON syntax fails goes to `loads`, once, and its answer is
 });
 
 test('the notes fill the asked slots in order and a user slot keeps its verbatim note', () => {
-  assert.deepEqual(mergeNotes(['user: hi', null, 'user: go', null], ['a', 'b']), ['user: hi', 'a', 'user: go', 'b']);
-  assert.deepEqual(mergeNotes([null], ['']), ['']);
+  assert.deepEqual(mergeNotes(['user: hi', null, 'user: go', null], ['a', 'b'], ['cue a', 'cue b']), ['user: hi', 'a', 'user: go', 'b']);
+});
+
+test('an empty note takes the cue of its own slot, whichever slots precede it; a note that is not empty and a user slot are never touched, and an empty cue leaves the note empty', () => {
+  assert.deepEqual(mergeNotes(['user: hi', null, null, 'user: go', null, null], ['', 'kept', ' ', ''], ['cue 1', 'cue 2', 'cue 3', '']), ['user: hi', 'cue 1', 'kept', 'user: go', ' ', '']);
+});
+
+test('the cues of the asked slots, a user slot having none, in their order are the action of each: each call of a step as its call row names it without the id, joined by `; `, else the step\'s text cue, a tool result as `tool result`, any other slot its text cue', () => {
+  const facts = [
+    user('please fix it'),
+    {
+      own: false, kind: 'step', text: 'ignored', assistantText: 'reading',
+      calls: [
+        { id: 'call-1', name: 'read', arguments: '{"path":"lib/held-view.js"}', failed: false },
+        { id: 'call-2', name: 'bash', arguments: 'not json', failed: true },
+        { id: 'call-3', name: 'noop', arguments: '{}', failed: false },
+      ],
+    },
+    { own: false, kind: 'step', text: '', assistantText: 'thinking  aloud', calls: [] },
+    { own: false, kind: 'step', text: '', assistantText: '', calls: [] },
+    { own: false, kind: 'result', text: 'late', toolCallId: 'call-outside' },
+    { own: false, kind: 'other', text: 'sub\nagent says' },
+    { own: false, kind: 'other', text: '' },
+  ];
+  const { askedCues } = planSummary(facts, NO_HELD);
+  assert.deepEqual(askedCues, [
+    'read → ok: "lib/held-view.js"; bash → error: "not json"; noop → ok',
+    '"thinking aloud"',
+    '',
+    'tool result',
+    '"sub agent says"',
+    '',
+  ]);
 });

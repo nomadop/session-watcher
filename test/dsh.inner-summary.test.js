@@ -297,7 +297,7 @@ const slotsOf = ({ carrier, secondAsk, secondReply }, seqOf) => [
 const NOTES = '{"1": "a", "2": "b"}';
 const SUMMARIES = ['a', 'user: second request', 'b'];
 
-test('a successful stop with a notes object of one string per slot the model is asked for answers the summaries, the user\'s own slot keeping its verbatim note, and the call record data, which carries the stream as the accumulator recorded it', { skip }, async () => {
+test('a successful stop with a notes object of one string per slot the model is asked for answers the summaries, the user\'s own slot keeping its verbatim note and an empty note taking its step\'s text cue, and the call record data, which carries the stream as the accumulator recorded it', { skip }, async () => {
   const fixture = sealedSession();
   const { session, seqOf, headerWithTools } = fixture;
   const usage = { type: 'usage', usage: { inputTokens: 900, outputTokens: 30, cacheReadTokens: 600 } };
@@ -310,7 +310,7 @@ test('a successful stop with a notes object of one string per slot the model is 
 
   assert.equal(outcome.ok, true);
   assert.equal(session.seq, logLength, 'the call appends nothing to the log');
-  assert.deepEqual(outcome.summaries, ['asked once', 'user: second request', '']);
+  assert.deepEqual(outcome.summaries, ['asked once', 'user: second request', '"second reply"'], 'the empty note of the last slot is its step\'s text cue');
   const { call } = outcome;
   assert.deepEqual(Object.keys(call).sort(), ['endedAt', 'input', 'purpose', 'range', 'selection', 'stream', 'v']);
   assert.equal(typeof call.endedAt, 'number');

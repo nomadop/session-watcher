@@ -1,4 +1,5 @@
 // public/lib/compactionEconomics.js — harness-independent compaction figures: the monitor lists estimates from attempt and handoff rows; the closed-segment report can adjust those estimates and its cumulative net with recall evidence.
+import { rebuildPremiumOf, requestCostOf } from './requestPrice.js';
 
 // The count of epoch boundaries before an attempt's first record: the segment it belongs to, the first where the host sends none.
 const segmentOf = ({ epoch }) => epoch ?? 0;
@@ -51,13 +52,6 @@ function followOf(committed, at, tail) {
   return later + tail;
 }
 
-// Output is recorded but not priced by this report's two-price model.
-function requestCostOf(usage, ratio) {
-  const { input, cacheRead, cacheWrite } = usage ?? {};
-  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
-  return cacheRead + ratio * (input + cacheWrite);
-}
-
 const neededOf = (cut, cost) => (cost === null || cut === null ? null : cut > 0 ? Math.ceil(Math.round(cost) / cut) : Infinity);
 const gapOf = (needed, follow) => (Number.isFinite(needed) ? needed - follow : null);
 
@@ -66,7 +60,7 @@ function figuresOf({ contextChange, call, cRatio }, follow, cut) {
   const { miss } = contextChange ?? {};
   const summary = requestCostOf(call.usage, cRatio);
   if (!Number.isFinite(cut) || !Number.isFinite(miss) || summary === null) return null;
-  const rebuild = (cRatio - 1) * miss;
+  const rebuild = rebuildPremiumOf(miss, cRatio);
   const cost = summary + rebuild;
   return cost > 0 ? { saved: Math.max(0, follow * cut), cost, rebuild } : null;
 }
@@ -226,11 +220,11 @@ export function paybackCurveOf({ steps, rows, adjustments }) {
   return { steps, net, seals: rows.map(row => row.sealAt).sort((a, b) => a - b), lowest, below, medianNeeded };
 }
 
-/** The share of the previous compaction's context, in percent, that a cache rebuild may exceed the context's growth by before it counts as unexpected. */
-export const UNEXPECTED_MISS_PERCENT = 30;
+/** The share, in percent, past which a cache miss draws a warning: of the previous compaction's context that a cache rebuild may exceed the context's growth by before it counts as unexpected, and of the context before a compaction (`contextChange.before`) that its summary call's cache read may fall short of before the call counts as cold. */
+export const MISS_WARNING_PERCENT = 30;
 
 /**
- * The ids, as a Set, of the committed attempts of `attempts` whose cache rebuild was unexpected. A compaction's rebuild (`miss`) is what the first call after it did not read from the cache; where the cache held, it is the context the segment grew by since the previous compaction, `after` less the previous one's `after`. The rebuild is unexpected when it exceeds that growth by more than `UNEXPECTED_MISS_PERCENT` of the previous compaction's `after`; a context that shrank has a negative growth.
+ * The ids, as a Set, of the committed attempts of `attempts` whose cache rebuild was unexpected. A compaction's rebuild (`miss`) is what the first call after it did not read from the cache; where the cache held, it is the context the segment grew by since the previous compaction, `after` less the previous one's `after`. The rebuild is unexpected when it exceeds that growth by more than `MISS_WARNING_PERCENT` of the previous compaction's `after`; a context that shrank has a negative growth.
  * The previous compaction is the nearest committed one before it in its segment, ascending by id: a failed, cancelled or running attempt is none, and a committed one whose own `after` is unknown is the previous one all the same, so the compaction after it has none to compare with. A compaction with no previous one, no known `after` or `miss`, or a previous `after` that is not positive is not in the Set.
  * It is for presentation alone; no row identity, selection or resource key reads it.
  */
@@ -243,10 +237,20 @@ export function unexpectedMissOf(attempts) {
     const segment = segmentOf(attempt);
     const { after, miss } = contextChange ?? {};
     const previous = previousAfter.get(segment);
-    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
+    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > MISS_WARNING_PERCENT * previous) unexpected.add(id);
     previousAfter.set(segment, Number.isFinite(after) ? after : null);
   }
   return unexpected;
+}
+
+/**
+ * Whether a summary call read too little of its context from the cache: `usage` is the call's `{ cacheRead }`, `before` the context of the main call it summarizes after, which the call shares its prefix with. The call is cold when its cache read falls short of `before` by more than `MISS_WARNING_PERCENT` of it.
+ * Where `before` is not a positive number, as for an attempt that did not commit, the call is cold only when it read nothing from the cache; a call with no usage is not.
+ * It is for presentation alone.
+ */
+export function isColdCall(usage, before) {
+  if (usage === null) return false;
+  return before > 0 ? (before - usage.cacheRead) * PERCENT > MISS_WARNING_PERCENT * before : usage.cacheRead === 0;
 }
 
 /** The status an attempt shows: `paid` for a committed one whose progress in `payback` (`paybackOf` over all the attempts and handoffs) has reached `PAID_BACK_PERCENT`, else its own status, which stays what the host gave and decides everything else. */

@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH, DRAWER_KEY_STEP, LIST_MIN_WIDTH, PREVIEW_CHARS,
-  createViewState, reduceView, isOpen, slotTitleOf, rowIdentity, flattenRows, visibleGroups, previewOf, elapsedOf, formatElapsed, clampDrawerWidth,
-  handoffSegmentOf, contextRangeText, NOT_AVAILABLE, LEAVES_LOADING, LEAVES_FAILED,
+  costWarningsOf, createViewState, reduceView, isOpen, slotTitleOf, rowIdentity, flattenRows, visibleGroups, previewOf, elapsedOf, formatElapsed, clampDrawerWidth,
+  handoffSegmentOf, contextRangeText, NOT_AVAILABLE, LEAVES_LOADING, LEAVES_FAILED, SHORT_SUMMARY_OUTPUT,
 } from '../dsh/src/client/monitor-state.js';
 import { settlementsOf } from '../public/lib/compactionEconomics.js';
-import { attemptRow, slotRow, handoffRow, failedRow, progressRow, paying, rebuilt, clearing, SUMMARY } from './helpers/dsh-monitor-wire.js';
+import { attemptRow, slotRow, handoffRow, failedRow, progressRow, paying, rebuilt, clearing, warmed, SUMMARY } from './helpers/dsh-monitor-wire.js';
 
 test('a new view state has nothing selected, no choices of its own, the drawer at its default width and the filter listing everything', () => {
   assert.deepEqual(createViewState(), { overrides: {}, selected: null, drawerWidth: DRAWER_DEFAULT_WIDTH, filter: { category: 'all', warned: false } });
@@ -538,8 +538,8 @@ test('collapsing closes every group the user opened and leaves the selection and
   assert.equal(reduceView(reclosed, { type: 'collapse' }), reclosed, 'a group the user closed again is no open group');
 });
 
-// Two compactions of segment 0 that cut the context, the second rebuilding enough of the first's context in the cache to pass `UNEXPECTED_MISS_PERCENT` (a warning); the continue 5 that cleared the segment, a settlement before it; a later load 7; and a compaction of segment 1 that grew the context (a warning).
-const mixed = () => ({ attempts: [paying(1), paying(2, { stepN: 1 }), attemptRow(9, { epoch: 1 })], handoffs: [clearing(5, 1, 2), handoffRow(7, { epoch: 1 })] });
+// Two compactions of segment 0 that cut the context, the second rebuilding enough of the first's context in the cache to pass `MISS_WARNING_PERCENT` (a warning); the continue 5 that cleared the segment, a settlement before it; a later load 7; and a compaction of segment 1 that grew the context (a warning).
+const mixed = () => ({ attempts: [paying(1), paying(2, { stepN: 1 }), attemptRow(9, { epoch: 1 })].map(warmed), handoffs: [clearing(5, 1, 2), handoffRow(7, { epoch: 1 })] });
 const filtering = (...actions) => actions.reduce(reduceView, createViewState());
 const category = name => ({ type: 'category', category: name });
 const WARNED = { type: 'warned', warned: true };
@@ -579,7 +579,7 @@ test('the filter hides rows and changes no figure of the rest: the ordinals, the
 test('a compaction the filter hides still pays back the ones it lists: the steps after a listed compaction count whether they are listed or not', () => {
   const rebuilding = attemptRow(2, { contextChange: { before: 150_000, after: 50_000, delta: -100_000, miss: 40_000 }, cRatio: 12, call: { usage: SUMMARY }, stepN: 4, epoch: 0 });
   const quiet = attemptRow(3, { contextChange: { before: 51_000, after: 50_000, delta: -1_000, miss: 0 }, stepN: 5, epoch: 0 });
-  const attempts = [paying(1), rebuilding, quiet];
+  const attempts = [warmed(paying(1)), rebuilding, warmed(quiet)];
   const statusOf = state => Object.fromEntries(flattenRows(attempts, {}, state).map(row => [row.attempt.id, row.shownStatus]));
   assert.equal(statusOf(createViewState())[2], 'paid');
   assert.deepEqual(statusOf(filtering(WARNED)), { 2: 'paid' }, 'the compaction after it is not listed and still counts');
@@ -599,4 +599,43 @@ test('a group the filter hides lists none of its leaves and keeps its choice of 
   assert.deepEqual(identities(flattenRows(attempts, slots, state, handoffs, turns)), ['attempt:1', 'call:1', 'slot:1:10', 'attempt:2', 'attempt:9']);
   state = reduceView(state, category('all'));
   assert.deepEqual(identities(flattenRows(attempts, slots, state, handoffs, turns)), before);
+});
+
+// ── The cold summary call ─────────────────────────────────────────────────────
+
+const callOf = (cacheRead, overrides = {}, id = 1) => attemptRow(id, { call: { usage: { input: 10, output: 600, cacheRead, cacheWrite: 0 } }, contextChange: { before: 1_000, after: 900, delta: -100, miss: 0 }, ...overrides });
+
+test('a cold call is a cost warning of its own beside the context and rebuild warnings, for a failed attempt too, and marks the call row and the warning filter', () => {
+  assert.deepEqual(costWarningsOf(callOf(100), false), { call: 'monitor.meta.call.cold' });
+  assert.deepEqual(costWarningsOf(callOf(900), false), {});
+  assert.deepEqual(costWarningsOf(callOf(100, { contextChange: { before: 1_000, after: 1_100, delta: 100, miss: 0 } }), true), { context: 'monitor.meta.context.grew', miss: 'monitor.meta.miss.unexpected', call: 'monitor.meta.call.cold' }, 'the warnings above it are untouched');
+  assert.deepEqual(costWarningsOf(attemptRow(2, { status: 'failed', contextChange: null, call: { usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0 } } }), false), { call: 'monitor.meta.call.cold' });
+  assert.deepEqual(costWarningsOf(attemptRow(3, { status: 'generating', contextChange: null, call: { usage: null } }), false), {}, 'no usage yet');
+
+  const attempts = [callOf(100), callOf(900, {}, 2)];
+  const state = reduceView(createViewState(), { type: 'toggle', attemptId: 1, open: false });
+  const rows = flattenRows(attempts, {}, reduceView(state, WARNED));
+  assert.deepEqual(rows.map(row => row.identity), ['attempt:1', 'call:1']);
+  assert.deepEqual(rows.find(row => row.kind === 'call').warningKeys, ['monitor.meta.call.cold']);
+});
+
+// ── The short summary ─────────────────────────────────────────────────────────
+
+const shortOf = (output, overrides = {}, id = 1) => attemptRow(id, { call: { usage: { input: 10, output, cacheRead: 1_000, cacheWrite: 0 } }, contextChange: { before: 1_000, after: 900, delta: -100, miss: 0 }, ...overrides });
+
+test('a committed summary call is short when its output falls under the minimum, and not at the minimum; any other attempt, and a call with no usage, is never short', () => {
+  assert.deepEqual(costWarningsOf(shortOf(SHORT_SUMMARY_OUTPUT - 1), false), { short: 'monitor.meta.call.short' });
+  assert.deepEqual(costWarningsOf(shortOf(SHORT_SUMMARY_OUTPUT), false), {}, 'at the minimum');
+  for (const status of ['failed', 'cancelled', 'generating', 'validating', 'unknown']) assert.deepEqual(costWarningsOf(shortOf(1, { status, contextChange: null }), false), {}, status);
+  assert.deepEqual(costWarningsOf(shortOf(1, { call: { usage: null } }), false), {}, 'no usage');
+});
+
+test('a short summary stands beside the other cost warnings, marks the call row and the warning filter', () => {
+  assert.deepEqual(costWarningsOf(shortOf(1, { contextChange: { before: 1_000, after: 1_100, delta: 100, miss: 0 } }), true), { context: 'monitor.meta.context.grew', miss: 'monitor.meta.miss.unexpected', short: 'monitor.meta.call.short' });
+  const coldAndShort = shortOf(1, { call: { usage: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0 } } });
+  assert.deepEqual(costWarningsOf(coldAndShort, false), { call: 'monitor.meta.call.cold', short: 'monitor.meta.call.short' }, 'a cold call that is also short keeps both');
+  const state = reduceView(createViewState(), { type: 'toggle', attemptId: 1, open: false });
+  const rows = flattenRows([shortOf(1), shortOf(900, {}, 2)], {}, reduceView(state, WARNED));
+  assert.deepEqual(rows.map(row => row.identity), ['attempt:1', 'call:1']);
+  assert.deepEqual(rows.find(row => row.kind === 'call').warningKeys, ['monitor.meta.call.short']);
 });

@@ -32,12 +32,12 @@ export function accessOver(events, { held = false } = {}) {
   });
 }
 
-/** A committed seal over `range` (events) that its quote prices as `n` counted steps: the attempt record, the call record and the carrier. */
-export function pricedSeal(range, n = range.length) {
+/** A committed seal over `range` (events) that its quote prices as `n` counted steps at the price ratio `cRatio`: the attempt record, the call record and the carrier. */
+export function pricedSeal(range, n = range.length, { cRatio = 2 } = {}) {
   const seqs = range.map(event => event.seq);
   const start = innerAttempt({
     range: seqs,
-    quote: { n, lA: 40_000, bEst: 0, cEst: 1600, sEst: 38_400, cRatio: 2, fee: 10_000, kappa: 1.1, nRef: 0.52, N: 0.56, jRef: 4.12, q: 2.07, arm: 'right', trigger: 'quote' },
+    quote: { n, lA: 40_000, bEst: 0, cEst: 1600, sEst: 38_400, cRatio, fee: 10_000, kappa: 1.1, nRef: 0.52, N: 0.56, jRef: 4.12, q: 2.07, arm: 'right', trigger: 'quote' },
   });
   const call = innerCall({
     range: seqs, attempt: start.seq, endedAt: 1_700_000_100_000,
@@ -80,4 +80,13 @@ export function stepOf({
   const answers = results ? calls.map(({ id }) => toolResult({ turn, step, callId: id, text: answer, isError, ...(error === undefined ? {} : { error }) })) : [];
   const end = stepEnd({ turn, step });
   return { start, admitted, request, dispatched, answers, end, events: [start, ...admitted, request, ...dispatched, ...answers, end] };
+}
+
+// Step 1 of turn 1 admits the task and answers it with a file read, and a seal sums that step up: the settlement's first range, `#0`. Everything a test adds comes after it.
+export function opening() {
+  const readFile = { id: 'file', name: 'read', arguments: JSON.stringify({ file_path: 'a.js' }) };
+  const head = stepOf({ turn: 1, step: 1, admit: ['please work'], calls: [readFile], text: 'working', usage: tokens(100, 30, 900), answer: 'file text' });
+  const [ask] = head.admitted;
+  const sealed = pricedSeal([ask, head.request], 1);
+  return { head, ask, sealed, events: [...head.events, ...sealed.events] };
 }

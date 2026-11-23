@@ -284,6 +284,34 @@ export function SlotSourcePage({ detail, opened = null, t }) {
     detail.events.map(event => h(SourceEvent, { key: event.seq, event, opened: opened?.seq === event.seq, t })));
 }
 
+// One measured call of the usage page under the title naming its source: the four buckets as `callUsageOf` folds them, or the neutral marker for a call that recorded no usage as a whole.
+// `marked` is the bucket the page sets apart in a colour of its own, by field and whatever its value; the mark wraps the number alone, which the shared `Facts` takes as any node.
+function CallUsage({ name, title, usage, marked, t }) {
+  const count = (field, value) => (marked === field ? h('span', { 'data-sw-usage': field }, tokensOf(value)) : tokensOf(value));
+  return h(Section, { name, title }, usage === null || usage === undefined ? h(Missing, { t }) : h(Facts, { entries: [
+    [t('monitor.slotUsage.input'), tokensOf(usage.input)], [t('monitor.usage.output'), count('output', usage.output)],
+    [t('monitor.usage.cacheRead'), tokensOf(usage.cacheRead)], [t('monitor.usage.cacheWrite'), count('cacheWrite', usage.cacheWrite)],
+  ] }));
+}
+
+/**
+ * The measured usage of the slot's own call and of the call that came after it, and the estimate of the slot's original text, each from the `usage` of the `inner-monitor/slot` payload as it is.
+ * The successor is a main call, or the summary call where the slot has no main call after it in its carrier; `null` where the host could not confirm it, which says so instead of reading as a missing call. A call that recorded no usage reads as not recorded, and the buckets are never zero-filled beyond the reducer's own.
+ * The slot's own output and the successor's cache write are the two numbers the page colours (`data-sw-usage`), blue and amber: the output of the call that wrote the slot and the cache write of the call that paid for the context after it, each by its field, a zero too, and no state of the page (no threshold, no warning).
+ * The estimate is the approximate count of the slot's original text as the compaction saw it, not the slot's summary, an attachment's content or a bill; a zero is a count, and one the carrier did not keep reads as not recorded. A slot with no measured call shows the estimate alone.
+ */
+export function SlotUsagePage({ detail, t }) {
+  const { current, next, sourceTokens } = detail.usage;
+  return h(React.Fragment, null,
+    current === null ? null : h(CallUsage, { name: 'current', title: t('monitor.slotUsage.current', { seq: current.seq }), usage: current.usage, marked: 'output', t }),
+    current === null ? null : next === null
+      ? h(Section, { name: 'next', title: t('monitor.slotUsage.next') }, h('p', { className: 'sw-mon-note', 'data-sw-unconfirmed': '' }, t('monitor.slotUsage.unconfirmed')))
+      : h(CallUsage, { name: 'next', title: t(next.kind === 'summary' ? 'monitor.slotUsage.nextSummary' : 'monitor.slotUsage.nextMain', { seq: next.seq }), usage: next.usage, marked: 'cacheWrite', t }),
+    h(Section, { name: 'source', title: t('monitor.slotUsage.source') },
+      h('p', { className: 'sw-mon-note' }, t('monitor.slotUsage.sourceNote')),
+      sourceTokens === null ? h(Missing, { t }) : h('p', null, t('monitor.slotUsage.approx', { tokens: tokensOf(Math.round(sourceTokens)) }))));
+}
+
 // The words the tools page gives a warning kind, on a card and in its header alike. A direct read is told by the target its dispatch names, whatever the result answered, so it is worded as the attempt it was and never as a read that returned; every other kind is worded as the slot row words it.
 const DIRECT_READS = ['handoff-recall', 'carrier-recall', 'verbatim-recall'];
 const warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
@@ -429,14 +457,17 @@ export function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
 // Whether a slot's tools are anything to show: a call, a result or a warning; an answer without the field, an older host's, has none.
 const hasTools = ({ tools }) => tools !== undefined && (tools.calls.length > 0 || tools.warnings.length > 0);
 
+// Whether a slot's usage is anything to show: a measured call or an estimate, a zero one included; an answer without the field, an older host's, has none.
+const hasUsage = ({ usage }) => usage !== undefined && (usage.current !== null || usage.sourceTokens !== null);
+
 /**
- * The pages of a slot's detail behind a tab strip, the summary first: the overview, the summary, the source text and, where the slot has tools to show, the tools. `detail` is the `inner-monitor/slot` payload.
+ * The pages of a slot's detail behind a tab strip, the summary first: the overview, the summary, the source text and, where the slot has a measured call or an estimate to show, the usage and, where it has tools to show, the tools. `detail` is the `inner-monitor/slot` payload.
  * The page is this component's state because a card's jump moves it: it opens the source page with `opened`, the event it names, which the next tab the reader chooses clears.
  */
 export function SlotDetail({ detail, t }) {
   const [page, setPage] = React.useState('summary');
   const [opened, setOpened] = React.useState(null);
-  const pages = hasTools(detail) ? { ...SLOT_PAGES, tools: SlotToolsPage } : SLOT_PAGES;
+  const pages = { ...SLOT_PAGES, ...(hasUsage(detail) ? { usage: SlotUsagePage } : {}), ...(hasTools(detail) ? { tools: SlotToolsPage } : {}) };
   const select = (name) => { setOpened(null); setPage(name); };
   const open = (seq) => { setOpened({ seq }); setPage('source'); };
   return h(PagedDetail, { pages, first: 'summary', page, onPage: select, labels: 'monitor.slotPage', detail, opened, open, t });

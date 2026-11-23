@@ -1,6 +1,7 @@
 // dsh/src/inner-seal.js — the inner seal: the `agent/pre-step` listener that summarizes the unsealed source and replaces it with an inner-seal carrier before the step.
 // It knows no Cordis and imports no DSH package: the services and the DSH values reach it by parameter.
 import { eventFactsOf } from '../../lib/harness/dsh/event-facts.js';
+import { pluginRecordType } from '../../lib/harness/dsh/plugin-record.js';
 import { innerSource, skeletonSlots } from '../../lib/inner-seal/source.js';
 import { ASK_TOOL_NAME } from '../../lib/harness/dsh/history-turn-rules.js';
 import { askAnswersOf } from '../../lib/harness/dsh/ask-result.js';
@@ -20,15 +21,12 @@ import { createRetryLadder } from '../../lib/inner-seal/ladder.js';
 import { summarizeSlots } from './inner-summary.js';
 import { hostDiagnostic, writeDiagnostic } from './watcher-table.js';
 
-// The namespace the DSH log gives the records of a plugin.
-const PLUGIN_RECORD_NAMESPACE = 'plugin:session-watcher/';
-
 /** The plugin record the seal appends for each auxiliary call whose stream it consumed: the call record's name under the DSH log's plugin-record namespace. */
-export const INNER_CALL_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${CALL_RECORD_NAME}`;
+export const INNER_CALL_RECORD_TYPE = pluginRecordType(CALL_RECORD_NAME);
 /** The plugin record the monitor appends as an attempt's summary request is dispatched: the attempt record's name under the DSH log's plugin-record namespace. */
-export const INNER_ATTEMPT_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${ATTEMPT_RECORD_NAME}`;
+export const INNER_ATTEMPT_RECORD_TYPE = pluginRecordType(ATTEMPT_RECORD_NAME);
 /** The plugin record the monitor appends when an attempt fails or is cancelled: the end record's name under the DSH log's plugin-record namespace. */
-export const INNER_END_RECORD_TYPE = `${PLUGIN_RECORD_NAMESPACE}${END_RECORD_NAME}`;
+export const INNER_END_RECORD_TYPE = pluginRecordType(END_RECORD_NAME);
 
 /** The text of anything a seal can throw: an error's message, any other value as text. */
 export const messageOf = error => (error instanceof Error ? error.message : String(error));
@@ -189,12 +187,14 @@ function historyReadOf(meter, session) {
   }
 }
 
-// The quote of sealing `range` now, over the request texts of the messages the session derives from the frozen slice and the text `renderCarried` renders for B, priced under the pair `ctpOf` reads for the session, with the one read of the history the summary call makes (`historyReadOf`) at the cache-read price: the held files are read through `readUnobserved`, which records no observation, and whatever the estimate, the ratio or the history read throws, a session with no pair included, leaves that input missing, one diagnostic line naming why.
+// The quote of sealing `range` now, with the pair it read, null where it read none (`ctp`), over the request texts of the messages the session derives from the frozen slice and the text `renderCarried` renders for B, priced under the pair `ctpOf` reads for the session, with the one read of the history the summary call makes (`historyReadOf`) at the cache-read price: the held files are read through `readUnobserved`, which records no observation, and whatever the estimate, the ratio or the history read throws, a session with no pair included, leaves that input missing, one diagnostic line naming why.
 async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved, ctpOf, cRatio, preset, history }) {
   let estimate = null;
+  let ctp = null;
   try {
-    const ctp = ctpOf(session.id);
-    if (ctp === null) throw new Error(`session ${session.id} has no model policy to price its range under`);
+    const read = ctpOf(session.id);
+    if (read === null) throw new Error(`session ${session.id} has no model policy to price its range under`);
+    ctp = read;
     const current = await currentOf(held, readUnobserved, agent, signal);
     const carried = carriedOf(retainedSources(session, range, bySeq), current);
     const texts = range.flatMap((seq) => {
@@ -212,20 +212,20 @@ async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, read
     writeDiagnostic(session.id, hostDiagnostic('inner_quote_failed', error));
   }
   if (history.error !== undefined) writeDiagnostic(session.id, hostDiagnostic('inner_quote_failed', history.error));
-  return innerQuote({ n: stepN, estimate, cRatio: ratio, preset, summaryReadCost: history.tokens });
+  return { quote: innerQuote({ n: stepN, estimate, cRatio: ratio, preset, summaryReadCost: history.tokens }), ctp };
 }
 
 // The summary of the frozen slots, each request an attempt of its own over the same history, slots, range and quote, on the selection the ladder (`createRetryLadder`) names.
 // A request that fails ends its attempt as failed; the ladder is asked whether another follows only once its call record stands and the turn is not cancelled.
 // Answers the request that stands: its attempt, still open, its summary and the exits that settle its call record. Any other failure ends its own attempt and is thrown as it is.
-async function requestSummary({ monitor, session, range, quote, llm, index, events, selection, fallback, slots, held, signal, kit, carrier }) {
+async function requestSummary({ monitor, session, range, quote, ctp, llm, index, events, selection, fallback, slots, held, signal, kit, carrier }) {
   const ladder = createRetryLadder({ selection, fallback });
   for (;;) {
     const attempt = monitor.begin(session, { range, quote });
     let again = false;
     try {
       // A rejection here comes before the stream was consumed, so there is no call to record.
-      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder.current(), slots, range, held, signal, kit, observer: attempt, carrier });
+      const summary = await summarizeSlots({ llm, session, index, events, selection: ladder.current(), slots, range, held, signal, kit, ctp, observer: attempt, carrier });
       attempt.responded({ endedAt: summary.call.endedAt });
       // The call is recorded once, by whichever exit settles it; a failed append is not retried. It names the attempt record when one was appended.
       let recorded = false;
@@ -278,7 +278,7 @@ async function requestSummary({ monitor, session, range, quote, llm, index, even
  *   monitor: { begin: (session: object, options: { range: number[], quote: object }) => object },
  *   readSettings: () => { preset: string, fallbackModel: ({ provider: string, model: string }|null) },
  *   carrier?: { scope: () => object } }} services `carrier` is the carrier cache's record (`carrier-evidence.js`), whose scope each summary request takes around its stream; without it a call has no evidence
- * From `INNER_QUOTE.minSteps` counted steps on, an unpaused slice is quoted before anything is summarized (`innerQuote`). `readSettings` is read once when the pre-step enters the quote, before its first await, so the compaction policy the quote is priced under and the backup model the ladder ends on are that one read's for the quote, every attempt and every retry, whatever the settings become meanwhile; the backup model is a route with no effort of its own, so the model's default controls apply. The quote prices the request texts of the range's messages and the text of the B its carrier would render now (`carriedOf`), its held files read through `readUnobserved`, which records no observation, under the pair `ctpOf` reads for the session and the C ratio `cRatio` reads, and pays the one read of the active history its summary call makes: the `meter`'s request pressure taken beside the settings and the surface cut, at the cache-read price (`historyReadOf`); a meter that throws or answers no finite non-negative total leaves the step quoted as it was priced without the read, the throw with one `inner_quote_failed` line. A quote with no trigger permits the step unsealed; a triggered one is every attempt's of the seal, handed to `monitor.begin`. The summary call's tail names the held files and skills the replaced events touched (`touchedOf` over the effects of the held view), where the quote and the carrier read the whole held view. Its requests follow the ladder (`createRetryLadder`) over the session's `modelSelection` and the backup model, each its own attempt, closed as failed before the next begins, its call record naming the selection it took; a failure the ladder does not ask again, a cancel, and every other failure end the turn. The commit reads the held files again through `readFile`, which records the observation, and builds B from that read against the carriers its own surface retains, so the quote's B is the estimate at its decision point. The session state is read at the commit alone, in the synchronous stretch of its checks and appends, and is no term of the quote: `readState` answers the cut and the reads of the items the host can read (`carryState`), the session's tools being those its request header lists; an item that fails is left out with one `inner_state_failed` line naming it, a state that cannot be read as a whole leaves the block out with one such line, and the seal goes on. The git state is the one item whose read takes an await, so `readGit(session, signal)` reads it beside the attachments and the held files, just ahead of that stretch, and `readState`'s items are joined by it as one more read, which stands for no tool of the session: a host with no `readGit`, and a `readGit` answering null for a directory that is no repository, leave it out without a line, and one that rejects fails the item as a read that throws does, while a cancel ends the turn at the check behind it. The carrier's source is assembled from the values taken (`assembleCarrierSource`). Each slot keeps, as metadata for the monitor alone, the held view's `oldReads` whose result's seq is among its own, the reads of the range that returned mostly lines their epoch already held; they are neither summarized, rendered nor read back by the quote. Beside the note of each step it holds the questions its slot's frozen events asked the user through `ask_user_question`, each with the user's own answer (`questionsOf`): a supplement the seal can do without, which a slot that does not read as such leaves out without a trace, the summary call neither asked to leave it out nor shown it. The prune's `shadowedTokenCount` stays the meter's own heuristic of the range's nodes, the unit of the host's protocol, whatever the quote priced.
+ * From `INNER_QUOTE.minSteps` counted steps on, an unpaused slice is quoted before anything is summarized (`innerQuote`). `readSettings` is read once when the pre-step enters the quote, before its first await, so the compaction policy the quote is priced under and the backup model the ladder ends on are that one read's for the quote, every attempt and every retry, whatever the settings become meanwhile; the backup model is a route with no effort of its own, so the model's default controls apply. The quote prices the request texts of the range's messages and the text of the B its carrier would render now (`carriedOf`), its held files read through `readUnobserved`, which records no observation, under the pair `ctpOf` reads for the session and the C ratio `cRatio` reads, and pays the one read of the active history its summary call makes: the `meter`'s request pressure taken beside the settings and the surface cut, at the cache-read price (`historyReadOf`); a meter that throws or answers no finite non-negative total leaves the step quoted as it was priced without the read, the throw with one `inner_quote_failed` line. A quote with no trigger permits the step unsealed; a triggered one is every attempt's of the seal, handed to `monitor.begin`. The summary call's tail names the held files and skills the replaced events touched (`touchedOf` over the effects of the held view), where the quote and the carrier read the whole held view. Its requests follow the ladder (`createRetryLadder`) over the session's `modelSelection` and the backup model, each its own attempt, closed as failed before the next begins, its call record naming the selection it took; a failure the ladder does not ask again, a cancel, and every other failure end the turn. The commit reads the held files again through `readFile`, which records the observation, and builds B from that read against the carriers its own surface retains, so the quote's B is the estimate at its decision point. The session state is read at the commit alone, in the synchronous stretch of its checks and appends, and is no term of the quote: `readState` answers the cut and the reads of the items the host can read (`carryState`), the session's tools being those its request header lists; an item that fails is left out with one `inner_state_failed` line naming it, a state that cannot be read as a whole leaves the block out with one such line, and the seal goes on. The git state is the one item whose read takes an await, so `readGit(session, signal)` reads it beside the attachments and the held files, just ahead of that stretch, and `readState`'s items are joined by it as one more read, which stands for no tool of the session: a host with no `readGit`, and a `readGit` answering null for a directory that is no repository, leave it out without a line, and one that rejects fails the item as a read that throws does, while a cancel ends the turn at the check behind it. The carrier's source is assembled from the values taken (`assembleCarrierSource`). Each slot keeps, as metadata for the monitor alone, the held view's `oldReads` whose result's seq is among its own, the reads of the range that returned mostly lines their epoch already held; they are neither summarized, rendered nor read back by the quote. Each slot also keeps, for the monitor alone, `sourceTokens`, the estimate of its original text the committing summary call saw, priced under the very pair the quote read (`quoteOf` answers it, so no retry or read asks again) and answered by `summarizeSlots`; it decides nothing of the quote, the trigger, the commit or the prune. Beside the note of each step it holds the questions its slot's frozen events asked the user through `ask_user_question`, each with the user's own answer (`questionsOf`): a supplement the seal can do without, which a slot that does not read as such leaves out without a trace, the summary call neither asked to leave it out nor shown it. The prune's `shadowedTokenCount` stays the meter's own heuristic of the range's nodes, the unit of the host's protocol, whatever the quote priced.
  */
 export function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile, readUnobserved, readState, readGit, cRatio, ctpOf, llm, attachments, meter, kit, monitor, readSettings, carrier }) {
   // The ids of the sessions whose invalid mode has been reported: the mode is locked by then, so one line says it for the session while this seal lives; a seal mounted again reports it again.
@@ -314,13 +314,13 @@ export function createInnerSeal({ readMode, eventFacts, readSession, heldView, r
     // The held view is read before the quote and the call, so B is estimated over the whole view and the tail names the files and skills of it the replaced events touched. A pruner replacement in the range stands for its original result, whose effects the view attributes, so the originals count beside the range.
     const replaced = [...range, ...originals];
     const held = heldView(session.id, events);
-    const quote = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved, ctpOf, cRatio, preset, history });
+    const { quote, ctp } = await quoteOf({ session, agent, signal, range, stepN, held, bySeq, readUnobserved, ctpOf, cRatio, preset, history });
     // A cancel during the quote ends the turn as the abort; it is no missing quote to step on from.
     if (signal.aborted) throw signal.reason;
     if (quote.trigger === null) return next();
     // The summary is requested again while its reply fails the notes' format or a content filter cuts it off; a failure before the request that stands left no open attempt to end.
     const { attempt, summary, settle, failed } = await requestSummary({
-      monitor, session, range, quote, llm, index, events, selection: modelSelection, fallback: fallbackModel, slots, held: touchedOf(held, replaced), signal, kit, carrier,
+      monitor, session, range, quote, ctp, llm, index, events, selection: modelSelection, fallback: fallbackModel, slots, held: touchedOf(held, replaced), signal, kit, carrier,
     });
     // From here to the carrier's append, whatever is thrown ends the attempt of the request that stands as failed or cancelled and is thrown again as it is.
     try {
@@ -352,7 +352,7 @@ export function createInnerSeal({ readMode, eventFacts, readSession, heldView, r
         const earlier = retainedSources(session, range, bySeq);
         const source = assembleCarrierSource({
           slots, summaries: summary.summaries, questions: questionsOf({ slots, bySeq }), attachments: slotAttachments,
-          oldReads: slots.map(({ seqs }) => held.oldReads.filter(({ seq }) => seqs.includes(seq))),
+          oldReads: slots.map(({ seqs }) => held.oldReads.filter(({ seq }) => seqs.includes(seq))), sourceTokens: summary.sourceTokens,
           verbatimSeqs: summary.verbatimSeqs, changes: carriedOf(earlier, current), state: stateAt(session, readState, earlier, git),
         });
         message = kit.createUserMessage({ content: renderCarrier(source, CARRIER_TABLE), source });

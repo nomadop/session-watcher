@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPathFold, integratePath, fitAffine, landmarksOf } from '../lib/measurement/position.js';
 import { computeFullCarryBurnRate } from '../lib/rate-lamp.js';
-import { computeMovableFrac } from '../lib/bill-regret.js';
+import { BR_AMBER, computeMovableFrac, walletIntervalFor } from '../lib/bill-regret.js';
 import { nucleus } from '../lib/landmarks.js';
 
 const DEAD = 1000, R = 10;
@@ -161,16 +161,20 @@ test('the rate is the mean of stock growth net of the SELECTED resources\' growt
   assert.equal(integratePath(shrink, { dead: DEAD, R, selector: key => key !== 'r' }).gBar, 100);
 });
 
-test('an interval whose selected growth exceeds the stock growth counts as zero, and a frame without growth leaves the rate where it stands', () => {
+test('growth placed on a selected resource nets against the other intervals\' growth and is clamped once, and a frame without growth leaves the rate where it stands', () => {
   const stepwise = createPathFold({ dead: DEAD, R, selector: all });
   stepwise.push(frame(1, DEAD, null));
   assert.equal(stepwise.rate(), 0);
   stepwise.push(frame(2, DEAD + 100, 100, { r: 500 }, { r: 500 }));
   assert.equal(stepwise.rate(), 0, 'growth placed on a selected resource is not excess');
   stepwise.push(frame(3, DEAD + 400, 300));
-  assert.equal(stepwise.rate(), 150);
-  stepwise.push(frame(4, DEAD + 400, null));
-  assert.equal(stepwise.rate(), 150);
+  assert.equal(stepwise.rate(), 0, 'the 300 of excess is spent against the 400 the resource took out of the first interval');
+  assert.equal(stepwise.physicalRate(), 0);
+  stepwise.push(frame(4, DEAD + 700, 300));
+  assert.equal(stepwise.rate(), 200 / 3);
+  assert.equal(stepwise.physicalRate(), 200 / 3);
+  stepwise.push(frame(5, DEAD + 700, null));
+  assert.equal(stepwise.rate(), 200 / 3);
 });
 
 test('the rate is the ratio of the excess growth to the main calls the intervals span, not a mean of per-interval slopes', () => {
@@ -220,7 +224,7 @@ test('deltaW is the left-priced trapezoid of the interval\'s two rent rates time
   near(arrived[2].deltaW, 4 * 0.5 * (300 / rebuild + (DEAD + 900 - (DEAD + 500)) / rebuild));
 });
 
-test('over sparse frames the excess is clamped per interval before the ratio: a selected resource\'s oversized growth cannot net against another interval\'s', () => {
+test('over sparse frames the excess of every interval nets before the ratio: a selected resource\'s oversized growth is spent against another interval\'s', () => {
   // Intervals of 2, 1 and 5 main calls whose stock grows 300, 100 and 600 while r gains 200, 500 and 100.
   const frames = [
     at(frame(1, DEAD, null, { r: 1000 }), 1),
@@ -228,8 +232,8 @@ test('over sparse frames the excess is clamped per interval before the ratio: a 
     at(frame(3, DEAD + 400, 100, { r: 1700 }, { r: 500 }), 4),
     at(frame(4, DEAD + 1000, 600, { r: 1800 }, { r: 100 }), 9),
   ];
-  // Carried: 100 + 0 + 500 excess over 8 calls; netted over the whole path it would be 200 over 8.
-  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 75);
+  // Carried: 100 − 400 + 500 of excess over 8 calls, the clamp taken once on the sum.
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 25);
   // Left behind, every interval's growth is excess: 300 + 100 + 600.
   assert.equal(integratePath(frames, { dead: DEAD, R, selector: key => key !== 'r' }).gBar, 125);
 });
@@ -281,4 +285,107 @@ test('landmarksOf returns every landmark ordered and finite, or every landmark n
   assert.deepEqual(landmarksOf(null, 0.3), nulls);
   assert.deepEqual(landmarksOf({ a: 1, d: 0.5 }, null), nulls);
   assert.deepEqual(landmarksOf({ a: 1, d: 0.5 }, 0), nulls);
+});
+
+// ── Recall priced into the interval fold ─────────────────────────────────────
+
+// A frame whose interval holds recall: `priced` extra main calls whose net bills, in read-price units, sum to `net`, and `unpriced` more whose bill is unknown.
+const recalled = (f, recall) => ({ ...f, recall: { priced: 0, net: 0, unpriced: 0, ...recall } });
+
+test('a closed interval that holds a priced recall request pays its net bill beside the ordinary slots of the other calls, and moves only those slots: the independent oracle', () => {
+  // m = 4 main calls, k = 1 of them an extra request whose net bill A = 10, B = 5, R = 2, so K = R·B = 10. The left endpoint stands at
+  // gPhys = 2 (the resident growth alone) and gBar = 5 (that growth plus a first recall of 3 per call over the 0 an ordinary path holds).
+  // The endpoints' ordinary rents are 2 and 4 above the baseline, which average q = 3: the rent is 3·3 + 10 = 19, not the 4·3 + 10 = 22 a request
+  // priced twice would give. Then Δu = 4·√(5/20) = 2, Λ = 4·√(2·10·5) = 40 and F = (4−1)·(5 + 2·2) = 27.
+  const frames = [
+    at(frame(1, 5, null), 1),
+    recalled(at(frame(2, 7, 2), 2), { priced: 1, net: 3 }),
+    recalled(at(frame(3, 9, 4), 6), { priced: 1, net: 10 }),
+  ];
+  const [, first, second] = integratePath(frames, { dead: 5, R: 2, selector: all }).points;
+  assert.equal(first.mfLocal, 0, 'an interval whose every call is an extra request has nothing to move');
+  near(first.deltaW, 3 / 10);
+  near(second.u, 2);
+  near(second.mfLocal, 40 / 67);
+  near(second.mf, 40 / 67);
+  near(second.deltaW, 1.9);
+  near(second.pp, 0.25);
+  near(second.br, 0.25 * 40 / 67);
+  // The wallet turns that bill into laps at the interval its own exchange fraction gives.
+  const interval = walletIntervalFor(second.mfLocal, BR_AMBER);
+  near(interval, 1.5665234423, 1e-9);
+  near(second.deltaW / interval, 1.2128768384, 1e-9);
+});
+
+test('a frame that states no recall and one that states none priced are the same path, bit for bit, and the resident rate is the rate of both', () => {
+  const plain = [at(frame(1, DEAD, null, { r: 700 }), 1), at(frame(2, DEAD + 333, 333), 4), at(frame(3, DEAD + 901, 568, { r: 900 }, { r: 200 }), 6), at(frame(4, DEAD + 1130, 229), 7)];
+  const stated = plain.map(f => recalled(f, {}));
+  const bare = integratePath(plain, { dead: DEAD, R, selector: all });
+  const said = integratePath(stated, { dead: DEAD, R, selector: all });
+  assert.deepEqual(said, bare);
+  assert.equal(bare.gBar, bare.gPhys);
+  assert.equal(bare.gBar, (333 + 368 + 229) / 6);
+});
+
+test('a recall bill that rises and falls back by the same amount per main call leaves no growth in the rate: the signed differences cancel', () => {
+  // Resident growth of 100 per call. The first interval pays 60 per call of recall over the ordinary path's none; the next pays none.
+  const frames = [
+    at(frame(1, DEAD, null), 1),
+    recalled(at(frame(2, DEAD + 100, 100), 2), { priced: 1, net: 60 }),
+    at(frame(3, DEAD + 200, 100), 3),
+  ];
+  const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
+  assert.equal(gPhys, 100);
+  assert.equal(gBar, 100, '(100 + 60) + (100 − 60) over two calls; clamping each difference at zero would read 130');
+});
+
+test('equal recall per main call over intervals of different spans creates no growth: the bill is compared per call, never as a sum', () => {
+  // 60 per call, once over one call and then over three; only the first rise from the ordinary path's zero is growth.
+  const frames = [
+    at(frame(1, DEAD, null), 1),
+    recalled(at(frame(2, DEAD + 30, 30), 2), { priced: 1, net: 60 }),
+    recalled(at(frame(3, DEAD + 60, 30), 5), { priced: 3, net: 180 }),
+  ];
+  const fold = createPathFold({ dead: DEAD, R, selector: all });
+  fold.push(frames[0]);
+  fold.push(frames[1]);
+  assert.equal(fold.rate(), 90);
+  fold.push(frames[2]);
+  assert.equal(fold.rate(), (30 + 60 + 30) / 4, 'the second interval adds its own resident 30 and no recall; comparing sums would add 120 more');
+  assert.equal(fold.physicalRate(), (30 + 30) / 4);
+});
+
+test('an interval with a request of unknown price is not a zero to fall to, and the interval after it has nothing to compare with', () => {
+  const frames = [
+    at(frame(1, DEAD, null), 1),
+    recalled(at(frame(2, DEAD + 10, 10), 2), { priced: 1, net: 60 }),
+    recalled(at(frame(3, DEAD + 20, 10), 3), { unpriced: 1 }),
+    recalled(at(frame(4, DEAD + 30, 10), 4), { priced: 1, net: 40 }),
+  ];
+  const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
+  assert.equal(gPhys, 10);
+  assert.equal(gBar, (10 + 60 + 10 + 10) / 3, 'neither the unknown nor the 40 against the 60 before it moves the rate; reading the unknown as a zero, or comparing across it, gives 70 / 3');
+});
+
+test('an interval of extra requests alone on a left endpoint with no growth owes its real bill and moves nothing: no 0/0, no fixed part, no phase', () => {
+  const frames = [at(frame(1, DEAD, null), 1), recalled(at(frame(2, DEAD + 500, 500), 4), { priced: 3, net: 7000 })];
+  const [, closed] = integratePath(frames, { dead: DEAD, R, selector: all }).points;
+  near(closed.deltaW, 7000 / (R * DEAD));
+  assert.equal(closed.mfLocal, 0);
+  assert.equal(closed.mf, 0);
+  assert.equal(closed.u, 0);
+  assert.equal(closed.pp, null);
+  assert.equal(walletIntervalFor(closed.mfLocal, BR_AMBER), Infinity, 'the bill counts while the wallet clock stands still');
+});
+
+test('the fixed part of an interval is its ordinary slots priced at the physical rate; the movable arm weighs every call at the mixed rate', () => {
+  // Left endpoint: gPhys 0 (no resident growth), gBar 40 (a recall of 40 per call over the ordinary path's none).
+  const frames = [
+    at(frame(1, DEAD, null), 1),
+    recalled(at(frame(2, DEAD, 0), 2), { priced: 1, net: 40 }),
+    recalled(at(frame(3, DEAD, 0), 4), { priced: 1, net: 50 }),
+  ];
+  const [, , second] = integratePath(frames, { dead: DEAD, R, selector: all }).points;
+  const arm = Math.sqrt(2 * R * DEAD * 40);
+  near(second.mfLocal, 2 * arm / (1 * (DEAD + R * 0) + 2 * arm));
 });

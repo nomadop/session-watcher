@@ -7,6 +7,10 @@ import {
   userMessage, assistantMessage, toolCall, toolResult, turnStart, turnEnd, stepStart, stepEnd, unknownEvent,
   sessionLog, innerSealCarrier,
 } from './helpers/dsh-events.js';
+import { createMonitorAccess } from '../dsh/src/inner-monitor-read.js';
+import {
+  SESSION, accessOver, clear, fold, kit, opening, pricedSeal, readCall, stepOf, tokens,
+} from './helpers/dsh-settlement.js';
 
 const SESSION_ID = 'session-a';
 const USAGE = {
@@ -341,4 +345,176 @@ test('the caller is asked when each frame is made, so a mode chosen after the in
   plain.install(sessionLog(again));
   plain.drain();
   assert.deepEqual(more.map(event => plain.feed(event)).filter(frame => frame !== null).map(frame => 'qualifiedCalls' in frame), [false, false, false, false, false]);
+});
+
+// ── Recall on the Source's frames ────────────────────────────────────────────
+// A request that only reads back events of its own session is priced on its main-call fact, over the one judgement the monitor's settlement makes of it; the facts' identity is the request's own seq.
+
+const recallDriver = () => createDshSourceDriver({ sessionId: SESSION, onDiagnostics: () => {} });
+// Every main-call fact that states a recall, as `[seq, recall]`.
+const recallsOf = batches => batches.flat().filter(observation => observation.type === 'main-call' && observation.recall !== undefined).map(observation => [observation.sourceOrdinal, observation.recall]);
+const coldRecalls = events => recallsOf(recallDriver().install(events).batches);
+
+// The calls a frame sequence leaves the Source holding: a replace frame replaces them and an append adds its batch.
+function applied(frames) {
+  let batches = [];
+  for (const frame of frames) batches = frame.transition === 'replace' ? frame.batches : [...batches, ...frame.batches];
+  return batches;
+}
+
+test('a request that only reads events back is priced on its own fact after the first seal, the call behind the seal net of the rebuild the seal paid, and the monitor\'s settlement judges the same requests pure', async () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const refused = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)], isError: true, answer: 'Error: already in your context' });
+  const log = [...events, ...post.events, ...refused.events];
+
+  // The seal's recorded ratio is 2, so a call of 20 uncached and 600 cached tokens costs 600 + 2·20; the call behind the seal paid its (2 − 1)·20 rebuild with the seal.
+  assert.deepEqual(coldRecalls(log), [[post.request.seq, { net: 620 }], [refused.request.seq, { net: 640 }]]);
+
+  const { recall } = await accessOver(log).currentSettlement(SESSION);
+  assert.deepEqual(recall.steps.map(step => [step.seq, step.post !== undefined]), [[post.request.seq, true], [refused.request.seq, false]]);
+});
+
+test('a seal whose attempt record holds no message tail is a seal the monitor shows no attempt of, and the requests behind it are priced on no fact', async () => {
+  const { ask, events, sealed } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const log = [...events, ...post.events];
+  assert.deepEqual(coldRecalls(log), [[post.request.seq, { net: 620 }]]);
+  assert.equal((await accessOver(log).currentSettlement(SESSION)).recall.steps.filter(step => 'usage' in step).length, 1);
+
+  sealed.start.data.request.messages.tail = { role: 'user', content: 'not a list of blocks' };
+  assert.deepEqual(coldRecalls(log), []);
+  const { recall } = await accessOver(log).currentSettlement(SESSION);
+  assert.deepEqual(recall?.steps.filter(step => 'usage' in step) ?? [], []);
+});
+
+test('a request that is no recall is priced on no fact: one aborted before dispatch, one never started, a mixed one, one with no tool, and a read before the first seal', async () => {
+  const early = stepOf({ turn: 1, step: 0, calls: [readCall('e', 0)] });
+  const { ask, events } = opening();
+  const skipped = stepOf({
+    turn: 2, step: 1, calls: [readCall('a', ask.seq)], isError: true, answer: 'Error: tool call aborted before dispatch',
+    error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+  });
+  const unstarted = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)], dispatch: false, isError: true, answer: 'Error: not started' });
+  const mixed = stepOf({ turn: 2, step: 4, calls: [readCall('d', ask.seq), { id: 'e', name: 'read', arguments: JSON.stringify({ file_path: 'b.js' }) }] });
+  const plain = stepOf({ turn: 2, step: 5, text: 'plain' });
+  const log = [...early.events, ...events, ...skipped.events, ...unstarted.events, ...mixed.events, ...plain.events];
+
+  assert.deepEqual(coldRecalls(log), []);
+  const { recall } = await accessOver(log).currentSettlement(SESSION);
+  assert.deepEqual(recall?.steps.filter(step => 'usage' in step) ?? [], []);
+});
+
+test('a call behind the seal that reported no usage keeps the seal\'s rebuild: its own bill is unknown and no later call is deducted in its place', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  delete post.request.data.usage;
+  const later = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)] });
+
+  assert.deepEqual(coldRecalls([...events, ...post.events, ...later.events]), [[post.request.seq, { net: null }], [later.request.seq, { net: 640 }]]);
+});
+
+test('a request the reducer rejects whole has no usage in the measurement, so it keeps the seal\'s rebuild as an unknown bill whatever its raw event reports, and a call that does carry a usage is priced as before', () => {
+  const { ask, events } = opening();
+  const rejected = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  // The raw event reports a valid usage, but a model that is no string fails the reducer's shape check and no usage Observation is admitted.
+  rejected.request.data.message.source.model = 42;
+  const later = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)] });
+
+  assert.deepEqual(coldRecalls([...events, ...rejected.events, ...later.events]), [[rejected.request.seq, { net: null }], [later.request.seq, { net: 640 }]]);
+});
+
+test('the facts belong to the request\'s seq: a clear whose tail count the log does not bear leaves the report with no step to place it on, and the facts as they are', async () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const cleared = clear('amber-falcon', { from: ask, to: post.request });
+  const log = [...events, ...post.events, ...cleared.events];
+  const state = fold(log);
+  state.handoffs = state.handoffs.map(handoff => ({ ...handoff, tailCalls: 2 }));
+  const access = createMonitorAccess({
+    sessionOf: () => ({}), readMonitor: () => state, live: () => [], kit, readSession: async () => ({ events: log }), readStored: async () => undefined, nextTaskOf: () => null,
+  });
+
+  const { recall } = await access.settlement(SESSION, cleared.payload.seq);
+
+  assert.equal(recall.partial, true);
+  assert.deepEqual(recall.steps, []);
+  assert.deepEqual(coldRecalls(log), [[post.request.seq, { net: 620 }]]);
+});
+
+test('a clear starts the recall facts over: a new epoch with no seal prices nothing, whatever seal and ratio the epoch before it ended on', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const cleared = clear('amber-falcon', { from: ask, to: post.request });
+  const fresh = stepOf({ turn: 3, step: 1, text: 'a fresh start' });
+  const reread = stepOf({ turn: 3, step: 2, calls: [readCall('b', fresh.request.seq)] });
+
+  // The first epoch's own request is priced on the seal it follows; the new epoch has none, so a read of its own event is an ordinary call.
+  assert.deepEqual(coldRecalls([...events, ...post.events, ...cleared.events, ...fresh.events, ...reread.events]), [[post.request.seq, { net: 620 }]]);
+});
+
+test('a clear starts the recall facts over: a new epoch that is sealed counts a read of its own events and no read of the epoch before it', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const cleared = clear('amber-falcon', { from: ask, to: post.request });
+  const second = stepOf({ turn: 3, step: 1, admit: ['the next task'], text: 'working', usage: tokens(100, 30, 900) });
+  const sealed = pricedSeal([second.admitted[0], second.request], 1);
+  const older = stepOf({ turn: 3, step: 2, calls: [readCall('c', ask.seq)] });
+  const own = stepOf({ turn: 3, step: 3, calls: [readCall('d', second.request.seq)] });
+
+  // The call behind the new seal reads the epoch before it, which no call of this one can recall, and keeps the seal's rebuild with it; the next reads an event of its own epoch and pays its whole bill.
+  assert.deepEqual(
+    coldRecalls([...events, ...post.events, ...cleared.events, ...second.events, ...sealed.events, ...older.events, ...own.events]),
+    [[post.request.seq, { net: 620 }], [own.request.seq, { net: 640 }]],
+  );
+});
+
+test('a request that may yet prove a recall is stated as one of unknown bill, and only the evidence that settles it replays the Source: the dispatch that proves it, the answer that frees it, none of an ordinary call or of a dispatch that leaves it open', () => {
+  const { ask, events } = opening();
+  const two = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq), readCall('b', ask.seq)] });
+  const cancelled = stepOf({
+    turn: 2, step: 2, calls: [readCall('c', ask.seq)], dispatch: false, isError: true, answer: 'Error: tool call aborted before dispatch',
+    error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+  });
+  const ordinary = stepOf({ turn: 2, step: 3, calls: [{ id: 'file', name: 'read', arguments: '{"file_path":"b.js"}' }], text: 'working' });
+  const driver = recallDriver();
+  const seen = [driver.install(events)];
+  driver.drain();
+
+  const fed = [...two.events, ...cancelled.events, ...ordinary.events];
+  const held = new Map();
+  const replays = [];
+  for (const event of fed) {
+    const frame = driver.feed(event);
+    if (frame !== null) seen.push(frame);
+    if (frame?.transition === 'replace') replays.push(event.seq);
+    held.set(event.seq, recallsOf(applied(seen)));
+  }
+  const unknown = seq => [seq, { net: null }];
+  // The call behind the seal is the first of the two, and the seal's recorded ratio is 2: 600 + 2·20 less the (2 − 1)·20 rebuild the seal paid.
+  assert.deepEqual(held.get(two.request.seq), [unknown(two.request.seq)], 'the request is stated as a recall whose bill is unknown, in its own slot');
+  assert.deepEqual(held.get(two.dispatched[0].seq), [unknown(two.request.seq)], 'a dispatch that leaves it open leaves the fact as it is');
+  assert.deepEqual(held.get(two.dispatched[1].seq), [[two.request.seq, { net: 620 }]]);
+  assert.deepEqual(held.get(cancelled.request.seq), [[two.request.seq, { net: 620 }], unknown(cancelled.request.seq)]);
+  assert.deepEqual(held.get(cancelled.answers[0].seq), [[two.request.seq, { net: 620 }]], 'an answer with no dispatch frees the request: it is no recall');
+  assert.deepEqual(held.get(ordinary.request.seq), [[two.request.seq, { net: 620 }]], 'a call that reads no event of the epoch states nothing, then or after');
+  assert.deepEqual(replays, [two.dispatched[1].seq, cancelled.answers[0].seq]);
+});
+
+test('the Source built live and the one read cold at the same cut hold the same facts, late proof included', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const refused = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)], isError: true, answer: 'Error: already in your context' });
+  const log = [...events, ...post.events, ...refused.events];
+  const cut = events.length;
+
+  const live = recallDriver();
+  const frames = [live.install(log.slice(0, cut))];
+  live.drain();
+  for (const event of log.slice(cut)) {
+    const frame = live.feed(event);
+    if (frame !== null) frames.push(frame);
+  }
+  assert.deepEqual(recallsOf(applied(frames)), coldRecalls(log));
+  assert.equal(recallsOf(applied(frames)).length, 2);
 });

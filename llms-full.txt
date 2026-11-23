@@ -180,13 +180,13 @@ bp combines two factors: (1) the position penalty, which grows as the session mo
 
 **API field.** `mf`
 
-**Units.** dimensionless fraction (0 to `1/(1+√2)`)
+**Units.** dimensionless fraction (0 to 1)
 
 **Definition.** The proportion of total session cost that is timing-sensitive — could theoretically be avoided by optimal restart timing. The remainder is unavoidable overhead (system floor, irreducible growth cost) that no restart strategy can eliminate.
 
 If mf is small, even bad timing costs little. If mf is large, timing matters significantly. mf scales the bill premium so that sessions where restarts matter get earlier alerts. It is path-weighted over the segment's travelled intervals; the reminder clock instead converts each interval's rent at that interval's own fraction.
 
-**Validity.** In range `[0, 1/(1+√2))` when the baseline is valid — exactly zero until the segment has realized any growth — and null on the segment's first measured call or when the baseline is invalid. The upper bound comes from the AM-GM inequality.
+**Validity.** In range `[0, 1]` when the baseline is valid — exactly zero until the segment has realized any growth — and null on the segment's first measured call or when the baseline is invalid. The AM-GM inequality bounds it at `1/(1+√2)`, except on DSH after an inner compaction: there a request that only reads earlier events back is priced at its own bill and adds no cost that restart timing cannot reach, so the bound is `1`.
 
 #### cRatio (Cost Ratio)
 
@@ -315,7 +315,7 @@ The session has been running beyond the efficient operating zone for an extended
 White indicates one of three states. (1) `no_transcript` — the watcher cannot locate or open the transcript file; verify the path configuration. (2) `insufficient_data` — the transcript exists but no usage rows have been ingested yet (the first API call has not been folded). The system overhead floor is anchored by the first usage row with a positive context stock, so this state resolves on the first model interaction — no file reads are required — unless that whole stock was already tracked as resident content the inclusion filter leaves out. (3) Healthy low-pressure zone — measurement is reliable, but the normalized position is still short of the sweet spot and below the mirrored amber boundary, which is the pair of conditions the lamp whitens on. This is a normal, efficient state (the session has not yet grown enough for the penalty function to engage). To distinguish these causes, check the reason or reliability field in the status output rather than interpreting white solely as a data-quality problem.
 
 **Scenario: mf seems low.**
-The movable fraction is the share of the context bill that restart timing can reach. The AM-GM bound caps it at `1/(1+√2)`, and a value well below that cap means most of the cost is fixed overhead — timing optimization has limited leverage. Handoff value is reduced but not zero: the reminder still comes, only at a longer interval, because the wallet clock's unit grows as mf shrinks. A persistently low mf means the session is carry-heavy (large B relative to growth), which is normal for sessions that loaded many files early.
+The movable fraction is the share of the context bill that restart timing can reach. A low value means most of the cost is fixed overhead — timing optimization has limited leverage. Handoff value is reduced but not zero: the reminder still comes, only at a longer interval, because the wallet clock's unit grows as mf shrinks. A persistently low mf means the session is carry-heavy (large B relative to growth), which is normal for sessions that loaded many files early.
 
 **Scenario: Understanding the two progress bars.**
 The dashboard shows two bars. The **cycle bar** shows how far through the current billing cycle you are. It fills with the per-call rent increment; when full it wraps to zero and increments the cycle count. A fast-filling bar means rent is accruing quickly. It is purely diagnostic — it does not trigger anything.
@@ -359,7 +359,7 @@ The residual bucket (context stock minus B) captures everything not attributed t
 The growth rate g measures how fast new content arrives relative to the baseline. It does not distinguish productive growth (new files being explored, code being written) from thrashing (repeated failed attempts generating tool output). A high g means cost is accumulating quickly regardless of cause. If the growth is productive, the session is efficiently using expensive context; bp still applies as the cost signal.
 
 **Scenario: mf seems capped below 50%.**
-The movable fraction has a theoretical ceiling of `1/(1+√2)` (the AM-GM bound). This is by construction: even in the worst case, timing optimization can affect at most this fraction of total bill. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
+The movable fraction has a theoretical ceiling of `1/(1+√2)` (the AM-GM bound). This is by construction: timing optimization can affect at most this fraction of total bill. The one exception is DSH after an inner compaction, where a request that only reads earlier events back is priced at its own bill and adds no cost that restart timing cannot reach, so the ceiling there is `1`. However, bp itself is NOT bounded by this ceiling. Since bp equals mf multiplied by the positional penalty pp, and pp is unbounded (it grows without limit as u deviates from 1), bp can exceed any fixed value in a sufficiently extended session. The mf bound limits only the movable-fraction component, not the overall bill premium.
 
 **Scenario: Detected cache miss during the session.**
 When a cache miss is detected (cacheRead falls below a fixed fraction of the previous step's L), L is reconstructed as the whole context stock — it does not drop to near zero. The miss classifier recognizes this pattern and applies that reconstruction, so the metrics see a continuous L rather than a transient cliff. Segmentation is a separate question with a single answer: a topology change (a root UUID that is not the file's first, which is what /compact and /continue produce). A cache miss is not one, a falling token total is not one, and new files entering the B bucket are not one. Undetected misses (patterns that do not match the miss classifier) are not explicitly handled, but are rare in practice.

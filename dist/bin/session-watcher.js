@@ -1959,7 +1959,7 @@ function sealedBatch(batch, selected) {
   return batch.flatMap((observation) => observation.type === "tool-result" ? [observation.effectsOnly ? observation : { ...observation, effectsOnly: !0 }] : observation.type === "usage" ? selected ? [observation] : [] : ["main-call", "tool-use", "epoch-boundary"].includes(observation.type) ? [observation] : []);
 }
 function createSourceFold() {
-  let kept = [], epochStart = 0, facts = initialSourceFacts();
+  let kept = [], keptBySeq = /* @__PURE__ */ new Map(), epochStart = 0, facts = initialSourceFacts();
   function push(input) {
     let { observations, diagnostics, sealed = [] } = input;
     facts = foldSourceFacts(facts, input);
@@ -1972,18 +1972,27 @@ function createSourceFold() {
         changed(kept[index].batch, next) && (kept[index].batch = next, rewound = !0);
       }
     }
-    let batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
-    return batch.length === 0 ? { batch: null, rewound, diagnostics } : (batch.some((observation) => observation.type === "epoch-boundary") && (epochStart = kept.length), kept.push({ seq: input.seq, batch }), { batch, rewound, diagnostics });
+    for (let { seq, recall } of input.recall ?? []) {
+      let entry2 = keptBySeq.get(seq);
+      if (entry2 === void 0) continue;
+      let at = entry2.batch.findIndex((observation) => observation.type === "main-call");
+      at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0) || (entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall)), rewound = !0);
+    }
+    let own = input.recall?.find((stated) => stated.seq === input.seq)?.recall, batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
+    if (batch.length === 0) return { batch: null, rewound, diagnostics };
+    batch.some((observation) => observation.type === "epoch-boundary") && (epochStart = kept.length);
+    let entry = { seq: input.seq, batch };
+    return kept.push(entry), keptBySeq.set(input.seq, entry), { batch, rewound, diagnostics };
   }
   function batches() {
     return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
   }
-  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts), facts: () => facts };
 }
-var changed, init_source_fold = __esm({
+var changed, sameRecall, mainCallFact, init_source_fold = __esm({
   "lib/measurement/source-fold.js"() {
     init_source_facts();
-    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]), sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net, mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
   }
 });
 
@@ -22876,7 +22885,7 @@ var DIAGNOSTIC_SCOPE, RESIDUAL_FAMILIES, SessionWatcher, init_session_watcher = 
             let kept = new Set(keptKeys), overrides = {};
             for (let row2 of filePaths) overrides[row2.path] = kept.has(row2.path) ? "include" : "exclude";
             let scenario = this._engine.readScenario(overrides);
-            return scenario.reliable ? scenario.gBar : 0;
+            return scenario.reliable ? scenario.gPhys : 0;
           }
         };
         if (stored && stored.deliveredAt == null) {
@@ -26310,31 +26319,42 @@ function mainCallsBetween(prevOrdinal, ordinal) {
   return prevOrdinal > 0 && ordinal > 0 ? ordinal - prevOrdinal : 1;
 }
 function createPathFold({ dead, R, selector }) {
-  let carried = /* @__PURE__ */ new Map(), u = 0, lambda = 0, F = 0, growthSum = 0, spanned = 0, prev = null;
-  function absorb(growth, calls) {
+  let carried = /* @__PURE__ */ new Map(), u = 0, lambda = 0, F = 0, physical = 0, combined = 0, spanned = 0, recallPerCall = 0, prev = null;
+  function absorb(frame, calls, closes) {
+    let { growth, recall } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (let [resourceKey, delta] of growth.resources) selector(resourceKey) && (excess -= delta);
-    growthSum += Math.max(0, excess), spanned += calls;
+    let drift = excess;
+    if (closes)
+      if ((recall?.unpriced ?? 0) > 0)
+        recallPerCall = null;
+      else {
+        let bill = (recall?.net ?? 0) / calls;
+        recallPerCall !== null && (drift += bill - recallPerCall), recallPerCall = bill;
+      }
+    physical += excess, combined += drift, spanned += calls;
   }
-  let rate = () => spanned > 0 ? growthSum / spanned : 0;
+  let rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0, physicalRate = () => spanned > 0 ? Math.max(0, physical) / spanned : 0;
   return {
     rate,
+    physicalRate,
     push(frame) {
       let calls = mainCallsBetween(prev?.ordinal, frame.mainCallOrdinal);
       for (let [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       let B = baselineOf(dead, carried, selector), x = frame.L / B;
       if (prev === null)
-        return absorb(frame.growth, calls), prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
+        return absorb(frame, calls, !1), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
+      let slots = calls - (frame.recall?.priced ?? 0);
       u += calls * Math.sqrt(prev.g / (2 * R * prev.B));
-      let V = Math.sqrt(2 * R * prev.B * prev.g);
-      lambda += calls * V, F += calls * (prev.B + R * prev.g);
-      let mfLocal = V / (prev.B + R * prev.g + V), pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null, mf = lambda / (F + lambda), br = pp === null ? null : mf * pp, deltaW = null;
+      let V = Math.sqrt(2 * R * prev.B * prev.g), lambdaHere = calls * V, fixedHere = slots * (prev.B + R * prev.gPhys);
+      lambda += lambdaHere, F += fixedHere;
+      let mfLocal = lambdaHere > 0 ? lambdaHere / (fixedHere + lambdaHere) : 0, pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null, mf = lambda > 0 ? lambda / (F + lambda) : 0, br = pp === null ? null : mf * pp, deltaW = null;
       if (prev.B > 0) {
         let rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R }), rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
-        deltaW = calls * (0.5 * (rPrev + rNow));
+        deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      return absorb(frame.growth, calls), prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
+      return absorb(frame, calls, !0), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
   };
 }
@@ -26538,9 +26558,9 @@ function diagnostic2(code, message) {
 }
 function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } = {}) {
   invariant3(typeof resolveModelPolicy == "function", "resolveModelPolicy must be a function"), invariant3(typeof resolveResourcePolicy == "function", "resolveResourcePolicy must be a function");
-  let segmentSeq = 0, turnSeq = 0, pendingTurn = !1, foldedSeq = 0, calls = [], epochModel = null, latestMeasuredModel = null, epochPolicy = null, stepsById = /* @__PURE__ */ new Map(), segmentSteps = [], pendingResiduals = [], gEma = null, ledger = createResidentLedger(), dead = 0, sessionFloor = 0, settlementCursor = null, deferred = { total: 0, byPath: /* @__PURE__ */ new Map() }, resourceGrowth = /* @__PURE__ */ new Map(), resourceOverrides = /* @__PURE__ */ new Map(), resourcePolicyByKey = /* @__PURE__ */ new Map(), frames = [], recordedTokens = /* @__PURE__ */ new Map(), defaultFold = null, segmentStartTurn = 0, segmentOutputSum = 0, segmentUsageCount = 0, segmentInputSum = 0, segmentFirstTs = null, segmentLastTs = null, segmentLPeak = 0, segmentGMin = 1 / 0;
+  let segmentSeq = 0, turnSeq = 0, pendingTurn = !1, foldedSeq = 0, calls = [], epochModel = null, latestMeasuredModel = null, epochPolicy = null, stepsById = /* @__PURE__ */ new Map(), segmentSteps = [], pendingResiduals = [], gEma = null, ledger = createResidentLedger(), dead = 0, sessionFloor = 0, settlementCursor = null, deferred = { total: 0, byPath: /* @__PURE__ */ new Map() }, resourceGrowth = /* @__PURE__ */ new Map(), resourceOverrides = /* @__PURE__ */ new Map(), resourcePolicyByKey = /* @__PURE__ */ new Map(), frames = [], heldRecall = null, recordedTokens = /* @__PURE__ */ new Map(), defaultFold = null, segmentStartTurn = 0, segmentOutputSum = 0, segmentUsageCount = 0, segmentInputSum = 0, segmentFirstTs = null, segmentLastTs = null, segmentLPeak = 0, segmentGMin = 1 / 0;
   function openFreshSegment() {
-    segmentSeq += 1, epochModel = null, latestMeasuredModel = null, epochPolicy = null, stepsById = /* @__PURE__ */ new Map(), segmentSteps = [], pendingResiduals = [], gEma = G_FLOOR, ledger = createResidentLedger(), dead = 0, sessionFloor = 0, settlementCursor = null, deferred = { total: 0, byPath: /* @__PURE__ */ new Map() }, resourceGrowth = /* @__PURE__ */ new Map(), resourceOverrides = /* @__PURE__ */ new Map(), resourcePolicyByKey = /* @__PURE__ */ new Map(), frames = [], recordedTokens = /* @__PURE__ */ new Map(), defaultFold = null, segmentStartTurn = turnSeq, segmentOutputSum = 0, segmentUsageCount = 0, segmentInputSum = 0, segmentFirstTs = null, segmentLastTs = null, segmentLPeak = 0, segmentGMin = 1 / 0;
+    segmentSeq += 1, epochModel = null, latestMeasuredModel = null, epochPolicy = null, stepsById = /* @__PURE__ */ new Map(), segmentSteps = [], pendingResiduals = [], gEma = G_FLOOR, ledger = createResidentLedger(), dead = 0, sessionFloor = 0, settlementCursor = null, deferred = { total: 0, byPath: /* @__PURE__ */ new Map() }, resourceGrowth = /* @__PURE__ */ new Map(), resourceOverrides = /* @__PURE__ */ new Map(), resourcePolicyByKey = /* @__PURE__ */ new Map(), frames = [], heldRecall = null, recordedTokens = /* @__PURE__ */ new Map(), defaultFold = null, segmentStartTurn = turnSeq, segmentOutputSum = 0, segmentUsageCount = 0, segmentInputSum = 0, segmentFirstTs = null, segmentLastTs = null, segmentLPeak = 0, segmentGMin = 1 / 0;
   }
   function readModelPolicy(raw) {
     if (raw === null || typeof raw != "object") return null;
@@ -26606,13 +26626,13 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal) {
+  function recordFrame(step, growth, mainCallOrdinal, recall) {
     let resourceTokens = /* @__PURE__ */ new Map(), totals = ledger.residentTotals(), present = /* @__PURE__ */ new Set();
     for (let { resourceKey, tokens } of totals)
       present.add(resourceKey), recordedTokens.get(resourceKey) !== tokens && (resourceTokens.set(resourceKey, tokens), recordedTokens.set(resourceKey, tokens));
     for (let [resourceKey, tokens] of recordedTokens)
       !(tokens > 0) || present.has(resourceKey) || (resourceTokens.set(resourceKey, 0), recordedTokens.set(resourceKey, 0));
-    let frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal };
+    let frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
     return frames.push(frame), frame;
   }
   function foldFor(selector) {
@@ -26632,7 +26652,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function scenarioPoints(selector) {
     let fold = foldFor(selector);
-    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate() } : { points: [], gBar: 0 };
+    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate(), gPhys: fold.physicalRate() } : { points: [], gBar: 0, gPhys: 0 };
   }
   function stampNewFrame(step, frame) {
     frames.length === 1 && (defaultFold = foldFor(isSelected)), step.stamp = defaultFold ? stampOf(defaultFold.push(frame)) : null;
@@ -26677,6 +26697,12 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     for (let key of USAGE_KEYS)
       invariant3(isTokenCount2(raw[key]), `step usage ${key} must be a non-negative finite number`);
     return { input: raw.input, output: raw.output, cacheRead: raw.cacheRead, cacheWrite: raw.cacheWrite };
+  }
+  function readRecall(raw) {
+    return raw === void 0 ? null : (invariant3(raw !== null && typeof raw == "object", "step recall must be an object"), invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers"), invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number"), { priced: raw.priced, net: raw.net, unpriced: raw.unpriced });
+  }
+  function mergedRecall(held, recall) {
+    return held === null || recall === null ? held ?? recall : { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
   }
   function readTimestamp(raw) {
     return raw == null ? null : (invariant3(typeof raw == "number" && Number.isFinite(raw), "step timestamp must be a finite number or null"), raw);
@@ -26787,7 +26813,9 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       foldedSeq,
       stamp: null
     };
-    stepsById.set(step.id, step), segmentSteps.push(step), calls.push(step), segmentOutputSum += usage.output, segmentUsageCount += 1, segmentInputSum += usage.input, Number.isFinite(timestamp) && (segmentFirstTs === null && (segmentFirstTs = timestamp), segmentLastTs = timestamp), updateSegmentExtrema(L), totalStock > 0 && (settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) }, stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal))), result.newCalls += 1;
+    stepsById.set(step.id, step), segmentSteps.push(step), calls.push(step), segmentOutputSum += usage.output, segmentUsageCount += 1, segmentInputSum += usage.input, Number.isFinite(timestamp) && (segmentFirstTs === null && (segmentFirstTs = timestamp), segmentLastTs = timestamp), updateSegmentExtrema(L);
+    let recall = mergedRecall(heldRecall, readRecall(record.recall));
+    totalStock > 0 ? (settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) }, heldRecall = null, stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall))) : heldRecall = recall, result.newCalls += 1;
   }
   function ingestStep(record, result) {
     invariant3(typeof record.id == "string" && record.id.length > 0, "step id must be a non-empty string");
@@ -27116,10 +27144,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function readScenario(overrides) {
     let { next, warnings } = parseOverrides(overrides), view = readView();
     if (!view.rateLamp.reliable) return { reliable: !1 };
-    let { points, gBar } = scenarioPoints(selectorOf(next));
+    let { points, gBar, gPhys } = scenarioPoints(selectorOf(next));
     return {
       reliable: !0,
       gBar,
+      gPhys,
       trajectory: points.filter((p) => p.pp !== null).map((p) => ({ seq: p.seq, x: p.x, u: p.u, pp: p.pp })),
       ...describeScenario(points),
       wallP: wallPositionFor(view.cRatio),
@@ -27203,7 +27232,7 @@ function createMeasurementProjection({
   function diagnostic3(code, message) {
     return { scope, code, message };
   }
-  let callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map(), mainCalls = 0;
+  let callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map(), mainCalls = 0, recallSince = { priced: 0, net: 0, unpriced: 0 };
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     return facts || (facts = emptyFacts(), sidecarByStepId.set(stepId, facts)), facts;
@@ -27269,10 +27298,14 @@ function createMeasurementProjection({
         records.push({ type: "turn-boundary" });
         break;
       case "main-call":
-        mainCalls += 1;
+        if (mainCalls += 1, observation.recall !== void 0) {
+          let { net } = observation.recall;
+          Number.isFinite(net) && net >= 0 ? recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net } : recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
+        }
         break;
-      case "usage":
-        records.push({
+      case "usage": {
+        let recall = recallSince;
+        recallSince = { priced: 0, net: 0, unpriced: 0 }, records.push({
           type: "step",
           id: observation.messageId,
           model: observation.model ?? null,
@@ -27283,9 +27316,11 @@ function createMeasurementProjection({
             cacheRead: observation.usage.cacheRead,
             cacheWrite: observation.usage.cacheWrite
           },
-          mainCallOrdinal: mainCalls
+          mainCallOrdinal: mainCalls,
+          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
         });
         break;
+      }
       case "tool-use":
         projectToolUse(observation, frameCtx, records, diagnostics);
         break;
@@ -29332,7 +29367,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.2",
+      version: "0.11.3",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -31260,7 +31295,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.11.2", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.11.3", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

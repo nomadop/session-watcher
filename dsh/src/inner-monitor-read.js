@@ -624,10 +624,11 @@ function carrierAt(log, seq) {
   return carrier;
 }
 
-// What a committed attempt's slots are made of, over the log: the slots of its carrier, never of its call, and the seqs of the range its call saw.
+// What a committed attempt's slots are made of, over the log: the slots of its carrier, never of its call, the seqs of the range its call saw and the stream of that call, the summary the carrier cites.
 function committedOf(attempt, log, kit) {
   const { slots } = carrierAt(log, attempt.carrier.seq).data.source;
-  return { slots, range: new Set(recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit).range) };
+  const call = recordOf(log, attempt.call.seq, INNER_CALL_RECORD_TYPE, kit);
+  return { slots, range: new Set(call.range), summary: { seq: attempt.call.seq, stream: call.stream } };
 }
 
 // A slot's address, its first seq and seqs, the counted step among its events and the type, producer kind and category of its first event, with the events themselves.
@@ -635,6 +636,32 @@ function placeOf(slot, log) {
   const events = slot.seqs.map(seq => loggedEvent(log, seq));
   const step = events.map(event => eventFactOf(event).step).find(counted => counted !== null) ?? null;
   return { key: slot.seqs[0], seqs: slot.seqs, turn: step?.turn ?? null, step: step?.step ?? null, source: slotSourceOf(events[0]), events };
+}
+
+// The estimate a carrier slot kept of its original text: a finite non-negative number, a zero included, else none; a slot of an older carrier keeps none.
+const sourceTokensOf = slot => (Number.isFinite(slot?.sourceTokens) && slot.sourceTokens >= 0 ? slot.sourceTokens : null);
+
+// The events of a carrier slot over the log, null where the slot's seqs do not read as a list or the log lacks one of them: whether such a slot holds a main call cannot be said.
+function eventsOfSlot(slot, log) {
+  const events = Array.isArray(slot?.seqs) ? slot.seqs.map(seq => log.get(seq)) : null;
+  return events === null || events.includes(undefined) ? null : events;
+}
+
+// The measured usage of a slot's own call and of the one after it: the next slot's main call that has any, else the summary call the carrier cites, which the committed attempt's own call record gives, last usage chunk of its stream. A slot that cannot be read before one with a main call leaves the next unconfirmed (null), never skipped or taken for the summary.
+function usageOfSlot({ slots, at, events, log, summary, kit }) {
+  const own = events.find(isMainCall);
+  const current = own === undefined ? null : { seq: own.seq, usage: callUsageOf(own.data?.usage) };
+  return { current, next: own === undefined ? null : nextCallOf(slots.slice(at + 1), log, summary, kit), sourceTokens: sourceTokensOf(slots[at]) };
+}
+
+function nextCallOf(later, log, summary, kit) {
+  for (const slot of later) {
+    const events = eventsOfSlot(slot, log);
+    if (events === null) return null;
+    const call = events.find(isMainCall);
+    if (call !== undefined) return { kind: 'main', seq: call.seq, usage: callUsageOf(call.data?.usage) };
+  }
+  return { kind: 'summary', seq: summary.seq, usage: usageOfStream(summary.stream, kit).folded };
 }
 
 const NOT_COMMITTED = Object.freeze({ kind: 'not_committed' });
@@ -765,7 +792,7 @@ function handoffDetailOf(handoff, row, log) {
  * `settlement(sessionId, id)` and `currentSettlement(sessionId)` answer one segment at one cut as `{ epoch, attempts, tailCalls, calls, cut, recall?, activity? }`: the continue whose payload message is at seq `id` cleared the segment `handoff.epoch − 1`, read up to its last event; the current one is the latest epoch of one stored snapshot (`readStored`, held or not), up to the snapshot's last event. `epoch` is the segment's display number, `attempts` the pricing inputs of its attempts that had begun by the cut (`id, status, epoch, contextChange, estimatedBefore, call.usage, stepN, cRatio`), a record that landed after it not yet there, so that a seal that commits later is an attempt in flight, `tailCalls` the main calls after its last carrier (a continue's own count for a clear, counted from the log for the current one), and `calls` the segment's main calls in log order, `{ seq, stock, post }`, excluding interrupted calls that reported no usage. `stock` is the input and cache stock of the call's usage as read by `callUsageOf`, or null where it reads none. `post` marks the Source's first call behind the carrier of a committed attempt of that segment (`afterOf`). If that call was excluded, the mark moves to the next retained call, if any, before the next carrier or epoch boundary; neither the movement nor the absence of a mark changes the attempt's readings. A chart can align these marks with the rows in order only when each carrier has a mark of its own. `cut` is `{ segment, through }`, the segment's index and the seq of the last event the answer read, which `settlementTarget` takes back.
  * `recall` is the report-only evidence of `settlementRecallOf` from that segment's log. `activity` is its recall activity, absent where the segment holds no committed seal: the judged and pure settlement steps after the first seal, whether those counts are proved to cover the axis, and the original events the pure steps read back, each with its landing on the axis and its reads; no text. A client that finds none is reading an answer of a host that does not send it.
  * `settlementTarget(sessionId, { segment, through, seq })` answers `{ seq, type, text }` of the original event at `seq` where the segment `segment` read up to `through` confirms it as a recall target, `text` the text blocks of the event end to end and null where it holds none, and the closed `{ kind: 'not_target' }` where it confirms none. It reads one stored snapshot and folds the same evidence at that cut, so the log running on adds nothing; it keeps nothing.
- * `call(sessionId, attempt)` answers `{ row, ids, request, response, usage, timing, carried, quote }` of the attempt whose id is `attempt`, `slots(sessionId, attempt)` answers `{ slots: [{ key, turn, step, source, input, inputDisplay, output }] }` and `slot(sessionId, attempt, key)` answers `{ key, number, seqs, turn, step, source, c, events: [{ seq, type, visible, blocks, raw }], tools }` of the slot that starts at the seq `key`.
+ * `call(sessionId, attempt)` answers `{ row, ids, request, response, usage, timing, carried, quote }` of the attempt whose id is `attempt`, `slots(sessionId, attempt)` answers `{ slots: [{ key, turn, step, source, input, inputDisplay, output }] }` and `slot(sessionId, attempt, key)` answers `{ key, number, seqs, turn, step, source, c, events: [{ seq, type, visible, blocks, raw }], tools, usage }` of the slot that starts at the seq `key`.
  * The other reads use the held instance's projection, live entries and log when available. Otherwise they use `readStored` without live entries, so an attempt with no terminal record reads `unknown`. All reads answer `undefined` for a session that is neither held nor stored, independently of the measurement. A failed read is the caller's to convert: an attempt the monitor holds none of, a record, carrier or event the log lacks at a seq a fact names, a carrier of another shape, a slot no carrier slot starts at, a handoff the monitor holds none of and a load asked for its settlement, a payload, read message or follow-up the log lacks or holds in another shape at a seq a fact names, a read call of a read message with no `paths` whose arguments do not parse or name no file, and a rejected `readSession` all reject. A request header the log lacks is no failure, as `call` says.
  * `call` of an attempt with a live entry reads that entry alone: its request display with the tools it sent, its stream as it stands and the times of the folded facts, with no read of the log and no clock. Otherwise it reads the log once, for the attempt record, the call record, where its row shows a reason the end record and where the attempt committed its carrier, each at the seq the folded facts name; `response` and `usage` are null while no call is recorded.
  * `ids` are the seqs of the start, call, end and carrier facts, each but the start null where there is none. `row` omits the list's `estimatedBefore`, `slotWarnings` and the call's `outputDisplay`; its `reason` and its call's `thrown` are the whole text of the end and call records where the list cuts them.
@@ -774,6 +801,7 @@ function handoffDetailOf(handoff, row, log) {
  * `slots` and `slot` answer the closed `{ kind: 'not_committed' }` for an attempt with no carrier, whatever its call holds: only a carrier is evidence that a seal committed. A slot is the carrier's: `key` its first seq, `turn` and `step` the counted step among its events (`eventFactOf`), else null, `source` the `{ type, kind, category }` of its first event (`slotSourceOf`, `kind` null where the message records none, `category` the class the client names it by), which says nothing of the slot's other events, `number` its place among the carrier's slots, counted from one (it is no reference to the numbering of the summary request), `c` its C string and `output` that same whole text, so an empty `output` is an empty C string, which is no failure. `input` is the cut text of its events the call saw, in the slot's order, `inputDisplay` the same with each structured tool call named by `eventDisplayText`. The list names no seqs: the detail `slot` carries the slot's seqs.
  * An event is `visible` when its seq is in the range its call record keeps, the surface the call saw; the current surface and the carrier's cited sources decide nothing. The original a pruner replaced is not, and no node between replacements is added.
  * `tools` is `slotToolsOf`'s answer over the slot's own events and the one read of the log, `{ warnings, calls }` (`dsh/src/inner-monitor-tools.js`): one card per structured tool call of the slot's assistant messages, paired with the original result by the turn- and step-qualified identity the reducer names, and the warnings the fold's facts place on the cards. It is empty for a slot with no call, no result and no warning. No attachment is read and no result text is copied beside the events that hold it.
+ * `usage` is `{ current, next, sourceTokens }`, read from the same one read of the log. `current` is `{ seq, usage }` of the slot's own main call, the first `assistant/message` among its events whatever event opens the slot, null where it has none, `usage` as `callUsageOf` reads it or null. `next` is null where `current` is, else `{ kind, seq, usage }` of the call after it: the first main call among the events of the carrier's later slots, in their order (`kind` `main`, a call with no usage still the one), and where none follows, the committed attempt's own summary call, the call record the carrier cites (`kind` `summary`, `usage` the last usage chunk of its stream as `callUsageOf` reads it); a later slot whose events cannot be told from the log leaves it null, never skipped and never taken for the summary, and fails nothing of the read. `sourceTokens` is the estimate the carrier's slot kept of its original text, a zero included, null for a carrier that kept none or a value that is no finite non-negative number.
  *
  * @param {{ sessionOf: (id: string) => (object|undefined), readMonitor: (session: object) => { attempts: object[], handoffs: object[] },
  *   live: (sessionId: string) => object[], kit: object, readSession: (sessionId: string) => Promise<{ events: object[] }>,
@@ -850,7 +878,7 @@ export function createMonitorAccess({ sessionOf, readMonitor, live, kit, readSes
       const attempt = attemptOf(facts.state, id);
       if (attempt.carrier === null) return NOT_COMMITTED;
       const log = await facts.log();
-      const { slots, range } = committedOf(attempt, log, kit);
+      const { slots, range, summary } = committedOf(attempt, log, kit);
       const at = slots.findIndex(each => each.seqs[0] === key);
       if (at < 0) throw new Error(`the carrier of attempt ${id} holds no slot ${key}`);
       const slot = slots[at];
@@ -858,7 +886,10 @@ export function createMonitorAccess({ sessionOf, readMonitor, live, kit, readSes
       const tools = slotToolsOf({
         events, range, log, kinds: attempt.slotWarnings?.[key] ?? [], dispatches: attempt.slotDispatches?.[key] ?? [], oldReads: oldReadsOf(slot),
       });
-      return { ...place, number: at + 1, c: slot.text, events: events.map(event => sourceEventView(event, { visible: range.has(event.seq) })), tools };
+      return {
+        ...place, number: at + 1, c: slot.text, events: events.map(event => sourceEventView(event, { visible: range.has(event.seq) })), tools,
+        usage: usageOfSlot({ slots, at, events, log, summary, kit }),
+      };
     },
   };
 }

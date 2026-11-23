@@ -53,7 +53,8 @@ const scenarioRateFor = (overrides) => 1000 + 10 * Object.values(overrides).filt
 
 function fakeEngine(measurement) {
   return {
-    readScenario: (overrides) => { scenarioCalls.push(overrides); return { reliable: true, gBar: scenarioRateFor(overrides) }; },
+    // The scenario's mixed rate is not the physical write rate the kept-bucket what-if prices: the double states both, apart.
+    readScenario: (overrides) => { scenarioCalls.push(overrides); return { reliable: true, gBar: scenarioRateFor(overrides) + 5000, gPhys: scenarioRateFor(overrides) }; },
     ingest: () => ({ newCalls: 0, revisedCalls: 0, newResourceKeys: [], closedSegments: [], diagnostics: [] }),
     closeCurrentSegment: () => ({ closedSegments: [], diagnostics: [] }),
     getStatus: () => ({ L: 90000, B: 60000, bDefault: 55000, g: 900, x: 1.6, dhat: 0.2, xSweet: 1.2, u: 3, pp: 0.31, mf: 0.3, br: 0.12, model: 'claude-opus-4-8', latestMeasuredModel: 'claude-opus-4-8', cRatio: 12.5, segment: measurement.segment, apiCalls: 4, turnSeq: measurement.turnSeq, usage: null, rateLamp: { reliable: true, B_default: 55000 } }),
@@ -171,7 +172,7 @@ describe('prepareHandoff', () => {
     assert.equal(previous.g, 700);
     const prepared = JSON.parse(row.prepared_stats);
     assert.equal(prepared.b_kept, 400 + 45000);
-    // The what-if's rate is the KEPT scenario's: the kept file carried, every other file left out as excess.
+    // The what-if's rate is the KEPT scenario's physical rate: the kept file carried, every other file left out as excess, and no recall bill taken for a write.
     assert.deepEqual(scenarioCalls.at(-1), { [join(project, 'src/a.js')]: 'include', [join(project, 'src/gone.js')]: 'exclude' });
     assert.equal(prepared.g, scenarioRateFor(scenarioCalls.at(-1)));
     assert.notEqual(prepared.g, previous.g, 'the exit stat keeps the default scenario\'s rate');

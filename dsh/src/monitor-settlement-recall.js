@@ -1,28 +1,10 @@
 // The closed-epoch report reads recall evidence without storing a projection or changing the session surface.
-import { eventReadTargetOf } from '../../lib/harness/dsh/event-read.js';
 import { eventFactOf } from '../../lib/harness/dsh/event-facts.js';
 import { callUsageOf, isMainCall } from '../../lib/harness/dsh/transcript-observation.js';
+import { createRecallJudge, isInitiated, judgeOf, stepKey } from '../../lib/harness/dsh/recall-judge.js';
 import { isCallRecord } from '../../lib/inner-seal/call-record.js';
 import { modelPolicyFor } from '../../lib/model-policy.js';
 import { charsToTokens } from '../../lib/token-estimate.js';
-
-const stepKey = ({ turn, step } = {}) => `${turn}:${step}`;
-
-/** The code DSH's loop gives the result of a call it skipped after a cancellation, one it never dispatched. */
-const ABORTED_BEFORE_DISPATCH = 'ABORTED_BEFORE_DISPATCH';
-
-// A call recalls only after the loop dispatched it and did not skip it; the price, the copy it returns, the share and the targets all rest on this one condition.
-const isInitiated = ({ target, dispatched, skipped }) => target !== undefined && dispatched && !skipped;
-
-// What one call is as a recall: `recall` where it was initiated, `other` where it is none (a tool of another kind, a target outside this segment or session, a call the loop skipped or answered without starting) and `unknown` where an unanswered one has not been dispatched.
-const callRecallOf = (call = {}) => (isInitiated(call) ? 'recall' : call.target === undefined || call.dispatched || call.resulted ? 'other' : 'unknown');
-
-// What one request is as a recall, the one reading of its calls: `pure` where each call was initiated, `other` where one is no recall however the others stand, and `unknown` where no call is known to be none yet an unanswered one has not been dispatched.
-function judgeOf({ tools, calls }) {
-  const states = tools.map(({ id }) => callRecallOf(calls.get(id)));
-  if (states.includes('other') || states.length === 0) return 'other';
-  return states.includes('unknown') ? 'unknown' : 'pure';
-}
 
 // The report counts distinct steps in each committed range, then main calls of the tail. A sample outside those counts must not move a correction to another step.
 // `landing` is the step a step key counts as, `sealAt` the step each carrier stands after, and `covered` whether every counted step after the first carrier was placed by a range or the tail that the counts prove.
@@ -89,12 +71,7 @@ export function settlementRecallOf({ events, log, attempts, postByAttempt, tailC
   let seal;
   let sample;
   let open = null;
-  // A call recalls an event of this segment and session written before its request.
-  const targetOf = (call, requestSeq) => {
-    const target = eventReadTargetOf(call);
-    return target && (target.sessionId === undefined || target.sessionId === sessionId)
-      && target.seq >= events[0].seq && target.seq < requestSeq && log.has(target.seq) ? target.seq : undefined;
-  };
+  const judge = createRecallJudge({ sessionId });
   for (const event of events) {
     const { seq, type, data } = event;
     if (starts.has(seq)) before.set(seq, lastMeasured);
@@ -110,29 +87,21 @@ export function settlementRecallOf({ events, log, attempts, postByAttempt, tailC
     else if (type === 'assistant/message' || type === 'tool/call' || type === 'tool/result') {
       if (Number.isSafeInteger(data?.turn) && Number.isSafeInteger(data?.step)) owners.set(seq, stepKey(data));
     }
+    // The judge follows the dispatches and answers of a request from the first seal on.
+    const judged = judge.push(event, { track: seal !== undefined });
     if (isMainCall(event)) {
       const usage = callUsageOf(data?.usage);
       if (usage !== null) ctp ??= modelPolicyFor(data?.message?.source?.model).ctp;
       const resident = [...active.values()].reduce((sum, tokens) => sum + tokens, 0);
-      const content = data?.message?.content;
-      const tools = Array.isArray(content) ? content.filter(block => block?.type === 'tool-call') : [];
-      const calls = new Map(tools.map(block => [block.id, { target: targetOf(block, seq), dispatched: false, skipped: false, resulted: false }]));
+      const { tools, calls } = judged.sample;
       sample = { event, counted: eventFactOf(event).step !== null, usage, resident, seal: seal?.attempt, tools, calls };
       if (!isNoise(event)) lastMeasured = usage === null ? undefined : sample;
       samples.set(seq, sample);
     }
     if (seal === undefined || sample === undefined) continue;
-    if (type === 'tool/call' && stepKey(data) === stepKey(sample.event.data)) {
-      const call = sample.calls.get(data.callId);
-      if (call !== undefined) call.dispatched = true;
-    }
     if (type === 'tool/result') {
       const op = event.surfaceOp;
-      const call = stepKey(data) === stepKey(sample.event.data) ? sample.calls.get(data.message?.toolCallId) : undefined;
-      if (call !== undefined) {
-        call.resulted = true;
-        if (data.error?.code === ABORTED_BEFORE_DISPATCH) call.skipped = true;
-      }
+      const call = judged.call;
       const replaced = op?.op === 'replace' && op.startSeq === op.endSeq && active.delete(op.startSeq);
       // A failed read returns no copy of its target, a refusal of a held one included.
       const returned = op === 'append' && data.message?.isError !== true && call !== undefined && isInitiated(call);

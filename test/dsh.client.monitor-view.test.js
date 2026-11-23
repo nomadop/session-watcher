@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { InnerCompactionView, MonitorSplit, MonitorList, MonitorDrawer, MonitorToolbar } from '../dsh/src/client/monitor-view.js';
-import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage, SlotToolsPage,
+import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPage, RequestPage, ResponsePage, SummariesPage, CarriedPage, QuotePage, UsagePage, TimingPage, SlotDetail, SlotOverviewPage, SlotSummaryPage, SlotSourcePage, SlotToolsPage, SlotUsagePage,
   HandoffDetail, HandoffOverviewPage, HandoffSummaryPage, HandoffFilesPage, HandoffTurnsPage, HandoffLineagePage } from '../dsh/src/client/monitor-drawer.js';
 import { en, zh } from '../dsh/src/client/locales.js';
 import { SKIP_REASONS } from '../lib/llm-adapter/carrier-results.js';
@@ -21,7 +21,7 @@ import { sourceEventView } from '../lib/harness/dsh/inner-monitor-source.js';
 import { FilesView, CarriedFiles } from '../dsh/src/client/monitor-files.js';
 import { carriedFilesOf, readFilesOf, createFilesState, reduceFiles } from '../dsh/src/client/monitor-files-model.js';
 import { assistantMessage, compactionPrune, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadMessage, loadPayload, loadReads, prunedResult, requestHeader, sessionLog, toolResult, userMessage } from './helpers/dsh-events.js';
-import { attemptRow, callPayload, slotRow, slotValue, handoffRow, handoffPayload, HANDOFF_TIME } from './helpers/dsh-monitor-wire.js';
+import { attemptRow, warmed, callPayload, slotRow, slotValue, handoffRow, handoffPayload, HANDOFF_TIME } from './helpers/dsh-monitor-wire.js';
 
 /** The translate: the key itself, followed by its parameters where there are any; `listener`, while set, hears each key asked with the names of its parameters. */
 let listener = null;
@@ -171,7 +171,7 @@ test('a parent row carries its status, its own time, its step count, its estimat
 
   assert.deepEqual(
     [byIdentity['attempt:1'].parts.status, byIdentity['attempt:1'].parts.time, byIdentity['attempt:1'].parts.step, byIdentity['attempt:1'].parts.usage, byIdentity['attempt:1'].parts.seq],
-    ['monitor.status.committed', '900 ms', 'monitor.meta.step(count=8)', 'monitor.usage.cell(output=40)', 'monitor.overview.seq(seq=1)'],
+    ['monitor.status.committed', '900 ms', 'monitor.meta.step(count=8)', 'monitor.usage.cell(output=600)', 'monitor.overview.seq(seq=1)'],
   );
   assert.match(byIdentity['attempt:1'].titles.step, /title="monitor\.meta\.step\.title"/);
   assert.deepEqual([byIdentity['attempt:2'].parts.step, byIdentity['attempt:3'].parts.step], ['—', '—'], 'a dash where the attempt was recorded without a step count');
@@ -179,7 +179,7 @@ test('a parent row carries its status, its own time, its step count, its estimat
   assert.match(byIdentity['attempt:1'].titles.estimate, /title="monitor\.meta\.estimate\.kappa\.title\(kappa=1\.13\)"/);
   assert.deepEqual([byIdentity['attempt:2'].parts.estimate, byIdentity['attempt:3'].parts.estimate], ['—', '—'], 'a dash where the attempt was recorded without a quote');
   assert.match(byIdentity['attempt:1'].markup, /data-status="committed"/);
-  assert.match(byIdentity['attempt:1'].titles.usage, /title="monitor\.usage\.title\(output=40,cacheRead=100,cacheWrite=20\)"/, 'the output and the cache usage are on the item as its title, the input is shown nowhere on the row');
+  assert.match(byIdentity['attempt:1'].titles.usage, /title="monitor\.usage\.title\(output=600,cacheRead=400,cacheWrite=20\)"/, 'the output and the cache usage are on the item as its title, the input is shown nowhere on the row');
   assert.match(byIdentity['attempt:1'].titles.time, /title="monitor\.meta\.time"/);
   assert.equal(byIdentity['attempt:2'].parts.status, 'monitor.status.failed');
   assert.equal(byIdentity['attempt:2'].parts.time, '800 ms');
@@ -249,7 +249,7 @@ test('a parent row says in words what the seal did to the context, and a dash wh
 });
 
 test('a parent row marks a context that grew and a cache rebuild beyond the context\'s growth, each in its own slot and with a title that gives the reason, and marks the row for either', () => {
-  const rebuilt = (id, after, miss, overrides = {}) => attemptRow(id, { contextChange: { before: after + 1_000, after, delta: -1_000, miss }, epoch: 0, ...overrides });
+  const rebuilt = (id, after, miss, overrides = {}) => warmed(attemptRow(id, { contextChange: { before: after + 1_000, after, delta: -1_000, miss }, epoch: 0, ...overrides }));
   const rows = [
     rebuilt(1, 10_000, 0),
     rebuilt(2, 12_000, 9_000),
@@ -268,6 +268,51 @@ test('a parent row marks a context that grew and a cache rebuild beyond the cont
   assert.deepEqual(parents.map(row => row.parts.miss), [
     'monitor.meta.miss(count=0)', 'monitor.meta.miss(count=9000)', 'monitor.meta.miss(count=1004)', 'monitor.meta.miss(count=1000)', 'monitor.meta.miss(count=9000)',
   ], 'the text of a marked slot is the one it has unmarked');
+});
+
+test('a cold summary call marks its call row with a tooltip and the parent row by attention alone, changing no text of the parent, and leaves the warnings above it', () => {
+  const shrunk = { before: 460, after: 410, delta: -50, miss: 0 };
+  const cold = attemptRow(1, { contextChange: shrunk, call: { usage: { input: 120, output: 600, cacheRead: 100, cacheWrite: 20 } } });
+  const grown = attemptRow(2, { contextChange: { before: 460, after: 710, delta: 250, miss: 510 }, call: { usage: { input: 120, output: 600, cacheRead: 100, cacheWrite: 20 } } });
+  const state = [1, 2, 3].reduce((view, attemptId) => reduceView(view, { type: 'toggle', attemptId, open: false }), createViewState());
+  const rows = parseRows(renderList([cold, grown, attemptRow(3, { contextChange: shrunk, epoch: 2 })], { state }));
+  const by = Object.fromEntries(rows.map(row => [row.attributes['data-identity'], row]));
+
+  assert.equal(by['attempt:1'].attributes['data-sw-attention'], '', 'the parent carries the signal');
+  assert.equal(by['attempt:3'].attributes['data-sw-attention'], undefined);
+  assert.equal(by['call:1'].attributes['data-sw-attention'], '');
+  assert.equal(by['call:1'].attributes['aria-description'], 'monitor.meta.call.cold');
+  assert.equal(by['call:3'].attributes['data-sw-attention'], undefined);
+  assert.equal(by['call:2'].attributes['aria-description'], ['monitor.meta.context.grew', 'monitor.meta.miss.unexpected', 'monitor.meta.call.cold'].join(' · '), 'the call row lists the warnings together');
+  assert.match(by['attempt:1'].titles.usage, /title="monitor\.usage\.title\(output=600,cacheRead=100,cacheWrite=20\)"/, 'the title of the usage slot is the one it has unwarned');
+  assert.equal(by['attempt:1'].parts.usage, 'monitor.usage.cell(output=600)');
+});
+
+test('a parent row with warned slots draws the badge inside its step slot, titled and labelled as an image, and a row without them draws none', () => {
+  const warned = attemptRow(1, { stepN: 8, slotWarnings: { 40: ['state-check'], 45: ['state-write'] } });
+  const rows = parseRows(renderList([warned, attemptRow(2, { stepN: 8 })]));
+  const badge = /<span\b[^>]*class="sw-mon-badge"[^>]*>([^<]*)<\/span>/.exec(rows[0].markup);
+  assert.equal(badge[1], '2');
+  assert.match(badge[0], /title="monitor\.meta\.step\.badge\(count=2,total=8\)"/);
+  assert.match(badge[0], /aria-label="monitor\.meta\.step\.badge\(count=2,total=8\)"/);
+  assert.match(badge[0], /role="img"/);
+  assert.match(rows[0].markup, /<span\b[^>]*data-part="step"[^>]*>monitor\.meta\.step\(count=8\)<span\b[^>]*class="sw-mon-badge"/, 'the badge is the step slot\'s own child');
+  assert.equal(rows[1].markup.includes('sw-mon-badge'), false);
+});
+
+test('a short summary marks its call row with a tooltip and the parent row by attention alone, changing no text of the parent', () => {
+  const usage = output => ({ input: 120, output, cacheRead: 400, cacheWrite: 20 });
+  const shrunk = { before: 460, after: 410, delta: -50, miss: 0 };
+  const state = [1, 2].reduce((view, attemptId) => reduceView(view, { type: 'toggle', attemptId, open: false }), createViewState());
+  const rows = parseRows(renderList([attemptRow(1, { contextChange: shrunk, call: { usage: usage(80) } }), attemptRow(2, { contextChange: shrunk, epoch: 2 })], { state }));
+  const by = Object.fromEntries(rows.map(row => [row.attributes['data-identity'], row]));
+  assert.equal(by['attempt:1'].attributes['data-sw-attention'], '');
+  assert.equal(by['attempt:2'].attributes['data-sw-attention'], undefined);
+  assert.equal(by['call:1'].attributes['data-sw-attention'], '');
+  assert.equal(by['call:1'].attributes['aria-description'], 'monitor.meta.call.short');
+  assert.equal(by['call:2'].attributes['data-sw-attention'], undefined);
+  assert.equal(by['attempt:1'].parts.usage, 'monitor.usage.cell(output=80)');
+  assert.match(by['attempt:1'].titles.usage, /title="monitor\.usage\.title\(output=80,cacheRead=400,cacheWrite=20\)"/);
 });
 
 test('in each locale the change reads as words: decreased by, increased by and unchanged', () => {
@@ -1244,6 +1289,98 @@ test('the tools of a slot the host answers read as the card list the page render
   assert.ok(first.pruned.includes(`data-sw-open-source="${conv.replacement.seq}"`), 'the jump names the replacement event of the slot');
   assert.ok(first.sections[1].text.includes('the whole file') && !first.markup.includes('file pruned'));
   assert.deepEqual(second.states, [['no-result', 'monitor.tool.noResult']]);
+});
+
+// ── The usage page of a slot ─────────────────────────────────────────────────
+
+const CALL_USAGE = { input: 1_000, output: 40, cacheRead: 5_000, cacheWrite: 300 };
+const NEXT_USAGE = { input: 2_000, output: 60, cacheRead: 7_000, cacheWrite: 0 };
+const usageOfSlot = (usage = {}) => slotValue(10, {
+  usage: { current: { seq: 10, usage: CALL_USAGE }, next: { kind: 'main', seq: 14, usage: NEXT_USAGE }, sourceTokens: 26_624, ...usage },
+});
+const FOUR = (usage, unit = 'token') => [
+  ['monitor.slotUsage.input', `${usage.input} ${unit}`], ['monitor.usage.output', `${usage.output} ${unit}`],
+  ['monitor.usage.cacheRead', `${usage.cacheRead} ${unit}`], ['monitor.usage.cacheWrite', `${usage.cacheWrite} ${unit}`],
+];
+
+test('a slot drawer offers its usage after the source text, before the tools, only where the host sent a measured call or an estimate (a zero one too), never opens on it, and an older host or an answer with neither keeps the pages it had', () => {
+  const select = reduceView(createViewState(), { type: 'select', kind: 'slot', attemptId: 1, slotKey: 10 });
+  const shown = value => drawerTabs(renderDrawer(select, { [slotKeyOf(1, 10)]: { kind: 'ready', value } }, { ordinals: { 1: { epoch: 1, ordinal: 1 } } }));
+  const plain = [['monitor.slotPage.overview', false], ['monitor.slotPage.summary', true], ['monitor.slotPage.source', false]];
+  const withUsage = [...plain, ['monitor.slotPage.usage', false]];
+
+  assert.deepEqual(shown(slotValue(10)), plain, 'a host that sends no usage field');
+  assert.deepEqual(shown(usageOfSlot({ current: null, next: null, sourceTokens: null })), plain, 'a field that holds nothing to show');
+  assert.deepEqual(shown(usageOfSlot()), withUsage, 'a measured call');
+  assert.deepEqual(shown(usageOfSlot({ current: null, next: null, sourceTokens: 0 })), withUsage, 'an estimate of zero is an estimate');
+  assert.deepEqual(shown(usageOfSlot({ sourceTokens: null })), withUsage, 'a carrier older than the estimate keeps the measured page');
+  assert.deepEqual(shown({ ...usageOfSlot(), tools: { warnings: ['old-attribution'], calls: [] } }), [...withUsage, ['monitor.slotPage.tools', false]], 'the tools come after the usage');
+});
+
+test('the usage page shows the slot\'s own call and the call after it as two blocks, each under its own source and seq with the four buckets, the original text estimate after them as an approximate count of what the compaction saw', () => {
+  const html = pageHtml(SlotUsagePage, usageOfSlot());
+
+  assert.deepEqual(factsOf(sectionOf(html, 'current')), FOUR(CALL_USAGE));
+  assert.ok(sectionOf(html, 'current').includes('monitor.slotUsage.current(seq=10)'), 'the slot\'s own call is told by its event seq');
+  assert.deepEqual(factsOf(sectionOf(html, 'next')), FOUR(NEXT_USAGE));
+  assert.ok(html.includes('monitor.slotUsage.nextMain(seq=14)'), 'the next call is told by its event seq as a main call');
+  assert.ok(textOf(sectionOf(html, 'source')).includes('monitor.slotUsage.approx(tokens=26624 token)'), 'the estimate is an approximation');
+  assert.ok(html.includes('monitor.slotUsage.source') && html.includes('monitor.slotUsage.sourceNote'), 'named as this slot\'s original text, and as what the compaction saw');
+  assert.ok(html.indexOf('data-sw-section="current"') < html.indexOf('data-sw-section="next"') && html.indexOf('data-sw-section="next"') < html.indexOf('data-sw-section="source"'));
+});
+
+test('the usage page words the successor as the summary call where the slot is the last with a call, a call with no usage as not recorded as a whole block, and a successor the host could not confirm as such, never as zeros', () => {
+  const summary = pageHtml(SlotUsagePage, usageOfSlot({ next: { kind: 'summary', seq: 40, usage: NEXT_USAGE } }));
+  assert.ok(summary.includes('monitor.slotUsage.nextSummary(seq=40)') && !summary.includes('monitor.slotUsage.nextMain'));
+  assert.deepEqual(factsOf(sectionOf(summary, 'next')), FOUR(NEXT_USAGE));
+
+  const bare = pageHtml(SlotUsagePage, usageOfSlot({ current: { seq: 10, usage: null }, next: { kind: 'main', seq: 14, usage: null } }));
+  for (const name of ['current', 'next']) {
+    assert.deepEqual(factsOf(sectionOf(bare, name)), [], `${name}: no bucket is shown`);
+    assert.ok(sectionOf(bare, name).includes('monitor.notRecorded'), `${name}: the block reads as not recorded`);
+  }
+
+  const unconfirmed = pageHtml(SlotUsagePage, usageOfSlot({ next: null }));
+  assert.ok(sectionOf(unconfirmed, 'next').includes('monitor.slotUsage.unconfirmed'));
+  assert.deepEqual(factsOf(sectionOf(unconfirmed, 'next')), []);
+  assert.deepEqual(factsOf(sectionOf(unconfirmed, 'current')), FOUR(CALL_USAGE), 'the slot\'s own call is still measured');
+
+  const reported = pageHtml(SlotUsagePage, usageOfSlot({ current: { seq: 10, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } } }));
+  assert.deepEqual(factsOf(sectionOf(reported, 'current')), FOUR({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }), 'a reported zero is shown as zeros');
+});
+
+test('the estimate is shown whatever it is, a zero included, and as not recorded where the carrier kept none beside a measured call; with no measured call the page holds the estimate alone', () => {
+  const zero = pageHtml(SlotUsagePage, usageOfSlot({ current: null, next: null, sourceTokens: 0 }));
+  assert.ok(textOf(sectionOf(zero, 'source')).includes('monitor.slotUsage.approx(tokens=0 token)'));
+  assert.equal(sectionOf(zero, 'current'), undefined);
+  assert.equal(sectionOf(zero, 'next'), undefined, 'no successor is told where there is no call');
+  assert.equal(zero.includes('monitor.slotUsage.unconfirmed'), false);
+
+  const fraction = pageHtml(SlotUsagePage, usageOfSlot({ current: null, next: null, sourceTokens: 1234.5678 }));
+  assert.ok(textOf(sectionOf(fraction, 'source')).includes('monitor.slotUsage.approx(tokens=1235 token)'), 'the stored value is whole and the page rounds');
+
+  const missing = pageHtml(SlotUsagePage, usageOfSlot({ sourceTokens: null }));
+  assert.ok(sectionOf(missing, 'source').includes('monitor.notRecorded'));
+  assert.equal(textOf(sectionOf(missing, 'source')).includes('0 token'), false, 'a missing estimate is no zero');
+});
+
+test('a slot detail the host answers over a real log reads on the usage page the very resource the drawer already read, with no further look-up', { skip }, async () => {
+  const conv = conversation();
+  conv.first.data.usage = { inputTokens: 1_000, outputTokens: 40, cacheReadTokens: 5_000, cacheWriteTokens: 300 };
+  conv.last.data.usage = { inputTokens: 2_000, outputTokens: 60, cacheReadTokens: 7_000 };
+  const { start, log } = attemptOver(conv);
+  const detail = await slotOf(log, start.seq, conv.first.seq);
+  const select = reduceView(createViewState(), { type: 'select', kind: 'slot', attemptId: start.seq, slotKey: conv.first.seq });
+  const touched = [];
+  const html = renderToString(React.createElement(MonitorDrawer, {
+    state: select, monitor: monitorAt(null, { [slotKeyOf(start.seq, conv.first.seq)]: { kind: 'ready', value: detail } }, touched), ordinals: { [start.seq]: { epoch: 1, ordinal: 1 } }, now: NOW, dispatch: () => {}, t,
+  }));
+
+  assert.deepEqual(touched, [slotKeyOf(start.seq, conv.first.seq)], 'the one handle the drawer opened');
+  assert.match(html, /role="tabpanel"[^>]*data-page="summary"|data-page="summary"[^>]*role="tabpanel"/, 'the page opens at its summary');
+  const usage = pageHtml(SlotUsagePage, detail);
+  assert.deepEqual(factsOf(sectionOf(usage, 'current')), FOUR({ input: 1_000, output: 40, cacheRead: 5_000, cacheWrite: 300 }));
+  assert.deepEqual(factsOf(sectionOf(usage, 'next')), FOUR({ input: 2_000, output: 60, cacheRead: 7_000, cacheWrite: 0 }), 'a bucket the call did not report is zero, as the reducer folds it');
 });
 
 // ── The expanded slots ────────────────────────────────────────────────────────
@@ -2346,7 +2483,7 @@ test('a click on a category, the collapse button or the warning toggle dispatche
 });
 
 test('the split puts the toolbar above its list and its drawer, and reads the slots and the turns of the groups the filter lists alone', () => {
-  const attempts = settlingAttempts();
+  const attempts = settlingAttempts().map(warmed);
   const handoffs = [clearingHandoff()];
   const resources = {
     [slotsKey(1)]: readySlots([slotRow(10)]), [slotsKey(2)]: readySlots([slotRow(20)]), [slotsKey(3)]: readySlots([slotRow(30)]), [handoffKey(5)]: readyHandoff(handoffs[0]),
@@ -2378,7 +2515,7 @@ test('the split puts the toolbar above its list and its drawer, and reads the sl
 });
 
 test('the warning filter lists the rows the list marks with a warning, the compaction whose context grew and the one whose cache rebuild was unexpected alike', () => {
-  const attempts = [...settlingAttempts(), attemptRow(9, { epoch: 1 })];
+  const attempts = [...settlingAttempts().map(warmed), attemptRow(9, { epoch: 1 })];
   const marked = parseRows(renderList(attempts)).filter(row => row.attributes['data-sw-attention'] !== undefined).map(row => row.attributes['data-identity']);
   assert.deepEqual(marked, ['attempt:2', 'attempt:3', 'attempt:9']);
   assert.deepEqual(rowIds(renderList(attempts, { state: filterBy(WARNED) })), marked);
@@ -2401,7 +2538,8 @@ test('slot warnings keep the closed parent and, when opened, only the warned slo
   assert.deepEqual(rowIds(closed.html), ['attempt:2', 'attempt:3']);
   assert.equal(parent.attributes['data-sw-attention'], '');
   const plain = parseRows(renderList([attempts[0], attemptRow(2, { contextChange: null })]))[1];
-  assert.equal(textOf(parent.markup), textOf(plain.markup), 'no additional parent text');
+  const withoutBadge = markup => markup.replace(/<span\b[^>]*class="sw-mon-badge"[^>]*>.*?<\/span>/g, '');
+  assert.equal(textOf(withoutBadge(parent.markup)), textOf(plain.markup), 'no additional parent text beside the badge');
   assert.deepEqual(closed.touched, [], 'the parent warning does not load details');
 
   const filtered = reduceView(opening(2, 3), WARNED);

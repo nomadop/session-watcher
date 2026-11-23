@@ -30,7 +30,7 @@ export function attemptRow(id, overrides = {}) {
     slots: 2,
     call: {
       state: 'received', endedAt: 1_500 + id, finish: 'stop', thrown: null, input: 'summarize the history', output: '["note one","note two"]',
-      usage: { input: 120, output: 40, cacheRead: 100, cacheWrite: 20 },
+      usage: { input: 120, output: 600, cacheRead: 400, cacheWrite: 20 },
       ...call,
     },
     contextChange: { before: 460, after: 710, delta: 250, miss: 510 },
@@ -84,6 +84,9 @@ export const CUT = { before: 100_000, after: 26_000, delta: -74_000, miss: 8_000
 export const SUMMARY = { input: 400, output: 2_400, cacheRead: 48_000, cacheWrite: 600 };
 export const NO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 export const paying = (id, overrides = {}) => attemptRow(id, { contextChange: CUT, cRatio: 12, call: { usage: SUMMARY }, stepN: 8, epoch: 0, ...overrides });
+
+/** `row` with its summary call reading the whole of its `before` from the cache, so that no cold-call warning marks it, whatever else its call says of the figures. */
+export const warmed = row => ({ ...row, call: { ...row.call, usage: { ...row.call.usage, cacheRead: row.contextChange.before } } });
 
 /** A committed compaction whose first call after it saw `after` tokens of context and rebuilt `miss` of them in the cache. */
 export const rebuilt = (id, after, miss, overrides = {}) => attemptRow(id, { contextChange: { before: after + 1_000, after, delta: -1_000, miss }, epoch: 0, ...overrides });

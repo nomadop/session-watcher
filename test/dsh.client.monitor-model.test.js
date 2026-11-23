@@ -20,7 +20,7 @@ const attemptRow = (overrides = {}) => ({
   slots: 2,
   call: {
     state: 'received', endedAt: 1_500, finish: 'stop', thrown: null, input: 'summarize', output: '["a"]', outputDisplay: 'a',
-    usage: { input: 120, output: 40, cacheRead: 100, cacheWrite: 20 },
+    usage: { input: 120, output: 600, cacheRead: 400, cacheWrite: 20 },
   },
   contextChange: { before: 460, after: 710, delta: 250, miss: 510 },
   stepN: 8,
@@ -35,7 +35,7 @@ test('a committed attempt\'s meta is its time, step count, estimate outcome, usa
     { part: 'time', text: '900 ms', title: 'monitor.meta.time' },
     { part: 'step', text: 'monitor.meta.step(count=8)', title: 'monitor.meta.step.title' },
     { part: 'estimate', text: 'monitor.meta.estimate(q=1.04)', title: 'monitor.meta.estimate.kappa.title(kappa=1.13)' },
-    { part: 'usage', text: 'monitor.usage.cell(output=40)', title: 'monitor.usage.title(output=40,cacheRead=100,cacheWrite=20)' },
+    { part: 'usage', text: 'monitor.usage.cell(output=600)', title: 'monitor.usage.title(output=600,cacheRead=400,cacheWrite=20)' },
     { part: 'range', text: 'monitor.meta.range(before=460,after=710)', title: 'monitor.meta.range.title' },
     { part: 'context', text: 'monitor.change.increase(count=250)', title: 'monitor.meta.context.grew', attention: true },
     { part: 'miss', text: 'monitor.meta.miss(count=510)', title: 'monitor.meta.miss.title' },
@@ -66,6 +66,19 @@ test('the step slot is the count alone with the title of its own, whatever the q
   assert.deepEqual(stepOf({ stepN: 24, trigger: { q: null, kappa: 1.1 } }), count, 'a quote with no result');
   assert.deepEqual(stepOf({ stepN: 24, trigger: null }), count, 'no quote');
   assert.deepEqual(stepOf({ stepN: null }), { part: 'step', text: '—', title: 'monitor.meta.step.title' });
+});
+
+test('the step slot carries a badge with the count of slots that have warnings where any has, under a title that says it, and its text and title stay as they are', () => {
+  const stepOf = overrides => parentMetaParts(attemptRow(overrides), 9_999, t)[1];
+  const plain = { part: 'step', text: 'monitor.meta.step(count=8)', title: 'monitor.meta.step.title' };
+  const warned = { 40: ['state-check', 'verbatim-recall'], 45: ['state-write'], 50: ['old-attribution'] };
+  assert.deepEqual(stepOf({ slotWarnings: warned }), { ...plain, badge: { text: '3', title: 'monitor.meta.step.badge(count=3,total=8)' } }, 'a slot with several warnings counts once');
+  assert.deepEqual(stepOf({ slotWarnings: { 40: ['state-check'] }, stepN: 3 }).badge, { text: '1', title: 'monitor.meta.step.badge(count=1,total=3)' });
+  assert.deepEqual(stepOf({ slotWarnings: { 40: ['state-check'] }, stepN: null }), { part: 'step', text: '—', title: 'monitor.meta.step.title', badge: { text: '1', title: 'monitor.meta.step.badge.unrated(count=1)' } }, 'no step count, no total in the title');
+  assert.deepEqual(stepOf({ slotWarnings: {} }), plain, 'no warned slot, no badge');
+  assert.deepEqual(stepOf({ slotWarnings: undefined }), plain);
+  const withBadge = parentMetaParts(attemptRow({ slotWarnings: warned }), 9_999, t);
+  assert.deepEqual(withBadge.filter(({ part }) => part !== 'step'), parentMetaParts(attemptRow(), 9_999, t).filter(({ part }) => part !== 'step'), 'no other slot reads it');
 });
 
 test('the estimate slot is the quote\'s deviation to two decimals, its title the deviation\'s meaning with the tolerance the quote was compared with to two decimals where it holds one, and a dash where there is no deviation', () => {
@@ -110,6 +123,27 @@ test('the cache rebuild slot is a warning with a title of its own where the row 
   assert.deepEqual(missOf(true), { part: 'miss', text: 'monitor.meta.miss(count=510)', title: 'monitor.meta.miss.unexpected', attention: true });
   const others = parentMetaParts(attemptRow(), 9_999, t, true).filter(({ part }) => part !== 'miss');
   assert.deepEqual(others, parentMetaParts(attemptRow(), 9_999, t).filter(({ part }) => part !== 'miss'), 'no other slot reads it');
+});
+
+test('a cold summary call marks the usage slot as a warning and changes neither its text nor its title nor any other slot', () => {
+  const cold = attemptRow({ call: { ...attemptRow().call, usage: { input: 120, output: 600, cacheRead: 100, cacheWrite: 20 } } });
+  const usageOf = row => parentMetaParts(row, 9_999, t)[3];
+  assert.deepEqual(usageOf(cold), { part: 'usage', text: 'monitor.usage.cell(output=600)', title: 'monitor.usage.title(output=600,cacheRead=100,cacheWrite=20)', attention: true });
+  assert.deepEqual(usageOf(attemptRow()), { part: 'usage', text: 'monitor.usage.cell(output=600)', title: 'monitor.usage.title(output=600,cacheRead=400,cacheWrite=20)' });
+  const others = parts => parts.filter(({ part }) => part !== 'usage');
+  assert.deepEqual(others(parentMetaParts(cold, 9_999, t)), others(parentMetaParts(attemptRow(), 9_999, t)));
+  const none = attemptRow({ status: 'generating', contextChange: null, call: { ...attemptRow().call, usage: null } });
+  assert.deepEqual(usageOf(none), { part: 'usage', text: '—' }, 'a call with no usage is no warning');
+});
+
+test('a short summary marks the usage slot as a warning like a cold call does, changing no text or title, and a failed attempt\'s short output is none', () => {
+  const withOutput = (output, overrides = {}) => attemptRow({ ...overrides, call: { ...attemptRow().call, usage: { input: 120, output, cacheRead: 400, cacheWrite: 20 } } });
+  const usageOf = row => parentMetaParts(row, 9_999, t)[3];
+  assert.deepEqual(usageOf(withOutput(499)), { part: 'usage', text: 'monitor.usage.cell(output=499)', title: 'monitor.usage.title(output=499,cacheRead=400,cacheWrite=20)', attention: true });
+  assert.deepEqual(usageOf(withOutput(500)), { part: 'usage', text: 'monitor.usage.cell(output=500)', title: 'monitor.usage.title(output=500,cacheRead=400,cacheWrite=20)' });
+  assert.equal(usageOf(withOutput(1, { status: 'failed', contextChange: null })).attention, undefined);
+  const others = parts => parts.filter(({ part }) => part !== 'usage');
+  assert.deepEqual(others(parentMetaParts(withOutput(1), 9_999, t)), others(parentMetaParts(attemptRow(), 9_999, t)));
 });
 
 // ── blockParts ────────────────────────────────────────────────────────────────

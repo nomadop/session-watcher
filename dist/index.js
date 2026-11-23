@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.2",
+      version: "0.11.3",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -49599,7 +49599,7 @@ var init_session_watcher = __esm({
             const overrides = {};
             for (const row2 of filePaths) overrides[row2.path] = kept.has(row2.path) ? "include" : "exclude";
             const scenario = this._engine.readScenario(overrides);
-            return scenario.reliable ? scenario.gBar : 0;
+            return scenario.reliable ? scenario.gPhys : 0;
           }
         };
         if (stored && stored.deliveredAt == null) {
@@ -54410,44 +54410,62 @@ function mainCallsBetween(prevOrdinal, ordinal) {
 function createPathFold({ dead, R, selector }) {
   const carried = /* @__PURE__ */ new Map();
   let u = 0, lambda = 0, F = 0;
-  let growthSum = 0, spanned = 0;
+  let physical = 0, combined = 0, spanned = 0;
+  let recallPerCall = 0;
   let prev = null;
-  function absorb(growth, calls) {
+  function absorb(frame, calls, closes) {
+    const { growth, recall } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
-    growthSum += Math.max(0, excess);
+    let drift = excess;
+    if (closes) {
+      if ((recall?.unpriced ?? 0) > 0) {
+        recallPerCall = null;
+      } else {
+        const bill = (recall?.net ?? 0) / calls;
+        if (recallPerCall !== null) drift += bill - recallPerCall;
+        recallPerCall = bill;
+      }
+    }
+    physical += excess;
+    combined += drift;
     spanned += calls;
   }
-  const rate = () => spanned > 0 ? growthSum / spanned : 0;
+  const rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0;
+  const physicalRate = () => spanned > 0 ? Math.max(0, physical) / spanned : 0;
   return {
     rate,
+    physicalRate,
     push(frame) {
       const calls = mainCallsBetween(prev?.ordinal, frame.mainCallOrdinal);
       for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       const B = baselineOf(dead, carried, selector);
       const x = frame.L / B;
       if (prev === null) {
-        absorb(frame.growth, calls);
-        prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
+        absorb(frame, calls, false);
+        prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
         return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       }
+      const slots = calls - (frame.recall?.priced ?? 0);
       u += calls * Math.sqrt(prev.g / (2 * R * prev.B));
       const V = Math.sqrt(2 * R * prev.B * prev.g);
-      lambda += calls * V;
-      F += calls * (prev.B + R * prev.g);
-      const mfLocal = V / (prev.B + R * prev.g + V);
+      const lambdaHere = calls * V;
+      const fixedHere = slots * (prev.B + R * prev.gPhys);
+      lambda += lambdaHere;
+      F += fixedHere;
+      const mfLocal = lambdaHere > 0 ? lambdaHere / (fixedHere + lambdaHere) : 0;
       const pp = u > 0 ? (u - 1) * (u - 1) / (2 * u) : null;
-      const mf = lambda / (F + lambda);
+      const mf = lambda > 0 ? lambda / (F + lambda) : 0;
       const br = pp === null ? null : mf * pp;
       let deltaW = null;
       if (prev.B > 0) {
         const rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R });
         const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
-        deltaW = calls * (0.5 * (rPrev + rNow));
+        deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      absorb(frame.growth, calls);
-      prev = { B, g: rate(), L: frame.L, ordinal: frame.mainCallOrdinal };
+      absorb(frame, calls, true);
+      prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
       return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
   };
@@ -54757,6 +54775,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   let resourceOverrides = /* @__PURE__ */ new Map();
   let resourcePolicyByKey = /* @__PURE__ */ new Map();
   let frames = [];
+  let heldRecall = null;
   let recordedTokens = /* @__PURE__ */ new Map();
   let defaultFold = null;
   let segmentStartTurn = 0;
@@ -54785,6 +54804,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     resourceOverrides = /* @__PURE__ */ new Map();
     resourcePolicyByKey = /* @__PURE__ */ new Map();
     frames = [];
+    heldRecall = null;
     recordedTokens = /* @__PURE__ */ new Map();
     defaultFold = null;
     segmentStartTurn = turnSeq;
@@ -54865,7 +54885,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal) {
+  function recordFrame(step, growth, mainCallOrdinal, recall) {
     const resourceTokens = /* @__PURE__ */ new Map();
     const totals = ledger.residentTotals();
     const present = /* @__PURE__ */ new Set();
@@ -54880,7 +54900,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       resourceTokens.set(resourceKey, 0);
       recordedTokens.set(resourceKey, 0);
     }
-    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal };
+    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
     frames.push(frame);
     return frame;
   }
@@ -54901,7 +54921,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   }
   function scenarioPoints(selector) {
     const fold = foldFor(selector);
-    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate() } : { points: [], gBar: 0 };
+    return fold ? { points: frames.map((frame) => fold.push(frame)), gBar: fold.rate(), gPhys: fold.physicalRate() } : { points: [], gBar: 0, gPhys: 0 };
   }
   function stampNewFrame(step, frame) {
     if (frames.length === 1) defaultFold = foldFor(isSelected);
@@ -54950,6 +54970,17 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       invariant3(isTokenCount2(raw[key]), `step usage ${key} must be a non-negative finite number`);
     }
     return { input: raw.input, output: raw.output, cacheRead: raw.cacheRead, cacheWrite: raw.cacheWrite };
+  }
+  function readRecall(raw) {
+    if (raw === void 0) return null;
+    invariant3(raw !== null && typeof raw === "object", "step recall must be an object");
+    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers");
+    invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number");
+    return { priced: raw.priced, net: raw.net, unpriced: raw.unpriced };
+  }
+  function mergedRecall(held, recall) {
+    if (held === null || recall === null) return held ?? recall;
+    return { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
   }
   function readTimestamp(raw) {
     if (raw === void 0 || raw === null) return null;
@@ -55127,9 +55158,13 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       segmentLastTs = timestamp;
     }
     updateSegmentExtrema(L);
+    const recall = mergedRecall(heldRecall, readRecall(record2.recall));
     if (totalStock > 0) {
       settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
-      stampNewFrame(step, recordFrame(step, growth, record2.mainCallOrdinal));
+      heldRecall = null;
+      stampNewFrame(step, recordFrame(step, growth, record2.mainCallOrdinal, recall));
+    } else {
+      heldRecall = recall;
     }
     result.newCalls += 1;
   }
@@ -55529,10 +55564,11 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const { next, warnings } = parseOverrides(overrides);
     const view = readView();
     if (!view.rateLamp.reliable) return { reliable: false };
-    const { points, gBar } = scenarioPoints(selectorOf(next));
+    const { points, gBar, gPhys } = scenarioPoints(selectorOf(next));
     return {
       reliable: true,
       gBar,
+      gPhys,
       trajectory: points.filter((p) => p.pp !== null).map((p) => ({ seq: p.seq, x: p.x, u: p.u, pp: p.pp })),
       ...describeScenario(points),
       wallP: wallPositionFor(view.cRatio),
@@ -56058,6 +56094,7 @@ function createMeasurementProjection({
   let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   let mainCalls = 0;
+  let recallSince = { priced: 0, net: 0, unpriced: 0 };
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     if (!facts) {
@@ -56145,8 +56182,15 @@ function createMeasurementProjection({
         break;
       case "main-call":
         mainCalls += 1;
+        if (observation.recall !== void 0) {
+          const { net } = observation.recall;
+          if (Number.isFinite(net) && net >= 0) recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net };
+          else recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
+        }
         break;
-      case "usage":
+      case "usage": {
+        const recall = recallSince;
+        recallSince = { priced: 0, net: 0, unpriced: 0 };
         records.push({
           type: "step",
           id: observation.messageId,
@@ -56158,9 +56202,11 @@ function createMeasurementProjection({
             cacheRead: observation.usage.cacheRead,
             cacheWrite: observation.usage.cacheWrite
           },
-          mainCallOrdinal: mainCalls
+          mainCallOrdinal: mainCalls,
+          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
         });
         break;
+      }
       case "tool-use":
         projectToolUse(observation, frameCtx, records, diagnostics);
         break;
@@ -59276,6 +59322,7 @@ function sealedBatch(batch, selected) {
 }
 function createSourceFold() {
   const kept = [];
+  const keptBySeq = /* @__PURE__ */ new Map();
   let epochStart = 0;
   let facts = initialSourceFacts();
   function push(input) {
@@ -59293,22 +59340,35 @@ function createSourceFold() {
         rewound = true;
       }
     }
-    const batch = input.mainCall ? [{ type: "main-call", sourceOrdinal: input.seq }, ...observations] : observations;
+    for (const { seq, recall } of input.recall ?? []) {
+      const entry2 = keptBySeq.get(seq);
+      if (entry2 === void 0) continue;
+      const at = entry2.batch.findIndex((observation) => observation.type === "main-call");
+      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0)) continue;
+      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall));
+      rewound = true;
+    }
+    const own = input.recall?.find((stated) => stated.seq === input.seq)?.recall;
+    const batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
-    kept.push({ seq: input.seq, batch });
+    const entry = { seq: input.seq, batch };
+    kept.push(entry);
+    keptBySeq.set(input.seq, entry);
     return { batch, rewound, diagnostics };
   }
   function batches() {
     return kept.map((entry) => entry.batch).filter((batch) => batch.length > 0);
   }
-  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts) };
+  return { push, batches, qualifiedCalls: () => qualifiedCalls(facts), facts: () => facts };
 }
-var changed;
+var changed, sameRecall, mainCallFact;
 var init_source_fold = __esm({
   "lib/measurement/source-fold.js"() {
     init_source_facts();
     changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
+    sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net;
+    mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
   }
 });
 

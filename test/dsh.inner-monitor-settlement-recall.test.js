@@ -10,17 +10,8 @@ import {
 } from './helpers/dsh-events.js';
 import { createMonitorAccess } from '../dsh/src/inner-monitor-read.js';
 import {
-  SESSION, accessOver, fold, kit, clear, failedSeal, pricedSeal, readCall, stepOf, tokens,
+  SESSION, accessOver, fold, kit, clear, failedSeal, opening, pricedSeal, readCall, stepOf, tokens,
 } from './helpers/dsh-settlement.js';
-
-// Step 1 of turn 1 admits the task and answers it with a file read, and a seal sums that step up: the settlement's first range, `#0`. Everything a test adds comes after it.
-function opening() {
-  const readFile = { id: 'file', name: 'read', arguments: JSON.stringify({ file_path: 'a.js' }) };
-  const head = stepOf({ turn: 1, step: 1, admit: ['please work'], calls: [readFile], text: 'working', usage: tokens(100, 30, 900), answer: 'file text' });
-  const [ask] = head.admitted;
-  const sealed = pricedSeal([ask, head.request], 1);
-  return { head, ask, sealed, events: [...head.events, ...sealed.events] };
-}
 
 const current = events => accessOver(events).currentSettlement(SESSION);
 

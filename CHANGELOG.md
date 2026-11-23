@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.3 (2026-11-23) — Recall requests priced at their own bill, and a sharper compaction monitor
+
+### DSH plugin
+
+- **A request that only reads earlier events back is priced at its own bill** — after an inner seal, the extra read-back requests enter the shared residual measurement at what they cost and add nothing restart timing could save, so the movable fraction is no longer capped at `1/(1+√2)` there, where it is bounded by `1`. Playback keeps the unpriced fold; every other host's bound is unchanged. The `sw-explain` skill and the concept and cookbook docs state the exception.
+- **The monitor warns of cold and short summary calls** — a summary call that read far less from the cache than the context before it held, or answered with very few tokens, is flagged; a step shows how many of its slots carry a warning.
+- **A compaction slot shows its own call's usage** — a Usage page gives the slot's call, the call after it and the uncached input, with the original text's approximate size marked as an estimate and no bill; the slot's output and the cache writes of the successor call are highlighted.
+- **The summary keys its action cues by the slots asked** — an empty slot note is filled with its cue, and the carrier's evidence and state wording drops the time anchors.
+
+---
+
 ## 0.11.2 (2026-11-23) — The carrier cache bundle carries its own adapter, and the monitor reads old attribution and recall
 
 ### DSH plugin

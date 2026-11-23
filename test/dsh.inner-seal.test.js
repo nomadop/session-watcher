@@ -1801,7 +1801,7 @@ test('what cannot give a question with the user\'s own answer adds nothing, and 
     const { carrier, types } = await sealedAsk(ask);
     assert.deepEqual(types, SEALED, why);
     const { slots } = carrier.data.source;
-    assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text']), `${why}: no field, no stand-in`);
+    assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text', 'sourceTokens']), `${why}: no field, no stand-in`);
     assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_TABLE.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }], `${why}: the body is the notes alone, as without an ask`);
   }
 });
@@ -1820,7 +1820,7 @@ test('a slot whose frozen events cannot be read for its questions, whatever the 
   await stderrOf(t, async () => { await preStep(seal, session); });
   assert.deepEqual(typesSince(session, before), SEALED);
   const { slots } = appendedSince(session, before).find(event => event.type === 'user/message').data.source;
-  assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text']));
+  assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text', 'sourceTokens']));
 });
 
 test('a refusal, a custom answer with no selection and a question the user left unanswered are what the user said: the non-empty answers stand under their questions, bound by id whatever order the answers come in, and the question with no text of the user\'s adds nothing beside them', { skip }, async () => {
@@ -1919,7 +1919,7 @@ test('a seal over steps that asked nothing, tool calls of other tools among them
 
   const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
   const { slots } = carrier.data.source;
-  assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text']));
+  assert.deepEqual(slots.map(slot => Object.keys(slot)), slots.map(() => ['seqs', 'text', 'sourceTokens']));
   assert.deepEqual(carrier.data.content, [{ type: 'text', text: [CARRIER_TABLE.addresses, ...slots.map(slot => `${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`)].join('\n') }]);
 });
 
@@ -3426,4 +3426,90 @@ test('a cancel during the git read ends the turn as the cancel, with no carrier 
   assert.equal(failure.nextCalls, 0);
   assert.deepEqual(typesSince(session, before), FAILED, 'the attempt ends with no prune and no carrier');
   assert.deepEqual(stateLines(lines), []);
+});
+
+// ── The estimate of each slot's original text a seal keeps ───────────────────────────────────────────────
+
+// The pair the quote below reads: ASCII and CJK characters at different prices, powers of two so that every token count is exact. A range of `INNER_QUOTE.minSteps` counted steps of `turnOf` still quotes as worth sealing under it.
+const SOURCE_CTP = { ascii: 1 / 1024, cjk: 1 / 512, version: 1 };
+
+test('a committed seal keeps, on each slot, the tokens of the range\'s messages it summarized under the pair its quote read, and the slot detail reads them: the pruned original is out, the replacement the call saw and the canonical request text are in, and the frozen slice is the text', { skip }, async () => {
+  const { events, replies } = turnOf({ toolSteps: [1] });
+  const original = events.find(event => event.type === 'tool/result');
+  const replacement = prunedResult(original, { text: 'pruned once' });
+  events.splice(events.indexOf(original) + 1, 0, replacement);
+  // Step 3 reads in two scripts, four CJK characters and one ASCII one; step 2 as the log has it changed after the slice was frozen.
+  replies[2].data.message.content[0].text = '好好好好x';
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const live = session.snapshotEvents();
+  const frozen = live.map(event => (event === live[seqOf(replies[1])] ? { ...event, data: { ...event.data, message: { ...event.data.message, content: [{ type: 'text', text: 'frozen reply 1.2' }] } } } : event));
+  const { monitor, seal } = sealOver(session, { ctpOf: () => SOURCE_CTP, readSession: async () => ({ events: frozen }) });
+  const before = session.seq;
+
+  await preStep(seal, session);
+
+  const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
+  // By hand: step 1 holds `reply 1.1`, the call `read{}` and the replacement `pruned once`, the original `result 1.1` being no part of what the call saw; step 2 the frozen 16 characters; step 3 one ASCII and four CJK characters; the others `reply 1.n`.
+  const expected = [(9 + 6 + 11) * 1024, 16 * 1024, 1 * 1024 + 4 * 512, ...Array(5).fill(9 * 1024)];
+  assert.deepEqual(carrier.data.source.slots.map(slot => slot.sourceTokens), expected);
+  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered, which says nothing of the estimate');
+
+  const access = accessAfter(session, monitor);
+  const [attempt] = (await access.rows(session.id)).attempts;
+  const details = await Promise.all(carrier.data.source.slots.map(slot => access.slot(session.id, attempt.id, slot.seqs[0])));
+  assert.deepEqual(details.map(detail => detail.usage.sourceTokens), expected, 'the slot detail reads what the carrier kept');
+});
+
+test('the estimate is priced under the pair the quote read, once: the retries of the summary and the commit do not read the pair again, and the carrier keeps what the committing call\'s own slot messages come to, a slot whose text is empty counting a real zero', { skip }, async () => {
+  const { events } = turnOf();
+  // A user message with no content in the middle of the range: a slot of its own, whose original text is empty.
+  const empty = userMessage({});
+  events.splice(events.findIndex(event => event.type === 'step/start' && event.data.step === 4), 0, empty);
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const other = { ascii: 1 / 4, cjk: 1 / 4, version: 2 };
+  let reads = 0;
+  const llm = sequencedLlm(wrongFormat, wrongFormat, answeringSlots().stream);
+  const { seal } = sealOver(session, { llm, ctpOf: () => { reads += 1; return reads === 1 ? SOURCE_CTP : other; } });
+  const before = session.seq;
+
+  await preStep(seal, session);
+
+  assert.equal(llm.calls.length, 3, 'two failed requests and the one that committed');
+  assert.equal(reads, 1, 'the pair is read once for the quote');
+  const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
+  const slots = carrier.data.source.slots;
+  const at = slots.findIndex(slot => slot.seqs.includes(seqOf(empty)));
+  assert.equal(slots[at].sourceTokens, 0, 'an empty original is a zero that was observed');
+  assert.deepEqual(slots.filter((_, index) => index !== at).map(slot => slot.sourceTokens), Array(INNER_QUOTE.minSteps).fill(9 * 1024), 'every other slot is priced under the first pair, never the one a later read would answer');
+});
+
+test('over a real seal the slot detail gives the measured usage of each slot\'s own call and of the next one, the last call\'s next being the summary call that committed and not one that failed before it', { skip }, async () => {
+  const { events, replies } = turnOf();
+  const usageOf = (input, output, read, write) => ({ inputTokens: input, outputTokens: output, totalTokens: input + output + read + write, cacheReadTokens: read, cacheWriteTokens: write });
+  replies[0].data.usage = usageOf(100, 10, 1_000, 50);
+  replies[1].data.usage = usageOf(200, 20, 2_000, 0);
+  // Reply 3 reported nothing: its slot holds a call with no usage, which is no slot to skip.
+  replies.at(-1).data.usage = usageOf(900, 90, 9_000, 9);
+  const { session, seqOf } = sessionOver([systemMessage(), ...events]);
+  const llm = sequencedLlm(() => summaryStream(['only one'], usageOf(7, 7, 7, 7)), answeringSlots(usageOf(5, 6, 3, 4)).stream);
+  const { monitor, seal } = sealOver(session, { llm });
+  const before = session.seq;
+
+  await preStep(seal, session);
+
+  const appended = appendedSince(session, before);
+  const committedCall = appended.filter(event => event.type === INNER_CALL_RECORD_TYPE).at(-1);
+  const access = accessAfter(session, monitor);
+  const [attempt] = (await access.rows(session.id)).attempts.filter(row => row.status === 'committed');
+  const slotOf = reply => access.slot(session.id, attempt.id, seqOf(reply));
+
+  const first = await slotOf(replies[0]);
+  const second = await slotOf(replies[1]);
+  const third = await slotOf(replies[2]);
+  const last = await slotOf(replies.at(-1));
+  assert.deepEqual(first.usage.current, { seq: seqOf(replies[0]), usage: { input: 100, output: 10, cacheRead: 1_000, cacheWrite: 50 } });
+  assert.deepEqual(first.usage.next, { kind: 'main', seq: seqOf(replies[1]), usage: { input: 200, output: 20, cacheRead: 2_000, cacheWrite: 0 } });
+  assert.deepEqual(second.usage.next, { kind: 'main', seq: seqOf(replies[2]), usage: null }, 'a call with no usage is the successor, its usage not recorded');
+  assert.deepEqual([third.usage.current.usage, third.usage.next.seq], [null, seqOf(replies[3])]);
+  assert.deepEqual(last.usage.next, { kind: 'summary', seq: committedCall.seq, usage: { input: 5, output: 6, cacheRead: 3, cacheWrite: 4 } }, 'the call the carrier cites, not the failed one');
 });

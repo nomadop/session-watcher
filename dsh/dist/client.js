@@ -220,12 +220,16 @@ var en = {
   "monitor.context.miss": "Cache rebuild",
   "monitor.meta.step": "Steps {count}",
   "monitor.meta.step.title": "Steps this compaction summarized",
+  "monitor.meta.step.badge": "Steps with slot warnings: {count} of {total}",
+  "monitor.meta.step.badge.unrated": "Steps with slot warnings: {count}",
   "monitor.meta.estimate": "Deviation {q}",
   "monitor.meta.estimate.title": "Deviation of the estimate from its reference",
   "monitor.meta.estimate.kappa.title": "Deviation of the estimate from its reference; early-trigger tolerance {kappa}",
   "monitor.meta.miss": "Cache rebuild {count}",
   "monitor.meta.miss.title": "Tokens rebuilt in the cache by the first call after compaction",
   "monitor.meta.miss.unexpected": "The cache rebuild exceeds the context growth: an unexpected cache miss occurred",
+  "monitor.meta.call.cold": "The call read far less from the cache than the context before it held",
+  "monitor.meta.call.short": "The summary call answered with very few tokens",
   "monitor.drawer.label": "Details",
   "monitor.drawer.call": "Call of segment #{epoch} compaction #{ordinal}",
   "monitor.drawer.slot": "Events of segment #{epoch} compaction #{ordinal}",
@@ -381,6 +385,16 @@ var en = {
   "monitor.slot.noBlocks": "This event has no content blocks.",
   "monitor.slot.raw": "Raw JSON",
   "monitor.slotPage.tools": "Tools",
+  "monitor.slotPage.usage": "Usage",
+  "monitor.slotUsage.current": "This slot's own call \xB7 event seq {seq}",
+  "monitor.slotUsage.next": "The call after it",
+  "monitor.slotUsage.nextMain": "The next call \xB7 event seq {seq}",
+  "monitor.slotUsage.nextSummary": "The summary call, no later slot holding a call \xB7 event seq {seq}",
+  "monitor.slotUsage.unconfirmed": "Cannot be confirmed",
+  "monitor.slotUsage.input": "Uncached input",
+  "monitor.slotUsage.source": "Original text of this slot",
+  "monitor.slotUsage.sourceNote": "An approximate count, estimated as the compaction saw this slot's original text; it is no measured usage and no bill.",
+  "monitor.slotUsage.approx": "\u2248 {tokens}",
   "monitor.tool.input": "Input",
   "monitor.tool.output": "Output",
   "monitor.tool.noInput": "Input not recorded",
@@ -789,12 +803,16 @@ var zh = {
   "monitor.context.miss": "\u7F13\u5B58\u91CD\u5EFA",
   "monitor.meta.step": "\u6B65\u6570 {count}",
   "monitor.meta.step.title": "\u8FD9\u6B21\u538B\u7F29\u6C47\u603B\u7684\u6B65\u6570",
+  "monitor.meta.step.badge": "{total} \u6B65\u4E2D\u6709 {count} \u6B65\u7684\u69FD\u4F4D\u5E26\u8B66\u544A",
+  "monitor.meta.step.badge.unrated": "{count} \u6B65\u7684\u69FD\u4F4D\u5E26\u8B66\u544A",
   "monitor.meta.estimate": "\u504F\u79BB\u5EA6 {q}",
   "monitor.meta.estimate.title": "\u4F30\u7B97\u76F8\u5BF9\u53C2\u8003\u7684\u504F\u79BB\u5EA6",
   "monitor.meta.estimate.kappa.title": "\u4F30\u7B97\u76F8\u5BF9\u53C2\u8003\u7684\u504F\u79BB\u5EA6\uFF1B\u63D0\u524D\u89E6\u53D1\u5BB9\u5DEE {kappa}",
   "monitor.meta.miss": "\u7F13\u5B58\u91CD\u5EFA {count}",
   "monitor.meta.miss.title": "\u538B\u7F29\u540E\u7B2C\u4E00\u6B21\u8C03\u7528\u91CD\u5EFA\u7F13\u5B58\u7684 token",
   "monitor.meta.miss.unexpected": "\u7F13\u5B58\u91CD\u5EFA\u91CF\u8D85\u51FA\u4E0A\u4E0B\u6587\u589E\u957F\uFF1A\u53D1\u751F\u4E86\u975E\u9884\u671F\u7684\u7F13\u5B58\u672A\u547D\u4E2D",
+  "monitor.meta.call.cold": "\u8BE5\u8C03\u7528\u4ECE\u7F13\u5B58\u8BFB\u53D6\u7684\u91CF\u8FDC\u4F4E\u4E8E\u5176\u524D\u7684\u4E0A\u4E0B\u6587",
+  "monitor.meta.call.short": "\u6458\u8981\u8C03\u7528\u7684\u8F93\u51FA\u5F88\u5C11",
   "monitor.drawer.label": "\u8BE6\u60C5",
   "monitor.drawer.call": "\u5206\u6BB5#{epoch}\u538B\u7F29#{ordinal}\u7684\u8C03\u7528",
   "monitor.drawer.slot": "\u5206\u6BB5#{epoch}\u538B\u7F29#{ordinal}\u7684\u4E8B\u4EF6",
@@ -950,6 +968,16 @@ var zh = {
   "monitor.slot.noBlocks": "\u6B64\u4E8B\u4EF6\u6CA1\u6709\u5185\u5BB9\u5757\u3002",
   "monitor.slot.raw": "\u539F\u59CB JSON",
   "monitor.slotPage.tools": "\u5DE5\u5177",
+  "monitor.slotPage.usage": "\u7528\u91CF",
+  "monitor.slotUsage.current": "\u672C\u69FD\u81EA\u5DF1\u7684\u8C03\u7528 \xB7 \u4E8B\u4EF6 seq {seq}",
+  "monitor.slotUsage.next": "\u5176\u540E\u7684\u8C03\u7528",
+  "monitor.slotUsage.nextMain": "\u4E0B\u4E00\u6B21\u8C03\u7528 \xB7 \u4E8B\u4EF6 seq {seq}",
+  "monitor.slotUsage.nextSummary": "\u6458\u8981\u8C03\u7528\uFF08\u5176\u540E\u7684\u69FD\u518D\u65E0\u8C03\u7528\uFF09\xB7 \u4E8B\u4EF6 seq {seq}",
+  "monitor.slotUsage.unconfirmed": "\u65E0\u6CD5\u786E\u8BA4",
+  "monitor.slotUsage.input": "\u672A\u7F13\u5B58\u8F93\u5165",
+  "monitor.slotUsage.source": "\u672C\u69FD\u539F\u6587",
+  "monitor.slotUsage.sourceNote": "\u538B\u7F29\u6240\u89C1\u672C\u69FD\u539F\u6587\u7684\u7EA6\u6570\uFF0C\u6309\u4F30\u7B97\u5F97\u51FA\uFF1B\u4E0D\u662F\u5B9E\u6D4B\u7528\u91CF\uFF0C\u4E5F\u4E0D\u662F\u8D26\u5355\u3002",
+  "monitor.slotUsage.approx": "\u7EA6 {tokens}",
   "monitor.tool.input": "\u8F93\u5165",
   "monitor.tool.output": "\u8F93\u51FA",
   "monitor.tool.noInput": "\u672A\u8BB0\u5F55\u8F93\u5165",
@@ -20275,6 +20303,14 @@ var import_react10 = __toESM(require("react"), 1);
 // dsh/src/client/monitor-drawer.js
 var import_react9 = __toESM(require("react"), 1);
 
+// public/lib/requestPrice.js
+function requestCostOf(usage, ratio) {
+  const { input, cacheRead, cacheWrite } = usage ?? {};
+  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
+  return cacheRead + ratio * (input + cacheWrite);
+}
+var rebuildPremiumOf = (miss, ratio) => (ratio - 1) * miss;
+
 // public/lib/compactionEconomics.js
 var segmentOf = ({ epoch }) => epoch ?? 0;
 var countOf = (value) => Number.isFinite(value) ? value : 0;
@@ -20305,18 +20341,13 @@ function followOf(committed, at, tail) {
   const later = committed.slice(at + 1).filter((next) => segmentOf(next) === segment).reduce((sum, { stepN }) => sum + countOf(stepN), 0);
   return later + tail;
 }
-function requestCostOf(usage, ratio) {
-  const { input, cacheRead, cacheWrite } = usage ?? {};
-  if (![input, cacheRead, cacheWrite, ratio].every(Number.isFinite)) return null;
-  return cacheRead + ratio * (input + cacheWrite);
-}
 var neededOf = (cut, cost) => cost === null || cut === null ? null : cut > 0 ? Math.ceil(Math.round(cost) / cut) : Infinity;
 var gapOf = (needed, follow) => Number.isFinite(needed) ? needed - follow : null;
 function figuresOf({ contextChange, call, cRatio }, follow, cut) {
   const { miss } = contextChange ?? {};
   const summary = requestCostOf(call.usage, cRatio);
   if (!Number.isFinite(cut) || !Number.isFinite(miss) || summary === null) return null;
-  const rebuild = (cRatio - 1) * miss;
+  const rebuild = rebuildPremiumOf(miss, cRatio);
   const cost = summary + rebuild;
   return cost > 0 ? { saved: Math.max(0, follow * cut), cost, rebuild } : null;
 }
@@ -20449,7 +20480,7 @@ function paybackCurveOf({ steps: steps2, rows, adjustments }) {
   const medianNeeded = needed.length < MEDIAN_MIN_COUNT ? null : needed.length % 2 === 1 ? needed[middle] : (needed[middle - 1] + needed[middle]) / 2;
   return { steps: steps2, net, seals: rows.map((row2) => row2.sealAt).sort((a, b) => a - b), lowest, below, medianNeeded };
 }
-var UNEXPECTED_MISS_PERCENT = 30;
+var MISS_WARNING_PERCENT = 30;
 function unexpectedMissOf(attempts) {
   const committed = attempts.filter(({ status }) => status === "committed").sort((a, b) => a.id - b.id);
   const previousAfter = /* @__PURE__ */ new Map();
@@ -20459,10 +20490,14 @@ function unexpectedMissOf(attempts) {
     const segment = segmentOf(attempt);
     const { after, miss } = contextChange ?? {};
     const previous = previousAfter.get(segment);
-    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > UNEXPECTED_MISS_PERCENT * previous) unexpected.add(id);
+    if (previous > 0 && Number.isFinite(after) && Number.isFinite(miss) && (miss - (after - previous)) * PERCENT > MISS_WARNING_PERCENT * previous) unexpected.add(id);
     previousAfter.set(segment, Number.isFinite(after) ? after : null);
   }
   return unexpected;
+}
+function isColdCall(usage, before) {
+  if (usage === null) return false;
+  return before > 0 ? (before - usage.cacheRead) * PERCENT > MISS_WARNING_PERCENT * before : usage.cacheRead === 0;
 }
 var shownStatusOf = (attempt, payback) => attempt.status === "committed" && payback.get(attempt.id) >= PAID_BACK_PERCENT ? "paid" : attempt.status;
 
@@ -20574,13 +20609,19 @@ function leafRows(id, owner, list, leafOf, include) {
   if (list.length === 0) return [placeholderRow(id, owner, "empty")];
   return (include === void 0 ? list : list.filter(include)).map(leafOf);
 }
-function costWarningsOf({ contextChange }, missWarned) {
+var SHORT_SUMMARY_OUTPUT = 500;
+var isShortSummary = ({ status, call }) => status === "committed" && call.usage !== null && call.usage.output < SHORT_SUMMARY_OUTPUT;
+function costWarningsOf(attempt, missWarned) {
+  const { contextChange, call } = attempt;
   return {
     ...contextChange?.delta > 0 && { context: "monitor.meta.context.grew" },
-    ...missWarned && { miss: "monitor.meta.miss.unexpected" }
+    ...missWarned && { miss: "monitor.meta.miss.unexpected" },
+    ...isColdCall(call.usage, contextChange?.before) && { call: "monitor.meta.call.cold" },
+    ...isShortSummary(attempt) && { short: "monitor.meta.call.short" }
   };
 }
-var hasSlotWarnings = ({ slotWarnings }) => slotWarnings !== void 0 && Object.keys(slotWarnings).length > 0;
+var slotWarningCount = ({ slotWarnings }) => slotWarnings === void 0 ? 0 : Object.keys(slotWarnings).length;
+var hasSlotWarnings = (attempt) => slotWarningCount(attempt) > 0;
 function visibleGroups(attempts, handoffs, { category, warned }) {
   const unexpectedMiss = unexpectedMissOf(attempts);
   return {
@@ -21022,7 +21063,16 @@ function createSettingsDraft({ settings, models }) {
 // dsh/src/client/monitor-model.js
 var jsonText = (value) => JSON.stringify(value, null, 2) ?? String(value);
 var stringOf = (value) => typeof value === "string" ? value : jsonText(value);
-var stepPart = (attempt, t) => ({ part: "step", text: Number.isFinite(attempt.stepN) ? t("monitor.meta.step", { count: attempt.stepN }) : NOT_AVAILABLE, title: t("monitor.meta.step.title") });
+function stepBadge(attempt, t) {
+  const count = slotWarningCount(attempt);
+  if (count === 0) return null;
+  const total = attempt.stepN;
+  return { text: `${count}`, title: Number.isFinite(total) ? t("monitor.meta.step.badge", { count, total }) : t("monitor.meta.step.badge.unrated", { count }) };
+}
+var stepPart = (attempt, t) => {
+  const badge = stepBadge(attempt, t);
+  return { part: "step", text: Number.isFinite(attempt.stepN) ? t("monitor.meta.step", { count: attempt.stepN }) : NOT_AVAILABLE, title: t("monitor.meta.step.title"), ...badge && { badge } };
+};
 var DECIMALS = 2;
 function estimatePart({ trigger }, t) {
   const q = trigger?.q;
@@ -21044,7 +21094,8 @@ function parentMetaParts(attempt, now, t, missWarned = false) {
     usage === null ? { part: "usage", text: NOT_AVAILABLE } : {
       part: "usage",
       text: t("monitor.usage.cell", { output: usage.output }),
-      title: t("monitor.usage.title", { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite })
+      title: t("monitor.usage.title", { output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite }),
+      ...(warnings.call || warnings.short) && { attention: true }
     },
     { part: "range", text: contextRangeText(attempt.contextChange, t), title: t("monitor.meta.range.title") },
     warnings.context ? { part: "context", text: contextChangeText(attempt.contextChange, t), title: t(warnings.context), attention: true } : { part: "context", text: contextChangeText(attempt.contextChange, t), title: t("monitor.meta.context") },
@@ -22881,6 +22932,30 @@ function SlotSourcePage({ detail, opened = null, t }) {
     detail.events.map((event) => h10(SourceEvent, { key: event.seq, event, opened: opened?.seq === event.seq, t }))
   );
 }
+function CallUsage({ name, title, usage, marked, t }) {
+  const count = (field, value) => marked === field ? h10("span", { "data-sw-usage": field }, tokensOf(value)) : tokensOf(value);
+  return h10(Section, { name, title }, usage === null || usage === void 0 ? h10(Missing, { t }) : h10(Facts, { entries: [
+    [t("monitor.slotUsage.input"), tokensOf(usage.input)],
+    [t("monitor.usage.output"), count("output", usage.output)],
+    [t("monitor.usage.cacheRead"), tokensOf(usage.cacheRead)],
+    [t("monitor.usage.cacheWrite"), count("cacheWrite", usage.cacheWrite)]
+  ] }));
+}
+function SlotUsagePage({ detail, t }) {
+  const { current, next, sourceTokens } = detail.usage;
+  return h10(
+    import_react9.default.Fragment,
+    null,
+    current === null ? null : h10(CallUsage, { name: "current", title: t("monitor.slotUsage.current", { seq: current.seq }), usage: current.usage, marked: "output", t }),
+    current === null ? null : next === null ? h10(Section, { name: "next", title: t("monitor.slotUsage.next") }, h10("p", { className: "sw-mon-note", "data-sw-unconfirmed": "" }, t("monitor.slotUsage.unconfirmed"))) : h10(CallUsage, { name: "next", title: t(next.kind === "summary" ? "monitor.slotUsage.nextSummary" : "monitor.slotUsage.nextMain", { seq: next.seq }), usage: next.usage, marked: "cacheWrite", t }),
+    h10(
+      Section,
+      { name: "source", title: t("monitor.slotUsage.source") },
+      h10("p", { className: "sw-mon-note" }, t("monitor.slotUsage.sourceNote")),
+      sourceTokens === null ? h10(Missing, { t }) : h10("p", null, t("monitor.slotUsage.approx", { tokens: tokensOf(Math.round(sourceTokens)) }))
+    )
+  );
+}
 var DIRECT_READS = ["handoff-recall", "carrier-recall", "verbatim-recall"];
 var warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
 function cardWarningText(warning, t) {
@@ -23029,10 +23104,11 @@ function CallDetail({ detail, monitor, attemptId, payback, now, t }) {
   return h10(PagedDetail, { pages: CALL_PAGES, first: "overview", labels: "monitor.page", detail, monitor, attemptId, payback, now, t });
 }
 var hasTools = ({ tools }) => tools !== void 0 && (tools.calls.length > 0 || tools.warnings.length > 0);
+var hasUsage = ({ usage }) => usage !== void 0 && (usage.current !== null || usage.sourceTokens !== null);
 function SlotDetail({ detail, t }) {
   const [page, setPage] = import_react9.default.useState("summary");
   const [opened, setOpened] = import_react9.default.useState(null);
-  const pages = hasTools(detail) ? { ...SLOT_PAGES, tools: SlotToolsPage } : SLOT_PAGES;
+  const pages = { ...SLOT_PAGES, ...hasUsage(detail) ? { usage: SlotUsagePage } : {}, ...hasTools(detail) ? { tools: SlotToolsPage } : {} };
   const select = (name) => {
     setOpened(null);
     setPage(name);
@@ -23118,7 +23194,12 @@ function Meta({ parts }) {
   return h11(
     "span",
     { className: "sw-mon-meta" },
-    parts.map(({ part, text, title, attention, type }) => h11("span", { key: part, className: "sw-mon-meta-item", "data-part": part, "data-sw-attention": attention ? "" : void 0, "data-type": type, title }, text))
+    parts.map(({ part, text, title, attention, type, badge }) => h11(
+      "span",
+      { key: part, className: "sw-mon-meta-item", "data-part": part, "data-sw-attention": attention ? "" : void 0, "data-type": type, title },
+      text,
+      badge === void 0 ? null : h11("span", { className: "sw-mon-badge", role: "img", title: badge.title, "aria-label": badge.title }, badge.text)
+    ))
   );
 }
 function MonitorRow({ row: row2, selected, now, dispatch, t }) {
@@ -26664,6 +26745,26 @@ var MONITOR_CSS = `[data-sw-monitor] {
 [data-sw-monitor] .sw-mon-meta-item[data-sw-attention] {
   color: var(--dsw-alias-state-warn-primary);
 }
+[data-sw-monitor] .sw-mon-meta-item[data-part="step"] {
+  position: relative;
+}
+[data-sw-monitor] .sw-mon-badge {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  box-sizing: border-box;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 [data-sw-monitor] .sw-mon-drawer {
   position: relative;
   display: flex;
@@ -26785,6 +26886,12 @@ var MONITOR_CSS = `[data-sw-monitor] {
   margin: 0;
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
+}
+[data-sw-monitor] [data-sw-usage="output"] {
+  color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 80%, var(--dsw-alias-label-primary));
+}
+[data-sw-monitor] [data-sw-usage="cacheWrite"] {
+  color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
 }
 [data-sw-monitor] .sw-mon-note {
   margin: 12px 0 0;
