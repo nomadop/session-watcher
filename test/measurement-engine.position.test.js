@@ -533,3 +533,50 @@ test('a segment closed before any stamp reports the zero peaks and null exits it
   assert.equal(closed.metrics.ppPeak, 0);
   assert.equal(closed.metrics.turnAtBrAmber, null);
 });
+
+// ── The expected recall share of a step ──────────────────────────────────────
+// A step may state `p`, the share of the main calls so far that are pure recall; the Engine hands it with the step's stock to the frame, and the fold prices p·min(S, B) (`test/position.test.js` `Expected recall growth`).
+
+const shared = (id, cacheRead, mainCallOrdinal, p) => ({ ...stepAt(id, cacheRead, mainCallOrdinal), p });
+
+test('a step\'s share and its own stock reach the position fold: the first expected stock is a base, the next is a signed rise that enters the rate and prices the interval after it', () => {
+  const engine = makeEngine();
+  // B stays at the dead 1000. E is 0, then 0.5·min(1300, 1000) = 500, then 500 again: the interval to s2 grows 300 + 500, the one to s3 grows 100 + 0.
+  engine.ingest([shared('s1', 1000, 1, 0), shared('s2', 1300, 2, 0.5), shared('s3', 1400, 3, 0.5)]);
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, (800 + 100) / 2);
+  const history = engine.getHistory();
+  assert.equal(history[1].u, 0, 'the interval to s2 is priced at the rate its left end had realized, none');
+  near(history[2].u, Math.sqrt(800 / (2 * R * 1000)));
+  assert.equal(engine.readScenario({}).gBar, (800 + 100) / 2);
+});
+
+test('a step that states no share leaves the rate the resident growth\'s, and a zero-stock step and a revision cannot move it', () => {
+  const engine = makeEngine();
+  engine.ingest([stepAt('s1', 1000, 1), stepAt('s2', 1300, 2), stepAt('s3', 1400, 3)]);
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, (300 + 100) / 2);
+  const gated = makeEngine();
+  // The zero-stock call z states a share of 0.9 and records no frame; the revision of s2 states 1 and moves no fixed point.
+  gated.ingest([shared('s1', 1000, 1, 0), shared('z', 0, 2, 0.9), shared('s2', 1300, 3, 0.5), { ...shared('s2', 1300, 9, 1), usage: { ...usage(1300), output: 99 } }]);
+  assert.equal(gated.getHandoffMeasurement().measurement.gBar, (300 + 500) / 2, 'the interval spans the two main calls between the frames\' own ordinals');
+});
+
+test('each scenario prices the expected stock under its own baseline', () => {
+  const engine = makeEngine();
+  // /r.js carries 600 into B = 1600 when selected, and out of B = 1000 when not. The stock of s2 is 2000: E is 0.5·1600 = 800 selected, 0.5·1000 = 500 excluded, over the resident growth 1000 − 600 and 1000.
+  engine.ingest([shared('s1', 1000, 1, 0), whole('/r.js', 600), shared('s2', 2000, 2, 0.5)]);
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, 400 + 800);
+  assert.equal(engine.readScenario({ '/r.js': 'exclude' }).gBar, 1000 + 500);
+  engine.replaceResourceOverrides({ '/r.js': 'exclude' });
+  assert.equal(engine.getHandoffMeasurement().measurement.gBar, 1000 + 500, 'Apply makes the default what Preview read');
+});
+
+test('a share that is no number between 0 and 1 is refused before any state moves', () => {
+  const engine = makeEngine();
+  engine.ingest([shared('s1', 1000, 1, 0)]);
+  for (const bad of [-0.1, 1.5, Number.NaN, '0.5', null]) {
+    assert.throws(() => engine.ingest([shared('s2', 1300, 2, bad)]), { message: /^measurement engine invariant: step share/ }, String(bad));
+  }
+  assert.equal(engine.getHistory().length, 1);
+  engine.ingest([shared('s2', 1300, 2, 0.5)]);
+  assert.equal(engine.getHistory().length, 2);
+});

@@ -1,6 +1,6 @@
 {
   "name": "@nomadop/session-watcher-dsh-carrier-cache",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Session Watcher's carrier cache adapter for DeepSeek Harness, with the profile layer that activates it",
   "type": "module",
   "license": "MIT",

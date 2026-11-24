@@ -22,7 +22,7 @@ import { reusedCallIdAcrossSteps } from './dsh-events.js';
 
 import { channelOn, CHECKOUT, DSH_HOME, fromCheckout, INNER_CALL_RECORD_TYPE, loaderOf, loaderWith, mountShippedLoop, ORIGINAL_ROW, REPLY_PADDING, SEAL_STEPS, SLOT_COUNT, slotNotes, turnOf } from './dsh-shipped-loop.js';
 import {
-  activation, BUNDLE_PACKAGE, CARRIER_TABLE, carriedNote, carrierOf, COMPANION_SPECIFIER, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, send, STATE_WORDING, SW_PACKAGE, waitFor,
+  activation, BUNDLE_PACKAGE, CARRIER_TABLE, carriedNote, carrierOf, carrierPrefixOf, COMPANION_SPECIFIER, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, mountPiAi, OAUTH_REF, offlinePnpm, packBundleFixture, packOffline, REPLACEMENT_ID, send, STATE_WORDING, SW_PACKAGE, waitFor,
 } from './dsh-pi-ai-fixture.js';
 
 const [scenario] = process.argv.slice(2);
@@ -101,7 +101,7 @@ async function bodyOver({ entry, providers, route, messages, host }) {
 }
 
 // The index of each message of a recorded body whose top-level text opens with the carrier wording.
-const carrierAt = (messages, textOf) => messages.flatMap((message, index) => (message.role === 'user' && textOf(message).startsWith(CARRIER_TABLE.addresses) ? [index] : []));
+const carrierAt = (messages, textOf) => messages.flatMap((message, index) => (message.role === 'user' && textOf(message).startsWith(carrierPrefixOf(CARRIER_TABLE)) ? [index] : []));
 
 // What a body keeps once its message `index` is set aside: the rest of the request, which the carrier cache point leaves exactly as the original adapter writes it.
 const withoutMessage = (body, index, key = 'messages') => ({ ...body, [key]: body[key].filter((_, at) => at !== index) });
@@ -204,7 +204,7 @@ const SCENARIOS = {
     const last = carriers.at(-1);
     const text = original.messages[last].content;
     assert.equal(typeof text, 'string', 'the native serializer writes a carrier as one string');
-    assert.ok(text.includes(carriedNote(CARRIER_TABLE)) && text.includes('C3 line two') && text.includes(STATE_WORDING.heading(9)) && text.includes('C3 item'), 'the carrier is whole: its summary, its evidence and its state');
+    assert.ok(text.includes(carriedNote()) && text.includes('C3 line two') && text.includes(STATE_WORDING.heading(9)) && text.includes('C3 item'), 'the carrier is whole: its summary, its evidence and its state');
     assert.deepEqual(replacement.messages[last], { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] });
     assert.deepEqual(withoutMessage(replacement, last), withoutMessage(original, last));
     assert.deepEqual(replacement.messages.at(-1).content.at(-1).cache_control, { type: 'ephemeral' }, 'the native tail point stays');
@@ -893,8 +893,8 @@ const SCENARIOS = {
   async 'carrier-identification'() {
     const say = (llm, text) => llm.createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
     const turn = (llm, text) => llm.createAssistantMessage({ content: [{ type: 'text', text }], source: ANTHROPIC });
-    const quoted = (llm, route) => [say(llm, 'the opening request'), say(llm, `Quoted from the log: ${CARRIER_TABLE.addresses}`), turn(llm, 'a step'), say(llm, `A line first.\n${CARRIER_TABLE.addresses}`), turn(llm, 'another step'), say(llm, 'follow-up')];
-    const typed = (llm, route) => [say(llm, 'the opening request'), say(llm, `${CARRIER_TABLE.addresses} Typed by the user, not a seal.`), turn(llm, 'a step'), say(llm, 'follow-up')];
+    const quoted = (llm, route) => [say(llm, 'the opening request'), say(llm, `Quoted from the log: ${CARRIER_TABLE.addresses}`), turn(llm, 'a step'), say(llm, `A line first.\n${CARRIER_TABLE.addresses}`), turn(llm, 'another step'), say(llm, `${CARRIER_TABLE.addresses} Typed with no reminder frame.`), turn(llm, 'a third step'), say(llm, 'follow-up')];
+    const typed = (llm, route) => [say(llm, 'the opening request'), say(llm, `${carrierPrefixOf(CARRIER_TABLE)} Typed by the user, not a seal.`), turn(llm, 'a step'), say(llm, 'follow-up')];
     const quotedBodies = await bodiesOf({ providers: origin => ({ 'sw-anthropic': anthropicRoute(origin) }), route: ANTHROPIC, protocol: 'anthropic', messages: quoted });
     assert.deepEqual(quotedBodies.replacement, quotedBodies.original, 'the wording elsewhere than at the start is no carrier');
     const typedBodies = await bodiesOf({ providers: origin => ({ 'sw-anthropic': anthropicRoute(origin) }), route: ANTHROPIC, protocol: 'anthropic', messages: typed });

@@ -22,105 +22,6 @@
 //! SOFTWARE.
 import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
 
-// lib/inner-seal/git-state.js
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-var execFileAsync = promisify(execFile);
-var STATUS_COMMAND = ["status", "--short", "--branch"];
-var LOG_COMMAND = ["log", "-1", "--oneline"];
-function isGitStateCommand(command) {
-  if (typeof command !== "string") return false;
-  const [status, head, ...rest] = command.trim().split(/[ \t]*&&[ \t]*/u);
-  return rest.length === 0 && /^git[ \t]+status(?:[ \t]+--?[\w=-]+)*$/u.test(status) && (head === void 0 || head.split(/[ \t]+/u).join(" ") === `git ${LOG_COMMAND.join(" ")}`);
-}
-var GIT_STATE_ITEM = Object.freeze({
-  key: "git",
-  label: `Git, as \`git ${STATUS_COMMAND.join(" ")} && git ${LOG_COMMAND.join(" ")}\` would show:`,
-  multiline: true,
-  normalize: (value) => {
-    if (typeof value !== "string" || value === "") throw new Error("the git state is not a text");
-    return value;
-  },
-  isEmpty: () => false,
-  same: (a, b) => a === b,
-  text: (value) => value
-});
-
-// lib/harness/dsh/carrier-table.js
-var isTodoItem = (item) => item !== null && typeof item === "object" && typeof item.content === "string" && typeof item.status === "string";
-function todoItemsOf(value) {
-  if (value === null) return [];
-  if (!Array.isArray(value) || !value.every(isTodoItem)) throw new Error("the todo list is neither null nor a list of items with a content text and a status text");
-  return value.map(({ content, status }) => ({ content, status }));
-}
-function textEntriesOf(value, fields, what) {
-  if (!Array.isArray(value) || !value.every((entry) => entry !== null && typeof entry === "object" && fields.every((field) => typeof entry[field] === "string"))) {
-    throw new Error(`the ${what} is not a list of entries with ${fields.join(" and ")} texts`);
-  }
-  return value.map((entry) => Object.fromEntries(fields.map((field) => [field, entry[field]])));
-}
-var sameEntries = (fields, a, b) => a.length === b.length && a.every((entry, at) => fields.every((field) => entry[field] === b[at][field]));
-var entryList = (entries) => entries.map(({ id, label: label2 }) => `${id} \u2014 ${label2}`).join("; ");
-var AGENT_FIELDS = ["id", "label"];
-var TODO_FIELDS = ["content", "status"];
-var stateItem = ({ tool, label: label2, ...rest }) => Object.freeze({ ...rest, tool, label: label2(tool) });
-function argumentsOf(call) {
-  try {
-    return JSON.parse(call.arguments);
-  } catch {
-    return void 0;
-  }
-}
-var CARRIER_TABLE = Object.freeze({
-  addresses: `These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
-  editGuard: "The reads behind this file text still count in this session, so edit a file without reading it again.",
-  imageReadTool: "read_image",
-  stateItems: Object.freeze([
-    stateItem({
-      key: "workingDirectory",
-      tool: "working_directory",
-      label: (tool) => `Working directory, as ${tool} would show:`,
-      operation: (call) => typeof argumentsOf(call)?.cd === "string" ? "write" : "read",
-      normalize: (value) => {
-        if (typeof value !== "string" || value === "") throw new Error("the working directory is not a path text");
-        return value;
-      },
-      isEmpty: () => false,
-      same: (a, b) => a === b,
-      text: (value) => value
-    }),
-    stateItem({
-      key: "subagents",
-      tool: "list_agents",
-      label: (tool) => `Running subagents, as ${tool} would show:`,
-      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "subagent list"),
-      isEmpty: (entries) => entries.length === 0,
-      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-      text: entryList
-    }),
-    stateItem({
-      key: "jobs",
-      tool: "job_list",
-      label: (tool) => `Running jobs, as ${tool} would show:`,
-      normalize: (value) => textEntriesOf(value, AGENT_FIELDS, "job list"),
-      isEmpty: (entries) => entries.length === 0,
-      same: (a, b) => sameEntries(AGENT_FIELDS, a, b),
-      text: entryList
-    }),
-    stateItem({
-      key: "todos",
-      tool: "todo_write",
-      operation: "write",
-      label: (tool) => `Todo list, as ${tool} last left it:`,
-      normalize: todoItemsOf,
-      isEmpty: (items) => items.length === 0,
-      same: (a, b) => sameEntries(TODO_FIELDS, a, b),
-      text: (items) => JSON.stringify(items)
-    }),
-    Object.freeze({ ...GIT_STATE_ITEM, matchesCall: (call) => call.name === "bash" && isGitStateCommand(argumentsOf(call)?.command) })
-  ])
-});
-
 // dsh/vendor/dsh-llm-pi-ai/src/config.ts
 import z from "@deepseek-ai/schemastery";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
@@ -1495,6 +1396,11 @@ function createCarrierPointWriter({ report, responsesBreakpoint }) {
   }
   const WRITERS = { "anthropic-messages": anthropic, "bedrock-converse-stream": bedrock, "openai-responses": responses, "openai-completions": completions };
   return function writeCarrierPoint({ prefix, payload, model, options }) {
+    if (prefix === void 0) return UNSUPPORTED;
+    if (typeof prefix !== "string" || prefix === "") {
+      report("carrier cache: the prefix to tell a carrier by is no text, so the request is sent without a cache point");
+      return UNSUPPORTED;
+    }
     return WRITERS[model.api]?.({ prefix, payload, model, options }) ?? UNSUPPORTED;
   };
 }
@@ -1509,10 +1415,18 @@ function createCarrierCache({ carrierPrefix, report, observe, responsesBreakpoin
       report("llm-pi-ai carrier cache: the cache evidence of a request could not be recorded");
     }
   };
+  const prefixNow = () => {
+    try {
+      return carrierPrefix();
+    } catch {
+      report("carrier cache: the prefix to tell a carrier by could not be read, so the request is sent without a cache point");
+      return void 0;
+    }
+  };
   const hookOf = (earlier, options) => async (payload, model) => {
     const replaced = await earlier?.(payload, model);
     const body = replaced ?? payload;
-    const outcome = writeCarrierPoint({ prefix: carrierPrefix, payload: body, model, options });
+    const outcome = writeCarrierPoint({ prefix: prefixNow(), payload: body, model, options });
     observed(outcome);
     return outcome.result === "added" ? body : replaced;
   };
@@ -1537,6 +1451,7 @@ function createCarrierCache({ carrierPrefix, report, observe, responsesBreakpoin
 var PI_AI_SERVICE = "sessionWatcherPiAi";
 var ORIGINAL_ROW = "include:llm-pi-ai";
 var CARRIER_EVIDENCE_SERVICE = "sessionWatcherCarrierEvidence";
+var CARRIER_PREFIX_SERVICE = "sessionWatcherCarrierPrefix";
 var CARRIER_SETTINGS_SERVICE = "sessionWatcherCarrierSettings";
 
 // dsh/src/pi-ai-index.js
@@ -1572,7 +1487,7 @@ function apply(ctx) {
     return;
   }
   const cache = createCarrierCache({
-    carrierPrefix: CARRIER_TABLE.addresses,
+    carrierPrefix: () => ctx.get(CARRIER_PREFIX_SERVICE)?.carrierPrefix(),
     report: (message) => ctx.logger.warn(message),
     observe: (result) => ctx.get(CARRIER_EVIDENCE_SERVICE)?.record(result),
     responsesBreakpoint: () => ctx.get(CARRIER_SETTINGS_SERVICE)?.responsesBreakpoint?.()

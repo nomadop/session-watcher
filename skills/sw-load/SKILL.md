@@ -27,14 +27,14 @@ Restore a previous session's handoff package into context so work can resume.
 
    Unresolvable path → tell the user, skip. Empty `paths_to_keep` → ask the user what they are working on.
 
-3. **Place the summary in its lineage.** `lineage` runs oldest to newest. The sessions the budget left out are collapsed into runs marked `omitted`, ahead of the newest sessions' headlines, and the budget may keep none. When the next task or what is already in context needs the headlines of an omitted run, `lineage_headlines` with that run's numbers as `k` (`S2-S5` is `2-5`) reads them; read a run for that need only, not by default. The injected page holds the newest turns and is already in context. From the page, list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address. When a headline bears on the next task and the page does not reach that member, call `turn_page` with that member's label as `before`; a session inside an omitted run is `S{k}`, `k` being its own number. That list is what step 5 reports.
+3. **Take the payload as the task's state.** The summary, the kept files and the newest turns in the payload are the established current state of the task, which the work builds on without checking or restating it. When a step needs a detail they leave out, `turn_page` reads older turns (an `S{k}:{T}` cursor or an `S{k}` label as `before`) and `lineage_headlines` the headlines of an omitted run (its numbers as `k`, `S2-S5` being `2-5`).
 
-4. **Load the kept skills** — invoke each name in `skills_to_keep` through the host's skill tool. A skill named only in the summary text is invoked after the user agrees.
+4. **Load the kept skills** — invoke each name in `skills_to_keep` through the host's skill tool.
 
-5. **Present, then hold.** One `git status --short && git log -1 --oneline`, then write, from the kept paths and that output:
+5. **Present, then hold.** Write:
    - Objective, one line
-   - Working state — each claim the summary makes about the current state, set against what the kept paths and the git output show: matches, differs (say how), or reaches neither (say unverified)
-   - Next task and its entry points — the `neither` entries with where their symbols sit, and the turns step 3 named
+   - Working state, as the summary states it
+   - Next task and its entry points — the `neither` entries with where their symbols sit
    - Blockers and risks
    - The kept paths now in context and the load token you used
 

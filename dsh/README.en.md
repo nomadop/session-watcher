@@ -40,7 +40,7 @@ The **SW Meter** tab in the conversation view shows the position chart and its v
 
 1. Ask the agent to use the `sw-handoff` skill. It picks only the files and skills the next task needs in hand, writes a summary and the next task, and answers with a token.
 2. Type `/sw-continue` in the Web composer. It clears the session in place and loads the newest handoff this session prepared.
-3. The agent says in one sentence what it resumes and carries on, unless the task left a question open. The kept files are read from disk as they are now; the summary, the latest lineage headlines and the newest turns come back with the handoff.
+3. The agent carries on from the next step, unless the task left a question open. The kept files are read from disk as they are now; the summary, the latest lineage headlines and the newest turns come back with the handoff.
 
 ![A handoff prepared with sw-handoff, then /sw-continue resuming the task](assets/handoff-loop.gif)
 
@@ -54,7 +54,7 @@ Clearing does not discard the history. Each turn stays recorded, and the agent c
 
 - The plugin reads the session event log of the DSH host it loads into, and the files that log names. It writes its state under `~/.session-watcher`, which it shares with the Claude Code plugin; a handoff in preparation also keeps its turn notes as working files in the system temp directory. The plugin uploads nothing and has no telemetry; what the agent sends to its model provider is the host's usual traffic, handoff text included.
 - The dock only observes. The tab also applies keep/discard overrides and saves price overrides, which reprice every session of the host that runs that model; neither changes the conversation. `/sw-continue` and `/sw-load` change the session, and both run only while the agent is idle. `/sw-continue` leaves the session untouched when it has prepared no handoff or when its newest handoff predates the latest context reset.
-- A handoff summary is written by the agent and can leave things out. `/sw-load` waits for you to confirm the state it loads; `/sw-continue` carries on after a one-sentence note, so read that note.
+- A handoff summary is written by the agent and can leave things out. `/sw-load` waits for you to confirm the state it loads; `/sw-continue` carries on from the next step without waiting, so read the summary first.
 - The tab and the dock are supported on `dsh web`. The DSH Desktop shell is unverified. The commands work from the Web composer only, not over ACP, in a headless run or from an SDK.
 - The readings model the cost of a prompt-cached context. They are not a judgement of task quality and not a promise of savings.
 

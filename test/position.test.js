@@ -289,18 +289,20 @@ test('landmarksOf returns every landmark ordered and finite, or every landmark n
 
 // ── Recall priced into the interval fold ─────────────────────────────────────
 
-// A frame whose interval holds recall: `priced` extra main calls whose net bills, in read-price units, sum to `net`, and `unpriced` more whose bill is unknown.
-const recalled = (f, recall) => ({ ...f, recall: { priced: 0, net: 0, unpriced: 0, ...recall } });
+// A frame whose interval holds recall: `priced` extra main calls whose net bills, in read-price units, sum to `net`.
+const recalled = (f, recall) => ({ ...f, recall: { priced: 0, net: 0, ...recall } });
+// A frame carrying what the Engine states for the expected recall stock: `p` the share of main calls that are pure recall, `S` the stock of the call's own request.
+const expecting = (f, p, S) => ({ ...f, p, S });
 
 test('a closed interval that holds a priced recall request pays its net bill beside the ordinary slots of the other calls, and moves only those slots: the independent oracle', () => {
   // m = 4 main calls, k = 1 of them an extra request whose net bill A = 10, B = 5, R = 2, so K = R·B = 10. The left endpoint stands at
-  // gPhys = 2 (the resident growth alone) and gBar = 5 (that growth plus a first recall of 3 per call over the 0 an ordinary path holds).
+  // gPhys = 2 (the resident growth alone) and gBar = 5 (that growth plus 3 of expected recall stock, the share 0.6 of min(S, B) = 5 over the base 0 before it).
   // The endpoints' ordinary rents are 2 and 4 above the baseline, which average q = 3: the rent is 3·3 + 10 = 19, not the 4·3 + 10 = 22 a request
   // priced twice would give. Then Δu = 4·√(5/20) = 2, Λ = 4·√(2·10·5) = 40 and F = (4−1)·(5 + 2·2) = 27.
   const frames = [
-    at(frame(1, 5, null), 1),
-    recalled(at(frame(2, 7, 2), 2), { priced: 1, net: 3 }),
-    recalled(at(frame(3, 9, 4), 6), { priced: 1, net: 10 }),
+    expecting(at(frame(1, 5, null), 1), 0, 5),
+    expecting(recalled(at(frame(2, 7, 2), 2), { priced: 1, net: 3 }), 0.6, 7),
+    expecting(recalled(at(frame(3, 9, 4), 6), { priced: 1, net: 10 }), 0.6, 9),
   ];
   const [, first, second] = integratePath(frames, { dead: 5, R: 2, selector: all }).points;
   assert.equal(first.mfLocal, 0, 'an interval whose every call is an extra request has nothing to move');
@@ -327,44 +329,15 @@ test('a frame that states no recall and one that states none priced are the same
   assert.equal(bare.gBar, (333 + 368 + 229) / 6);
 });
 
-test('a recall bill that rises and falls back by the same amount per main call leaves no growth in the rate: the signed differences cancel', () => {
-  // Resident growth of 100 per call. The first interval pays 60 per call of recall over the ordinary path's none; the next pays none.
+test('the bill a priced request paid is no growth of the rate: a path with no estimate has the resident rate whatever its requests cost', () => {
   const frames = [
     at(frame(1, DEAD, null), 1),
     recalled(at(frame(2, DEAD + 100, 100), 2), { priced: 1, net: 60 }),
-    at(frame(3, DEAD + 200, 100), 3),
+    recalled(at(frame(3, DEAD + 200, 100), 5), { priced: 3, net: 7000 }),
   ];
   const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
-  assert.equal(gPhys, 100);
-  assert.equal(gBar, 100, '(100 + 60) + (100 − 60) over two calls; clamping each difference at zero would read 130');
-});
-
-test('equal recall per main call over intervals of different spans creates no growth: the bill is compared per call, never as a sum', () => {
-  // 60 per call, once over one call and then over three; only the first rise from the ordinary path's zero is growth.
-  const frames = [
-    at(frame(1, DEAD, null), 1),
-    recalled(at(frame(2, DEAD + 30, 30), 2), { priced: 1, net: 60 }),
-    recalled(at(frame(3, DEAD + 60, 30), 5), { priced: 3, net: 180 }),
-  ];
-  const fold = createPathFold({ dead: DEAD, R, selector: all });
-  fold.push(frames[0]);
-  fold.push(frames[1]);
-  assert.equal(fold.rate(), 90);
-  fold.push(frames[2]);
-  assert.equal(fold.rate(), (30 + 60 + 30) / 4, 'the second interval adds its own resident 30 and no recall; comparing sums would add 120 more');
-  assert.equal(fold.physicalRate(), (30 + 30) / 4);
-});
-
-test('an interval with a request of unknown price is not a zero to fall to, and the interval after it has nothing to compare with', () => {
-  const frames = [
-    at(frame(1, DEAD, null), 1),
-    recalled(at(frame(2, DEAD + 10, 10), 2), { priced: 1, net: 60 }),
-    recalled(at(frame(3, DEAD + 20, 10), 3), { unpriced: 1 }),
-    recalled(at(frame(4, DEAD + 30, 10), 4), { priced: 1, net: 40 }),
-  ];
-  const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
-  assert.equal(gPhys, 10);
-  assert.equal(gBar, (10 + 60 + 10 + 10) / 3, 'neither the unknown nor the 40 against the 60 before it moves the rate; reading the unknown as a zero, or comparing across it, gives 70 / 3');
+  assert.equal(gPhys, 200 / 4);
+  assert.equal(gBar, 200 / 4, 'the 60 and the 7000 are paid on deltaW alone; reading them as a drift of the rate would add to it');
 });
 
 test('an interval of extra requests alone on a left endpoint with no growth owes its real bill and moves nothing: no 0/0, no fixed part, no phase', () => {
@@ -379,13 +352,104 @@ test('an interval of extra requests alone on a left endpoint with no growth owes
 });
 
 test('the fixed part of an interval is its ordinary slots priced at the physical rate; the movable arm weighs every call at the mixed rate', () => {
-  // Left endpoint: gPhys 0 (no resident growth), gBar 40 (a recall of 40 per call over the ordinary path's none).
+  // Left endpoint: gPhys 0 (no resident growth), gBar 40 (the share 0.04 of min(S, B) = 1000 over the base 0 before it).
   const frames = [
-    at(frame(1, DEAD, null), 1),
-    recalled(at(frame(2, DEAD, 0), 2), { priced: 1, net: 40 }),
-    recalled(at(frame(3, DEAD, 0), 4), { priced: 1, net: 50 }),
+    expecting(at(frame(1, DEAD, null), 1), 0, 2000),
+    expecting(recalled(at(frame(2, DEAD, 0), 2), { priced: 1, net: 40 }), 0.04, 2000),
+    expecting(recalled(at(frame(3, DEAD, 0), 4), { priced: 1, net: 50 }), 0.04, 2000),
   ];
   const [, , second] = integratePath(frames, { dead: DEAD, R, selector: all }).points;
   const arm = Math.sqrt(2 * R * DEAD * 40);
   near(second.mfLocal, 2 * arm / (1 * (DEAD + R * 0) + 2 * arm));
+});
+
+// ── Expected recall growth ───────────────────────────────────────────────────
+// A frame with a share `p` carries E = p·min(S, B) under the scenario's own B; the first E is a base, and each later one adds its signed difference from the one before to the sum the rate is a one-time non-negative reading of, over the main calls the intervals span. B is DEAD throughout unless a resource is carried.
+
+test('the first expected recall stock is a base and no step from zero, the first frame that closes no interval included; a share held at a stock beyond B adds nothing', () => {
+  const frames = [
+    expecting(at(frame(1, DEAD, null), 1), 0.5, 2000),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 0.5, 2100),
+    expecting(at(frame(3, DEAD + 200, 100), 3), 0.5, 2200),
+  ];
+  const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
+  assert.equal(gBar, 100, 'E is 500 at every frame; reading the first as growth from zero would add 500');
+  assert.equal(gPhys, 100);
+});
+
+test('the base is the first expected stock the path has, not the first frame\'s: frames before the estimate exist state none, and the frame that first has one adds nothing', () => {
+  const frames = [
+    at(frame(1, DEAD, null), 1),
+    at(frame(2, DEAD + 100, 100), 2),
+    expecting(at(frame(3, DEAD + 200, 100), 3), 0.5, 2000),
+    expecting(at(frame(4, DEAD + 300, 100), 4), 0.5, 2100),
+  ];
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 100, 'reading the first E of 500 as a rise from zero would add it');
+});
+
+test('a stock below B counts as it stands: min(S, B) is the part of the stock a request pays whole', () => {
+  // E = 0.5·800 = 400, then 0.5·min(1500, 1000) = 500: 100 of expected recall stock on top of the 100 of resident growth.
+  const frames = [
+    expecting(at(frame(1, DEAD, null), 1), 0.5, 800),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 0.5, 1500),
+  ];
+  const { gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
+  assert.equal(gBar, 200);
+  assert.equal(gPhys, 100);
+});
+
+test('a real zero is a base like any other value: the rise from a share of zero is growth', () => {
+  const frames = [
+    expecting(at(frame(1, DEAD, null), 1), 0, 2000),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 0.2, 2100),
+  ];
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 100 + 200);
+});
+
+test('each scenario computes E under its own B', () => {
+  // The resource r of 500 tokens is in B = 1500 when selected and out of B = 1000 when not; the stock stays 1200 and the share rises from 0.5 to 1.
+  const frames = [
+    expecting(at(frame(1, DEAD, null, { r: 500 }), 1), 0.5, 1200),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 1, 1200),
+  ];
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 100 + (1200 - 600), 'E from 0.5·1200 to 1200');
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: () => false }).gBar, 100 + (1000 - 500), 'E from 0.5·1000 to 1000');
+});
+
+test('differences of either sign add into one signed sum, clamped once and divided by the main calls the intervals span, and the left endpoint prices the next interval', () => {
+  // E: 500, 800, 600. First interval (1 call): resident 100 and +300. Second (2 calls): resident 50 and −200. The sum is 250 over 3 calls; clamping each interval would read 400 / 3.
+  const frames = [
+    expecting(at(frame(1, DEAD, null), 1), 0.5, 2000),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 0.8, 2000),
+    expecting(at(frame(3, DEAD + 150, 50), 4), 0.6, 2000),
+  ];
+  const { points, gBar, gPhys } = integratePath(frames, { dead: DEAD, R, selector: all });
+  assert.equal(gBar, 250 / 3);
+  assert.equal(gPhys, 150 / 3);
+  // The interval that ends at frame 3 is priced at the rate frame 2 left: (100 + 300) per call over the 1 call so far.
+  near(points[2].u, 2 * Math.sqrt(400 / (2 * R * DEAD)));
+  near(points[1].u, 0);
+});
+
+test('a total that falls below zero reads as no growth', () => {
+  const frames = [
+    expecting(at(frame(1, DEAD, null), 1), 0.8, 2000),
+    expecting(at(frame(2, DEAD + 100, 100), 2), 0.2, 2000),
+  ];
+  assert.equal(integratePath(frames, { dead: DEAD, R, selector: all }).gBar, 0, '100 − 600 is clamped once');
+});
+
+test('the expectation moves neither the physical rate nor the bill: deltaW and gPhys are those of the same path with no estimate', () => {
+  const bare = [
+    at(frame(1, DEAD, null, { r: 700 }), 1),
+    recalled(at(frame(2, DEAD + 333, 333), 4), { priced: 1, net: 9000 }),
+    at(frame(3, DEAD + 901, 568, { r: 900 }, { r: 200 }), 6),
+  ];
+  const shares = [0.1, 0.4, 0.2];
+  const expected = bare.map((f, i) => expecting(f, shares[i], 5000));
+  const without = integratePath(bare, { dead: DEAD, R, selector: all });
+  const withShare = integratePath(expected, { dead: DEAD, R, selector: all });
+  assert.equal(withShare.gPhys, without.gPhys);
+  assert.deepEqual(withShare.points.map(point => point.deltaW), without.points.map(point => point.deltaW));
+  assert.ok(withShare.gBar > without.gBar, 'the rate itself moves');
 });

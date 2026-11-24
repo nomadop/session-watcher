@@ -11,6 +11,7 @@ import { createMonitorAccess } from '../dsh/src/inner-monitor-read.js';
 import {
   SESSION, accessOver, clear, fold, kit, opening, pricedSeal, readCall, stepOf, tokens,
 } from './helpers/dsh-settlement.js';
+import { dshRig } from './helpers/attribution-fixtures.js';
 
 const SESSION_ID = 'session-a';
 const USAGE = {
@@ -354,6 +355,9 @@ const recallDriver = () => createDshSourceDriver({ sessionId: SESSION, onDiagnos
 // Every main-call fact that states a recall, as `[seq, recall]`.
 const recallsOf = batches => batches.flat().filter(observation => observation.type === 'main-call' && observation.recall !== undefined).map(observation => [observation.sourceOrdinal, observation.recall]);
 const coldRecalls = events => recallsOf(recallDriver().install(events).batches);
+// Every main-call fact that states what its request is, as `[seq, verdict]`.
+const verdictsOf = batches => batches.flat().filter(observation => observation.type === 'main-call' && observation.verdict !== undefined).map(observation => [observation.sourceOrdinal, observation.verdict]);
+const coldVerdicts = events => verdictsOf(recallDriver().install(events).batches);
 
 // The calls a frame sequence leaves the Source holding: a replace frame replaces them and an append adds its batch.
 function applied(frames) {
@@ -405,6 +409,31 @@ test('a request that is no recall is priced on no fact: one aborted before dispa
   assert.deepEqual(recall?.steps.filter(step => 'usage' in step) ?? [], []);
 });
 
+test('a request of reads the guard blocked is stated as a recall once every call has its record, the Source built live and cold alike, and no fact states it before or without one', () => {
+  const { events } = opening();
+  const file = id => ({ id, name: 'read', arguments: JSON.stringify({ file_path: 'a.js' }) });
+  const both = stepOf({ turn: 2, step: 1, calls: [file('a'), file('b')], blocked: ['a', 'b'], isError: true, answer: 'Error: already in your context' });
+  const half = stepOf({ turn: 2, step: 2, calls: [file('c'), file('d')], blocked: ['c'] });
+  const log = [...events, ...both.events, ...half.events];
+  // The seal's recorded ratio is 2: the call behind the seal pays 600 + 2·20 less the (2 − 1)·20 rebuild the seal paid.
+  assert.deepEqual(coldRecalls(log), [[both.request.seq, { net: 620 }]]);
+
+  const driver = recallDriver();
+  const seen = [driver.install(events)];
+  driver.drain();
+  const held = new Map();
+  for (const event of [...both.events, ...half.events]) {
+    const frame = driver.feed(event);
+    if (frame !== null) seen.push(frame);
+    held.set(event.seq, recallsOf(applied(seen)));
+  }
+  assert.deepEqual(held.get(both.dispatched[1].seq), [], 'a request whose reads have no record yet is an ordinary one');
+  assert.deepEqual(held.get(both.records[0].seq), [], 'one record of two leaves it so');
+  assert.deepEqual(held.get(both.records[1].seq), [[both.request.seq, { net: 620 }]], 'the last record states the recall');
+  assert.deepEqual(held.get(half.end.seq), [[both.request.seq, { net: 620 }]], 'a read with no record keeps its request ordinary');
+  assert.deepEqual(recallsOf(applied(seen)), coldRecalls(log));
+});
+
 test('a call behind the seal that reported no usage keeps the seal\'s rebuild: its own bill is unknown and no later call is deducted in its place', () => {
   const { ask, events } = opening();
   const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
@@ -412,6 +441,7 @@ test('a call behind the seal that reported no usage keeps the seal\'s rebuild: i
   const later = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)] });
 
   assert.deepEqual(coldRecalls([...events, ...post.events, ...later.events]), [[post.request.seq, { net: null }], [later.request.seq, { net: 640 }]]);
+  assert.deepEqual(coldVerdicts([...events, ...post.events, ...later.events]), [[post.request.seq, 'pure'], [later.request.seq, 'pure']], 'the call with no usage is a recall request of unknown bill all the same');
 });
 
 test('a request the reducer rejects whole has no usage in the measurement, so it keeps the seal\'s rebuild as an unknown bill whatever its raw event reports, and a call that does carry a usage is priced as before', () => {
@@ -422,6 +452,7 @@ test('a request the reducer rejects whole has no usage in the measurement, so it
   const later = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq)] });
 
   assert.deepEqual(coldRecalls([...events, ...rejected.events, ...later.events]), [[rejected.request.seq, { net: null }], [later.request.seq, { net: 640 }]]);
+  assert.deepEqual(coldVerdicts([...events, ...rejected.events, ...later.events]), [[rejected.request.seq, 'pure'], [later.request.seq, 'pure']]);
 });
 
 test('the facts belong to the request\'s seq: a clear whose tail count the log does not bear leaves the report with no step to place it on, and the facts as they are', async () => {
@@ -517,4 +548,188 @@ test('the Source built live and the one read cold at the same cut hold the same 
   }
   assert.deepEqual(recallsOf(applied(frames)), coldRecalls(log));
   assert.equal(recallsOf(applied(frames)).length, 2);
+});
+
+// ── The verdict on the Source's frames ───────────────────────────────────────
+// Behind the first seal, each main call states what its request is as a recall: `pure`, `other` or `unknown`, one reading the monitor's settlement shares, and independent of the call's bill. The production Projection turns those facts into the share each measured point reads.
+
+// The decay of one classified main call from its half-life of 32.
+const ALPHA = 1 - 2 ** (-1 / 32);
+const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-12, `${message ?? ''} ${actual} ≈ ${expected}`.trim());
+
+// The measured points the production Projection reads off a sequence of frames, a replace frame starting a fresh Projection as a watcher does: the share and the main call's ordinal by the seq of the request the step belongs to.
+function pointsOf(frames) {
+  let projection = null;
+  let points = new Map();
+  for (const frame of frames) {
+    if (frame.transition === 'replace') {
+      projection = dshRig().projection;
+      points = new Map();
+    }
+    for (const observation of frame.batches.flat()) {
+      for (const record of projection.project(observation, {}).records) {
+        if (record.type === 'step') points.set(Number(/(\d+)$/.exec(record.id)[1]), { p: record.p, ordinal: record.mainCallOrdinal });
+      }
+    }
+  }
+  return points;
+}
+const shareAt = (points, request) => points.get(request.seq).p;
+const coldPoints = events => pointsOf([recallDriver().install(events)]);
+
+// The frames a driver gives a log fed live behind its first `cut` events, as `{ frames, replays }` with the seqs of the events whose frame replaced the Source.
+function liveFrames(log, cut) {
+  const driver = recallDriver();
+  const frames = [driver.install(log.slice(0, cut))];
+  driver.drain();
+  const replays = [];
+  for (const event of log.slice(cut)) {
+    const frame = driver.feed(event);
+    if (frame === null) continue;
+    frames.push(frame);
+    if (frame.transition === 'replace') replays.push(event.seq);
+  }
+  return { frames, replays };
+}
+
+test('every main call behind the first seal states what its request is, whatever its bill: a recall, one that is none and one that may still prove one, the call behind the seal and a call with no usage among them', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const ordinary = stepOf({ turn: 2, step: 2, text: 'working' });
+  const mixed = stepOf({ turn: 2, step: 3, calls: [readCall('b', ask.seq), { id: 'file', name: 'read', arguments: '{"file_path":"b.js"}' }] });
+  const open = stepOf({ turn: 2, step: 4, calls: [readCall('c', ask.seq)], dispatch: false, results: false });
+  const quiet = stepOf({ turn: 2, step: 5, calls: [readCall('d', ask.seq)] });
+  delete quiet.request.data.usage;
+  const log = [...events, ...post.events, ...ordinary.events, ...mixed.events, ...open.events, ...quiet.events];
+
+  assert.deepEqual(coldVerdicts(log), [
+    [post.request.seq, 'pure'], [ordinary.request.seq, 'other'], [mixed.request.seq, 'other'], [open.request.seq, 'unknown'], [quiet.request.seq, 'pure'],
+  ], 'the head stands before the seal and states none');
+  assert.deepEqual(coldRecalls(log), [[post.request.seq, { net: 620 }], [open.request.seq, { net: null }], [quiet.request.seq, { net: null }]], 'the bills are as they were');
+});
+
+test('a seal that recorded no quote still lets its calls be classified: a recall behind it is pure with no bill, a call that is none is other', () => {
+  const { ask, events, sealed } = opening();
+  delete sealed.start.data.quote;
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const ordinary = stepOf({ turn: 2, step: 2, text: 'working' });
+  const log = [...events, ...post.events, ...ordinary.events];
+  assert.deepEqual(coldVerdicts(log), [[post.request.seq, 'pure'], [ordinary.request.seq, 'other']]);
+  assert.deepEqual(coldRecalls(log), [[post.request.seq, { net: null }]]);
+  near(shareAt(coldPoints(log), ordinary.request), ALPHA, 'the recall with no bill counts once');
+});
+
+test('a read before the first seal and a seal the log does not show whole classify nothing, and the Source states no share for them', () => {
+  const early = stepOf({ turn: 1, step: 0, calls: [readCall('e', 0)] });
+  const { ask, events, sealed } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  assert.deepEqual(coldVerdicts([...early.events, ...events, ...post.events]), [[post.request.seq, 'pure']]);
+  sealed.start.data.request.messages.tail = { role: 'user', content: 'not a list of blocks' };
+  assert.deepEqual(coldVerdicts([...early.events, ...events, ...post.events]), []);
+  for (const point of coldPoints([...early.events, ...events, ...post.events]).values()) assert.equal(point.p, undefined);
+});
+
+test('a request that proves a recall on a bill that stays unknown replays the Source on the verdict alone, and its successors read it from the next main call', () => {
+  const { ask, events, sealed } = opening();
+  delete sealed.start.data.quote;
+  const first = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const two = stepOf({ turn: 2, step: 2, calls: [readCall('b', ask.seq), readCall('c', ask.seq)] });
+  const next = stepOf({ turn: 2, step: 3, text: 'working' });
+  const log = [...events, ...first.events, ...two.events, ...next.events];
+  const cut = events.length;
+
+  const { frames, replays } = liveFrames(log, cut);
+  // The dispatch of a lone read proves its request and the second of two does: the bill is unknown on both sides of each, so only the verdict says it moved, and the first of two leaves the request open.
+  assert.deepEqual(replays, [first.dispatched[0].seq, two.dispatched[1].seq]);
+  assert.deepEqual(verdictsOf(applied(frames)), [[first.request.seq, 'pure'], [two.request.seq, 'pure'], [next.request.seq, 'other']]);
+  const points = pointsOf(frames);
+  assert.equal(shareAt(points, first.request), undefined, 'the call behind the seal has no classified call before it');
+  near(shareAt(points, two.request), ALPHA, 'its own point reads the share before its own verdict, which the proof does not backfill');
+  near(shareAt(points, next.request), (1 - ALPHA) * ALPHA + ALPHA, 'the next main call is the first to count it');
+  assert.deepEqual([...points], [...coldPoints(log)], 'the Source built live and the one read cold at the same cut hold the same shares');
+});
+
+test('a read the guard blocks is classified other until its record arrives and pure after, with no quote to price it, and the next main call is the first to read the change', () => {
+  const { events, sealed } = opening();
+  delete sealed.start.data.quote;
+  const file = { id: 'a', name: 'read', arguments: JSON.stringify({ file_path: 'a.js' }) };
+  const before = stepOf({ turn: 2, step: 1, text: 'working' });
+  const guarded = stepOf({ turn: 2, step: 2, calls: [file], blocked: ['a'], isError: true, answer: 'Error: already in your context' });
+  const next = stepOf({ turn: 2, step: 3, text: 'working' });
+  const log = [...events, ...before.events, ...guarded.events, ...next.events];
+
+  const driver = recallDriver();
+  const frames = [driver.install(events)];
+  driver.drain();
+  const seen = new Map();
+  const replays = [];
+  for (const event of [...before.events, ...guarded.events, ...next.events]) {
+    const frame = driver.feed(event);
+    if (frame !== null) frames.push(frame);
+    if (frame?.transition === 'replace') replays.push(event.seq);
+    seen.set(event.seq, verdictsOf(applied(frames)));
+  }
+  assert.deepEqual(seen.get(guarded.dispatched[0].seq).at(-1), [guarded.request.seq, 'other'], 'a read of a file is no recall until the guard says so');
+  assert.deepEqual(seen.get(guarded.records[0].seq).at(-1), [guarded.request.seq, 'pure']);
+  assert.deepEqual(replays, [guarded.records[0].seq]);
+  const points = pointsOf(frames);
+  near(shareAt(points, guarded.request), 0, 'the call before it was other');
+  near(shareAt(points, next.request), (1 - ALPHA) * 0 + ALPHA, 'the blocked read counts as pure from the next call on');
+  assert.deepEqual([...points], [...coldPoints(log)]);
+});
+
+test('a classification and a bill that do not change replay nothing: an ordinary call\'s tool events, a dispatch that leaves a request unknown, and an answer that frees nothing', () => {
+  const { ask, events } = opening();
+  const ordinary = stepOf({ turn: 2, step: 1, calls: [{ id: 'file', name: 'read', arguments: '{"file_path":"b.js"}' }], text: 'working' });
+  const two = stepOf({ turn: 2, step: 2, calls: [readCall('a', ask.seq), readCall('b', ask.seq)] });
+  const { replays } = liveFrames([...events, ...ordinary.events, ...two.events], events.length);
+  assert.deepEqual(replays, [two.dispatched[1].seq], 'only the dispatch that proves the request replays');
+});
+
+test('a later seal withdraws a call\'s usage and keeps its verdict and its place in the order the share reads', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const work = stepOf({ turn: 2, step: 2, text: 'working' });
+  const later = stepOf({ turn: 2, step: 3, text: 'working again' });
+  const second = pricedSeal([post.request, work.request], 2);
+  const after = stepOf({ turn: 2, step: 4, text: 'after the second seal' });
+  const log = [...events, ...post.events, ...work.events, ...later.events, ...second.events, ...after.events];
+
+  const cold = recallDriver().install(log);
+  assert.deepEqual(verdictsOf(cold.batches), [[post.request.seq, 'pure'], [work.request.seq, 'other'], [later.request.seq, 'other'], [after.request.seq, 'other']]);
+  const points = pointsOf([cold]);
+  assert.equal(points.has(work.request.seq), false, 'the withdrawn call keeps no point');
+  near(shareAt(points, after.request), (1 - ALPHA) * (1 - ALPHA) * ALPHA, 'the share runs through the withdrawn calls and the second seal restarts nothing');
+});
+
+test('a call that reported no usage and a call whose stock is zero take their places in the order of the share, and the call after them reads it', () => {
+  const { ask, events } = opening();
+  const first = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const quiet = stepOf({ turn: 2, step: 2, text: 'quiet' });
+  delete quiet.request.data.usage;
+  const empty = stepOf({ turn: 2, step: 3, text: 'empty', usage: tokens(0, 5, 0, 0) });
+  const last = stepOf({ turn: 2, step: 4, text: 'last' });
+  const points = coldPoints([...events, ...first.events, ...quiet.events, ...empty.events, ...last.events]);
+  near(shareAt(points, empty.request), (1 - ALPHA) * ALPHA, 'the quiet call counted as other');
+  near(shareAt(points, last.request), (1 - ALPHA) * (1 - ALPHA) * ALPHA, 'and so did the one with no stock');
+  assert.deepEqual([first, empty, last].map(each => points.get(each.request.seq).ordinal), [2, 4, 5], 'the count of main calls is the lifetime one');
+});
+
+test('a clear starts the share over: the first classified call of the new epoch reads no estimate, and the epoch before it stays out of it', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const cleared = clear('amber-falcon', { from: ask, to: post.request });
+  const second = stepOf({ turn: 3, step: 1, admit: ['the next task'], text: 'working', usage: tokens(100, 30, 900) });
+  const sealed = pricedSeal([second.admitted[0], second.request], 1);
+  const older = stepOf({ turn: 3, step: 2, calls: [readCall('c', ask.seq)] });
+  const own = stepOf({ turn: 3, step: 3, calls: [readCall('d', second.request.seq)] });
+  const last = stepOf({ turn: 3, step: 4, text: 'last' });
+  const points = coldPoints([...events, ...post.events, ...cleared.events, ...second.events, ...sealed.events, ...older.events, ...own.events, ...last.events]);
+
+  assert.equal(shareAt(points, post.request), undefined);
+  assert.equal(shareAt(points, second.request), undefined, 'a new epoch with no seal has no classified call');
+  assert.equal(shareAt(points, older.request), undefined, 'a read of the epoch before is other, and the first classified call reads nothing');
+  assert.equal(shareAt(points, own.request), 0, 'zero is an estimate: the call before it was other, and the pure call of the epoch before is out of it');
+  near(shareAt(points, last.request), ALPHA, 'one other call and then a pure one: the weight of the pure one');
+  assert.equal(points.get(last.request.seq).ordinal > points.get(post.request.seq).ordinal, true, 'the count of main calls runs on');
 });

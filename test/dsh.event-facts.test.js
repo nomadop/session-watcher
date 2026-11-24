@@ -11,7 +11,7 @@ import {
 
 // The facts of an event that is none of the kinds a fact names, with `rest` set; `owner` is the event's own turn and step.
 const fact = (event, rest = {}) => ({
-  system: false, header: false, marker: null, epoch: false, step: null, owner: { turn: event.data?.turn, step: event.data?.step }, assistant: false, skeletonCall: false, ...rest,
+  system: false, header: false, marker: null, epoch: false, step: null, owner: { turn: event.data?.turn, step: event.data?.step }, assistant: false, skeletonCall: false, pruned: null, ...rest,
 });
 const factOf = (event, rest) => [eventFactOf(event), fact(event, rest)];
 
@@ -71,6 +71,14 @@ test('the owner of an event is the turn and step its data names, whether or not 
   assert.deepEqual(eventFactOf(systemMessage({ turn: 2, step: 5 })).owner, { turn: 2, step: 5 });
   assert.deepEqual(eventFactOf(assistantMessage({ turn: 4, step: 1 })).owner, { turn: 4, step: 1 }, 'an empty message too');
   assert.deepEqual(eventFactOf(userMessage({ text: 'hello' })).owner, { turn: undefined, step: undefined }, 'a user message names none');
+});
+
+test('eventFactOf names the call a pruner replacement answers and no other event is one', () => {
+  const original = toolResult({ callId: 'c1', text: 'a long result', turn: 3, step: 2 });
+  assert.deepEqual(eventFactOf(prunedResult(original)).pruned, { turn: 3, step: 2, callId: 'c1' });
+  assert.equal(eventFactOf(original).pruned, null, 'the result it replaces is an ordinary one');
+  assert.equal(eventFactOf(assistantMessage({ text: 'done' })).pruned, null);
+  assert.deepEqual(eventFactOf({ ...prunedResult(original), data: {} }).pruned, { turn: undefined, step: undefined, callId: undefined }, 'a malformed replacement is still one and names nothing');
 });
 
 test('only a tool-call block of an assistant/message naming get_turn_skeleton is a skeleton call', () => {

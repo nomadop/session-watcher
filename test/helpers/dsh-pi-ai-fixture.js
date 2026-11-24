@@ -6,13 +6,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { INNER_SEAL_KIND, renderCarrier } from '../../lib/inner-seal/carrier.js';
+import { INNER_SEAL_KIND, carrierPrefixOf, renderCarrier } from '../../lib/inner-seal/carrier.js';
+import { CARRIER_PREFIX_SERVICE } from '../../dsh/src/pi-ai-integration.js';
 import { STATE_WORDING } from '../../lib/inner-seal/state-block.js';
 import { carriedNote } from '../../lib/carried-evidence.js';
 import { CARRIER_TABLE } from '../../lib/harness/dsh/carrier-table.js';
 import { CHECKOUT, DSH_HOME, fromCheckout, IMPORTER, loaderWith, PROFILE_DIR, RecordCredentials } from './dsh-shipped-loop.js';
 
-export { CARRIER_TABLE, STATE_WORDING, carriedNote };
+export { CARRIER_TABLE, STATE_WORDING, carriedNote, carrierPrefixOf };
 
 /** The credential reference every fixture route names and the placeholder the credentials double answers it with. */
 export const KEY_REF = 'SW_FIXTURE_PI_AI_KEY';
@@ -109,7 +110,7 @@ export async function endpoints({ reply = () => 'hello', delayMs = 0 } = {}) {
  * `loader` stands in for the Loader service instead when given.
  * `ctx.llm.stream` is the one entry the scenarios send through.
  */
-export async function mountPiAi({ entry, config, loader = loaderWith(config.providers) }) {
+export async function mountPiAi({ entry, config, loader = loaderWith(config.providers), carrierPrefix = carrierPrefixOf(CARRIER_TABLE) }) {
   const [{ Context }, appBoot, llm] = await Promise.all([
     'vendor/cordis/lib/index.js',
     'packages/boot/app-boot/lib/index.js',
@@ -128,6 +129,8 @@ export async function mountPiAi({ entry, config, loader = loaderWith(config.prov
     ? await (await import(pathToFileURL(IMPORTER).href)).loadPiAiEntry()
     : await fromCheckout('packages/llm/llm-pi-ai/lib/index.js');
   if (replacement) ctx.provide('loader', loader);
+  // The host's service the replacement asks what a carrier opens with at each call of its hook, over the production wording; `carrierPrefix: null` is a context where the host provides none.
+  if (replacement && carrierPrefix !== null) ctx.provide(CARRIER_PREFIX_SERVICE, { carrierPrefix: () => carrierPrefix });
   await ctx.plugin(module, replacement ? undefined : config);
   return { ctx, llm, module };
 }
@@ -260,10 +263,11 @@ export function activation({ providers, keepOriginalOn = false }) {
  * The profile's base bundle holds the llm service and the original dormant `llm-pi-ai` row under the checkout's own package names, its second bundle's patch layer is `bundleLayer` and its own patch layer is `layer`; every module a row names resolves from this profile or from the installation, so a specifier names a package the profile has to hold.
  * `installed` are bundles `{ name, patch }` the profile depends on and holds on disk without selecting them, except the names `selected` lists, which the profile started with; each is a `link:` dependency, as a local bundle is in a real profile, so pnpm can run in the profile without a registry. The packages they name come from the profile: `linkSoftware` links this repository's Session Watcher package into it, the one a local bundle's row names (`REPLACEMENT_SPECIFIER`), and a profile that must hold no Session Watcher says `false`.
  * `services(ctx)` mounts the services the profile's rows inject before the Loader reads the profile, the llm service among them: the base bundle then holds no `llm` row of its own.
+ * `carrierPrefix` is what the Session Watcher host's carrier prefix service answers the replacement, provided by a stand-in before the Loader reads the profile; `null` provides none, for a profile whose own host row or no host answers.
  * With `manager` the real plugin manager mounts over the profile under `managerConfig`, which `ctx.pluginManager` then is; with `hmr: false` the profile is startup-only; with `connection` the real WebServer and Connection mount on a loopback port; `packageManager(home)` answers the package manager invocation the manager runs pnpm with, `offlinePnpm(home)` for a profile that must install without a network, and `prepare({ dir, home })` runs once the profile's files are on disk and before its composition mounts, for a package the profile must already hold.
  * Answers the context, the llm package, the layer's file, the profile directory and `rewrite(text)`, which replaces the layer's text, the Loader reloading from it.
  */
-export async function mountComposition({ bundleLayer = '[]\n', layer, installed = [], selected = [], manager = false, managerConfig = {}, hmr: withHmr = true, connection = false, packageManager, prepare, linkSoftware = true, services }) {
+export async function mountComposition({ bundleLayer = '[]\n', layer, installed = [], selected = [], manager = false, managerConfig = {}, hmr: withHmr = true, connection = false, packageManager, prepare, linkSoftware = true, services, carrierPrefix = carrierPrefixOf(CARRIER_TABLE) }) {
   const [{ Context }, loaderModule, appBoot, llm, settingsModule, configEditor, timer, hmr, fsPromises, osModule, managerModule] = await Promise.all([
     fromCheckout('vendor/cordis/lib/index.js'), fromCheckout('vendor/loader/lib/index.js'),
     fromCheckout('packages/boot/app-boot/lib/index.js'), fromCheckout('packages/llm/llm/lib/index.js'),
@@ -323,6 +327,8 @@ export async function mountComposition({ bundleLayer = '[]\n', layer, installed 
   await ctx.plugin(PluginPackages, { resolution });
   ctx.provide('credentials', new RecordCredentials(PLACEHOLDERS));
   await services?.(ctx);
+  // What the host answers the replacement at each call of its hook, a stand-in over the production wording where no host is mounted; `carrierPrefix: null` is a context where a real host or none provides it.
+  if (carrierPrefix !== null) ctx.provide(CARRIER_PREFIX_SERVICE, { carrierPrefix: () => carrierPrefix });
   await ctx.plugin(loaderModule.default);
 
   const profile = {

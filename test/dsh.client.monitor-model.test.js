@@ -71,7 +71,7 @@ test('the step slot is the count alone with the title of its own, whatever the q
 test('the step slot carries a badge with the count of slots that have warnings where any has, under a title that says it, and its text and title stay as they are', () => {
   const stepOf = overrides => parentMetaParts(attemptRow(overrides), 9_999, t)[1];
   const plain = { part: 'step', text: 'monitor.meta.step(count=8)', title: 'monitor.meta.step.title' };
-  const warned = { 40: ['state-check', 'verbatim-recall'], 45: ['state-write'], 50: ['old-attribution'] };
+  const warned = { 40: ['state-check', 'verbatim-recall'], 45: ['state-write'], 50: ['read-block'] };
   assert.deepEqual(stepOf({ slotWarnings: warned }), { ...plain, badge: { text: '3', title: 'monitor.meta.step.badge(count=3,total=8)' } }, 'a slot with several warnings counts once');
   assert.deepEqual(stepOf({ slotWarnings: { 40: ['state-check'] }, stepN: 3 }).badge, { text: '1', title: 'monitor.meta.step.badge(count=1,total=3)' });
   assert.deepEqual(stepOf({ slotWarnings: { 40: ['state-check'] }, stepN: null }), { part: 'step', text: '—', title: 'monitor.meta.step.title', badge: { text: '1', title: 'monitor.meta.step.badge.unrated(count=1)' } }, 'no step count, no total in the title');

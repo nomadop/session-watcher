@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  callUsageOf, foldInputOf, heldObservationsOf, isMainCall, reduceDshEvent, reduceDshSnapshot,
+  callUsageOf, foldInputOf, isMainCall, reduceDshEvent, reduceDshSnapshot,
 } from '../lib/harness/dsh/transcript-observation.js';
 import {
   userMessage, assistantMessage, toolCall, toolResult, attempt, requestHeader, requestContext,
@@ -515,42 +515,4 @@ test('reduceDshSnapshot flattens the batches in event order', () => {
     diagnostics.map(diagnostic => [diagnostic.code, /\bseq (\d+)\b/.exec(diagnostic.message)?.[1]]),
     [['shape-violation', '6'], ['shape-violation', '9']],
   );
-});
-
-// --- Held slice ---
-
-test('heldObservationsOf is the snapshot\'s Observations with each step/start as a step-start at its place and each tool result carrying the key of the step its event names', () => {
-  const read = [{ id: 'call_read', name: 'read', arguments: '{"file_path":"src/a.js"}' }];
-  const events = sessionLog([
-    turnStart(),
-    userMessage({ text: 'Where is parse defined?' }),
-    stepStart({ turn: 1, step: 1 }),
-    assistantMessage({ step: 1, toolCalls: read, usage: USAGE }),
-    toolCall({ step: 1, callId: 'call_read', name: 'read', arguments: read[0].arguments }),
-    toolResult({ step: 1, callId: 'call_read', text: 'export function parse() {}' }),
-    stepEnd({ step: 1 }),
-    stepStart({ turn: 2, step: 3 }),
-    assistantMessage({ turn: 2, step: 3, text: 'In src/a.js.', usage: USAGE }),
-    stepEnd({ turn: 2, step: 3 }),
-    turnEnd(),
-  ]);
-  const held = heldObservationsOf(events);
-  assert.deepEqual(held.map(item => [item.type, item.stepKey]), [
-    ['turn-boundary', undefined], ['text', undefined], ['step-start', '1:1'], ['tool-use', undefined], ['usage', undefined],
-    ['tool-result', '1:1'], ['step-start', '2:3'], ['text', undefined], ['usage', undefined],
-  ]);
-  const observations = reduceDshSnapshot(events).observations;
-  assert.deepEqual(
-    held.filter(item => item.type !== 'step-start').map(({ stepKey: _, ...item }) => item),
-    observations,
-    'apart from the step key every Observation is the snapshot\'s own, in its order',
-  );
-});
-
-test('a step/start whose turn or step is no index opens no step', () => {
-  const events = sessionLog([turnStart(), stepStart({ step: 1 }), stepEnd({ step: 1 })]);
-  const opening = events[1];
-  for (const data of [{ turn: 1, step: 'one' }, { turn: -1, step: 1 }, { turn: 1 }, undefined]) {
-    assert.deepEqual(heldObservationsOf([{ ...opening, data }]), []);
-  }
 });

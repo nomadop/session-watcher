@@ -40,7 +40,7 @@ dsh plugin --profile web add @nomadop/session-watcher-dsh
 
 1. 让 agent 使用 `sw-handoff` skill。它只挑出下一个任务要用到的文件和 skill，写好摘要和下一个任务，并返回一个 token。
 2. 在 Web 输入框里输入 `/sw-continue`。它原地清空会话，并加载本会话准备的最新一份交接。
-3. agent 用一句话说明它接着做什么，然后继续，除非任务还留着一个待回答的问题。保留的文件按磁盘上的当前内容读取；摘要、最近的 lineage 标题和最新的几轮对话随交接一起回来。
+3. agent 直接从下一步继续，除非任务还留着一个待回答的问题。保留的文件按磁盘上的当前内容读取；摘要、最近的 lineage 标题和最新的几轮对话随交接一起回来。
 
 ![用 sw-handoff 准备交接，再用 /sw-continue 接着做任务](assets/handoff-loop.gif)
 
@@ -54,7 +54,7 @@ dsh plugin --profile web add @nomadop/session-watcher-dsh
 
 - 插件读取它所加载进的 DSH 主机的会话事件日志，以及日志里提到的文件。它把状态写在 `~/.session-watcher` 下，与 Claude Code 插件共用；准备中的交接还会把它的轮次笔记作为工作文件放在系统临时目录。插件不上传任何内容，也没有遥测；agent 发给模型 provider 的内容是主机的常规流量，包括交接文本。
 - dock 只观测。标签页还会应用保留/丢弃的覆盖项并保存价格覆盖项，价格覆盖项会让主机上所有运行该模型的会话按新价格重新计价；两者都不改动对话本身。`/sw-continue` 和 `/sw-load` 会改动会话，且都只在 agent 空闲时运行。本会话没有准备交接，或其最新交接早于最近一次上下文重置时，`/sw-continue` 不会改动会话。
-- 交接摘要由 agent 撰写，可能有遗漏。`/sw-load` 会等你确认它加载的状态；`/sw-continue` 只留一句说明就继续，所以请读那句说明。
+- 交接摘要由 agent 撰写，可能有遗漏。`/sw-load` 会等你确认它加载的状态；`/sw-continue` 不等确认就从下一步继续，所以请先读摘要。
 - 标签页和 dock 支持 `dsh web`，DSH Desktop 外壳未经验证。命令只能在 Web 输入框里使用，不支持 ACP、headless 运行或 SDK。
 - 读数刻画的是 prompt cache 下上下文的成本，不是对任务质量的评判，也不承诺节省费用。
 

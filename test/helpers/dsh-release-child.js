@@ -7,10 +7,10 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { OFFICIAL_CARRIER_BUNDLE } from '../../dsh/src/carrier-cache-switch.js';
-import { PI_AI_SERVICE, CARRIER_EVIDENCE_SERVICE } from '../../dsh/src/pi-ai-integration.js';
+import { PI_AI_SERVICE, CARRIER_EVIDENCE_SERVICE, CARRIER_PREFIX_SERVICE } from '../../dsh/src/pi-ai-integration.js';
 import { channelOn, mountHostServices } from './dsh-shipped-loop.js';
 import {
-  activation, CARRIER_TABLE, COMPANION_SPECIFIER, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, REPLACEMENT_ID, REPLACEMENT_SPECIFIER, send, waitFor,
+  activation, CARRIER_TABLE, carrierPrefixOf, COMPANION_SPECIFIER, conversationOf, endpoints, joinedText, KEY_REF, mountComposition, REPLACEMENT_ID, REPLACEMENT_SPECIFIER, send, waitFor,
 } from './dsh-pi-ai-fixture.js';
 import { manifestOf, RELEASED_COMPANION, RELEASED_SW, registryPnpm, releasedTarball, startRegistry, workingTreeTarball } from './dsh-release-registry.js';
 
@@ -72,7 +72,7 @@ function assertBumped(candidate, previous) {
 async function profileOver(registry, served, options = {}) {
   const rig = await mountComposition({
     layer: activation({ providers: { 'sw-anthropic': route(served.origin) } }).layer, services: mountHostServices, linkSoftware: false, manager: true,
-    managerConfig: { registry: registry.url, fallbackRegistries: [] }, packageManager: home => registryPnpm(home, registry.url), ...options,
+    managerConfig: { registry: registry.url, fallbackRegistries: [] }, packageManager: home => registryPnpm(home, registry.url), carrierPrefix: null, ...options,
   });
   return { ...rig, manager: rig.ctx.get('pluginManager'), served };
 }
@@ -92,9 +92,12 @@ async function conversation(rig) {
   return rig.served.requests.at(-1).body;
 }
 
+// The warnings the profile's logger holds.
+const warningsOf = rig => rig.ctx.logger.buffer.filter(each => each.type === 'warn').length;
+
 // Whether each carrier of the body ends in the cache marker, in order: the native serializer writes a carrier as one string and the carrier cache point as blocks whose last one carries the marker.
 const carrierPoints = body => body.messages
-  .filter(message => message.role === 'user' && joinedText(message.content).startsWith(CARRIER_TABLE.addresses))
+  .filter(message => message.role === 'user' && joinedText(message.content).startsWith(carrierPrefixOf(CARRIER_TABLE)))
   .map(message => Array.isArray(message.content) && message.content.at(-1).cache_control?.type === 'ephemeral');
 
 // A profile package added by the real pnpm from `registry` before the profile boots.
@@ -191,6 +194,11 @@ const SCENARIOS = {
     assert.equal(rowOf(rig.ctx, 'session-watcher'), undefined, 'the profile mounts no host');
 
     assertServing(rig, { specifier: COMPANION_SPECIFIER, ownerDir: packageDir(rig, COMPANION), ownerName: COMPANION, ownerVersion: next.companion.version });
+    // With no host to answer what a carrier opens with the route is served and no carrier is given a point, with no warning; a host that answers at the next request is followed.
+    const before = warningsOf(rig);
+    assert.deepEqual(carrierPoints(await conversation(rig)), [false, false]);
+    assert.equal(warningsOf(rig), before, 'no warning for a request the host has no prefix for');
+    rig.ctx.provide(CARRIER_PREFIX_SERVICE, { carrierPrefix: () => carrierPrefixOf(CARRIER_TABLE) });
     assert.deepEqual(carrierPoints(await conversation(rig)), [false, true]);
     await rig.ctx.fiber.dispose();
     await served.close();
@@ -257,7 +265,9 @@ const SCENARIOS = {
       // The companion carries the route alone.
       assert.ok(bundlesOf(rig).includes(COMPANION), 'the companion is still selected');
       assertServing(rig, { specifier: COMPANION_SPECIFIER, ownerDir: packageDir(rig, COMPANION), ownerName: COMPANION, ownerVersion: next.companion.version });
-      assert.deepEqual(carrierPoints(await conversation(rig)), [false, true], 'the same route completes through the companion');
+      const before = warningsOf(rig);
+      assert.deepEqual(carrierPoints(await conversation(rig)), [false, false], 'the same route completes through the companion, which has no host to tell a carrier by');
+      assert.equal(warningsOf(rig), before, 'and says nothing of it');
     } finally {
       held.release();
     }

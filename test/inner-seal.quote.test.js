@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 
 import { estimateInnerA, INNER_QUOTE, innerQuote as quoteUnder, isQuote, KAPPA_PRESETS, kappaOf, QUOTE_QUANTITIES } from '../lib/inner-seal/quote.js';
 import { renderCarried } from '../lib/carried-evidence.js';
-import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 
 // E2 is the policy the worked values below were derived under; a case that names another preset says so.
 const innerQuote = input => quoteUnder({ preset: 'E2', ...input });
@@ -359,7 +358,7 @@ test('the estimate of A: L_A is each request text priced on its own under the mo
     paths: [{ path, displayPath: path, totalLines: 3, state: 'readable', write: [[1, 'shown again'], [2, 'new 中文 line']], omit: [1] }],
     skills: [{ name: 'tdd', text: 'test first' }],
   };
-  const bText = renderCarried(carried, CARRIER_TABLE);
+  const bText = renderCarried(carried);
   const estimate = estimateInnerA({ n: 8, texts, bText, ctp: CTP });
 
   // The first text: four ASCII characters are 2, two CJK characters 4. The second: fourteen ASCII characters are 7, one CJK character 2.
@@ -375,8 +374,8 @@ test('the estimate of A: L_A is each request text priced on its own under the mo
   assert.equal(none.bEst, 0, 'a carrier that changes no evidence renders no B');
   assert.equal(none.lA, 15);
   const unsaid = { paths: [{ path, displayPath: path, withdraw: [1, 2] }, { path: '/repo/src/back.js', displayPath: '/repo/src/back.js', state: 'readable' }], removed: ['/repo/src/gone.js'] };
-  assert.equal(renderCarried(unsaid, CARRIER_TABLE), null, 'withdrawn lines, a removed path and a readable state are no part of B');
-  assert.equal(estimateInnerA({ n: 8, texts: [], bText: renderCarried(unsaid, CARRIER_TABLE), ctp: CTP }).bEst, 0);
+  assert.equal(renderCarried(unsaid), null, 'withdrawn lines, a removed path and a readable state are no part of B');
+  assert.equal(estimateInnerA({ n: 8, texts: [], bText: renderCarried(unsaid), ctp: CTP }).bEst, 0);
   assert.equal(estimateInnerA({ n: 8, texts: [], bText: null, ctp: CTP }).lA, 0, 'a range of nodes deriving no message has no A');
 });
 

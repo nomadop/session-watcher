@@ -18,10 +18,11 @@ import {
 import { createNodeWorkingTree } from '../../lib/working-tree.js';
 import { createResourceAttribution } from '../../lib/resource-attribution.js';
 import { createToolEvidenceInterpreter } from '../../lib/tool-evidence.js';
+import { createScratchView } from '../../lib/scratch-view.js';
 import { createDshDialogueSource } from '../../lib/harness/dsh/dialogue-source.js';
 import { createDshDialogueProjection } from '../../lib/harness/dsh/history-turn-rules.js';
 import { createDshMeasurementProjection } from '../../lib/harness/dsh/measurement-projection.js';
-import { heldObservationsOf } from '../../lib/harness/dsh/transcript-observation.js';
+import { reduceDshSnapshot } from '../../lib/harness/dsh/transcript-observation.js';
 import { dshToolEvidenceProfile } from '../../lib/harness/dsh/tool-evidence-profile.js';
 
 /** The Turn Notes root the host binds: under the system temp directory, which DSH's `workspace-write` sandbox admits. */
@@ -68,11 +69,12 @@ function interpretersFor({ workingTree, cwd }) {
  *   readSession: (sessionId: string) => Promise<{ events: object[] }>,
  *   isIgnored: ((path: string) => boolean)|null, cacheTtl: () => string|null,
  *   workingTree?: object }} options
- * `heldView(events)` answers what a raw event slice holds, apart from the watcher and whatever its state (`lib/held-view.js`): each held file's line keys, each held skill's text, the event each effect belongs to and the file reads that returned mostly lines their epoch already held. The slice is reduced as the Dialogue side reads it, with each step's start kept (`heldObservationsOf`), and projected under a frame context that recalls the session's saved records, none for a null session id, and keeps none.
+ * `heldView(events)` answers what a raw event slice holds, apart from the watcher and whatever its state (`lib/held-view.js`): each held file's line keys, each held skill's text, and the event each effect belongs to. The slice is reduced as the Dialogue side reads it (`reduceDshSnapshot`), and projected under a frame context that recalls the session's saved records, none for a null session id, and keeps none.
  * @returns {{ watcher: SessionWatcher, dialogueSource: object, dialogueProjection: object,
  *   heldView: (events: object[]) => { paths: Map<string, number[]>, skills: Map<string, string>,
- *     effects: { seq: number, kind: 'path'|'skill', key: string }[],
- *     oldReads: { toolUseId: string, seq: number, oldLines: number, newLines: number }[] } }}
+ *     effects: { seq: number, kind: 'path'|'skill', key: string }[] },
+ *   heldScratch: () => (Map<string, Map<number, object>>|null) }}
+ * `heldScratch()` answers the scratch the watcher's Projection keeps of its open epoch, as the latest call the interpreter took was handed it (`lib/scratch-view.js`), null before the first: the read guard reads it, and nothing writes it.
  */
 export function composeWatcher({
   sessionId, cwd, store, turnNotesRoot, readSession, isIgnored, cacheTtl, workingTree,
@@ -80,6 +82,8 @@ export function composeWatcher({
   const dialogueSource = createDshDialogueSource({ readSession });
   const dialogueProjection = createDshDialogueProjection();
   const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
+  // Only the watcher's own Projection is observed: the held view's passes each build a scratch of their own.
+  const scratchView = createScratchView();
   const policyFor = (modelId) => {
     const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
     const saved = loadPricingOverride(modelId);
@@ -101,7 +105,7 @@ export function composeWatcher({
     dialogueProjection,
     createEngine: createMeasurementEngine,
     createMeasurementProjection: (_locator, resolveModelPolicy) => createDshMeasurementProjection({
-      cwd, projectRoot: cwd, resolveModelPolicy, interpretToolUse, completeToolResult,
+      cwd, projectRoot: cwd, resolveModelPolicy, ...scratchView.observing({ interpretToolUse, completeToolResult }),
     }),
     resourceKeysOf,
     modelPolicyFor: policyFor,
@@ -121,6 +125,6 @@ export function composeWatcher({
     resolveModelPolicy: policyFor,
     frameCtx: sessionId ? { recall } : {},
   });
-  const heldView = events => view(heldObservationsOf(events));
-  return { watcher, dialogueSource, dialogueProjection, heldView };
+  const heldView = events => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView, heldScratch: scratchView.read };
 }

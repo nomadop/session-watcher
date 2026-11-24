@@ -39,11 +39,6 @@ test('the English and Chinese monitor texts carry the same keys and the same pla
   for (const key of monitorKeys(en)) assert.deepEqual(placeholders(zh[key]), placeholders(en[key]), key);
 });
 
-test('the old-attribution slot warning the monitor folds has its text in both locales, the Chinese one as agreed', () => {
-  assert.equal(zh['monitor.warning.old-attribution'], '文件读取的旧归因占比高');
-  assert.equal(typeof en['monitor.warning.old-attribution'], 'string');
-});
-
 test('the tools page words each direct-read kind as the attempt its dispatch was, in both locales, and the slot row keeps the wording it had', () => {
   const attempts = {
     'handoff-recall': ['尝试直读交接载荷', 'Attempted a direct read of the handoff payload'],

@@ -175,7 +175,7 @@ var en = {
   "monitor.warning.verbatim-recall": "Read target includes verbatim text carried by compaction",
   "monitor.warning.handoff-recall": "Direct handoff payload read",
   "monitor.warning.carrier-recall": "Direct compaction carrier read",
-  "monitor.warning.old-attribution": "High share of old attribution in file reads",
+  "monitor.warning.read-block": "Read blocked: the lines were already in context word for word",
   "monitor.filter.collapseAll": "Collapse all",
   "monitor.filter.empty": "No events match the filter",
   "monitor.object.attempt": "Segment #{epoch} Compaction #{ordinal}",
@@ -408,8 +408,7 @@ var en = {
   "monitor.tool.attempt.handoff-recall": "Attempted a direct read of the handoff payload",
   "monitor.tool.attempt.carrier-recall": "Attempted a direct read of the compaction carrier",
   "monitor.tool.attempt.verbatim-recall": "Attempted a read-back: the target includes verbatim text carried by compaction",
-  "monitor.tool.oldAttribution": "{label} \xB7 {percent} (old {oldLines} lines, new {newLines} lines)",
-  "monitor.tool.oldNote": `"Old" means attributed before the step began, which is not necessarily text still in the model's context.`,
+  "monitor.tool.attempt.read-block": "Blocked a read of lines already in context word for word",
   "monitor.overview.status": "Status",
   "monitor.overview.payback": "Payback progress",
   "monitor.overview.callState": "Call",
@@ -758,7 +757,7 @@ var zh = {
   "monitor.warning.verbatim-recall": "\u56DE\u8BFB\u76EE\u6807\u542B\u5C01\u5B58\u5DF2\u643A\u5E26\u7684\u539F\u6587",
   "monitor.warning.handoff-recall": "\u76F4\u8BFB\u4EA4\u63A5\u8F7D\u8377",
   "monitor.warning.carrier-recall": "\u76F4\u8BFB\u538B\u7F29\u8F7D\u4F53",
-  "monitor.warning.old-attribution": "\u6587\u4EF6\u8BFB\u53D6\u7684\u65E7\u5F52\u56E0\u5360\u6BD4\u9AD8",
+  "monitor.warning.read-block": "\u5DF2\u62E6\u622A\u8BFB\u53D6\uFF1A\u8FD9\u4E9B\u884C\u5DF2\u9010\u5B57\u5728\u4E0A\u4E0B\u6587\u4E2D",
   "monitor.filter.collapseAll": "\u5168\u90E8\u6298\u53E0",
   "monitor.filter.empty": "\u6CA1\u6709\u7B26\u5408\u7B5B\u9009\u6761\u4EF6\u7684\u4E8B\u4EF6",
   "monitor.object.attempt": "\u5206\u6BB5 #{epoch} \u538B\u7F29 #{ordinal}",
@@ -991,8 +990,7 @@ var zh = {
   "monitor.tool.attempt.handoff-recall": "\u5C1D\u8BD5\u76F4\u8BFB\u4EA4\u63A5\u8F7D\u8377",
   "monitor.tool.attempt.carrier-recall": "\u5C1D\u8BD5\u76F4\u8BFB\u538B\u7F29\u8F7D\u4F53",
   "monitor.tool.attempt.verbatim-recall": "\u5C1D\u8BD5\u56DE\u8BFB\uFF1A\u76EE\u6807\u542B\u5C01\u5B58\u5DF2\u643A\u5E26\u7684\u539F\u6587",
-  "monitor.tool.oldAttribution": "{label} \xB7 {percent}\uFF08\u65E7 {oldLines} \u884C\uFF0C\u65B0 {newLines} \u884C\uFF09",
-  "monitor.tool.oldNote": "\u201C\u65E7\u201D\u6307\u8BE5\u6B65\u5F00\u59CB\u524D\u5DF2\u88AB\u5F52\u56E0\uFF0C\u4E0D\u4E00\u5B9A\u4ECD\u662F\u6A21\u578B\u5F53\u524D\u4E0A\u4E0B\u6587\u4E2D\u7684\u6587\u672C\u3002",
+  "monitor.tool.attempt.read-block": "\u62E6\u622A\u4E86\u4E00\u6B21\u8BFB\u53D6\uFF1A\u8FD9\u4E9B\u884C\u5DF2\u9010\u5B57\u5728\u4E0A\u4E0B\u6587\u4E2D",
   "monitor.overview.status": "\u72B6\u6001",
   "monitor.overview.payback": "\u56DE\u672C\u8FDB\u5EA6",
   "monitor.overview.callState": "\u8C03\u7528",
@@ -22956,8 +22954,8 @@ function SlotUsagePage({ detail, t }) {
     )
   );
 }
-var DIRECT_READS = ["handoff-recall", "carrier-recall", "verbatim-recall"];
-var warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
+var ATTEMPTED_READS = ["handoff-recall", "carrier-recall", "verbatim-recall", "read-block"];
+var warningText = (kind, t) => t(ATTEMPTED_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
 function cardWarningText(warning, t) {
   switch (warning.kind) {
     case "state-check":
@@ -22965,10 +22963,6 @@ function cardWarningText(warning, t) {
       return t("monitor.tool.stateQuery");
     case "state-write":
       return t("monitor.tool.stateWrite");
-    case "old-attribution": {
-      const { percent: percent2, over, oldLines, newLines } = warning;
-      return t("monitor.tool.oldAttribution", { label: t("monitor.warning.old-attribution"), percent: percent2 === null ? NOT_AVAILABLE : `${over ? ">" : ""}${percent2}%`, oldLines, newLines });
-    }
     default:
       return warningText(warning.kind, t);
   }
@@ -23015,19 +23009,17 @@ function ToolCard({ card: { id, name, input, result, pruned, warnings }, events,
 }
 function SlotToolsPage({ detail, open, t }) {
   const { warnings, calls } = detail.tools;
-  const explains = warnings.includes("old-attribution") || calls.some((card) => card.warnings.some(({ kind }) => kind === "old-attribution"));
   return h10(
     import_react9.default.Fragment,
     null,
-    warnings.length === 0 && !explains ? null : h10(
+    warnings.length === 0 ? null : h10(
       Section,
       { name: "warnings" },
-      warnings.length === 0 ? null : h10(
+      h10(
         "ul",
         { className: "sw-mon-tool-warnings" },
         warnings.map((kind) => h10("li", { key: kind, className: "sw-mon-tool-warning", "data-sw-warning": kind, "data-sw-attention": "" }, warningText(kind, t)))
-      ),
-      explains ? h10("p", { className: "sw-mon-note", "data-sw-old-note": "" }, t("monitor.tool.oldNote")) : null
+      )
     ),
     calls.map((card, at) => h10(ToolCard, { key: at, card, events: detail.events, open, t }))
   );

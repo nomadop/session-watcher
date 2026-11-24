@@ -3,7 +3,7 @@
 import { readTreeWindows } from '../../lib/working-tree-text.js';
 
 // The execution world's target of `key` and the path the `read` tool prints for it, null where the backend maps no such key; a `resolve` that throws throws.
-async function targetOf(fs, key, signal) {
+export async function targetOf(fs, key, signal) {
   const mapped = fs.processPathFromHostPath(key);
   if (mapped === undefined) return null;
   const target = await fs.resolve(mapped, { signal });

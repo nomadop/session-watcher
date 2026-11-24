@@ -13,7 +13,7 @@ import { SettlementDetail, PagedDetail, SETTLEMENT_PAGES, CallDetail, OverviewPa
   HandoffDetail, HandoffOverviewPage, HandoffSummaryPage, HandoffFilesPage, HandoffTurnsPage, HandoffLineagePage } from '../dsh/src/client/monitor-drawer.js';
 import { en, zh } from '../dsh/src/client/locales.js';
 import { SKIP_REASONS } from '../lib/llm-adapter/carrier-results.js';
-import { createViewState, reduceView, flattenRows, isOpen, NOT_AVAILABLE, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
+import { createViewState, reduceView, flattenRows, isOpen, LEAVES_LOADING, LEAVES_FAILED, DRAWER_DEFAULT_WIDTH, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from '../dsh/src/client/monitor-state.js';
 import { settlementsOf } from '../public/lib/compactionEconomics.js';
 import { innerMonitorProjection, createMonitorAccess, PREVIEW_SOURCE_CHARS } from '../dsh/src/inner-monitor-read.js';
 import { innerQuote } from '../lib/inner-seal/quote.js';
@@ -1165,7 +1165,7 @@ test('a slot drawer offers its tools beside the other pages only when the slot h
   assert.deepEqual(shown(slotValue(10, { tools: { warnings: [], calls: [] } })), without, 'nothing to show');
   assert.deepEqual(shown(toolsSlot([toolCard()])), withTools, 'a call');
   assert.deepEqual(shown(toolsSlot([toolCard({ name: null, input: null })])), withTools, 'a result alone');
-  assert.deepEqual(shown(slotValue(10, { tools: { warnings: ['old-attribution'], calls: [] } })), withTools, 'a warning is shown though no call is');
+  assert.deepEqual(shown(slotValue(10, { tools: { warnings: ['read-block'], calls: [] } })), withTools, 'a warning is shown though no call is');
   assert.match(renderDrawer(select, { [slotKeyOf(1, 10)]: { kind: 'ready', value: toolsSlot([toolCard()]) } }, { ordinals: { 1: { epoch: 1, ordinal: 1 } } }), /role="tabpanel"[^>]*data-page="summary"|data-page="summary"[^>]*role="tabpanel"/);
 });
 
@@ -1216,46 +1216,36 @@ test('a call\'s name, input and output are set as data: markup and links in them
   assert.equal(html.includes('<a '), false);
 });
 
-test('a card shows the warnings it holds beside a collapsed card in their own kind, a state kind as its short query or write, a direct read as the attempt its dispatch was, failed or not, and the others in the words of the slot row, and the header shows each kind it was given once in the same words, the state kinds in full', () => {
+test('a card shows the warnings it holds beside a collapsed card in their own kind, a state kind as its short query or write, a direct read and a blocked read as the attempt they were, failed or not, and the header shows each kind it was given once in the same words, the state kinds in full', () => {
   const cards = parseCards(pageHtml(SlotToolsPage, toolsSlot([
     toolCard({ id: '1:1:a', warnings: [{ kind: 'state-mixed' }] }),
     toolCard({ id: '1:1:b', warnings: [{ kind: 'state-check' }, { kind: 'carrier-recall' }] }),
     toolCard({ id: '1:1:c', warnings: [{ kind: 'state-write' }, { kind: 'verbatim-recall' }, { kind: 'handoff-recall' }] }),
-    toolCard({ id: '1:1:d', warnings: [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }] }),
-    toolCard({ id: '1:1:e', warnings: [{ kind: 'old-attribution', oldLines: 901, newLines: 99, percent: 90, over: true }] }),
-    toolCard({ id: '1:1:f', warnings: [{ kind: 'old-attribution', oldLines: 0, newLines: 0, percent: null, over: false }] }),
-    toolCard({ id: '1:1:g', result: { seq: 12, error: true, empty: false }, warnings: [{ kind: 'carrier-recall' }] }),
+    toolCard({ id: '1:1:d', result: { seq: 12, error: true, empty: false }, warnings: [{ kind: 'read-block' }] }),
+    toolCard({ id: '1:1:e', result: { seq: 12, error: true, empty: false }, warnings: [{ kind: 'carrier-recall' }] }),
   ], { warnings: ['state-mixed', 'state-write', 'handoff-recall'], events: [toolEvent(11), toolEvent(12, { text: 'denied', isError: true })] })));
-  const html = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'state-write' }] })], { warnings: ['state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall'] }));
+  const html = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'state-write' }] })], { warnings: ['state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall', 'read-block'] }));
 
   assert.deepEqual(cards.map(card => card.warnings), [
     [['state-mixed', 'monitor.tool.stateQuery']],
     [['state-check', 'monitor.tool.stateQuery'], ['carrier-recall', 'monitor.tool.attempt.carrier-recall']],
     [['state-write', 'monitor.tool.stateWrite'], ['verbatim-recall', 'monitor.tool.attempt.verbatim-recall'], ['handoff-recall', 'monitor.tool.attempt.handoff-recall']],
-    [['old-attribution', 'monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=95%,oldLines=19,newLines=1)']],
-    [['old-attribution', 'monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=>90%,oldLines=901,newLines=99)']],
-    [['old-attribution', `monitor.tool.oldAttribution(label=monitor.warning.old-attribution,percent=${NOT_AVAILABLE},oldLines=0,newLines=0)`]],
+    [['read-block', 'monitor.tool.attempt.read-block']],
     [['carrier-recall', 'monitor.tool.attempt.carrier-recall']],
   ]);
   assert.ok(cards.every(card => card.sections.length > 0 && card.sections.every(section => section.open === false)), 'every card shows its warnings with its sections folded');
-  assert.deepEqual(cards[6].states, [['error', 'monitor.tool.failed']], 'a direct read that failed shows its failure beside the warning');
+  assert.deepEqual([cards[3], cards[4]].map(card => card.states), [[['error', 'monitor.tool.failed']], [['error', 'monitor.tool.failed']]], 'a direct read that failed and a read the guard blocked show their failure beside the warning');
 
   const header = sectionOf(html, 'warnings');
   assert.deepEqual([...header.matchAll(/data-sw-warning="([\w-]+)"[^>]*>(.*?)<\/li>/g)].map(([, kind, text]) => [kind, textOf(text)]), [
     ['state-mixed', 'monitor.warning.state-mixed'], ['state-write', 'monitor.warning.state-write'], ['verbatim-recall', 'monitor.tool.attempt.verbatim-recall'],
-    ['handoff-recall', 'monitor.tool.attempt.handoff-recall'], ['carrier-recall', 'monitor.tool.attempt.carrier-recall'],
+    ['handoff-recall', 'monitor.tool.attempt.handoff-recall'], ['carrier-recall', 'monitor.tool.attempt.carrier-recall'], ['read-block', 'monitor.tool.attempt.read-block'],
   ]);
-  assert.equal(html.includes('data-sw-old-note'), false, 'no explanation of old where nothing says old');
 });
 
-test('the page explains what old means wherever it shows an old-attribution warning, on a card or in the header, and nowhere else', () => {
-  const onCard = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }] })]));
-  const inHeader = pageHtml(SlotToolsPage, toolsSlot([toolCard()], { warnings: ['old-attribution'] }));
-  const absent = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'carrier-recall' }] })], { warnings: ['carrier-recall'] }));
-
-  for (const html of [onCard, inHeader]) assert.ok(textOf(html).includes('monitor.tool.oldNote'));
-  assert.equal(absent.includes('monitor.tool.oldNote'), false);
-  assert.equal(sectionOf(onCard, 'warnings') === undefined || !sectionOf(onCard, 'warnings').includes('data-sw-warning'), true, 'a card\'s warning is not repeated in the header');
+test('a card\'s warning is not repeated in the header', () => {
+  const onCard = pageHtml(SlotToolsPage, toolsSlot([toolCard({ warnings: [{ kind: 'read-block' }] })]));
+  assert.equal(sectionOf(onCard, 'warnings') === undefined || !sectionOf(onCard, 'warnings').includes('data-sw-warning'), true);
 });
 
 test('a card shows pruning as neutral text with a jump to the replacement on the source page, and the source page marks only the event the jump names', () => {
@@ -1314,7 +1304,7 @@ test('a slot drawer offers its usage after the source text, before the tools, on
   assert.deepEqual(shown(usageOfSlot()), withUsage, 'a measured call');
   assert.deepEqual(shown(usageOfSlot({ current: null, next: null, sourceTokens: 0 })), withUsage, 'an estimate of zero is an estimate');
   assert.deepEqual(shown(usageOfSlot({ sourceTokens: null })), withUsage, 'a carrier older than the estimate keeps the measured page');
-  assert.deepEqual(shown({ ...usageOfSlot(), tools: { warnings: ['old-attribution'], calls: [] } }), [...withUsage, ['monitor.slotPage.tools', false]], 'the tools come after the usage');
+  assert.deepEqual(shown({ ...usageOfSlot(), tools: { warnings: ['read-block'], calls: [] } }), [...withUsage, ['monitor.slotPage.tools', false]], 'the tools come after the usage');
 });
 
 test('the usage page shows the slot\'s own call and the call after it as two blocks, each under its own source and seq with the four buckets, the original text estimate after them as an approximate count of what the compaction saw', () => {
@@ -2521,7 +2511,7 @@ test('the warning filter lists the rows the list marks with a warning, the compa
   assert.deepEqual(rowIds(renderList(attempts, { state: filterBy(WARNED) })), marked);
 });
 
-const SLOT_WARNINGS = { 40: ['state-check', 'verbatim-recall'], 45: ['state-mixed', 'state-write', 'handoff-recall', 'carrier-recall'] };
+const SLOT_WARNINGS = { 40: ['state-check', 'verbatim-recall'], 45: ['state-mixed', 'state-write', 'handoff-recall', 'carrier-recall', 'read-block'] };
 
 test('slot warnings keep the closed parent and, when opened, only the warned slots and any warned call under the warning filter', () => {
   const attempts = [
@@ -2549,7 +2539,7 @@ test('slot warnings keep the closed parent and, when opened, only the warned slo
   assert.deepEqual(touched, [slotsKey(2), slotsKey(3)]);
   assert.deepEqual(group.map(row => row.attributes['data-sw-attention']), ['', '', '', '', '', '']);
   assert.equal(group[1].attributes['aria-description'], 'monitor.warning.state-check · monitor.warning.verbatim-recall');
-  assert.equal(group[2].attributes['aria-description'], 'monitor.warning.state-mixed · monitor.warning.state-write · monitor.warning.handoff-recall · monitor.warning.carrier-recall', 'the slot row keeps the wording it had');
+  assert.equal(group[2].attributes['aria-description'], 'monitor.warning.state-mixed · monitor.warning.state-write · monitor.warning.handoff-recall · monitor.warning.carrier-recall · monitor.warning.read-block', 'the slot row keeps the wording it had');
   assert.equal(group[1].parts.mark, undefined, 'the reason adds no row text');
   assert.equal(group[4].attributes['aria-description'], 'monitor.meta.context.grew');
 
@@ -2587,12 +2577,12 @@ test('every locale key the view and its drawer ask for, over the states of the m
     renderDrawer(slotSelected);
     renderDrawer(slotSelected, { [slotKeyOf(1, 2)]: { kind: 'ready', value: slotValue(2) } });
     for (const page of [SlotOverviewPage, SlotSummaryPage, SlotSourcePage]) pageHtml(page, slotValue(2, { source: undefined }));
-    const everyKind = ['state-check', 'state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall', 'old-attribution'];
+    const everyKind = ['state-check', 'state-mixed', 'state-write', 'verbatim-recall', 'handoff-recall', 'carrier-recall', 'read-block'];
     const toolsDetail = toolsSlot([
-      toolCard({ pruned: { seq: 12 }, warnings: everyKind.map(kind => (kind === 'old-attribution' ? { kind, oldLines: 19, newLines: 1, percent: 95, over: false } : { kind })) }),
+      toolCard({ pruned: { seq: 12 }, warnings: everyKind.map(kind => ({ kind })) }),
       toolCard({ id: '1:1:r2', name: null, input: null, result: null }),
       toolCard({ id: '1:1:r3', result: { seq: 13, error: true, empty: true } }),
-      toolCard({ id: '1:1:r4', result: { seq: 14, error: false, empty: true }, warnings: [{ kind: 'old-attribution', oldLines: 901, newLines: 99, percent: 90, over: true }, { kind: 'old-attribution', oldLines: 0, newLines: 0, percent: null, over: false }] }),
+      toolCard({ id: '1:1:r4', result: { seq: 14, error: false, empty: true } }),
     ], { warnings: everyKind, events: [toolEvent(11), toolEvent(12), toolEvent(13, { blocks: [] }), toolEvent(14, { text: '' })] });
     pageHtml(SlotToolsPage, toolsDetail);
     pageHtml(SlotSourcePage, toolsDetail, { opened: { seq: 12 } });

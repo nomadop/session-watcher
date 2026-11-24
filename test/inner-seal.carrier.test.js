@@ -9,13 +9,14 @@ import nodePath, { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
-  CARRIER_WORDING, INNER_SEAL_KIND, assembleCarrierSource, callSeqOf, renderCarrier, sourceEventSeqsOf,
+  CARRIER_WORDING, INNER_SEAL_KIND, assembleCarrierSource, callSeqOf, carrierPrefixOf, renderCarrier, sourceEventSeqsOf,
 } from '../lib/inner-seal/carrier.js';
 import { renderState } from '../lib/inner-seal/state-block.js';
 import { CARRIED_WORDING, carriedNote, carryChanges, foldCarried, renderCarried } from '../lib/carried-evidence.js';
 import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { createNodeWorkingTree } from '../lib/working-tree.js';
 import { readObserved } from '../dsh/src/observed-read.js';
+import { unframed } from './helpers/reminder-frame.js';
 
 const carrier = ({ paths = [], removed, skills } = {}) => ({
   kind: INNER_SEAL_KIND, v: 1, slots: [], paths,
@@ -57,7 +58,7 @@ const SOURCE = {
 describe('the body', () => {
   test('renders C slot by slot under the address sentence with each slot\'s attachments after its line, then B entry by entry, written runs under their seal-time path and line count shown once per file, each text block breaking from the block before it and to a file after it, B after a blank line', () => {
     const W = CARRIER_WORDING;
-    assert.deepEqual(renderCarrier(SOURCE, CARRIER_TABLE), [
+    assert.deepEqual(unframed(renderCarrier(SOURCE, CARRIER_TABLE)), [
       { type: 'text', text: `${[CARRIER_TABLE.addresses, `${W.slotLine([4, 5])}The user asked for the parser.`].join('\n')}\n` },
       { type: 'file', attachment: FILE },
       { type: 'text', text: `\n${[`${W.slotLine([7])}The agent read the module.`, W.imageSaved('screen.png', CARRIER_TABLE.imageReadTool)].join('\n')}\n` },
@@ -66,7 +67,7 @@ describe('the body', () => {
       {
         type: 'text',
         text: `\n\n${[
-          carriedNote(CARRIER_TABLE),
+          carriedNote(),
           '/shown/a.txt (total lines: 9)\n1: one\n2: two\n--\n5: five',
           CARRIED_WORDING.empty('/shown/e.txt'),
           CARRIED_WORDING.unreadable('/shown/m.txt', 'missing'),
@@ -80,15 +81,15 @@ describe('the body', () => {
     const DELTA = 'delta line of some length to show';
     const entry = entryOf('/r/a.txt', 6, [...BODY, DELTA], { displayPath: '/shown/a.txt' });
     const source = carrier({ paths: [{ ...entry, write: [...entry.write, [12, 'twelfth line']], omit: [7, 8, 9] }] });
-    const body = renderCarrier(source, CARRIER_TABLE).at(-1).text;
-    assert.equal(body, `\n\n${[carriedNote(CARRIER_TABLE), `/shown/a.txt (total lines: 40)\n6: ${BODY[0]}\n--\n12: twelfth line`].join('\n\n')}`);
+    const body = unframed(renderCarrier(source, CARRIER_TABLE)).at(-1).text;
+    assert.equal(body, `\n\n${[carriedNote(), `/shown/a.txt (total lines: 40)\n6: ${BODY[0]}\n--\n12: twelfth line`].join('\n\n')}`);
     for (const text of [BODY[1], BODY[2], DELTA]) assert.ok(!body.includes(text), text);
   });
 
   test('a file whose written lines are all in omit has no path header and no run, whatever else its entry holds; a carrier with nothing else in B renders C alone', () => {
     const omitting = (extra = {}) => ({ ...entryOf('/r/a.txt', 6, BODY, { displayPath: '/shown/a.txt', omit: [6, 7, 8], ...extra }) });
     for (const extra of [{}, { withdraw: [1, 2, 3] }]) {
-      const blocks = renderCarrier({ ...carrier({ paths: [omitting(extra)] }), slots: [{ seqs: [3], text: 'Done.' }] }, CARRIER_TABLE);
+      const blocks = unframed(renderCarrier({ ...carrier({ paths: [omitting(extra)] }), slots: [{ seqs: [3], text: 'Done.' }] }, CARRIER_TABLE));
       assert.deepEqual(blocks, [{ type: 'text', text: [CARRIER_TABLE.addresses, `${CARRIER_WORDING.slotLine([3])}Done.`].join('\n') }]);
     }
   });
@@ -112,13 +113,13 @@ describe('the body', () => {
   });
 
   test('renderCarried is the text of the carrier\'s B block without the break that block opens with', () => {
-    const body = renderCarrier(SOURCE, CARRIER_TABLE).at(-1).text;
+    const body = unframed(renderCarrier(SOURCE, CARRIER_TABLE)).at(-1).text;
     assert.ok(body.startsWith('\n\n'));
-    assert.equal(renderCarried(SOURCE, CARRIER_TABLE), body.slice(2));
+    assert.equal(renderCarried(SOURCE), body.slice(2));
   });
 
   test('a carrier that changes no B evidence renders C alone', () => {
-    const blocks = renderCarrier({ kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] }, CARRIER_TABLE);
+    const blocks = unframed(renderCarrier({ kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] }, CARRIER_TABLE));
     assert.deepEqual(blocks, [{ type: 'text', text: [CARRIER_TABLE.addresses, `${CARRIER_WORDING.slotLine([3])}Done.`].join('\n') }]);
   });
 
@@ -133,7 +134,7 @@ describe('the body', () => {
     const source = { kind: INNER_SEAL_KIND, v: 1, paths: [] };
     const blocks = renderCarrier({ ...source, slots: slots.map((slot, at) => (at === 0 ? { ...slot, asks: [ask] } : slot)) }, CARRIER_TABLE);
     assert.deepEqual(blocks, renderCarrier({ ...source, slots }, CARRIER_TABLE));
-    assert.deepEqual(blocks, [
+    assert.deepEqual(unframed(blocks), [
       { type: 'text', text: `${[CARRIER_TABLE.addresses, `${W.slotLine([3, 4])}Asked twice.\nThe note has two lines.`].join('\n')}\n` },
       { type: 'file', attachment: FILE },
       { type: 'text', text: `\n${W.slotLine([5])}Next.` },
@@ -154,7 +155,7 @@ describe('the body', () => {
     ];
     const source = { kind: INNER_SEAL_KIND, v: 1, paths: [], slots };
     const note = `${W.slotLine([3, 4])}Asked twice.\nThe note has two lines.`;
-    const blocks = renderCarrier(source, CARRIER_TABLE);
+    const blocks = unframed(renderCarrier(source, CARRIER_TABLE));
     assert.deepEqual(blocks, [
       { type: 'text', text: `${[`${CARRIER_TABLE.addresses} ${W.questionMark}`, note, W.questionLine(LONG_QUESTION), W.userLine(LONG_USER), W.questionLine('Who owns it?'), W.userLine('Platform')].join('\n')}\n` },
       { type: 'file', attachment: FILE },
@@ -163,7 +164,7 @@ describe('the body', () => {
     // Independent of the wording: the originals stand whole in the block, in order.
     const places = ['The note has two lines.', LONG_QUESTION, LONG_USER, 'Who owns it?', 'Platform'].map(part => blocks[0].text.indexOf(part));
     assert.ok(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), 'the note, then each question and its answer whole, in order');
-    assert.deepEqual(renderCarrier({ ...source, slots: slots.map(({ questions: _, ...rest }) => rest) }, CARRIER_TABLE), [
+    assert.deepEqual(unframed(renderCarrier({ ...source, slots: slots.map(({ questions: _, ...rest }) => rest) }, CARRIER_TABLE)), [
       { type: 'text', text: `${[CARRIER_TABLE.addresses, note].join('\n')}\n` },
       { type: 'file', attachment: FILE },
       { type: 'text', text: `\n${W.slotLine([5])}Next.` },
@@ -181,7 +182,7 @@ describe('the body', () => {
       todos: { value: [{ content: 'Announce', status: 'pending' }], unchanged: true },
     },
   };
-  const stateOf = state => renderCarrier({ kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [], state }, CARRIER_TABLE);
+  const stateOf = state => unframed(renderCarrier({ kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [], state }, CARRIER_TABLE));
 
   test('a source with a state renders its state block last as its own text block, the block opening after a blank line', () => {
     assert.deepEqual(stateOf(STATE), [
@@ -193,15 +194,66 @@ describe('the body', () => {
   test('the state opens after the blank line whichever section stands before it, every earlier block keeping its break, and a source with no state renders as it did', () => {
     const withState = { ...SOURCE, state: STATE };
     const block = stateOf(STATE).at(-1);
-    assert.deepEqual(renderCarrier(withState, CARRIER_TABLE), [...renderCarrier(SOURCE, CARRIER_TABLE), block], 'B stays where it was, the state behind it');
+    assert.deepEqual(unframed(renderCarrier(withState, CARRIER_TABLE)), [...unframed(renderCarrier(SOURCE, CARRIER_TABLE)), block], 'B stays where it was, the state behind it');
     const lastFile = { kind: INNER_SEAL_KIND, v: 1, slots: SOURCE.slots.slice(0, 1), paths: [], state: STATE };
-    assert.deepEqual(renderCarrier(lastFile, CARRIER_TABLE), [
+    assert.deepEqual(unframed(renderCarrier(lastFile, CARRIER_TABLE)), [
       { type: 'text', text: `${[CARRIER_TABLE.addresses, `${W.slotLine([4, 5])}The user asked for the parser.`].join('\n')}\n` },
       { type: 'file', attachment: FILE },
       block,
     ], 'a file block last: the state breaks from its handle by a blank line');
     const bare = { kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] };
-    assert.deepEqual(renderCarrier({ ...bare, state: STATE }, CARRIER_TABLE), [...renderCarrier(bare, CARRIER_TABLE), block]);
+    assert.deepEqual(unframed(renderCarrier({ ...bare, state: STATE }, CARRIER_TABLE)), [...unframed(renderCarrier(bare, CARRIER_TABLE)), block]);
+  });
+});
+
+// ── The reminder frame ───────────────────────────────────────────────────────
+
+describe('the reminder frame', () => {
+  const TAG = '</system-reminder>';
+  const joined = blocks => blocks.map(block => (block.type === 'text' ? block.text : '[file]')).join('');
+  const bare = { kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] };
+
+  test('carrierPrefixOf is the reminder\'s opening and the wording\'s address sentence, and every carrier\'s first text block opens with it, with or without questions', () => {
+    assert.equal(carrierPrefixOf({ addresses: 'ADDRESSES' }), '<system-reminder>\nADDRESSES');
+    const asking = { ...bare, slots: [{ seqs: [3], text: 'Done.', questions: [{ question: 'Which?', user: 'This' }] }] };
+    for (const source of [SOURCE, bare, asking, { ...bare, slots: SOURCE.slots.slice(0, 1) }]) {
+      const blocks = renderCarrier(source, CARRIER_TABLE);
+      assert.equal(blocks[0].type, 'text');
+      assert.ok(blocks[0].text.startsWith(carrierPrefixOf(CARRIER_TABLE)));
+    }
+  });
+
+  test('the carrier is one reminder: the frame opens in the first block and closes in the last, the other blocks as they were, and a file block last has a text block after it that closes the frame', () => {
+    const lastFile = { ...bare, slots: SOURCE.slots.slice(0, 1) };
+    const blocks = renderCarrier(lastFile, CARRIER_TABLE);
+    assert.equal(blocks.length, 3);
+    assert.deepEqual(blocks.map(block => block.type), ['text', 'file', 'text']);
+    assert.equal(blocks[2].text, `\n${TAG}`);
+    assert.equal(joined(blocks).startsWith('<system-reminder>\n'), true);
+    assert.equal(joined(blocks).endsWith(`[file]\n${TAG}`), true);
+    const whole = renderCarrier({ ...SOURCE, state: { asOfSeq: 41, items: { workingDirectory: { value: '/repo/app' } } } }, CARRIER_TABLE);
+    assert.equal(joined(whole).split(TAG).length - 1, 1, 'one closing tag, at the end');
+    assert.equal(joined(whole).endsWith(`\n${TAG}`), true);
+    assert.deepEqual(whole.map(block => block.type), ['text', 'file', 'text', 'file', 'text', 'text', 'text']);
+  });
+
+  test('the closing tag is escaped wherever the carrier\'s text has it, a summary line, a question, an answer, a held file line, a skill and a state value alike, and the source keeps what it holds', () => {
+    const slots = [{ seqs: [3], text: `Summary ${TAG} line`, questions: [{ question: `Ask ${TAG}`, user: `Answer ${TAG}` }] }];
+    const paths = [{ path: '/r/a.txt', displayPath: '/shown/a.txt', totalLines: 1, state: 'readable', write: [[1, `held ${TAG} line`]] }];
+    const source = { ...bare, slots, paths, skills: [{ name: 'tdd', text: `skill ${TAG} text` }], state: { asOfSeq: 41, items: { workingDirectory: { value: `/dir/${TAG}` } } } };
+    const copy = structuredClone(source);
+    const text = joined(renderCarrier(source, CARRIER_TABLE));
+    assert.equal(text.split(TAG).length - 1, 1, 'only the frame\'s own closing tag is left');
+    assert.equal(text.split('<\\/system-reminder>').length - 1, 6, 'each of the six texts holds its escape');
+    assert.deepEqual(source, copy);
+  });
+
+  test('B as `renderCarried` renders it is the text of the held evidence alone, neither framed nor escaped', () => {
+    const paths = [{ path: '/r/a.txt', displayPath: '/shown/a.txt', totalLines: 1, state: 'readable', write: [[1, `held ${TAG} line`]] }];
+    const text = renderCarried({ ...bare, paths });
+    assert.ok(text.includes(`1: held ${TAG} line`));
+    assert.ok(!text.includes('<system-reminder>'));
+    assert.ok(joined(renderCarrier({ ...bare, paths }, CARRIER_TABLE)).includes(`1: held <\\/system-reminder> line`), 'the carrier writes it escaped');
   });
 });
 
@@ -223,17 +275,6 @@ describe('assembleCarrierSource', () => {
       ...CHANGES,
       state: STATE,
     });
-  });
-
-  test('a slot holds the reads it was given as metadata beside its note, none where it has none or none were given, and the rendered body is the same', () => {
-    const READS = [{ toolUseId: '1:2:call-a', seq: 5, oldLines: 19, newLines: 1 }, { toolUseId: '1:2:call-b', seq: 5, oldLines: 3, newLines: 0 }];
-    const parts = { slots: SLOTS, summaries: ['first', 'second'], questions: [[], []], attachments: [[], []], changes: CHANGES, state: null };
-    const without = assembleCarrierSource(parts);
-    const source = assembleCarrierSource({ ...parts, oldReads: [READS, []] });
-    assert.deepEqual(source, { ...without, slots: [{ ...without.slots[0], oldReads: READS }, without.slots[1]] });
-    assert.equal(Object.hasOwn(assembleCarrierSource({ ...parts, oldReads: [[], []] }).slots[0], 'oldReads'), false);
-    assert.equal(Object.hasOwn(without.slots[0], 'oldReads'), false);
-    assert.deepEqual(renderCarrier(source, CARRIER_TABLE), renderCarrier(without, CARRIER_TABLE));
   });
 
   test('a null state is no field, and a slot with no question and no attachment holds neither field', () => {

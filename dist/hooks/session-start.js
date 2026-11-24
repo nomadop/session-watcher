@@ -40,6 +40,8 @@ var C_RATIO_TABLE = [
   { match: /deepseek.*pro/i, ratio: 30 },
   { match: /deepseek/i, ratio: 50 }
 ];
+var RECALL_SHARE_HALF_LIFE = 32;
+var RECALL_SHARE_ALPHA = 1 - 2 ** (-1 / RECALL_SHARE_HALF_LIFE);
 var HANDOFF_HOOK_TTL_DAYS = 7;
 var HANDOFF_HOOK_MAX_DISPLAY = 3;
 var HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1;

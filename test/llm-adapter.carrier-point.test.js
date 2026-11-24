@@ -216,3 +216,32 @@ test('the writer reads the prefix it is handed at each request: a writer holds n
   assert.deepEqual(write({ prefix: 'Another opening.', payload, model: ANTHROPIC }), { result: 'added' });
   assert.deepEqual(payload.messages[0].content.at(-1).cache_control, mark());
 });
+
+// A request of each protocol whose last user message an empty prefix would take for the carrier.
+const plainRequests = [
+  [ANTHROPIC, () => anthropic([HEAD(), STEP(), user([text('a follow-up')])]), undefined],
+  [COMPLETIONS, () => completions([user('head'), user('a follow-up')], [tool(true)]), undefined],
+  [BEDROCK, () => bedrock([converse('user', { text: 'head' }), converse('user', { text: 'a follow-up' })]), undefined],
+  [OFFICIAL, () => responses([item('user', inputText('head')), item('user', inputText('a follow-up')), item('assistant', { type: 'output_text', text: 'a step' })]), KEYED],
+];
+
+// What a prefix the writer cannot use does to each protocol's request: the payload as it was, the result `unsupported` and as many reports as `reports`.
+function assertNoPoint(prefixes, reports) {
+  for (const prefix of prefixes) {
+    for (const [model, payload, options] of plainRequests) {
+      const written = writerOver();
+      const body = payload();
+      assert.deepEqual(written.write({ prefix, payload: body, model, options }), { result: 'skipped', reason: 'unsupported' }, `${model.api}, ${String(prefix)}`);
+      assert.deepEqual(body, payload(), `${model.api}, ${String(prefix)}: the payload is as it was`);
+      assert.equal(written.reports.length, reports, `${model.api}, ${String(prefix)}`);
+    }
+  }
+}
+
+test('a request handed a prefix that is none is given no point on any protocol, with no report', () => {
+  assertNoPoint([undefined], 0);
+});
+
+test('a request handed a prefix that is given and no usable text, null, an empty text or a value that is no text, is given no point on any protocol: one report, the payload as it was and the result `unsupported`, where an empty prefix would have matched every user message', () => {
+  assertNoPoint([null, '', 42, {}], 1);
+});

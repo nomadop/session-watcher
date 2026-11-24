@@ -10,7 +10,7 @@ test('a profile that holds the packed host and no companion is offered the compa
   runReleaseScenario(t, 'fresh-settings', CHECKOUT);
 });
 
-test('a profile that holds the companion and no Session Watcher package resolves the replacement row from the companion in a process that has loaded neither, with the real host peers, and serves the route with the carrier marker', RELEASE, (t) => {
+test('a profile that holds the companion and no Session Watcher package resolves the replacement row from the companion in a process that has loaded neither, with the real host peers, and serves the route, a carrier given the marker once a host answers what a carrier opens with', RELEASE, (t) => {
   runReleaseScenario(t, 'cold-start', CHECKOUT);
 });
 

@@ -270,9 +270,9 @@ describe('a session whose inner mode is on, with requests that only read events 
     const proof = rowOf(rows, 'd3-proof');
     assertBudget(before.ledger, { bill: 0.8733333333333333, wallet: 0 }, 'the pending request');
     assert.deepEqual(proof.ledger, before.ledger, 'the proof of a pending request replaces nothing in the budget');
-    // The interval after the first post spans 8 main calls, the 7 the second carrier withdrew among them, and holds one priced request: 7 slots and the net 10300 of the withdrawn call.
+    // The interval after the first post spans 8 main calls, the 7 the second carrier withdrew among them, and holds one priced request: 7 slots and the net 10300 of the withdrawn call. It is priced at the rate the first post left, 7000 of resident growth over 8 calls: no call before that post is classified, so no expected recall stock stands yet.
     const post = rowOf(rows, 'P2');
-    assertBudget(post.ledger, { bill: 3.014666666666667, wallet: 1.1039402021001379 }, 'the second post, still unproven');
+    assertBudget(post.ledger, { bill: 3.014666666666667, wallet: 1.0691206577542585 }, 'the second post, still unproven');
     assert.deepEqual(post.ledger.recentStopEvents.map(event => event.billCount), [1], 'the lap it reaches is announced once');
   });
 
@@ -281,15 +281,16 @@ describe('a session whose inner mode is on, with requests that only read events 
     const { rows, table } = await runRecall({ entries, innerModeOn: on });
     const unproven = rowOf(rows, 'P2');
     const proven = rowOf(rows, 'P2-proof');
-    assertBudget(proven.ledger, { bill: 3.2013333333333334, wallet: 1.2686673229753673 }, 'the second post as the recall it is');
+    assertBudget(proven.ledger, { bill: 3.2013333333333334, wallet: 1.2325982914065057 }, 'the second post as the recall it is');
     assert.deepEqual(proven.ledger.recentStopEvents, unproven.ledger.recentStopEvents);
     assert.equal(proven.ledger.lastStopEvent, null);
-    assertClose(proven.economy.u, 0.938083151964686, 'the position reads the proven interval too');
-    // The Position Scenario of the default selection is the fold the lamp reads: 7000 of resident growth over 16 calls and the recall bills' drift on top of it.
+    // The interval the post closes spans 8 calls at the rate the first post left, 875: 8·√(875 / (2·12.5·3000)).
+    assertClose(proven.economy.u, 0.8640987597877147, 'the position reads the proven interval too');
+    // The Position Scenario of the default selection is the fold the lamp reads: 7000 of resident growth over each 8 calls. The second post is the first measured call with an estimate, so its expected recall stock is a base and adds nothing.
     const scenario = table.get(SESSION).watcher.readScenario({});
     assertClose(scenario.u, proven.economy.u, 'the scenario\'s position');
     assert.equal(scenario.gPhys, 875);
-    assertClose(scenario.gBar, 1088.28125, 'the scenario\'s rate with the recall drift');
+    assert.equal(scenario.gBar, 875, 'the scenario\'s rate, the resident one');
     for (const tag of ['P', 'P-proof', 'd3-proof', 'P2', 'P2-proof']) {
       const cold = await coldAt(entries, tag, on);
       const live = rowOf(rows, tag);
@@ -300,8 +301,8 @@ describe('a session whose inner mode is on, with requests that only read events 
 });
 
 describe('a session whose mode is not on, with a request that may yet prove a recall behind a priced interval', () => {
-  // The first post's interval spans 8 calls and grew 7000 over them, 1250 of recall per call that the ordinary path's none rises to: 8250 over 8 calls. X adds one call that grew 100.
-  // What the interval X closes is as the log then shows it: unknown, so no zero that the 1250 falls back to and nothing the next one compares with; a recall of 10100, which costs the whole of it; or none, the zero it falls back to.
+  // The first post's interval spans 8 calls and grew 7000 over them; X adds one call that grew 100.
+  // X's request is as the log then shows it: unknown, a recall of 10100, which costs the whole of it, or none. Its bill is paid on the sample alone. The rate is the resident one in all three: X reads the share the first post leaves, the only estimate on the path, so its expected recall stock is a base.
   const rateAt = async (how, tag) => {
     const entries = afterPostLog(how);
     const { rows, table } = await runRecall({ entries, innerModeOn: off });
@@ -309,9 +310,9 @@ describe('a session whose mode is not on, with a request that may yet prove a re
     return { entries, row: rowOf(rows, tag), gBar: scenario.gBar, gPhys: scenario.gPhys };
   };
 
-  test('is an ordinary slot until its dispatch proves it, and the interval it closes is neither a zero the earlier bill falls back to nor a bill', async () => {
+  test('is an ordinary slot until its dispatch proves it, and the rate is the resident one', async () => {
     const open = await rateAt('open', 'X');
-    assertClose(open.gBar, 8350 / 9, 'the rate with the interval left unknown');
+    assertClose(open.gBar, 7100 / 9, 'the rate with the request left open');
     assertClose(open.gPhys, 7100 / 9, 'the physical rate is the resident growth alone');
     // The slot is still an ordinary one: the rents at 9500 and 10100 over the baseline 3000, in units of K = 37500.
     assertClose(open.row.economy.samples.at(-1)[0], 6800 / 37500, 'the slot priced as an ordinary one');
@@ -319,29 +320,37 @@ describe('a session whose mode is not on, with a request that may yet prove a re
     assert.deepEqual(cold.economy, open.row.economy, 'the cold read of the same cut holds the unknown too');
   });
 
-  test('prices the interval whole once its dispatch proves it, and as the zero it is once an answer with no dispatch frees it', async () => {
+  test('prices the interval whole once its dispatch proves it, and as an ordinary slot once an answer with no dispatch frees it, the rate the resident one throughout', async () => {
     const proven = await rateAt('proven', 'X-proof');
-    assertClose(proven.gBar, 17_200 / 9, 'the rate with the recall of 10100 per call risen from 1250');
+    assertClose(proven.gBar, 7100 / 9, 'the rate with the recall of 10100 paid on the sample');
     assertClose(proven.row.economy.samples.at(-1)[0], 10_100 / 37_500, 'the request pays its own bill and no slot');
     const freed = await rateAt('cancelled', 'X-proof');
-    assertClose(freed.gBar, 7100 / 9, 'the rate with the 1250 fallen to the zero the interval is');
+    assertClose(freed.gBar, 7100 / 9, 'the rate with the request freed');
     assertClose(freed.row.economy.samples.at(-1)[0], 6800 / 37_500, 'the slot priced as an ordinary one');
     assert.equal(freed.row.economy.samples.length, proven.row.economy.samples.length, 'neither resolution adds a sample');
   });
 });
 
 describe('a session whose mode is not on, with a post that reports no tokens between two measured points', () => {
-  test('keeps the recall the stretch held before it: the post is no measured point, so the next one closes the whole stretch with that recall in it', async () => {
+  // The decay of one classified main call, from the half-life of 32.
+  const ALPHA = 1 - 2 ** (-1 / 32);
+
+  test('keeps the stretch the post interrupts: the post is no measured point, so the next one closes the whole stretch, the withdrawn request\'s bill in it', async () => {
     const entries = zeroStockPostLog();
     const { rows } = await runRecall({ entries, innerModeOn: off });
     const after = rowOf(rows, 'P3').economy;
     // Nine calls stand between the first post, at rent 6500 over the baseline 3000, and P3, at 7800: 8 ordinary slots at their mean 7150 and the withdrawn request's net 10300, over K = 37500.
     assertClose(after.samples.at(-1)[0], (8 * 7150 + 10_300) / 37_500, 'the stretch with the recall of the withdrawn call');
-    // 7000 of growth and the first recall's 1250 per call over the head's 8 calls, then 800 of growth and 10300 over 9 calls less the 1250 the bill falls from.
-    assertClose(after.gBar, (7000 + 1250 + 800 + 10_300 / 9 - 1250) / 17, 'the rate with that recall in it');
+    // 7000 of growth over the head's 8 calls and 800 over the 9 that follow; P3 is the first measured call with an estimate, so its expected recall stock is a base.
+    assertClose(after.gBar, (7000 + 800) / 17, 'the rate at the first estimate');
     assert.deepEqual(after, (await coldAt(entries, 'P3', off)).economy, 'the cold read of the same cut');
     // The next stretch is one ordinary call between the rents 7800 and 7900: what the held recall was spent on does not come back.
-    assertClose(rowOf(rows, 'P4').economy.samples.at(-1)[0], 7850 / 37_500, 'the stretch after it');
+    const next = rowOf(rows, 'P4').economy;
+    assertClose(next.samples.at(-1)[0], 7850 / 37_500, 'the stretch after it');
+    // From the first post the calls are classified in order: the post and the withdrawn request d3 are pure, the six others and the post Z that reported no tokens are other. P3 reads the share with Z counted and P4 with P3 too, so the share falls by one factor of 1 − α while both stand at stock 10800 and 10900, beyond B = 3000: 3000·(share at P4 − share at P3) is a signed difference of the expected recall stock, taken with the 100 of growth over 18 calls.
+    const atP3 = ALPHA * (1 - ALPHA) ** 8 + ALPHA * (1 - ALPHA) ** 5;
+    assertClose(next.gBar, (7000 + 800 + 100 + 3000 * ((1 - ALPHA) * atP3 - atP3)) / 18, 'the rate with the share falling');
+    assert.deepEqual(next, (await coldAt(entries, 'P4', off)).economy, 'the cold read of the same cut');
   });
 });
 

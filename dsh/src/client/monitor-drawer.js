@@ -312,20 +312,16 @@ export function SlotUsagePage({ detail, t }) {
       sourceTokens === null ? h(Missing, { t }) : h('p', null, t('monitor.slotUsage.approx', { tokens: tokensOf(Math.round(sourceTokens)) }))));
 }
 
-// The words the tools page gives a warning kind, on a card and in its header alike. A direct read is told by the target its dispatch names, whatever the result answered, so it is worded as the attempt it was and never as a read that returned; every other kind is worded as the slot row words it.
-const DIRECT_READS = ['handoff-recall', 'carrier-recall', 'verbatim-recall'];
-const warningText = (kind, t) => t(DIRECT_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
+// The words the tools page gives a warning kind, on a card and in its header alike. A direct read is told by the target its dispatch names and a blocked read by the guard's record, whatever the result answered, so each is worded as the attempt it was and never as a read that returned; every other kind is worded as the slot row words it.
+const ATTEMPTED_READS = ['handoff-recall', 'carrier-recall', 'verbatim-recall', 'read-block'];
+const warningText = (kind, t) => t(ATTEMPTED_READS.includes(kind) ? `monitor.tool.attempt.${kind}` : `monitor.warning.${kind}`);
 
-// The words a warning wears on a card: a state kind as the short query or write, an old read with its share and counts, any other kind as `warningText` has it. The header words every kind by `warningText`.
+// The words a warning wears on a card: a state kind as the short query or write, any other kind as `warningText` has it. The header words every kind by `warningText`.
 function cardWarningText(warning, t) {
   switch (warning.kind) {
     case 'state-check':
     case 'state-mixed': return t('monitor.tool.stateQuery');
     case 'state-write': return t('monitor.tool.stateWrite');
-    case 'old-attribution': {
-      const { percent, over, oldLines, newLines } = warning;
-      return t('monitor.tool.oldAttribution', { label: t('monitor.warning.old-attribution'), percent: percent === null ? NOT_AVAILABLE : `${over ? '>' : ''}${percent}%`, oldLines, newLines });
-    }
     default: return warningText(warning.kind, t);
   }
 }
@@ -358,17 +354,15 @@ function ToolCard({ card: { id, name, input, result, pruned, warnings }, events,
 }
 
 /**
- * The tool calls of a slot: the warnings the slot's cards do not hold, each kind once in the words of `warningText`, beside the note that "old" means attributed before the step wherever an old-attribution warning is shown, then one card per call in the order the assistant issued them (`ToolCard`).
+ * The tool calls of a slot: the warnings the slot's cards do not hold, each kind once in the words of `warningText`, then one card per call in the order the assistant issued them (`ToolCard`).
  * `detail` is the `inner-monitor/slot` payload, whose `tools` the host builds and whose `events` hold each result's blocks; `open(seq)` is the jump to the source page's event at `seq`.
  */
 export function SlotToolsPage({ detail, open, t }) {
   const { warnings, calls } = detail.tools;
-  const explains = warnings.includes('old-attribution') || calls.some(card => card.warnings.some(({ kind }) => kind === 'old-attribution'));
   return h(React.Fragment, null,
-    warnings.length === 0 && !explains ? null : h(Section, { name: 'warnings' },
-      warnings.length === 0 ? null : h('ul', { className: 'sw-mon-tool-warnings' },
-        warnings.map(kind => h('li', { key: kind, className: 'sw-mon-tool-warning', 'data-sw-warning': kind, 'data-sw-attention': '' }, warningText(kind, t)))),
-      explains ? h('p', { className: 'sw-mon-note', 'data-sw-old-note': '' }, t('monitor.tool.oldNote')) : null),
+    warnings.length === 0 ? null : h(Section, { name: 'warnings' },
+      h('ul', { className: 'sw-mon-tool-warnings' },
+        warnings.map(kind => h('li', { key: kind, className: 'sw-mon-tool-warning', 'data-sw-warning': kind, 'data-sw-attention': '' }, warningText(kind, t))))),
     calls.map((card, at) => h(ToolCard, { key: at, card, events: detail.events, open, t })));
 }
 

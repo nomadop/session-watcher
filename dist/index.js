@@ -54,7 +54,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.3",
+      version: "0.11.4",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -438,7 +438,7 @@ var init_bill_regret = __esm({
 });
 
 // lib/constants.js
-var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS;
+var RECENT_STOP_EVENTS_LIMIT, RECENT_PROCESSED_HOOK_IDS_LIMIT, DEFAULT_CACHE_TTL, LONG_CACHE_TTL, C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, RECALL_SHARE_HALF_LIFE, RECALL_SHARE_ALPHA, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS;
 var init_constants = __esm({
   "lib/constants.js"() {
     RECENT_STOP_EVENTS_LIMIT = 32;
@@ -520,6 +520,8 @@ var init_constants = __esm({
     G_DELTA_CAP = 250;
     G_FLOOR = 100;
     MISS_CR_DROP = 0.95;
+    RECALL_SHARE_HALF_LIFE = 32;
+    RECALL_SHARE_ALPHA = 1 - 2 ** (-1 / RECALL_SHARE_HALF_LIFE);
     GC_BATCH_LIMIT = 3;
     GC_REPLAY_MAX_FILE_BYTES = 5e7;
     GC_HANDOFF_MAX_AGE_DAYS = 90;
@@ -54411,25 +54413,17 @@ function createPathFold({ dead, R, selector }) {
   const carried = /* @__PURE__ */ new Map();
   let u = 0, lambda = 0, F = 0;
   let physical = 0, combined = 0, spanned = 0;
-  let recallPerCall = 0;
+  let expected = null;
   let prev = null;
-  function absorb(frame, calls, closes) {
-    const { growth, recall } = frame;
+  function absorb(frame, calls, E) {
+    const expectedGrowth = E !== null && expected !== null ? E - expected : 0;
+    if (E !== null) expected = E;
+    const { growth } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
-    let drift = excess;
-    if (closes) {
-      if ((recall?.unpriced ?? 0) > 0) {
-        recallPerCall = null;
-      } else {
-        const bill = (recall?.net ?? 0) / calls;
-        if (recallPerCall !== null) drift += bill - recallPerCall;
-        recallPerCall = bill;
-      }
-    }
     physical += excess;
-    combined += drift;
+    combined += excess + expectedGrowth;
     spanned += calls;
   }
   const rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0;
@@ -54442,8 +54436,9 @@ function createPathFold({ dead, R, selector }) {
       for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       const B = baselineOf(dead, carried, selector);
       const x = frame.L / B;
+      const E = frame.p === void 0 ? null : frame.p * Math.min(frame.S, B);
       if (prev === null) {
-        absorb(frame, calls, false);
+        absorb(frame, calls, E);
         prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
         return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       }
@@ -54464,7 +54459,7 @@ function createPathFold({ dead, R, selector }) {
         const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
         deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      absorb(frame, calls, true);
+      absorb(frame, calls, E);
       prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
       return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
@@ -54885,7 +54880,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal, recall) {
+  function recordFrame(step, growth, mainCallOrdinal, recall, p) {
     const resourceTokens = /* @__PURE__ */ new Map();
     const totals = ledger.residentTotals();
     const present = /* @__PURE__ */ new Set();
@@ -54900,7 +54895,16 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       resourceTokens.set(resourceKey, 0);
       recordedTokens.set(resourceKey, 0);
     }
-    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
+    const frame = {
+      seq: step.foldedSeq,
+      L: step.L,
+      growth,
+      resourceTokens,
+      mainCallOrdinal,
+      S: stockOf(step.usage),
+      ...recall === null ? {} : { recall },
+      ...p === null ? {} : { p }
+    };
     frames.push(frame);
     return frame;
   }
@@ -54974,13 +54978,18 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function readRecall(raw) {
     if (raw === void 0) return null;
     invariant3(raw !== null && typeof raw === "object", "step recall must be an object");
-    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers");
+    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0, "step recall count must be a non-negative integer");
     invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number");
-    return { priced: raw.priced, net: raw.net, unpriced: raw.unpriced };
+    return { priced: raw.priced, net: raw.net };
   }
   function mergedRecall(held, recall) {
     if (held === null || recall === null) return held ?? recall;
-    return { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
+    return { priced: held.priced + recall.priced, net: held.net + recall.net };
+  }
+  function readShare(raw) {
+    if (raw === void 0) return null;
+    invariant3(typeof raw === "number" && raw >= 0 && raw <= 1, "step share must be a number between 0 and 1");
+    return raw;
   }
   function readTimestamp(raw) {
     if (raw === void 0 || raw === null) return null;
@@ -55097,6 +55106,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const totalStock = stockOf(usage);
     const model = record2.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
+    const share = readShare(record2.p);
     if (totalStock > 0 && frames.length > 0) {
       invariant3(
         mainCallsBetween(frames.at(-1).mainCallOrdinal, record2.mainCallOrdinal) >= 1,
@@ -55162,7 +55172,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     if (totalStock > 0) {
       settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
       heldRecall = null;
-      stampNewFrame(step, recordFrame(step, growth, record2.mainCallOrdinal, recall));
+      stampNewFrame(step, recordFrame(step, growth, record2.mainCallOrdinal, recall, share));
     } else {
       heldRecall = recall;
     }
@@ -56094,7 +56104,9 @@ function createMeasurementProjection({
   let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   let mainCalls = 0;
-  let recallSince = { priced: 0, net: 0, unpriced: 0 };
+  let recallSince = { priced: 0, net: 0 };
+  let share = null;
+  let shareAtCall = null;
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     if (!facts) {
@@ -56175,6 +56187,8 @@ function createMeasurementProjection({
       case "epoch-boundary":
         callByToolUseId = /* @__PURE__ */ new Map();
         scratch = /* @__PURE__ */ new Map();
+        share = null;
+        shareAtCall = null;
         records.push({ type: "epoch" });
         break;
       case "turn-boundary":
@@ -56182,15 +56196,17 @@ function createMeasurementProjection({
         break;
       case "main-call":
         mainCalls += 1;
-        if (observation.recall !== void 0) {
-          const { net } = observation.recall;
-          if (Number.isFinite(net) && net >= 0) recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net };
-          else recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
+        shareAtCall = share;
+        if (Number.isFinite(observation.recall?.net) && observation.recall.net >= 0) {
+          recallSince = { priced: recallSince.priced + 1, net: recallSince.net + observation.recall.net };
+        }
+        if (observation.verdict === "pure" || observation.verdict === "other") {
+          share = (1 - RECALL_SHARE_ALPHA) * (share ?? 0) + (observation.verdict === "pure" ? RECALL_SHARE_ALPHA : 0);
         }
         break;
       case "usage": {
         const recall = recallSince;
-        recallSince = { priced: 0, net: 0, unpriced: 0 };
+        recallSince = { priced: 0, net: 0 };
         records.push({
           type: "step",
           id: observation.messageId,
@@ -56203,7 +56219,8 @@ function createMeasurementProjection({
             cacheWrite: observation.usage.cacheWrite
           },
           mainCallOrdinal: mainCalls,
-          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
+          ...recall.priced > 0 ? { recall } : {},
+          ...shareAtCall === null ? {} : { p: shareAtCall }
         });
         break;
       }
@@ -56249,6 +56266,7 @@ function createMeasurementProjection({
 }
 var init_measurement_projection = __esm({
   "lib/measurement-projection.js"() {
+    init_constants();
   }
 });
 
@@ -57356,13 +57374,14 @@ function foldInto(scratch, recorded, effects) {
   recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
     const { fragments } = effects[effectAt].impacts[impactAt].mutation;
     const held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
-    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+    entries.forEach(({ key, chars, cjk, fp, moved }, entryAt) => {
       if (fragments[entryAt].vacate === true) {
         held.delete(key);
         return;
       }
       const entry = { chars, cjk, tokens: fragments[entryAt].tokens };
       if (fp !== void 0) entry.fp = fp;
+      if (moved === true) entry.moved = true;
       held.set(key, entry);
     });
     scratch.set(resourceKey, held);
@@ -57470,10 +57489,10 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
   }
   function recordOf(pending, observation, frameCtx, scratch) {
     const recalled = typeof frameCtx.recall === "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
-    if (recalled !== null) return { record: recalled, recalled: true };
+    if (recalled !== null) return recalled;
     const record2 = partition(pending, observation, scratch);
     if (typeof frameCtx.remember === "function") frameCtx.remember(pending.toolUseId, record2);
-    return { record: record2, recalled: false };
+    return record2;
   }
   function emit2(record2, pending, observation, telemetry, scratch) {
     const effects = priced(record2.effects, pending.issuingPolicy.ctp);
@@ -57535,8 +57554,7 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
     };
     if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
     const ctx = frameCtx ?? {};
-    const { record: record2, recalled } = recordOf(pending, observation, ctx, scratch);
-    if (typeof ctx.observeRecord === "function") ctx.observeRecord({ pending, observation, record: record2, recalled, scratch });
+    const record2 = recordOf(pending, observation, ctx, scratch);
     return emit2(record2, pending, observation, telemetry, scratch);
   }
   function resourceKeysOf(pair, capture) {
@@ -59340,16 +59358,16 @@ function createSourceFold() {
         rewound = true;
       }
     }
-    for (const { seq, recall } of input.recall ?? []) {
+    for (const { seq, recall, verdict } of input.recall ?? []) {
       const entry2 = keptBySeq.get(seq);
       if (entry2 === void 0) continue;
       const at = entry2.batch.findIndex((observation) => observation.type === "main-call");
-      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0)) continue;
-      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall));
+      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0) && entry2.batch[at].verdict === (verdict ?? void 0)) continue;
+      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall, verdict));
       rewound = true;
     }
-    const own = input.recall?.find((stated) => stated.seq === input.seq)?.recall;
-    const batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
+    const own = input.recall?.find((stated) => stated.seq === input.seq);
+    const batch = input.mainCall ? [mainCallFact(input.seq, own?.recall, own?.verdict), ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
     const entry = { seq: input.seq, batch };
@@ -59368,7 +59386,12 @@ var init_source_fold = __esm({
     init_source_facts();
     changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
     sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net;
-    mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
+    mainCallFact = (seq, recall, verdict) => ({
+      type: "main-call",
+      sourceOrdinal: seq,
+      ...recall == null ? {} : { recall },
+      ...verdict == null ? {} : { verdict }
+    });
   }
 });
 
@@ -59393,6 +59416,12 @@ var init_load_message = __esm({
   }
 });
 
+// lib/system-reminder.js
+var init_system_reminder = __esm({
+  "lib/system-reminder.js"() {
+  }
+});
+
 // lib/inner-seal/state-block.js
 var init_state_block = __esm({
   "lib/inner-seal/state-block.js"() {
@@ -59404,6 +59433,7 @@ var INNER_SEAL_KIND;
 var init_carrier = __esm({
   "lib/inner-seal/carrier.js"() {
     init_carried_evidence();
+    init_system_reminder();
     init_state_block();
     INNER_SEAL_KIND = "session-watcher-inner-seal";
   }
@@ -59634,15 +59664,7 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-function heldObservationsOf(events) {
-  return events.flatMap((event) => {
-    const stepKey = stepKeyOf(event.data);
-    if (event.type === "step/start") return stepKey === null ? [] : [{ type: "step-start", stepKey }];
-    const { observations } = reduceDshEvent(event);
-    return event.type === "tool/result" ? observations.map((observation) => ({ ...observation, stepKey })) : observations;
-  });
-}
-var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall, stepKeyOf;
+var SCOPE, MESSAGE_NAMESPACE, isObject3, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall;
 var init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     init_load_message();
@@ -59658,7 +59680,6 @@ var init_transcript_observation2 = __esm({
     toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name === "string" && typeof block.arguments === "string";
     isRoute = (route) => isObject3(route) && typeof route.provider === "string" && typeof route.model === "string";
     isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
-    stepKeyOf = (data) => isIndex2(data?.turn) && isIndex2(data?.step) ? `${data.turn}:${data.step}` : null;
   }
 });
 
@@ -59737,97 +59758,6 @@ var init_replay_source = __esm({
   }
 });
 
-// lib/old-attribution.js
-function createOldAttributionScorer() {
-  const hits = [];
-  let step = null;
-  let gapSeen = false;
-  const startStep = (key) => {
-    step = { key, scored: !gapSeen, undo: /* @__PURE__ */ new Map() };
-  };
-  const startEpoch = () => {
-    step = null;
-    gapSeen = false;
-  };
-  function freeze(record2, scratch) {
-    for (const { impacts } of record2.effects) {
-      for (const { resourceKey, kind, entries } of impacts) {
-        const before = scratch.get(resourceKey);
-        const undone = step.undo.get(resourceKey) ?? /* @__PURE__ */ new Map();
-        if (kind === "replace-fragments") {
-          for (const [line, entry] of before ?? []) if (!undone.has(line)) undone.set(line, entry);
-        }
-        for (const { key } of entries) if (!undone.has(key)) undone.set(key, before?.get(key) ?? null);
-        step.undo.set(resourceKey, undone);
-      }
-    }
-  }
-  function heldIn(resourceKey, scratch) {
-    const undone = step.undo.get(resourceKey);
-    let overview = null;
-    const overviewOf = () => {
-      const lines = new Map(scratch.get(resourceKey));
-      for (const [line, entry] of undone ?? []) {
-        if (entry === null) lines.delete(line);
-        else lines.set(line, entry);
-      }
-      const fps = /* @__PURE__ */ new Set();
-      let unfingerprinted = false;
-      for (const entry of lines.values()) {
-        if (entry.fp === void 0) unfingerprinted = true;
-        else fps.add(entry.fp);
-      }
-      return { fps, unfingerprinted };
-    };
-    return {
-      entryAt: (line) => undone?.has(line) ? undone.get(line) ?? void 0 : scratch.get(resourceKey)?.get(line),
-      mayHaveMoved(fp) {
-        overview ??= overviewOf();
-        return overview.unfingerprinted || overview.fps.has(fp);
-      }
-    };
-  }
-  function returnedBy(record2) {
-    const byResource = /* @__PURE__ */ new Map();
-    for (const { access, impacts } of record2.effects) {
-      if (access !== "read") continue;
-      for (const { resourceKey, entries } of impacts) {
-        const lines = byResource.get(resourceKey) ?? /* @__PURE__ */ new Map();
-        for (const { key, fp, moved } of entries) if (moved !== true && fp !== void 0) lines.set(key, fp);
-        byResource.set(resourceKey, lines);
-      }
-    }
-    return byResource;
-  }
-  function score({ pending, observation, record: record2, scratch }) {
-    let oldLines = 0;
-    let newLines = 0;
-    for (const [resourceKey, lines] of returnedBy(record2)) {
-      const held = heldIn(resourceKey, scratch);
-      for (const [key, fp] of lines) {
-        if (held.entryAt(key)?.fp === fp) oldLines += 1;
-        else if (!held.mayHaveMoved(fp)) newLines += 1;
-      }
-    }
-    if (oldLines > 0 && oldLines / (oldLines + newLines) > OLD_SHARE_ABOVE) {
-      hits.push({ toolUseId: pending.toolUseId, seq: observation.sourceOrdinal, oldLines, newLines });
-    }
-  }
-  function observe(call) {
-    if (!call.recalled) gapSeen = true;
-    if (step === null || !step.scored) return;
-    if (call.recalled && call.observation.isError !== true && call.observation.stepKey === step.key) score(call);
-    freeze(call.record, call.scratch);
-  }
-  return { hits, startStep, startEpoch, observe };
-}
-var OLD_SHARE_ABOVE;
-var init_old_attribution = __esm({
-  "lib/old-attribution.js"() {
-    OLD_SHARE_ABOVE = 0.9;
-  }
-});
-
 // lib/held-view.js
 function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
   return (observations) => {
@@ -59839,23 +59769,14 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
         return answer;
       }
     });
-    const scorer = createOldAttributionScorer();
-    const scoringCtx = { ...frameCtx, observeRecord: scorer.observe };
     const engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED });
     let skills = /* @__PURE__ */ new Map();
     const effects = [];
     for (const observation of observations) {
-      if (observation.type === "step-start") {
-        scorer.startStep(observation.stepKey);
-        continue;
-      }
       completed = [];
-      const { records } = projection.project(observation, scoringCtx);
+      const { records } = projection.project(observation, frameCtx);
       engine.ingest(records.filter((record2) => record2.type === "effect" || record2.type === "epoch"));
-      if (records.some((record2) => record2.type === "epoch")) {
-        skills = /* @__PURE__ */ new Map();
-        scorer.startEpoch();
-      }
+      if (records.some((record2) => record2.type === "epoch")) skills = /* @__PURE__ */ new Map();
       for (const { effects: answered, text, seq } of completed) {
         for (const { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
           const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
@@ -59866,16 +59787,40 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
       }
     }
     const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, effects, oldReads: scorer.hits };
+    return { paths, skills, effects };
   };
 }
 var SELECTED;
 var init_held_view = __esm({
   "lib/held-view.js"() {
     init_engine();
-    init_old_attribution();
     init_resource_policy();
     SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
+  }
+});
+
+// lib/scratch-view.js
+function createScratchView() {
+  let scratch = null;
+  const note = (options) => {
+    scratch = options?.scratch ?? scratch;
+  };
+  return {
+    observing: ({ interpretToolUse, completeToolResult }) => ({
+      interpretToolUse: (observation, context, options) => {
+        note(options);
+        return interpretToolUse(observation, context, options);
+      },
+      completeToolResult: (pending, observation, context, options) => {
+        note(options);
+        return completeToolResult(pending, observation, context, options);
+      }
+    }),
+    read: () => scratch
+  };
+}
+var init_scratch_view = __esm({
+  "lib/scratch-view.js"() {
   }
 });
 
@@ -60065,6 +60010,7 @@ function composeWatcher({
   const dialogueSource = createDshDialogueSource({ readSession });
   const dialogueProjection = createDshDialogueProjection();
   const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
+  const scratchView = createScratchView();
   const policyFor = (modelId) => {
     const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
     const saved = loadPricingOverride(modelId);
@@ -60089,8 +60035,7 @@ function composeWatcher({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse,
-      completeToolResult
+      ...scratchView.observing({ interpretToolUse, completeToolResult })
     }),
     resourceKeysOf,
     modelPolicyFor: policyFor
@@ -60114,8 +60059,8 @@ function composeWatcher({
     resolveModelPolicy: policyFor,
     frameCtx: sessionId ? { recall } : {}
   });
-  const heldView = (events) => view(heldObservationsOf(events));
-  return { watcher, dialogueSource, dialogueProjection, heldView };
+  const heldView = (events) => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView, heldScratch: scratchView.read };
 }
 var DSH_TURN_NOTES_ROOT, sharedWorkingTree;
 var init_composition = __esm({
@@ -60134,6 +60079,7 @@ var init_composition = __esm({
     init_working_tree();
     init_resource_attribution();
     init_tool_evidence();
+    init_scratch_view();
     init_dialogue_source2();
     init_history_turn_rules2();
     init_measurement_projection3();

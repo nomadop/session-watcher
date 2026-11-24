@@ -15,13 +15,12 @@ const PRESET = 'E2';
 import { parentMetaParts, quoteFactsOf } from '../dsh/src/client/monitor-model.js';
 import { exportSession } from '../dsh/src/client/monitor-export.js';
 import { CARRIED_WORDING, carriedNote } from '../lib/carried-evidence.js';
-import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { INNER_ATTEMPT_RECORD_TYPE, INNER_END_RECORD_TYPE } from '../dsh/src/inner-seal.js';
 import {
   heldInContext, innerMonitorProjection, isMonitorInput, rowsOf, createMonitorAccess, MONITOR_PROJECTION_KEY, PREVIEW_SOURCE_CHARS,
 } from '../dsh/src/inner-monitor-read.js';
 import {
-  assistantMessage, attempt, compactCheckpoint, compactionPrune, ignorableEvent, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, loadReads, prunedResult, requestHeader, toolCall, toolResult,
+  assistantMessage, attempt, compactCheckpoint, compactionPrune, ignorableEvent, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, loadReads, prunedResult, readBlockRecord, requestHeader, toolCall, toolResult,
   turnStart, userMessage,
 } from './helpers/dsh-events.js';
 import { newSession } from './helpers/dsh-mode-kit.js';
@@ -411,7 +410,7 @@ test('the revision is the greatest seq of the start, call, end and carrier facts
 test('the projection is keyed session-watcher/inner-monitor, versioned, and starts from a new empty state each time', { skip }, () => {
   assert.equal(projection.key, 'session-watcher/inner-monitor');
   assert.equal(MONITOR_PROJECTION_KEY, projection.key);
-  assert.equal(projection.stateVersion, 18, 'the version of the state that keeps the dispatches a slot warns of');
+  assert.equal(projection.stateVersion, 19, 'the version of the state whose latest request keeps its dispatched calls and that no longer reads old attributions off a carrier');
   assert.deepEqual(projection.init(), { attempts: [], handoffs: [], lastMainUsage: null, settlementBefore: null, lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: null, source: { epoch: 0, headDone: false, points: [], carriers: [] } });
   assert.notEqual(projection.init(), projection.init());
 });
@@ -512,38 +511,54 @@ test('recall warnings follow the slot that seals the call, not the prior seal or
   }, undefined, undefined], 'a later carrier does not hide an earlier carrier’s verbatim text in the same epoch');
 });
 
-// A seal over `steps` whose slot at each index of `reads` holds the old reads of it, as the seal keeps them.
-function sealWithOldReads(steps, reads) {
-  const seal = sealSteps(...steps);
-  const carrier = seal.at(-1);
-  reads.forEach((value, at) => { if (value !== undefined) carrier.data.source.slots[at].oldReads = value; });
-  return seal;
-}
-
 const resultStep = (id, step) => [...dispatchedStep([{ id, name: 'read' }], { step }), toolResult({ callId: id, step, text: 'result' })];
-const hitAt = (event, toolUseId, oldLines = 19, newLines = 1) => ({ toolUseId, seq: event.seq, oldLines, newLines });
 
-test('a slot whose carrier holds old reads has one old-attribution warning however many it holds, beside the direct-read warnings of the same slot, and a carrier without the field or with one that does not read as reads has none', { skip }, async () => {
-  const first = [resultStep('a', 1), resultStep('b', 2)];
-  const firstHits = [[hitAt(first[0][2], '1:1:a'), hitAt(first[0][2], '1:1:a-again', 1, 5)], [{ toolUseId: 7, seq: first[1][2].seq, oldLines: 1, newLines: 0 }]];
-  const sealed = sealWithOldReads(first, firstHits);
-  const recall = dispatchedStep([{ id: 'peek', name: 'sw_event_read', arguments: JSON.stringify({ seq: sealed.at(-1).seq }) }], { step: 3 });
-  const second = [recall, resultStep('c', 4), resultStep('d', 5), resultStep('e', 6), resultStep('f', 7)];
-  const secondSeal = sealWithOldReads(second, [undefined, [hitAt(second[1][2], '1:4:c')], undefined, [], 'old']);
-  const { access, id, reads } = detailsOver([...first.flat(), ...sealed, ...recall, ...second.slice(1).flat(), ...secondSeal]);
-  const { attempts } = await access.rows(id);
-  assert.deepEqual(reads, [], 'listing warnings needs no detail or full-log read');
-  assert.deepEqual(attempts.map(row => row.slotWarnings), [
-    { [first[0][0].seq]: ['old-attribution'] },
-    { [recall[0].seq]: ['carrier-recall'], [second[1][0].seq]: ['old-attribution'] },
-  ], 'the first carrier of an epoch, a slot of several reads and a slot that holds a direct-read warning and old reads');
+test('the `oldReads` an earlier seal kept on a carrier slot are no fact of the monitor: the list and the slot detail warn of nothing, and nothing throws', { skip }, async () => {
+  const steps = [resultStep('a', 1)];
+  const sealed = sealSteps(...steps);
+  sealed.at(-1).data.source.slots[0].oldReads = [{ toolUseId: '1:1:a', seq: steps[0][2].seq, oldLines: 19, newLines: 1 }];
+  const { access, id } = detailsOver([...steps.flat(), ...sealed]);
+  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [undefined]);
+  const detail = await access.slot(id, sealed[0].seq, steps[0][0].seq);
+  assert.deepEqual(detail.tools.warnings, []);
+  assert.deepEqual(detail.tools.calls.map(({ warnings }) => warnings), [[]]);
 });
 
-test('the folded warnings are the carrier\'s own record of what the seal committed: a hit below any threshold still warns', { skip }, async () => {
-  const steps = [resultStep('a', 1)];
-  const sealed = sealWithOldReads(steps, [[hitAt(steps[0][2], '1:1:a', 1, 40)]]);
-  const { access, id } = detailsOver([...steps.flat(), ...sealed]);
-  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [{ [steps[0][0].seq]: ['old-attribution'] }]);
+test('a read the guard blocked warns the slot that seals its call as a direct read does, only through a record that reads as a block of a call of the latest request after a seal', { skip }, async () => {
+  const first = sealOf();
+  const reads = ['a', 'b', 'c', 'd', 'e'].map(id => readCall(id, `${id}.js`));
+  const [assistant, ...dispatched] = dispatchedStep(reads, { step: 2 });
+  const answers = reads.map(({ id }) => toolResult({ callId: id, step: 2, text: 'text' }));
+  const unreadable = readBlockRecord({ callId: 'd', step: 2 });
+  delete unreadable.data.path;
+  const records = [
+    readBlockRecord({ callId: 'a', step: 2 }), readBlockRecord({ callId: 'b', step: 2 }), readBlockRecord({ callId: 'c', step: 3 }),
+    readBlockRecord({ callId: 'e', turn: 2, step: 2 }), readBlockRecord({ callId: 'ghost', step: 2 }), unreadable,
+  ];
+  const sealed = sealSteps([assistant, ...dispatched, ...answers]);
+  const log = [...eventsOfSeal(first), assistant, ...dispatched, ...records, ...answers, ...sealed];
+  const folded = fold(log);
+  assert.deepEqual(folded.attempts[1].slotWarnings, { [assistant.seq]: ['read-block'] }, 'once for the two reads of the slot');
+  assert.deepEqual(folded.attempts[1].slotDispatches, { [assistant.seq]: [{ kind: 'read-block', seq: dispatched[0].seq }, { kind: 'read-block', seq: dispatched[1].seq }] });
+  assert.deepEqual(projection.stateSchema.parse(structuredClone(folded)), folded);
+
+  const { access, id } = detailsOver(log);
+  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [undefined, { [assistant.seq]: ['read-block'] }]);
+  const detail = await access.slot(id, sealed[0].seq, assistant.seq);
+  assert.deepEqual(kindsOf(detail), [['read-block'], ['read-block'], [], [], []], 'on the cards of the calls the records name');
+  assert.deepEqual(detail.tools.warnings, [], 'every occurrence is placed on a card');
+});
+
+test('the state a resumed fold reads keeps the dispatched calls of the latest request after a seal, and refuses a request whose calls are no list of call ids and seqs', { skip }, () => {
+  const [assistant, ...dispatched] = dispatchedStep([readCall('a', 'a.js')], { step: 2 });
+  const state = fold([...eventsOfSeal(sealOf()), assistant, ...dispatched]);
+  assert.deepEqual(state.postSeal.request.calls, [{ callId: 'a', seq: dispatched[0].seq }]);
+  assert.deepEqual(projection.stateSchema.parse(structuredClone(state)), state);
+  for (const calls of [undefined, {}, [null], [{ callId: 1, seq: 1 }], [{ callId: 'a', seq: -1 }]]) {
+    const broken = structuredClone(state);
+    broken.postSeal.request.calls = calls;
+    assert.throws(() => projection.stateSchema.parse(broken), JSON.stringify(calls) ?? 'undefined');
+  }
 });
 
 test('a read by the native tool name warns the slot that seals it as the DSH tool name does, for a verbatim, a carrier and a handoff target', { skip }, async () => {
@@ -1198,8 +1213,8 @@ test('the call of a committed attempt carries B, the evidence its carrier change
   const detail = await access.call(id, sealed.start.seq);
 
   assert.deepEqual(detail?.carried, {
-    text: [carriedNote(CARRIER_TABLE), '/shown/a.txt (total lines: 9)\n1: one\n2: two', W.skill('tdd', 'Test first.')].join('\n\n'),
-    note: carriedNote(CARRIER_TABLE),
+    text: [carriedNote(), '/shown/a.txt (total lines: 9)\n1: one\n2: two', W.skill('tdd', 'Test first.')].join('\n\n'),
+    note: carriedNote(),
     files: [{
       path: '/shown/a.txt', total: 9, state: 'readable', reason: null,
       runs: [{ offset: 1, lines: [{ number: 1, text: 'one' }, { number: 2, text: 'two' }] }],
@@ -1226,7 +1241,7 @@ test('the call of a committed attempt whose carrier only withdraws lines or remo
 
   assert.deepEqual((await access.call(id, sealed.start.seq))?.carried, {
     text: null,
-    note: carriedNote(CARRIER_TABLE),
+    note: carriedNote(),
     files: [{ path: '/shown/a.txt', total: null, state: null, reason: null, runs: [], withdrawn: [{ first: 3, last: 4 }] }],
     removed: ['/r/gone.txt'],
     skills: [],
@@ -2064,55 +2079,6 @@ test('a slot whose warnings no card of it holds shows them in the page header al
 
   const plain = await warnedSlot([assistantMessage({ text: 'no call' })], { first });
   assert.deepEqual(plain.detail.tools, { warnings: [], calls: [] }, 'nothing recorded and nothing warned: no tools to show');
-});
-
-// One slot of one step that issues the calls `ids` (reads) and answers each, sealed with the old reads `hits(results)` builds.
-async function oldReadsSlot(ids, hits, { stepNumber = 1 } = {}) {
-  const [assistant, ...dispatches] = dispatchedStep(ids.map(id => readCall(id, `${id}.js`)), { step: stepNumber });
-  const results = ids.map(id => toolResult({ callId: id, text: `${id} text`, step: stepNumber }));
-  const seal = sealWithOldReads([[assistant, ...dispatches, ...results]], [hits(results)]);
-  const { access, id } = detailsOver([assistant, ...dispatches, ...results, ...seal]);
-  return { detail: await access.slot(id, seal[0].seq, assistant.seq), results, access, id };
-}
-
-test('old reads of a carrier slot match the cards by both the qualified call identity and the original result seq, the card showing the share of the lines it could attribute, and a read matched by neither alone stays in the header', { skip }, async () => {
-  const { detail, results, access, id } = await oldReadsSlot(['a', 'b', 'c'], ([a, b, c]) => [
-    { toolUseId: '1:1:a', seq: a.seq, oldLines: 19, newLines: 1 },
-    { toolUseId: '1:1:b', seq: c.seq, oldLines: 20, newLines: 0 },
-    { toolUseId: '1:2:c', seq: c.seq, oldLines: 20, newLines: 0 },
-    { toolUseId: '1:1:a', seq: a.seq, oldLines: 30, newLines: 0 },
-  ]);
-
-  assert.deepEqual(detail.tools.calls.map(({ warnings }) => warnings), [
-    [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }], [], [],
-  ], 'one display of the kind on a card, whatever the carrier lists for it');
-  assert.deepEqual(detail.tools.warnings, ['old-attribution'], 'the hits that matched no card, once');
-  assert.deepEqual((await access.rows(id)).attempts.map(row => row.slotWarnings), [{ [detail.key]: ['old-attribution'] }]);
-  assert.deepEqual(results.map(result => result.seq), detail.tools.calls.map(({ result }) => result.seq));
-
-  const matched = await oldReadsSlot(['a'], ([a]) => [{ toolUseId: '1:1:a', seq: a.seq, oldLines: 3, newLines: 1 }]);
-  assert.deepEqual(matched.detail.tools.warnings, [], 'every hit placed on its card leaves the header without it');
-});
-
-test('the share an old read shows is the share of its determinable lines, rounded down so a hit above the threshold never reads as the threshold or below it, and a total the hit does not state has none', { skip }, async () => {
-  const counts = [[901, 99], [91, 9], [999, 1], [19, 1], [9, 1], [1, 40], [0, 0]];
-  const ids = counts.map((_, at) => `c${at}`);
-  const { detail } = await oldReadsSlot(ids, results => results.map((result, at) => ({ toolUseId: `1:1:c${at}`, seq: result.seq, oldLines: counts[at][0], newLines: counts[at][1] })));
-
-  assert.deepEqual(detail.tools.calls.map(({ warnings }) => [warnings[0].percent, warnings[0].over]), [
-    [90, true], [91, false], [99, false], [95, false], [90, false], [2, false], [null, false],
-  ]);
-});
-
-test('an old read names the original result of a pruned call and never the replacement the summary call saw', { skip }, async () => {
-  const conv = conversation();
-  const hit = seq => ({ toolUseId: '1:1:call-1', seq, oldLines: 19, newLines: 1 });
-  const original = await conversationSlot(conv, { slots: [{ ...conv.slots[1], oldReads: [hit(conv.original.seq)] }] });
-  assert.deepEqual(original.tools.calls.map(({ warnings }) => warnings.map(({ kind }) => kind)), [['old-attribution']]);
-  assert.deepEqual(original.tools.warnings, []);
-  const pruned = await conversationSlot(conv, { slots: [{ ...conv.slots[1], oldReads: [hit(conv.replacement.seq)] }] });
-  assert.deepEqual(pruned.tools.calls.map(({ warnings }) => warnings), [[]], 'a read of pruned text is no read of the original');
-  assert.deepEqual(pruned.tools.warnings, ['old-attribution']);
 });
 
 test('a call id that more than one call or more than one result of the slot carries names no single call, so none of them is paired or guessed at', { skip }, async () => {

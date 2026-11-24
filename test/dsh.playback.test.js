@@ -8,6 +8,7 @@ import { createDshSourceDriver } from '../lib/harness/dsh/source-driver.js';
 import { reduceDshEvent } from '../lib/harness/dsh/transcript-observation.js';
 import { hasDshFixture, readDshFixture } from './helpers/dsh-fixtures.js';
 import * as E from './helpers/dsh-events.js';
+import { SESSION, opening, readCall, stepOf } from './helpers/dsh-settlement.js';
 
 const SESSION_ID = 'session-playback';
 const FIXTURES = ['compaction-prune', 'plain-ask', 'subagent'];
@@ -171,4 +172,16 @@ test('a log with a carrier played over any split ends each advance where the ins
         `split at ${limits.join(', ')}, after limit ${limit}`);
     }
   }
+});
+
+test('a played log states no recall and no verdict on its main calls, however many seals it holds: Playback stays the ordinary path', () => {
+  const { ask, events } = opening();
+  const post = stepOf({ turn: 2, step: 1, calls: [readCall('a', ask.seq)] });
+  const log = [...events, ...post.events];
+  const played = createDshPlaybackDriver({ sessionId: SESSION, events: log }).advance({});
+  const mainCalls = played.batches.flat().filter(observation => observation.type === 'main-call');
+  assert.equal(mainCalls.length, 2);
+  assert.deepEqual(mainCalls.filter(observation => 'recall' in observation || 'verdict' in observation), []);
+  const installed = createDshSourceDriver({ sessionId: SESSION, onDiagnostics: () => {} }).install(log).batches.flat();
+  assert.equal(installed.some(observation => observation.type === 'main-call' && 'verdict' in observation), true, 'control: the Source of the same log states them');
 });

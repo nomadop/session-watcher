@@ -51,10 +51,11 @@ const PASS_THROUGH_NAMES = {
  * The events fed while bootstrapping wait in the entry, in order, and reach the driver after the snapshot's install, ahead of its drain.
  * Each entry also keeps the `seq → eventFactOf` Map of its session's raw events, the index the inner-seal trigger reads (`innerSource`) and the auxiliary call reads for the request header it sends (`headerSeqIn`), apart from the measurement: `feed` adds an event before it looks at the entry's state, so a failed or bootstrapping entry still takes the facts, and the snapshot's events merge in before the model-name warm-up, which alone makes `eventFacts(sessionId)` answer the Map, `null` for an unobserved session, one whose snapshot was rejected (no retry until a disposed entry is built again) and one not yet merged. Disposal drops the Map with the entry.
  * `heldView(sessionId, events)` answers the entry's composition `heldView` over the raw slice `events` in every state of its measurement, and null for a session the table lacks; it leaves with the entry.
+ * `heldScratch(sessionId)` answers the composition's `heldScratch()` for an entry that is `live` and null for any other state or session.
  * `onChange(listener)` adds a listener the table calls with the session id once each when an entry turns `live`, when a fed event applies a frame, when an entry fails and when it is removed; the frames the snapshot install drains are covered by the `live` call, and a listener's throw is a `handler_failed` line.
  *
  * @param {{ compose: (options: { sessionId: string, cwd: string|null, cacheTtl: () => string|null }) =>
- *   { watcher: object, dialogueSource: object, dialogueProjection: object, heldView: (events: object[]) => object },
+ *   { watcher: object, dialogueSource: object, dialogueProjection: object, heldView: (events: object[]) => object, heldScratch?: () => (Map<string, Map<number, object>>|null) },
  *   readSession: (sessionId: string) => Promise<{ events: object[] }>,
  *   cacheTtlFor?: (route: string|undefined) => string|null,
  *   innerModeOn?: (sessionId: string) => boolean,
@@ -187,10 +188,10 @@ export function createWatcherTable({
       sessionId, state: 'bootstrapping', disposed: false, cacheTtl: null, diagnostic: null, waiters: new Set(),
       pending: [], facts: new Map(), sourceReady: false,
     };
-    const { watcher, dialogueSource, dialogueProjection, heldView: viewOf } = compose({
+    const { watcher, dialogueSource, dialogueProjection, heldView: viewOf, heldScratch: scratchOf } = compose({
       sessionId, cwd: session.header.cwd, cacheTtl: () => entry.cacheTtl,
     });
-    Object.assign(entry, { watcher, dialogueSource, dialogueProjection, heldView: viewOf });
+    Object.assign(entry, { watcher, dialogueSource, dialogueProjection, heldView: viewOf, heldScratch: scratchOf });
     entry.driver = createDshSourceDriver({
       sessionId, onDiagnostics: diagnostics => writeAll(sessionId, diagnostics), qualifyCalls: () => innerModeOn(sessionId),
     });
@@ -289,5 +290,11 @@ export function createWatcherTable({
     return entry === undefined ? null : entry.heldView(events);
   }
 
-  return { ensure, feed, dispose, disposeAll, get, waitLive, live, onChange, eventFacts, heldView };
+  // The scratch of a live entry's open epoch, null while the entry is not live and for a composition that gives none; it is the Projection's own Map, read and never written.
+  function heldScratch(sessionId) {
+    const entry = entries.get(sessionId);
+    return entry?.state === 'live' ? entry.heldScratch?.() ?? null : null;
+  }
+
+  return { ensure, feed, dispose, disposeAll, get, waitLive, live, onChange, eventFacts, heldView, heldScratch };
 }

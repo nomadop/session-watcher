@@ -235,10 +235,10 @@ describe('key relocation', () => {
     chain.call(wholeOf(A, V1));
     const v2 = ['new-0001', 'new-0002', ...V1];
     const done = chain.call(showing(A, v2, [8]));
-    // The six lines are on lines three to eight; the keys one and two, which they left, are gone.
+    // The six lines are on lines three to eight; the keys one and two, which they left, are gone. The entries that moved keep the mark, the line of the call, key eight, is its own.
     assert.deepEqual(chain.scratch.get(A), new Map([
-      [3, entryOf('aaaa-001')], [4, entryOf('bbbb-002')], [5, entryOf('cccc-003')],
-      [6, entryOf('dddd-004')], [7, entryOf('eeee-005')], [8, entryOf('ffff-006')],
+      [3, { ...entryOf('aaaa-001'), moved: true }], [4, { ...entryOf('bbbb-002'), moved: true }], [5, { ...entryOf('cccc-003'), moved: true }],
+      [6, { ...entryOf('dddd-004'), moved: true }], [7, { ...entryOf('eeee-005'), moved: true }], [8, entryOf('ffff-006')],
     ]));
     assert.deepEqual(residencyOf(chain.scratch, A), [3, 4, 5, 6, 7, 8]);
     assert.equal(impactOf(done).mutation.kind, 'merge-fragments');
@@ -263,9 +263,10 @@ describe('key relocation', () => {
     const chain = chainOf();
     chain.call(wholeOf(A, V1));
     chain.call(showing(A, V1.slice(2), [4]));
-    // The first two lines are deleted: the other four are on lines one to four, and the keys five and six are left.
+    // The first two lines are deleted: the other four are on lines one to four, and the keys five and six are left. The line of the call, key four, is its own.
     assert.deepEqual(chain.scratch.get(A), new Map([
-      [1, entryOf('cccc-003')], [2, entryOf('dddd-004')], [3, entryOf('eeee-005')], [4, entryOf('ffff-006')],
+      [1, { ...entryOf('cccc-003'), moved: true }], [2, { ...entryOf('dddd-004'), moved: true }],
+      [3, { ...entryOf('eeee-005'), moved: true }], [4, entryOf('ffff-006')],
     ]));
     assert.deepEqual(fragmentsOf(chain.ledger, A), { 1: 2, 2: 2, 3: 2, 4: 2 });
     assertTwin(chain);
@@ -276,9 +277,10 @@ describe('key relocation', () => {
     chain.call(wholeOf(A, V1));
     const v2 = V1.filter(line => line !== 'cccc-003');
     chain.call(showing(A, v2, [1]));
+    // The entries that left a key carry the mark; the first, which the call showed again, and the second, which stayed, do not.
     assert.deepEqual(chain.scratch.get(A), new Map([
-      [1, entryOf('aaaa-001')], [2, entryOf('bbbb-002')], [3, entryOf('dddd-004')],
-      [4, entryOf('eeee-005')], [5, entryOf('ffff-006')],
+      [1, entryOf('aaaa-001')], [2, entryOf('bbbb-002')], [3, { ...entryOf('dddd-004'), moved: true }],
+      [4, { ...entryOf('eeee-005'), moved: true }], [5, { ...entryOf('ffff-006'), moved: true }],
     ]));
     assertTwin(chain);
   });
@@ -638,8 +640,8 @@ describe('the spend of a call that moves entries', () => {
       // The impact holds both entries; the spend is the entries not marked moved.
       assert.deepEqual(keysOfImpact(impactOf(done)), [1, 2], label);
       assert.equal(done.effects[0].spentTokens, spentTokens, label);
-      // The scratch holds the counts, the tokens and the fingerprint, never the mark.
-      assert.deepEqual(chain.scratch.get(A).get(2), { chars: 8, cjk: 0, tokens: 2, fp: fp('bbbb-002') }, label);
+      // The scratch holds the counts, the tokens and the fingerprint, and the mark where it is `true`.
+      assert.deepEqual(chain.scratch.get(A).get(2), { chars: 8, cjk: 0, tokens: 2, fp: fp('bbbb-002'), ...mark.moved === true ? { moved: true } : {} }, label);
       assertTwin(chain);
     }
   });

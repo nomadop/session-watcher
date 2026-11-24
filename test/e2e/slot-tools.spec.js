@@ -79,8 +79,7 @@ test('a slot opens at its summary and its Tools tab shows the cards, whose jump 
     calls: [
       card({ pruned: { seq: 60 }, warnings: [{ kind: 'carrier-recall' }, { kind: 'state-write' }] }),
       card({ id: '1:1:r2', name: 'bash', input: '{"command":"ls"}', result: { seq: 12, error: true, empty: true } }),
-      card({ id: '1:1:r3', warnings: [{ kind: 'old-attribution', oldLines: 19, newLines: 1, percent: 95, over: false }] }),
-      card({ id: '1:1:r4', warnings: [{ kind: 'old-attribution', oldLines: 901, newLines: 99, percent: 90, over: true }] }),
+      card({ id: '1:1:r3', warnings: [{ kind: 'read-block' }] }),
     ],
   }));
   await expect(tab(drawer, zh['monitor.slotPage.summary'])).toHaveAttribute('aria-selected', 'true');
@@ -88,7 +87,7 @@ test('a slot opens at its summary and its Tools tab shows the cards, whose jump 
 
   await tab(drawer, zh['monitor.slotPage.tools']).click();
   const cards = drawer.locator('article[data-sw-tool]');
-  await expect(cards).toHaveCount(4);
+  await expect(cards).toHaveCount(3);
   await expect(drawer.locator('details[open]')).toHaveCount(0);
   await expect(cards.first().locator('[data-sw-warning="carrier-recall"]')).toHaveText(zh['monitor.tool.attempt.carrier-recall']);
   await expect(cards.first().locator('[data-sw-warning="state-write"]')).toHaveText(zh['monitor.tool.stateWrite']);
@@ -100,9 +99,8 @@ test('a slot opens at its summary and its Tools tab shows the cards, whose jump 
   await expect(cards.first().locator('[data-sw-pruned]')).toHaveCSS('color', QUIET);
   await expect(cards.first().locator('[data-sw-pruned]')).toContainText(zh['monitor.tool.pruned']);
 
-  await expect(cards.nth(2).locator('[data-sw-warning="old-attribution"]')).toHaveText('文件读取的旧归因占比高 · 95%（旧 19 行，新 1 行）');
-  await expect(cards.nth(3).locator('[data-sw-warning="old-attribution"]')).toHaveText('文件读取的旧归因占比高 · >90%（旧 901 行，新 99 行）');
-  await expect(cards.nth(2).locator('[data-sw-warning="old-attribution"]')).toHaveCSS('color', WARN);
+  await expect(cards.nth(2).locator('[data-sw-warning="read-block"]')).toHaveText(zh['monitor.tool.attempt.read-block']);
+  await expect(cards.nth(2).locator('[data-sw-warning="read-block"]')).toHaveCSS('color', WARN);
 
   await cards.first().getByRole('button', { name: zh['monitor.tool.openPruned'].replace('{seq}', '60') }).click();
   await expect(tab(drawer, zh['monitor.slotPage.source'])).toHaveAttribute('aria-selected', 'true');
@@ -126,10 +124,9 @@ test('a slot with nothing to show has no Tools tab', async ({ page }) => {
 });
 
 test('a slot that only has a warning to show opens its Tools tab on the header alone', async ({ page }) => {
-  const drawer = await open(page, slot({ warnings: ['old-attribution'], calls: [] }));
+  const drawer = await open(page, slot({ warnings: ['read-block'], calls: [] }));
   await tab(drawer, zh['monitor.slotPage.tools']).click();
-  await expect(drawer.locator('[data-sw-section="warnings"] [data-sw-warning="old-attribution"]')).toHaveText(zh['monitor.warning.old-attribution']);
-  await expect(drawer.getByText(zh['monitor.tool.oldNote'])).toBeVisible();
+  await expect(drawer.locator('[data-sw-section="warnings"] [data-sw-warning="read-block"]')).toHaveText(zh['monitor.tool.attempt.read-block']);
   await expect(drawer.locator('article[data-sw-tool]')).toHaveCount(0);
 });
 

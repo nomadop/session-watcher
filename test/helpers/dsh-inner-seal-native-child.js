@@ -721,7 +721,7 @@ const SCENARIOS = {
       assert.equal(JSON.stringify(each.body.input.slice(0, n)), prefixBytes, `the ${name} carries the first request's input bytes verbatim first`);
       assert.equal(each.body.instructions, firstBody.body.instructions, `the ${name} carries the system prompt verbatim`);
     }
-    assert.ok(partsOf(post.body.input[n]).map(partText).join('').includes(carriedNote(CARRIER_TABLE)) || partsOf(post.body.input[n]).map(partText).join('').includes(carrier.data.source.slots[0].text),
+    assert.ok(partsOf(post.body.input[n]).map(partText).join('').includes(carriedNote()) || partsOf(post.body.input[n]).map(partText).join('').includes(carrier.data.source.slots[0].text),
       'the carrier follows the prefix in the next main request');
     console.log(JSON.stringify({ prefixKinds: kinds, firstHeader: firstHeader.seq, prefix, range: [range[0], range.at(-1)], firstBodyItems: n, auxItems: aux.body.input.length, postItems: post.body.input.length }));
     await ctx.fiber.dispose();
@@ -1008,7 +1008,7 @@ const SCENARIOS = {
             if (image !== undefined) assert.ok(rows.includes(CARRIER_WORDING.imageSaved(image.name ?? image.attachmentId, CARRIER_TABLE.imageReadTool)), `body ${index}: the sentence of ${file.name} is a line of its own`);
           }
         }
-        const heading = rows.indexOf(carriedNote(CARRIER_TABLE));
+        const heading = rows.indexOf(carriedNote());
         const showsLine = entry => (entry.write ?? []).some(([number]) => !(entry.omit ?? []).includes(number));
         if (carrier.source.paths.some(showsLine)) assert.ok(heading > 0, `body ${index}: carrier ${carrier.seq} has a B section`);
         if (heading >= 0) assert.ok(heading > 0 && rows[heading - 1] === '', `body ${index}: carrier ${carrier.seq}'s B section opens after a blank line`);

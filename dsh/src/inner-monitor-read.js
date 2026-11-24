@@ -5,11 +5,13 @@ import { callSeqOf } from '../../lib/inner-seal/carrier.js';
 import { attemptQuoteOf, isAttemptRecord } from '../../lib/inner-seal/attempt-record.js';
 import { isCallRecord, isCarrierCache } from '../../lib/inner-seal/call-record.js';
 import { isEndRecord } from '../../lib/inner-seal/end-record.js';
+import { READ_BLOCK_RECORD_NAME, isReadBlockRecord } from '../../lib/inner-seal/read-block-record.js';
 import { isQuote } from '../../lib/inner-seal/quote.js';
-import { CARRIER_TABLE, carriesEvidence, stateOperationOf } from '../../lib/harness/dsh/carrier-table.js';
+import { carriesEvidence, stateOperationOf } from '../../lib/harness/dsh/carrier-table.js';
 import { carriedEvidence, carriedNote, renderCarried } from '../../lib/carried-evidence.js';
 import { eventFactOf } from '../../lib/harness/dsh/event-facts.js';
 import { eventReadTargetOf } from '../../lib/harness/dsh/event-read.js';
+import { pluginRecordType } from '../../lib/harness/dsh/plugin-record.js';
 import { LOAD_MESSAGE_KIND, isLoadPayload, loadCallsOf } from '../../lib/harness/dsh/load-message.js';
 import { eventDisplayText, eventPreviewText, slotSourceOf, sourceEventView } from '../../lib/harness/dsh/inner-monitor-source.js';
 import {
@@ -19,7 +21,7 @@ import { stockOf, uncachedOf } from '../../lib/measurement/usage.js';
 import { newestMemberOf, parseTurnPage } from '../../lib/turn-page.js';
 import { checkpointTokenOf, loadedTokenOf } from './handoff-text.js';
 import { settlementRecallOf } from './monitor-settlement-recall.js';
-import { slotToolsOf, STATE_WARNING, OLD_ATTRIBUTION_WARNING } from './inner-monitor-tools.js';
+import { slotToolsOf, STATE_WARNING } from './inner-monitor-tools.js';
 import { INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE, messageOf } from './inner-seal.js';
 
 /** The projection key the registry keeps the attempts' summaries under. */
@@ -28,6 +30,9 @@ export const MONITOR_PROJECTION_KEY = 'session-watcher/inner-monitor';
 export const PREVIEW_SOURCE_CHARS = 500;
 
 const RECORD_TYPES = [INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE];
+const READ_BLOCK_TYPE = pluginRecordType(READ_BLOCK_RECORD_NAME);
+/** The kind of slot warning a read the guard blocked raises. */
+const READ_BLOCK_WARNING = 'read-block';
 const USAGE_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 
 const isUserMessage = event => event.type === 'user/message';
@@ -52,11 +57,6 @@ const isSeq = value => Number.isSafeInteger(value) && value >= 0;
 const isText = value => typeof value === 'string';
 const isMessage = value => isObject(value) && Array.isArray(value.content);
 const orNull = holds => value => value === null || holds(value);
-
-// A read the seal committed on a slot as having returned mostly lines its epoch already held: the fact is the carrier's, whatever the counts say against any later threshold.
-const isOldRead = value => isObject(value) && isText(value.toolUseId) && isSeq(value.seq) && isSeq(value.oldLines) && isSeq(value.newLines);
-// The old reads of a carrier slot that read as reads; a slot's field that is no list holds none.
-const oldReadsOf = slot => (Array.isArray(slot?.oldReads) ? slot.oldReads.filter(isOldRead) : []);
 
 const isCarrierShape = event => Array.isArray(event.sourceEventSeqs) && isSeq(callSeqOf(event.sourceEventSeqs)) && Array.isArray(event.data.source.slots);
 
@@ -185,7 +185,6 @@ function foldCarrier(state, event) {
     if (!Array.isArray(seqs) || seqs.length === 0 || !seqs.every(isSeq)) continue;
     const dispatches = seqs.flatMap(seq => pending[seq] ?? []);
     const warnings = new Set(dispatches.map(({ kind }) => kind));
-    if (oldReadsOf(slot).length > 0) warnings.add(OLD_ATTRIBUTION_WARNING);
     if (warnings.size > 0) slotWarnings[seqs[0]] = [...warnings];
     if (dispatches.length > 0) slotDispatches[seqs[0]] = dispatches;
   }
@@ -201,7 +200,7 @@ function foldPostSealRequest(state, event) {
   const { turn, step, message } = event.data ?? {};
   const count = Array.isArray(message?.content) ? message.content.filter(block => block?.type === 'tool-call').length : 0;
   const request = isMainCall(event) && isSeq(turn) && isSeq(step) && count > 0
-    ? { seq: event.seq, turn, step, count, first: postSeal.first } : null;
+    ? { seq: event.seq, turn, step, count, first: postSeal.first, calls: [] } : null;
   if (!postSeal.first && request === null && postSeal.request === null) return state;
   return { ...state, postSeal: { ...postSeal, first: false, request } };
 }
@@ -228,14 +227,28 @@ function stateWarningOf(request, call) {
   if (operation !== undefined) return operation === 'write' ? STATE_WARNING.write : request.count === 1 ? STATE_WARNING.check : STATE_WARNING.mixed;
 }
 
+// The post-seal state with `dispatch` waiting for the slot that holds the message of `request`.
+function withDispatch(postSeal, request, dispatch) {
+  return { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...postSeal.pending[request.seq] ?? [], dispatch] } };
+}
+
+// A dispatch of the latest request is remembered by its call id, which a block record of the guard names later; a classified one also waits for its slot.
 function foldToolCall(state, event) {
   const { postSeal } = state;
   const request = postSeal?.request;
   if (!request || request.turn !== event.data?.turn || request.step !== event.data?.step) return state;
   const warning = recallWarningOf(state, event) ?? stateWarningOf(request, event.data);
-  if (warning === undefined) return state;
-  const dispatches = postSeal.pending[request.seq] ?? [];
-  return { ...state, postSeal: { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...dispatches, { kind: warning, seq: event.seq }] } } };
+  const seen = { ...postSeal, request: { ...request, calls: [...request.calls, { callId: event.data.callId, seq: event.seq }] } };
+  return { ...state, postSeal: warning === undefined ? seen : withDispatch(seen, request, { kind: warning, seq: event.seq }) };
+}
+
+// The guard's record of a blocked read waits as a dispatch of the call it names, found among the latest request's dispatches by turn, step and call id.
+function foldReadBlock(state, record) {
+  const { postSeal } = state;
+  const request = postSeal?.request;
+  if (!isReadBlockRecord(record?.data) || !request || request.turn !== record.data.turn || request.step !== record.data.step) return state;
+  const dispatched = request.calls.find(({ callId }) => callId === record.data.callId);
+  return dispatched === undefined ? state : { ...state, postSeal: withDispatch(postSeal, request, { kind: READ_BLOCK_WARNING, seq: dispatched.seq }) };
 }
 
 // What a payload message holds: the JSON of its `load_handoff` call, which has to name a token; null for a message that holds no such delivery.
@@ -325,7 +338,9 @@ const isAttemptState = value => isObject(value) && isSeq(value.id) && Number.isF
   && orNull(isQuote)(value.quote) && isSeq(value.epoch)
   && (value.slotWarnings === undefined || isWarningsBySeq(value.slotWarnings))
   && (value.slotDispatches === undefined || isDispatchesBySeq(value.slotDispatches));
-const isPostSealRequest = orNull(value => isObject(value) && isSeq(value.seq) && isSeq(value.turn) && isSeq(value.step) && isSeq(value.count) && typeof value.first === 'boolean');
+const isDispatchedCall = value => isObject(value) && isText(value.callId) && isSeq(value.seq);
+const isPostSealRequest = orNull(value => isObject(value) && isSeq(value.seq) && isSeq(value.turn) && isSeq(value.step) && isSeq(value.count) && typeof value.first === 'boolean'
+  && Array.isArray(value.calls) && value.calls.every(isDispatchedCall));
 const isPostSeal = orNull(value => isObject(value) && typeof value.first === 'boolean' && isPostSealRequest(value.request) && isDispatchesBySeq(value.pending));
 
 const stateSchema = {
@@ -344,7 +359,7 @@ const stateSchema = {
 /**
  * The host-only projection of the attempts of the inner seal and of the handoffs a session loaded.
  * The state keeps one summary per attempt in log order, keyed by the seq of its first record. `lastMainUsage` is the last main call's usage as `callUsageOf` reads it; `source` is the measurement source fold over the same events. `handoffs` holds one summary per load and `lastCheckpointToken` is the token of the nearest checkpoint where `checkpointTokenOf` finds one. `openCalls` counts non-empty main calls after the latest carrier or checkpoint and `lastCheckpointCalls` is the count the nearest checkpoint ended. Neither count is the `stepN` of `innerSource`; a checkpoint's retained tail already precedes it in the log.
- * `verbatimSeqs` holds the original text sources recorded by carriers committed in the open epoch. After a carrier commits, `postSeal` tracks the main requests, with a failed settlement counting as the first request too. Each classified `tool/call` dispatch waits as `{ kind, seq }`, its kind and its own event seq, by the dispatching assistant message's seq until a carrier commits a slot that contains that message; the slot then keeps its kinds as `slotWarnings` and those dispatches as `slotDispatches`, which the slot detail alone reads to place each warning on the call it names, with no classification run again. `sessionId` distinguishes local recall targets from other sessions.
+ * `verbatimSeqs` holds the original text sources recorded by carriers committed in the open epoch. After a carrier commits, `postSeal` tracks the main requests, with a failed settlement counting as the first request too, and the latest request keeps the call id and seq of each of its `tool/call` dispatches as `calls`. Each classified `tool/call` dispatch waits as `{ kind, seq }`, its kind and its own event seq, by the dispatching assistant message's seq until a carrier commits a slot that contains that message; so does an `inner-read-block` record of the guard that names a call of the latest request by turn, step and call id, as a `read-block` dispatch of that call's `tool/call` event. The slot then keeps its kinds as `slotWarnings` and those dispatches as `slotDispatches`, which the slot detail alone reads to place each warning on the call it names, with no classification run again. `sessionId` distinguishes local recall targets from other sessions.
  * `before` is the context of the last main call before the attempt began (its input, cache and output buckets, summed), a display apart from the measurement. A committed attempt's `after` is read from `source` and is none of this fold's choosing: null until a main call follows the carrier in its epoch, then `{ seq, stock, miss }` of the first one (its `seq` moves the row's `revision`, which `before`, a count of a call that precedes the attempt, has no need of), `stock` the sum of its input and cache buckets and `miss` its uncached input plus cache writes, each null where the measurement reads no usage of that call; neither looks past the call it names.
  * `settlementBefore` is the same context reading for the last main call after the most recent carrier or epoch boundary, skipping only interrupted calls that reported no usage. A retained call without valid usage clears it. Where `before` is missing, the attempt keeps this reading as `estimatedBefore` if available.
  * `epoch` is the count of Context Epoch boundaries the Source facts had folded when the attempt's first record arrived, so an attempt belongs to the epoch it began in, whichever epoch its later records land in.
@@ -353,7 +368,7 @@ const stateSchema = {
  * A handoff summary is `{ id, time, type, token, handoffId, createdAt, epoch, kept, skills, lineage, read, readSeq, followSeq, before, after, tailCalls }`, born at a payload message (`payloadOf`: the JSON of its `load_handoff` call, which names a token; any other payload makes no row), `id` its seq and `time` its event time. `type` is `continue` when `lastCheckpointToken` equals the payload's token and `load` otherwise, the checkpoint staying in place, so a later load of the same token reads as a continue until another checkpoint comes. `handoffId`, `createdAt`, `kept`, `skills` and `lineage` are the payload's own facts (`handoffRowsOf` says which), `epoch` the count of epoch boundaries folded before the payload, and the state keeps no summary, file text, lineage or turn page: the log at the payload's seq holds them whole.
  * The read message and the follow-up that come after the payload attach to the newest row alone: the first read message, while neither it nor the follow-up has come, sets `read`, the count of its `read` calls, and `readSeq`; the latest message after the payload that opens by naming the row's token (`loadedTokenOf`) sets `followSeq`. `before` and `after` belong to a continue: `before` is the context of the last main call before the payload as `beforeOf` reads it, and `after` the first main call after it, `{ seq, stock, miss }` as an attempt's, each null where there is none, a load's always. `tailCalls` is a continue's `lastCheckpointCalls` as of its payload, null for a load.
  * Every text of an attempt the state keeps is cut to `PREVIEW_SOURCE_CHARS`; `outputDisplay` is cut after its strings are decoded, from the whole text. The tokens a handoff row and the last checkpoint keep are the store's generated load tokens, kept whole.
- * The fold is pure and writes nothing; for an event that changes nothing it answers the state it was given. That is every event that is neither a main call, a compact checkpoint nor an input, a record of any other shape, and a call or an end that names no attempt of the state; a carrier of any shape answers a new state, as it ends the calls being counted. A record the kit cannot read, as a stream holding records that are none, is left unread rather than thrown.
+ * The fold is pure and writes nothing; for an event that changes nothing it answers the state it was given. That is every event that is neither a main call, a compact checkpoint nor an input, a dispatch outside the latest request after a seal, a block record that names no call of it, a record of any other shape, and a call or an end that names no attempt of the state; a carrier of any shape answers a new state, as it ends the calls being counted. A record the kit cannot read, as a stream holding records that are none, is left unread rather than thrown.
  *
  * @param {{ pluginRecordOf: (event: object) => ({ type: string, seq: number, time: number, data: unknown } | undefined),
  *   assembleAssistantStream: (stream: object[]) => { blocks: () => object[] },
@@ -378,13 +393,14 @@ export function innerMonitorProjection(kit) {
   };
   return {
     key: MONITOR_PROJECTION_KEY,
-    stateVersion: 18,
+    stateVersion: 19,
     stateSchema,
     init: header => ({ attempts: [], lastMainUsage: null, settlementBefore: null, source: initialSourceFacts(), handoffs: [], lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: header?.id ?? null }),
     apply(state, event) {
       if (!isSeq(event.seq) || !Number.isFinite(event.time)) return state;
       try {
         if (event.type === 'tool/call') return foldToolCall(state, event);
+        if (event.type === READ_BLOCK_TYPE) return foldReadBlock(state, kit.pluginRecordOf(event));
         const source = foldSourceFacts(state.source, foldInputOf(event));
         const folded = isMonitorInput(event) || isMainCall(event) || event.type === 'assistant/attempt' || isCheckpoint(event) ? fold(state, event) : state;
         if (source === state.source) return folded;
@@ -452,7 +468,7 @@ function rowOf(attempt, entry, kit) {
  * `endedAt` is the event time of the carrier or end record the status rests on, `reason` the text of that end record, `slots` the count of the carrier's, each null where the status has none.
  * `trigger` is null for an attempt recorded without a quote, else `{ q, kappa }`: the quote's deviation and the tolerance it was compared with. It is read from the snapshot alone and decides no status. `stepN` is the quote's `n`, the counted steps of the range the attempt summarizes, null for an attempt recorded without a quote. `cRatio` is the quote's own, the cache write-to-read price ratio it was priced under, null where it could not be read and for an attempt recorded without a quote. `epoch` is the attempt's own, the zero-based count of epoch boundaries before its first record.
  * `contextChange` is null unless the attempt committed, else `{ before, after, delta, miss }`: the context before the seal, the stock of the first main call after it, `after - before` and the tokens of that call the cache did not serve, each null where its main call is missing or reported no valid usage.
- * The list supplies `estimatedBefore` separately where a committed attempt recorded it. `slotWarnings` maps the affected committed slots' keys to their warning kinds: the post-seal ones waiting for the slot that holds the dispatching message and `old-attribution` for a slot whose carrier keeps `oldReads`, the seal's own record of file reads that returned mostly lines their epoch already held, which the fold reads without checking its counts again. The list can mark a collapsed group without reading the slots.
+ * The list supplies `estimatedBefore` separately where a committed attempt recorded it. `slotWarnings` maps the affected committed slots' keys to their warning kinds: the post-seal ones waiting for the slot that holds the dispatching message. The list can mark a collapsed group without reading the slots.
  * `call` is `{ state, endedAt, finish, thrown, input, output, outputDisplay, usage }`: `thrown` is the message of an error thrown while the call's stream was consumed or assembled, `input` the prompt and `output` the response text, `outputDisplay` that text as a list shows it (a complete JSON object of strings as its strings, one to a line; any other text as it is; null where `output` is), and a field with nothing to read is null, `input` apart. `state` reads the transport alone: `received` where a finish chunk was observed and `error` where none was, whatever `thrown` says. With no call recorded, a live entry's stream is read as it stands: `generating` until the stream ends, then as a recorded call is; with neither, the call is `absent`.
  * A live entry of an attempt the state does not hold makes no row.
  */
@@ -614,7 +630,7 @@ function recordedCall(attempt, log, kit) {
 // B of a carrier's source: the text it renders, null where B renders none, that text's fixed opening paragraph and the evidence the source changes as structure, which holds what B does not print; null where the source changes none.
 function carriedDetailOf(source) {
   const evidence = carriedEvidence(source);
-  return evidence === null ? null : { text: renderCarried(source, CARRIER_TABLE), note: carriedNote(CARRIER_TABLE), ...evidence };
+  return evidence === null ? null : { text: renderCarried(source), note: carriedNote(), ...evidence };
 }
 
 // The carrier of the log at `seq`; a log that holds none there, or an event of another shape, is the caller's to convert.
@@ -884,7 +900,7 @@ export function createMonitorAccess({ sessionOf, readMonitor, live, kit, readSes
       const slot = slots[at];
       const { events, ...place } = placeOf(slot, log);
       const tools = slotToolsOf({
-        events, range, log, kinds: attempt.slotWarnings?.[key] ?? [], dispatches: attempt.slotDispatches?.[key] ?? [], oldReads: oldReadsOf(slot),
+        events, range, log, kinds: attempt.slotWarnings?.[key] ?? [], dispatches: attempt.slotDispatches?.[key] ?? [],
       });
       return {
         ...place, number: at + 1, c: slot.text, events: events.map(event => sourceEventView(event, { visible: range.has(event.seq) })), tools,

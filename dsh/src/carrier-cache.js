@@ -5,8 +5,8 @@
 import { createCarrierPointWriter } from '../../lib/llm-adapter/carrier-point.js';
 
 /**
- * @param {{ carrierPrefix: string, report: (message: string) => void, observe: (result: object) => void, responsesBreakpoint: () => boolean }} parameters
- *   `carrierPrefix` is the text every carrier's top-level text starts with; `report` receives the one-line diagnostic of a request whose carrier could not be given a cache point, of a result `observe` could not take and of a switch that could not be read; `observe` is told the closed result of each hook call and may throw, which leaves the request as it is.
+ * @param {{ carrierPrefix: () => (string|undefined), report: (message: string) => void, observe: (result: object) => void, responsesBreakpoint: () => boolean }} parameters
+ *   `carrierPrefix` answers the text every carrier's top-level text starts with, asked at each call of the hook: an answer of `undefined`, the host having none to give, leaves the request without a point (`unsupported`) and no report; an answer that is no non-empty text, or a throw, leaves it so with one report; `report` receives the one-line diagnostic of a request whose carrier could not be given a cache point, of a result `observe` could not take and of a switch that could not be read; `observe` is told the closed result of each hook call and may throw, which leaves the request as it is.
  *   `responsesBreakpoint` is the owner's Responses switch, which the writer reads once for each Responses request and takes as off unless it answers `true`; one that throws is off, with one diagnostic.
  */
 export function createCarrierCache({ carrierPrefix, report, observe, responsesBreakpoint }) {
@@ -21,11 +21,21 @@ export function createCarrierCache({ carrierPrefix, report, observe, responsesBr
     }
   };
 
+  // The prefix as the owner answers it now; one it cannot answer is reported here and is none to the writer.
+  const prefixNow = () => {
+    try {
+      return carrierPrefix();
+    } catch {
+      report('carrier cache: the prefix to tell a carrier by could not be read, so the request is sent without a cache point');
+      return undefined;
+    }
+  };
+
   // The `onPayload` hook of one request: the hook the caller set, when it did, runs first and its replacement payload is the one written to.
   const hookOf = (earlier, options) => async (payload, model) => {
     const replaced = await earlier?.(payload, model);
     const body = replaced ?? payload;
-    const outcome = writeCarrierPoint({ prefix: carrierPrefix, payload: body, model, options });
+    const outcome = writeCarrierPoint({ prefix: prefixNow(), payload: body, model, options });
     observed(outcome);
     return outcome.result === 'added' ? body : replaced;
   };

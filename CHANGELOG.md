@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.4 (2026-11-24) — A repeat read of held lines blocked, the carrier as one system reminder, and an expected recall stock in the position
+
+### DSH plugin
+
+- **A read of lines the context already holds is blocked** — with inner compaction on, a top-level native `read` whose every returned line already stands in the active context at the same line number and word for word is answered with an error that says so, in place of the text. The read has run, so an edit of the file may follow it without another read. A moved line, a line a carrier left out of its body or withdrew, a result DSH's own pruner replaced, a line holding the closing tag of a system reminder and anything the check cannot establish let the read return its text. A block that reaches the model is recorded in the session log by its turn, step, call and lines, never the file text. The DSH page describes it.
+- **The monitor warns the slot that seals a blocked read** — a `read-block` warning on the slot, placed on the blocked call's card of the slot's Tools page. It takes the place of the old-attribution warning that 0.11.2 introduced ("High share of old attribution in file reads"), which is removed together with the old-read cards of the Tools page and the record the seal kept for them.
+- **A blocked read counts as a recall** — a request whose calls are each an event read-back or a blocked read is a recall request, for the measurement's Source and the inner monitor's settlement alike. The settlement's share of pure recall and the shared residual measurement's pricing of such requests at their own bill follow, and the movable-fraction exception on DSH after an inner compaction, stated in the `sw-explain` skill and the concept and cookbook docs, names blocked reads with the read-backs.
+- **The position folds the rise of an expected recall stock** — the position's drift of the recall bill paid is replaced by the signed rise of `p · min(S, B)`, the context stock `S` capped at each scenario's rebuild baseline `B`, where `p` is an exponential average, with the half-life `RECALL_SHARE_HALF_LIFE`, of the Source's verdicts on whether a main call is a pure recall request. A session's restart reminder may now come at a different moment than under the earlier estimate. A Source that classifies no call adds no such stock.
+- **The inner-seal carrier is one system reminder, reworded** — the whole carrier is written as a single `<system-reminder>` block in which a closing tag in its text is escaped (`<\/system-reminder>`), and its fixed wording is rewritten. A carrier is now told by that opening followed by its address sentence.
+- **The follow-ups of `/sw-load` and `/sw-continue` are reworded** — the model takes the payload's summary, kept files and newest turns as the task's established state and builds on them without checking or restating them: `/sw-load` presents the state and waits for the user's confirmation as before, `/sw-continue` continues from the next step, within what the task was already authorized to do, and neither runs `git status` to reconcile the summary any more. `turn_page` and `lineage_headlines` read what the payload leaves out when a step needs it.
+
+### DSH plugin and Claude Code
+
+- **The `/sw-load` skill of Claude Code follows the same wording** — it takes the payload as the task's established state and presents the working state as the summary states it, with no git check against it and no list of turns by their notes, then holds for the user's confirmation as before. It invokes the skills named in `skills_to_keep` and no longer offers one named only in the summary.
+
+### Carrier cache companion
+
+- **`@nomadop/session-watcher-dsh-carrier-cache` goes to 0.3.0** — its adapter asks the host, at each request's payload hook, what a carrier opens with, and sets no cache point where the host gives none; a missing host entry is silent and an answer that is no text or a failed answer is reported with one warning. A change of the carrier's wording or framing therefore needs no new bundle release.
+- **An installed bundle is updated on the Plugins page, with Session Watcher** — it does not follow Session Watcher automatically, and a carrier gets its cache point only when both are updated, whichever is updated first. A 0.2.0 bundle with this release, and the 0.3.0 bundle with an earlier Session Watcher, send every request without a cache point and without a warning. The official bundle's first install from Settings now takes 0.3.0. This package's `./pi-ai` export and peer contract are unchanged.
+
+---
+
 ## 0.11.3 (2026-11-23) — Recall requests priced at their own bill, and a sharper compaction monitor
 
 ### DSH plugin

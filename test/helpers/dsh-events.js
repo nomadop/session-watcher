@@ -455,6 +455,14 @@ export function ignorableEvent({ type = 'plugin/note', data = {} } = {}) {
 }
 
 /**
+ * The `inner-read-block` plugin record the read guard appends for a block that took effect: `{ v: 1, turn, step, callId,
+ * path, first, last }`, in the log between the blocked call's `tool/call` and its `tool/result`.
+ */
+export function readBlockRecord({ callId, turn = 1, step = 1, path = 'a.js', first = 1, last = 3 } = {}) {
+  return ignorableEvent({ type: 'plugin:session-watcher/inner-read-block', data: { v: 1, turn, step, callId, path, first, last } });
+}
+
+/**
  * The events as one log, as new event objects: `seq` renumbered from zero in list order, and every seq reference
  * among them — a replacement's surface range and cited seqs, a compaction's shadowed seqs, a tool-registry message's
  * header — following the event it names. A reference to an event outside the list keeps its value.

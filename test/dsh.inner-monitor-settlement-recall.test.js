@@ -87,6 +87,23 @@ test('a refused read still is an initiation, and one DSH logged as aborted befor
   assert.deepEqual(answer.recall.steps.map(step => step.seq), [refused.request.seq], 'the request of the skipped call is no recall request either');
 });
 
+test('a read the guard blocked is a recall with no target: a request of blocked reads alone is a pure step and priced as one, a blocked read beside a read-back keeps that read-back\'s target alone, and a read with no record beside it leaves the request ordinary', async () => {
+  const { ask, events } = opening();
+  const file = id => ({ id, name: 'read', arguments: JSON.stringify({ file_path: 'a.js' }) });
+  const blockedOnly = stepOf({ turn: 2, step: 1, calls: [file('a'), file('b')], blocked: ['a', 'b'], isError: true, answer: 'Error: already in your context' });
+  const beside = stepOf({ turn: 2, step: 2, calls: [file('c'), readCall('d', ask.seq)], blocked: ['c'] });
+  const plain = stepOf({ turn: 2, step: 3, calls: [file('e')] });
+  const half = stepOf({ turn: 2, step: 4, calls: [file('f'), file('g')], blocked: ['f'] });
+
+  const { activity, recall } = await current([...events, ...blockedOnly.events, ...beside.events, ...plain.events, ...half.events]);
+
+  assert.deepEqual(activity, {
+    covered: true, judged: 4, pure: 2,
+    targets: [{ seq: ask.seq, type: 'user/message', at: 1, reads: [{ at: 3, seq: beside.request.seq }] }],
+  });
+  assert.deepEqual(recall.steps.filter(step => 'usage' in step).map(step => step.seq), [blockedOnly.request.seq, beside.request.seq]);
+});
+
 test('a read of another segment\'s event or another session\'s, one to an event not yet written and a read of no event are judged steps with no target', async () => {
   const earlier = userMessage({ text: 'previous segment' });
   const before = clear('previous', { from: earlier, to: earlier });

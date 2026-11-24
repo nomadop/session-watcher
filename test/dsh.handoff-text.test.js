@@ -26,11 +26,11 @@ test('the lead of a load\'s follow-up names the token as a JSON string and reads
   assert.equal(loadedTokenOf(undefined), null);
 });
 
-test('the follow-up `loadedText` writes opens with that lead, whichever variant and however many messages the harness placed', () => {
+test('the follow-up `loadedText` writes opens with that lead, whichever variant and however many messages precede it', () => {
   const loaded = { token: 'amber-falcon', skipped: [], unread: [], toPlace: [], skills: [], empty: false, reads: 0 };
   for (const [reads, resume] of [[0, false], [2, false], [0, true], [2, true]]) {
     const text = loadedText({ ...loaded, reads }, { resume });
     assert.equal(loadedTokenOf(text), 'amber-falcon', `${reads} reads, resume ${resume}`);
-    assert.equal(text.startsWith('Handoff "amber-falcon" is loaded. The harness placed '), true, `${reads} reads, resume ${resume}`);
+    assert.equal(text.startsWith(loadedLead('amber-falcon')), true, `${reads} reads, resume ${resume}`);
   }
 });

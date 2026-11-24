@@ -26,6 +26,12 @@ export const ORIGINAL_ROW = 'include:llm-pi-ai';
 export const CARRIER_EVIDENCE_SERVICE = 'sessionWatcherCarrierEvidence';
 
 /**
+ * The service the host entry provides for the pi-ai entry to ask what a carrier opens with: `{ carrierPrefix() }`, the text the first text block of every inner-seal carrier the host writes starts with, asked at each call of the payload hook, so a reworded carrier needs no new release of the entry.
+ * A context where no such service stands has no host mounted, or one from before it; the entry then tells no carrier and gives no request a point and reports nothing.
+ */
+export const CARRIER_PREFIX_SERVICE = 'sessionWatcherCarrierPrefix';
+
+/**
  * The service the host entry provides for the pi-ai entry to ask: `{ responsesBreakpoint() }`, whether the owner's saved switch for the OpenAI Responses breakpoint is on, asked once for each OpenAI Responses request; the entry takes anything but `true`, a service with no such member and one that throws included, as off.
  * A context where no such service stands has no host mounted, and the entry then finds the switch off.
  */

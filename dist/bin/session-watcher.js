@@ -45,7 +45,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // lib/constants.js
-var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS, init_constants = __esm({
+var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE, DEFAULT_CONTEXT_WINDOW, RESERVED_OUTPUT, CTX_SAFETY_MARGIN, COALESCED_PERSIST_MS, IDLE_HEARTBEAT_MS, CTP_TABLE, DEFAULT_CTP, SKILL_FRAMING_TOKENS, DEPTH_HOT_LAP_COUNT, ALPHA_EMA, G_DELTA_CAP, G_FLOOR, MISS_CR_DROP, RECALL_SHARE_HALF_LIFE, RECALL_SHARE_ALPHA, GC_BATCH_LIMIT, GC_REPLAY_MAX_FILE_BYTES, GC_HANDOFF_MAX_AGE_DAYS, HANDOFF_MAX_PATHS, HANDOFF_MAX_SUMMARY_CHARS, HANDOFF_MAX_NEXT_TASK_CHARS, LINEAGE_HEADLINE_TOKEN_BUDGET, HANDOFF_HOOK_TTL_DAYS, HANDOFF_HOOK_MAX_DISPLAY, HANDOFF_HOOK_QUERY_LIMIT, HANDOFF_HOOK_TASK_PREVIEW_CHARS, NOTE_TOKEN_LIMIT, NOTE_PREVIEW_TOKENS, HANDOFF_TOKEN_MAX_RETRIES, WORKING_TREE_CACHE_ENTRIES, WORKING_TREE_CACHE_CHARS, ATTRIBUTION_LIMITS, init_constants = __esm({
   "lib/constants.js"() {
     C_RATIO_TABLE = [
       // A keyed row prices its longer lifetime's cache write above its DEFAULT_CACHE_TTL one — equal entries do
@@ -105,7 +105,7 @@ var C_RATIO_TABLE, DEFAULT_C_RATIO, MODEL_PRICING_PRESETS, CONTEXT_WINDOW_TABLE,
       // Anthropic tokenizer (n=5881)
       { match: /deepseek/i, ascii: 3.24, cjk: 0.94 }
       // DeepSeek tokenizer (n=5265)
-    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, SKILL_FRAMING_TOKENS = 40, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, LINEAGE_HEADLINE_TOKEN_BUDGET = 3e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5, WORKING_TREE_CACHE_ENTRIES = 256, WORKING_TREE_CACHE_CHARS = 8e6, ATTRIBUTION_LIMITS = {
+    ], DEFAULT_CTP = { ascii: 3, cjk: 1 }, SKILL_FRAMING_TOKENS = 40, DEPTH_HOT_LAP_COUNT = 3, ALPHA_EMA = 0.06, G_DELTA_CAP = 250, G_FLOOR = 100, MISS_CR_DROP = 0.95, RECALL_SHARE_HALF_LIFE = 32, RECALL_SHARE_ALPHA = 1 - 2 ** (-1 / RECALL_SHARE_HALF_LIFE), GC_BATCH_LIMIT = 3, GC_REPLAY_MAX_FILE_BYTES = 5e7, GC_HANDOFF_MAX_AGE_DAYS = 90, HANDOFF_MAX_PATHS = 50, HANDOFF_MAX_SUMMARY_CHARS = 1e4, HANDOFF_MAX_NEXT_TASK_CHARS = 2e3, LINEAGE_HEADLINE_TOKEN_BUDGET = 3e3, HANDOFF_HOOK_TTL_DAYS = 7, HANDOFF_HOOK_MAX_DISPLAY = 3, HANDOFF_HOOK_QUERY_LIMIT = HANDOFF_HOOK_MAX_DISPLAY + 1, HANDOFF_HOOK_TASK_PREVIEW_CHARS = 200, NOTE_TOKEN_LIMIT = 800, NOTE_PREVIEW_TOKENS = 100, HANDOFF_TOKEN_MAX_RETRIES = 5, WORKING_TREE_CACHE_ENTRIES = 256, WORKING_TREE_CACHE_CHARS = 8e6, ATTRIBUTION_LIMITS = {
       candidates: 64,
       fileBytes: 1e6,
       sideChars: 1e5,
@@ -1972,13 +1972,13 @@ function createSourceFold() {
         changed(kept[index].batch, next) && (kept[index].batch = next, rewound = !0);
       }
     }
-    for (let { seq, recall } of input.recall ?? []) {
+    for (let { seq, recall, verdict } of input.recall ?? []) {
       let entry2 = keptBySeq.get(seq);
       if (entry2 === void 0) continue;
       let at = entry2.batch.findIndex((observation) => observation.type === "main-call");
-      at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0) || (entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall)), rewound = !0);
+      at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0) && entry2.batch[at].verdict === (verdict ?? void 0) || (entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall, verdict)), rewound = !0);
     }
-    let own = input.recall?.find((stated) => stated.seq === input.seq)?.recall, batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
+    let own = input.recall?.find((stated) => stated.seq === input.seq), batch = input.mainCall ? [mainCallFact(input.seq, own?.recall, own?.verdict), ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     batch.some((observation) => observation.type === "epoch-boundary") && (epochStart = kept.length);
     let entry = { seq: input.seq, batch };
@@ -1992,7 +1992,12 @@ function createSourceFold() {
 var changed, sameRecall, mainCallFact, init_source_fold = __esm({
   "lib/measurement/source-fold.js"() {
     init_source_facts();
-    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]), sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net, mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
+    changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]), sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net, mainCallFact = (seq, recall, verdict) => ({
+      type: "main-call",
+      sourceOrdinal: seq,
+      ...recall == null ? {} : { recall },
+      ...verdict == null ? {} : { verdict }
+    });
   }
 });
 
@@ -2117,6 +2122,12 @@ var init_carried_evidence = __esm({
   }
 });
 
+// lib/system-reminder.js
+var init_system_reminder = __esm({
+  "lib/system-reminder.js"() {
+  }
+});
+
 // lib/inner-seal/state-block.js
 var init_state_block = __esm({
   "lib/inner-seal/state-block.js"() {
@@ -2127,6 +2138,7 @@ var init_state_block = __esm({
 var INNER_SEAL_KIND, init_carrier = __esm({
   "lib/inner-seal/carrier.js"() {
     init_carried_evidence();
+    init_system_reminder();
     init_state_block();
     INNER_SEAL_KIND = "session-watcher-inner-seal";
   }
@@ -2322,15 +2334,7 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-function heldObservationsOf(events) {
-  return events.flatMap((event) => {
-    let stepKey = stepKeyOf(event.data);
-    if (event.type === "step/start") return stepKey === null ? [] : [{ type: "step-start", stepKey }];
-    let { observations } = reduceDshEvent(event);
-    return event.type === "tool/result" ? observations.map((observation) => ({ ...observation, stepKey })) : observations;
-  });
-}
-var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall, stepKeyOf, init_transcript_observation2 = __esm({
+var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex2, isId2, isSurfaceOp, nothing, textShaped, toolCallShaped, isRoute, isMainCall, init_transcript_observation2 = __esm({
   "lib/harness/dsh/transcript-observation.js"() {
     init_load_message();
     init_carrier();
@@ -2338,7 +2342,6 @@ var SCOPE, MESSAGE_NAMESPACE, isObject, isIndex2, isId2, isSurfaceOp, nothing, t
     textShaped = (block) => block.type !== "text" || typeof block.text == "string", toolCallShaped = (block) => block.type !== "tool-call" || isId2(block.id) && typeof block.name == "string" && typeof block.arguments == "string";
     isRoute = (route) => isObject(route) && typeof route.provider == "string" && typeof route.model == "string";
     isMainCall = (event) => event.type === "assistant/message" && isIndex2(event.seq);
-    stepKeyOf = (data) => isIndex2(data?.turn) && isIndex2(data?.step) ? `${data.turn}:${data.step}` : null;
   }
 });
 
@@ -26319,21 +26322,15 @@ function mainCallsBetween(prevOrdinal, ordinal) {
   return prevOrdinal > 0 && ordinal > 0 ? ordinal - prevOrdinal : 1;
 }
 function createPathFold({ dead, R, selector }) {
-  let carried = /* @__PURE__ */ new Map(), u = 0, lambda = 0, F = 0, physical = 0, combined = 0, spanned = 0, recallPerCall = 0, prev = null;
-  function absorb(frame, calls, closes) {
-    let { growth, recall } = frame;
+  let carried = /* @__PURE__ */ new Map(), u = 0, lambda = 0, F = 0, physical = 0, combined = 0, spanned = 0, expected = null, prev = null;
+  function absorb(frame, calls, E) {
+    let expectedGrowth = E !== null && expected !== null ? E - expected : 0;
+    E !== null && (expected = E);
+    let { growth } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (let [resourceKey, delta] of growth.resources) selector(resourceKey) && (excess -= delta);
-    let drift = excess;
-    if (closes)
-      if ((recall?.unpriced ?? 0) > 0)
-        recallPerCall = null;
-      else {
-        let bill = (recall?.net ?? 0) / calls;
-        recallPerCall !== null && (drift += bill - recallPerCall), recallPerCall = bill;
-      }
-    physical += excess, combined += drift, spanned += calls;
+    physical += excess, combined += excess + expectedGrowth, spanned += calls;
   }
   let rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0, physicalRate = () => spanned > 0 ? Math.max(0, physical) / spanned : 0;
   return {
@@ -26342,9 +26339,9 @@ function createPathFold({ dead, R, selector }) {
     push(frame) {
       let calls = mainCallsBetween(prev?.ordinal, frame.mainCallOrdinal);
       for (let [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
-      let B = baselineOf(dead, carried, selector), x = frame.L / B;
+      let B = baselineOf(dead, carried, selector), x = frame.L / B, E = frame.p === void 0 ? null : frame.p * Math.min(frame.S, B);
       if (prev === null)
-        return absorb(frame, calls, !1), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
+        return absorb(frame, calls, E), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       let slots = calls - (frame.recall?.priced ?? 0);
       u += calls * Math.sqrt(prev.g / (2 * R * prev.B));
       let V = Math.sqrt(2 * R * prev.B * prev.g), lambdaHere = calls * V, fixedHere = slots * (prev.B + R * prev.gPhys);
@@ -26354,7 +26351,7 @@ function createPathFold({ dead, R, selector }) {
         let rPrev = computeFullCarryBurnRate({ L_read: prev.L, B_post: prev.B, B_rebuild: prev.B, cRatio: R }), rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
         deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      return absorb(frame, calls, !0), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
+      return absorb(frame, calls, E), prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal }, { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
   };
 }
@@ -26626,13 +26623,22 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal, recall) {
+  function recordFrame(step, growth, mainCallOrdinal, recall, p) {
     let resourceTokens = /* @__PURE__ */ new Map(), totals = ledger.residentTotals(), present = /* @__PURE__ */ new Set();
     for (let { resourceKey, tokens } of totals)
       present.add(resourceKey), recordedTokens.get(resourceKey) !== tokens && (resourceTokens.set(resourceKey, tokens), recordedTokens.set(resourceKey, tokens));
     for (let [resourceKey, tokens] of recordedTokens)
       !(tokens > 0) || present.has(resourceKey) || (resourceTokens.set(resourceKey, 0), recordedTokens.set(resourceKey, 0));
-    let frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
+    let frame = {
+      seq: step.foldedSeq,
+      L: step.L,
+      growth,
+      resourceTokens,
+      mainCallOrdinal,
+      S: stockOf(step.usage),
+      ...recall === null ? {} : { recall },
+      ...p === null ? {} : { p }
+    };
     return frames.push(frame), frame;
   }
   function foldFor(selector) {
@@ -26699,10 +26705,13 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     return { input: raw.input, output: raw.output, cacheRead: raw.cacheRead, cacheWrite: raw.cacheWrite };
   }
   function readRecall(raw) {
-    return raw === void 0 ? null : (invariant3(raw !== null && typeof raw == "object", "step recall must be an object"), invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers"), invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number"), { priced: raw.priced, net: raw.net, unpriced: raw.unpriced });
+    return raw === void 0 ? null : (invariant3(raw !== null && typeof raw == "object", "step recall must be an object"), invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0, "step recall count must be a non-negative integer"), invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number"), { priced: raw.priced, net: raw.net });
   }
   function mergedRecall(held, recall) {
-    return held === null || recall === null ? held ?? recall : { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
+    return held === null || recall === null ? held ?? recall : { priced: held.priced + recall.priced, net: held.net + recall.net };
+  }
+  function readShare(raw) {
+    return raw === void 0 ? null : (invariant3(typeof raw == "number" && raw >= 0 && raw <= 1, "step share must be a number between 0 and 1"), raw);
   }
   function readTimestamp(raw) {
     return raw == null ? null : (invariant3(typeof raw == "number" && Number.isFinite(raw), "step timestamp must be a finite number or null"), raw);
@@ -26786,7 +26795,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     segmentLPeak = Math.max(segmentLPeak, L), segmentGMin = Math.min(segmentGMin, effectiveG(gEma));
   }
   function acceptNewStep(record, usage, usageTotal, timestamp, result) {
-    let totalStock = stockOf(usage), model = record.model ?? null, firstOfEpoch = segmentSteps.length === 0;
+    let totalStock = stockOf(usage), model = record.model ?? null, firstOfEpoch = segmentSteps.length === 0, share = readShare(record.p);
     totalStock > 0 && frames.length > 0 && invariant3(
       mainCallsBetween(frames.at(-1).mainCallOrdinal, record.mainCallOrdinal) >= 1,
       "a frame's main call must come after the previous frame's"
@@ -26815,7 +26824,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     };
     stepsById.set(step.id, step), segmentSteps.push(step), calls.push(step), segmentOutputSum += usage.output, segmentUsageCount += 1, segmentInputSum += usage.input, Number.isFinite(timestamp) && (segmentFirstTs === null && (segmentFirstTs = timestamp), segmentLastTs = timestamp), updateSegmentExtrema(L);
     let recall = mergedRecall(heldRecall, readRecall(record.recall));
-    totalStock > 0 ? (settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) }, heldRecall = null, stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall))) : heldRecall = recall, result.newCalls += 1;
+    totalStock > 0 ? (settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) }, heldRecall = null, stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall, share))) : heldRecall = recall, result.newCalls += 1;
   }
   function ingestStep(record, result) {
     invariant3(typeof record.id == "string" && record.id.length > 0, "step id must be a non-empty string");
@@ -27232,7 +27241,7 @@ function createMeasurementProjection({
   function diagnostic3(code, message) {
     return { scope, code, message };
   }
-  let callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map(), mainCalls = 0, recallSince = { priced: 0, net: 0, unpriced: 0 };
+  let callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), sidecarByStepId = /* @__PURE__ */ new Map(), mainCalls = 0, recallSince = { priced: 0, net: 0 }, share = null, shareAtCall = null;
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     return facts || (facts = emptyFacts(), sidecarByStepId.set(stepId, facts)), facts;
@@ -27292,20 +27301,17 @@ function createMeasurementProjection({
     let records = [], diagnostics = [];
     switch (observation.type) {
       case "epoch-boundary":
-        callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), records.push({ type: "epoch" });
+        callByToolUseId = /* @__PURE__ */ new Map(), scratch = /* @__PURE__ */ new Map(), share = null, shareAtCall = null, records.push({ type: "epoch" });
         break;
       case "turn-boundary":
         records.push({ type: "turn-boundary" });
         break;
       case "main-call":
-        if (mainCalls += 1, observation.recall !== void 0) {
-          let { net } = observation.recall;
-          Number.isFinite(net) && net >= 0 ? recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net } : recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
-        }
+        mainCalls += 1, shareAtCall = share, Number.isFinite(observation.recall?.net) && observation.recall.net >= 0 && (recallSince = { priced: recallSince.priced + 1, net: recallSince.net + observation.recall.net }), (observation.verdict === "pure" || observation.verdict === "other") && (share = (1 - RECALL_SHARE_ALPHA) * (share ?? 0) + (observation.verdict === "pure" ? RECALL_SHARE_ALPHA : 0));
         break;
       case "usage": {
         let recall = recallSince;
-        recallSince = { priced: 0, net: 0, unpriced: 0 }, records.push({
+        recallSince = { priced: 0, net: 0 }, records.push({
           type: "step",
           id: observation.messageId,
           model: observation.model ?? null,
@@ -27317,7 +27323,8 @@ function createMeasurementProjection({
             cacheWrite: observation.usage.cacheWrite
           },
           mainCallOrdinal: mainCalls,
-          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
+          ...recall.priced > 0 ? { recall } : {},
+          ...shareAtCall === null ? {} : { p: shareAtCall }
         });
         break;
       }
@@ -27360,6 +27367,7 @@ function createMeasurementProjection({
 }
 var init_measurement_projection = __esm({
   "lib/measurement-projection.js"() {
+    init_constants();
   }
 });
 
@@ -28202,13 +28210,13 @@ function pathEventsFor(effects, toolType) {
 function foldInto(scratch, recorded, effects) {
   recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
     let { fragments } = effects[effectAt].impacts[impactAt].mutation, held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
-    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+    entries.forEach(({ key, chars, cjk, fp, moved }, entryAt) => {
       if (fragments[entryAt].vacate === !0) {
         held.delete(key);
         return;
       }
       let entry = { chars, cjk, tokens: fragments[entryAt].tokens };
-      fp !== void 0 && (entry.fp = fp), held.set(key, entry);
+      fp !== void 0 && (entry.fp = fp), moved === !0 && (entry.moved = !0), held.set(key, entry);
     }), scratch.set(resourceKey, held);
   }));
 }
@@ -28293,9 +28301,9 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
   }
   function recordOf(pending, observation, frameCtx, scratch) {
     let recalled = typeof frameCtx.recall == "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
-    if (recalled !== null) return { record: recalled, recalled: !0 };
+    if (recalled !== null) return recalled;
     let record = partition(pending, observation, scratch);
-    return typeof frameCtx.remember == "function" && frameCtx.remember(pending.toolUseId, record), { record, recalled: !1 };
+    return typeof frameCtx.remember == "function" && frameCtx.remember(pending.toolUseId, record), record;
   }
   function emit(record, pending, observation, telemetry, scratch) {
     let effects = priced(record.effects, pending.issuingPolicy.ctp);
@@ -28348,8 +28356,8 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
       pathEvents: []
     };
     if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
-    let ctx = frameCtx ?? {}, { record, recalled } = recordOf(pending, observation, ctx, scratch);
-    return typeof ctx.observeRecord == "function" && ctx.observeRecord({ pending, observation, record, recalled, scratch }), emit(record, pending, observation, telemetry, scratch);
+    let record = recordOf(pending, observation, frameCtx ?? {}, scratch);
+    return emit(record, pending, observation, telemetry, scratch);
   }
   function resourceKeysOf(pair, capture) {
     try {
@@ -29367,7 +29375,7 @@ var package_default, init_package = __esm({
   "package.json"() {
     package_default = {
       name: "@nomadop/session-watcher",
-      version: "0.11.3",
+      version: "0.11.4",
       description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
       type: "module",
       license: "MIT",
@@ -29944,70 +29952,6 @@ var TURN_NOTICE, SEARCH_HIT_RECOVERY, LOCATE_HIT_RECOVERY, init_turn_recovery = 
   }
 });
 
-// lib/old-attribution.js
-function createOldAttributionScorer() {
-  let hits = [], step = null, gapSeen = !1, startStep = (key) => {
-    step = { key, scored: !gapSeen, undo: /* @__PURE__ */ new Map() };
-  }, startEpoch = () => {
-    step = null, gapSeen = !1;
-  };
-  function freeze(record, scratch) {
-    for (let { impacts } of record.effects)
-      for (let { resourceKey, kind, entries } of impacts) {
-        let before = scratch.get(resourceKey), undone = step.undo.get(resourceKey) ?? /* @__PURE__ */ new Map();
-        if (kind === "replace-fragments")
-          for (let [line, entry] of before ?? []) undone.has(line) || undone.set(line, entry);
-        for (let { key } of entries) undone.has(key) || undone.set(key, before?.get(key) ?? null);
-        step.undo.set(resourceKey, undone);
-      }
-  }
-  function heldIn(resourceKey, scratch) {
-    let undone = step.undo.get(resourceKey), overview = null, overviewOf = () => {
-      let lines = new Map(scratch.get(resourceKey));
-      for (let [line, entry] of undone ?? [])
-        entry === null ? lines.delete(line) : lines.set(line, entry);
-      let fps = /* @__PURE__ */ new Set(), unfingerprinted = !1;
-      for (let entry of lines.values())
-        entry.fp === void 0 ? unfingerprinted = !0 : fps.add(entry.fp);
-      return { fps, unfingerprinted };
-    };
-    return {
-      entryAt: (line) => undone?.has(line) ? undone.get(line) ?? void 0 : scratch.get(resourceKey)?.get(line),
-      mayHaveMoved(fp) {
-        return overview ??= overviewOf(), overview.unfingerprinted || overview.fps.has(fp);
-      }
-    };
-  }
-  function returnedBy(record) {
-    let byResource = /* @__PURE__ */ new Map();
-    for (let { access, impacts } of record.effects)
-      if (access === "read")
-        for (let { resourceKey, entries } of impacts) {
-          let lines = byResource.get(resourceKey) ?? /* @__PURE__ */ new Map();
-          for (let { key, fp, moved } of entries) moved !== !0 && fp !== void 0 && lines.set(key, fp);
-          byResource.set(resourceKey, lines);
-        }
-    return byResource;
-  }
-  function score({ pending, observation, record, scratch }) {
-    let oldLines = 0, newLines = 0;
-    for (let [resourceKey, lines] of returnedBy(record)) {
-      let held = heldIn(resourceKey, scratch);
-      for (let [key, fp] of lines)
-        held.entryAt(key)?.fp === fp ? oldLines += 1 : held.mayHaveMoved(fp) || (newLines += 1);
-    }
-    oldLines > 0 && oldLines / (oldLines + newLines) > 0.9 && hits.push({ toolUseId: pending.toolUseId, seq: observation.sourceOrdinal, oldLines, newLines });
-  }
-  function observe(call) {
-    call.recalled || (gapSeen = !0), !(step === null || !step.scored) && (call.recalled && call.observation.isError !== !0 && call.observation.stepKey === step.key && score(call), freeze(call.record, call.scratch));
-  }
-  return { hits, startStep, startEpoch, observe };
-}
-var init_old_attribution = __esm({
-  "lib/old-attribution.js"() {
-  }
-});
-
 // lib/held-view.js
 function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
   return (observations) => {
@@ -30016,30 +29960,43 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
         let answer = completeToolResult(pending, observation, context, options);
         return completed.push({ effects: answer.effects, text: observation.content, seq: observation.sourceOrdinal }), answer;
       }
-    }), scorer = createOldAttributionScorer(), scoringCtx = { ...frameCtx, observeRecord: scorer.observe }, engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED }), skills = /* @__PURE__ */ new Map(), effects = [];
+    }), engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED }), skills = /* @__PURE__ */ new Map(), effects = [];
     for (let observation of observations) {
-      if (observation.type === "step-start") {
-        scorer.startStep(observation.stepKey);
-        continue;
-      }
       completed = [];
-      let { records } = projection.project(observation, scoringCtx);
-      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch")), records.some((record) => record.type === "epoch") && (skills = /* @__PURE__ */ new Map(), scorer.startEpoch());
+      let { records } = projection.project(observation, frameCtx);
+      engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch")), records.some((record) => record.type === "epoch") && (skills = /* @__PURE__ */ new Map());
       for (let { effects: answered, text, seq } of completed)
         for (let { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
           let isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX), key = isSkill ? resourceKey.slice(SKILL_RESOURCE_PREFIX.length) : resourceKey;
           isSkill && skills.set(key, text), effects.push({ seq, kind: isSkill ? "skill" : "path", key });
         }
     }
-    return { paths: new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX))), skills, effects, oldReads: scorer.hits };
+    return { paths: new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX))), skills, effects };
   };
 }
 var SELECTED, init_held_view = __esm({
   "lib/held-view.js"() {
     init_engine();
-    init_old_attribution();
     init_resource_policy();
     SELECTED = () => ({ selectedByDefault: !0, defaultDiscardReason: null });
+  }
+});
+
+// lib/scratch-view.js
+function createScratchView() {
+  let scratch = null, note = (options) => {
+    scratch = options?.scratch ?? scratch;
+  };
+  return {
+    observing: ({ interpretToolUse, completeToolResult }) => ({
+      interpretToolUse: (observation, context, options) => (note(options), interpretToolUse(observation, context, options)),
+      completeToolResult: (pending, observation, context, options) => (note(options), completeToolResult(pending, observation, context, options))
+    }),
+    read: () => scratch
+  };
+}
+var init_scratch_view = __esm({
+  "lib/scratch-view.js"() {
   }
 });
 
@@ -30216,7 +30173,7 @@ function composeWatcher({
   cacheTtl,
   workingTree
 }) {
-  let dialogueSource = createDshDialogueSource({ readSession }), dialogueProjection = createDshDialogueProjection(), { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd }), policyFor = (modelId) => {
+  let dialogueSource = createDshDialogueSource({ readSession }), dialogueProjection = createDshDialogueProjection(), { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd }), scratchView = createScratchView(), policyFor = (modelId) => {
     let policy = modelPolicyFor(modelId, cacheTtl() ?? "5m"), saved = loadPricingOverride(modelId);
     return saved && (policy.cRatio = saved.ratio), policy;
   }, watcher = new SessionWatcher({
@@ -30237,8 +30194,7 @@ function composeWatcher({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse,
-      completeToolResult
+      ...scratchView.observing({ interpretToolUse, completeToolResult })
     }),
     resourceKeysOf,
     modelPolicyFor: policyFor
@@ -30260,7 +30216,7 @@ function composeWatcher({
       }
     } } : {}
   });
-  return { watcher, dialogueSource, dialogueProjection, heldView: (events) => view(heldObservationsOf(events)) };
+  return { watcher, dialogueSource, dialogueProjection, heldView: (events) => view(reduceDshSnapshot(events).observations), heldScratch: scratchView.read };
 }
 var DSH_TURN_NOTES_ROOT, sharedWorkingTree, init_composition = __esm({
   "dsh/src/composition.js"() {
@@ -30278,6 +30234,7 @@ var DSH_TURN_NOTES_ROOT, sharedWorkingTree, init_composition = __esm({
     init_working_tree();
     init_resource_attribution();
     init_tool_evidence();
+    init_scratch_view();
     init_dialogue_source2();
     init_history_turn_rules2();
     init_measurement_projection3();
@@ -31295,7 +31252,7 @@ function parseCliArgs(argv) {
 }
 
 // bin/session-watcher.js
-var VERSION = "0.11.3", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
+var VERSION = "0.11.4", isMain = import.meta.url === pathToFileURL2(realpathSync2(process.argv[1])).href;
 if (isMain) {
   let args2 = parseCliArgs(process.argv.slice(2));
   args2.command === "help" && (console.log(`Usage: session-watcher <command> [options]

@@ -9919,7 +9919,7 @@ var repairJson = Object.assign(jsonRepair, { parse: jsonParse });
 // dsh/carrier-cache/package.json
 var package_default = {
   name: "@nomadop/session-watcher-dsh-carrier-cache",
-  version: "0.2.0",
+  version: "0.3.0",
   description: "Session Watcher's carrier cache adapter for DeepSeek Harness, with the profile layer that activates it",
   type: "module",
   license: "MIT",
@@ -10051,6 +10051,8 @@ var ALPHA_EMA = 0.06;
 var G_DELTA_CAP = 250;
 var G_FLOOR = 100;
 var MISS_CR_DROP = 0.95;
+var RECALL_SHARE_HALF_LIFE = 32;
+var RECALL_SHARE_ALPHA = 1 - 2 ** (-1 / RECALL_SHARE_HALF_LIFE);
 var GC_BATCH_LIMIT = 3;
 var GC_REPLAY_MAX_FILE_BYTES = 5e7;
 var GC_HANDOFF_MAX_AGE_DAYS = 90;
@@ -18485,25 +18487,17 @@ function createPathFold({ dead, R, selector }) {
   const carried = /* @__PURE__ */ new Map();
   let u = 0, lambda = 0, F = 0;
   let physical = 0, combined = 0, spanned = 0;
-  let recallPerCall = 0;
+  let expected = null;
   let prev = null;
-  function absorb(frame, calls, closes) {
-    const { growth, recall } = frame;
+  function absorb(frame, calls, E) {
+    const expectedGrowth = E !== null && expected !== null ? E - expected : 0;
+    if (E !== null) expected = E;
+    const { growth } = frame;
     if (!growth) return;
     let excess = growth.stock;
     for (const [resourceKey, delta] of growth.resources) if (selector(resourceKey)) excess -= delta;
-    let drift = excess;
-    if (closes) {
-      if ((recall?.unpriced ?? 0) > 0) {
-        recallPerCall = null;
-      } else {
-        const bill = (recall?.net ?? 0) / calls;
-        if (recallPerCall !== null) drift += bill - recallPerCall;
-        recallPerCall = bill;
-      }
-    }
     physical += excess;
-    combined += drift;
+    combined += excess + expectedGrowth;
     spanned += calls;
   }
   const rate = () => spanned > 0 ? Math.max(0, combined) / spanned : 0;
@@ -18516,8 +18510,9 @@ function createPathFold({ dead, R, selector }) {
       for (const [resourceKey, tokens] of frame.resourceTokens) carried.set(resourceKey, tokens);
       const B = baselineOf(dead, carried, selector);
       const x = frame.L / B;
+      const E = frame.p === void 0 ? null : frame.p * Math.min(frame.S, B);
       if (prev === null) {
-        absorb(frame, calls, false);
+        absorb(frame, calls, E);
         prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
         return { seq: frame.seq, bDefault: B, x, u: 0, pp: null, mf: null, mfLocal: null, br: null, deltaW: null };
       }
@@ -18538,7 +18533,7 @@ function createPathFold({ dead, R, selector }) {
         const rNow = computeFullCarryBurnRate({ L_read: frame.L, B_post: B, B_rebuild: prev.B, cRatio: R });
         deltaW = slots * (0.5 * (rPrev + rNow)) + (frame.recall?.net ?? 0) / (R * prev.B);
       }
-      absorb(frame, calls, true);
+      absorb(frame, calls, E);
       prev = { B, g: rate(), gPhys: physicalRate(), L: frame.L, ordinal: frame.mainCallOrdinal };
       return { seq: frame.seq, bDefault: B, x, u, pp, mf, mfLocal, br, deltaW };
     }
@@ -18945,7 +18940,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function isSelected(resourceKey) {
     return selectedUnder(resourceOverrides, resourceKey);
   }
-  function recordFrame(step, growth, mainCallOrdinal, recall) {
+  function recordFrame(step, growth, mainCallOrdinal, recall, p) {
     const resourceTokens = /* @__PURE__ */ new Map();
     const totals = ledger.residentTotals();
     const present = /* @__PURE__ */ new Set();
@@ -18960,7 +18955,16 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
       resourceTokens.set(resourceKey, 0);
       recordedTokens.set(resourceKey, 0);
     }
-    const frame = { seq: step.foldedSeq, L: step.L, growth, resourceTokens, mainCallOrdinal, ...recall === null ? {} : { recall } };
+    const frame = {
+      seq: step.foldedSeq,
+      L: step.L,
+      growth,
+      resourceTokens,
+      mainCallOrdinal,
+      S: stockOf(step.usage),
+      ...recall === null ? {} : { recall },
+      ...p === null ? {} : { p }
+    };
     frames.push(frame);
     return frame;
   }
@@ -19034,13 +19038,18 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   function readRecall(raw) {
     if (raw === void 0) return null;
     invariant3(raw !== null && typeof raw === "object", "step recall must be an object");
-    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0 && Number.isSafeInteger(raw.unpriced) && raw.unpriced >= 0, "step recall counts must be non-negative integers");
+    invariant3(Number.isSafeInteger(raw.priced) && raw.priced >= 0, "step recall count must be a non-negative integer");
     invariant3(isTokenCount2(raw.net), "step recall net must be a non-negative finite number");
-    return { priced: raw.priced, net: raw.net, unpriced: raw.unpriced };
+    return { priced: raw.priced, net: raw.net };
   }
   function mergedRecall(held, recall) {
     if (held === null || recall === null) return held ?? recall;
-    return { priced: held.priced + recall.priced, net: held.net + recall.net, unpriced: held.unpriced + recall.unpriced };
+    return { priced: held.priced + recall.priced, net: held.net + recall.net };
+  }
+  function readShare(raw) {
+    if (raw === void 0) return null;
+    invariant3(typeof raw === "number" && raw >= 0 && raw <= 1, "step share must be a number between 0 and 1");
+    return raw;
   }
   function readTimestamp(raw) {
     if (raw === void 0 || raw === null) return null;
@@ -19157,6 +19166,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     const totalStock = stockOf(usage);
     const model = record.model ?? null;
     const firstOfEpoch = segmentSteps.length === 0;
+    const share = readShare(record.p);
     if (totalStock > 0 && frames.length > 0) {
       invariant3(
         mainCallsBetween(frames.at(-1).mainCallOrdinal, record.mainCallOrdinal) >= 1,
@@ -19222,7 +19232,7 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
     if (totalStock > 0) {
       settlementCursor = { L, totalStock, residentTotal, resourceTotals: new Map(totals.map((t) => [t.resourceKey, t.tokens])) };
       heldRecall = null;
-      stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall));
+      stampNewFrame(step, recordFrame(step, growth, record.mainCallOrdinal, recall, share));
     } else {
       heldRecall = recall;
     }
@@ -19650,92 +19660,6 @@ function createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy } =
   };
 }
 
-// lib/old-attribution.js
-var OLD_SHARE_ABOVE = 0.9;
-function createOldAttributionScorer() {
-  const hits = [];
-  let step = null;
-  let gapSeen = false;
-  const startStep = (key) => {
-    step = { key, scored: !gapSeen, undo: /* @__PURE__ */ new Map() };
-  };
-  const startEpoch = () => {
-    step = null;
-    gapSeen = false;
-  };
-  function freeze(record, scratch) {
-    for (const { impacts } of record.effects) {
-      for (const { resourceKey, kind, entries } of impacts) {
-        const before = scratch.get(resourceKey);
-        const undone = step.undo.get(resourceKey) ?? /* @__PURE__ */ new Map();
-        if (kind === "replace-fragments") {
-          for (const [line, entry] of before ?? []) if (!undone.has(line)) undone.set(line, entry);
-        }
-        for (const { key } of entries) if (!undone.has(key)) undone.set(key, before?.get(key) ?? null);
-        step.undo.set(resourceKey, undone);
-      }
-    }
-  }
-  function heldIn(resourceKey, scratch) {
-    const undone = step.undo.get(resourceKey);
-    let overview = null;
-    const overviewOf = () => {
-      const lines = new Map(scratch.get(resourceKey));
-      for (const [line, entry] of undone ?? []) {
-        if (entry === null) lines.delete(line);
-        else lines.set(line, entry);
-      }
-      const fps = /* @__PURE__ */ new Set();
-      let unfingerprinted = false;
-      for (const entry of lines.values()) {
-        if (entry.fp === void 0) unfingerprinted = true;
-        else fps.add(entry.fp);
-      }
-      return { fps, unfingerprinted };
-    };
-    return {
-      entryAt: (line) => undone?.has(line) ? undone.get(line) ?? void 0 : scratch.get(resourceKey)?.get(line),
-      mayHaveMoved(fp) {
-        overview ??= overviewOf();
-        return overview.unfingerprinted || overview.fps.has(fp);
-      }
-    };
-  }
-  function returnedBy(record) {
-    const byResource = /* @__PURE__ */ new Map();
-    for (const { access, impacts } of record.effects) {
-      if (access !== "read") continue;
-      for (const { resourceKey, entries } of impacts) {
-        const lines = byResource.get(resourceKey) ?? /* @__PURE__ */ new Map();
-        for (const { key, fp, moved } of entries) if (moved !== true && fp !== void 0) lines.set(key, fp);
-        byResource.set(resourceKey, lines);
-      }
-    }
-    return byResource;
-  }
-  function score({ pending, observation, record, scratch }) {
-    let oldLines = 0;
-    let newLines = 0;
-    for (const [resourceKey, lines] of returnedBy(record)) {
-      const held = heldIn(resourceKey, scratch);
-      for (const [key, fp] of lines) {
-        if (held.entryAt(key)?.fp === fp) oldLines += 1;
-        else if (!held.mayHaveMoved(fp)) newLines += 1;
-      }
-    }
-    if (oldLines > 0 && oldLines / (oldLines + newLines) > OLD_SHARE_ABOVE) {
-      hits.push({ toolUseId: pending.toolUseId, seq: observation.sourceOrdinal, oldLines, newLines });
-    }
-  }
-  function observe(call) {
-    if (!call.recalled) gapSeen = true;
-    if (step === null || !step.scored) return;
-    if (call.recalled && call.observation.isError !== true && call.observation.stepKey === step.key) score(call);
-    freeze(call.record, call.scratch);
-  }
-  return { hits, startStep, startEpoch, observe };
-}
-
 // lib/held-view.js
 var SELECTED = () => ({ selectedByDefault: true, defaultDiscardReason: null });
 function createHeldView({ createProjection, completeToolResult, resolveModelPolicy, frameCtx }) {
@@ -19748,23 +19672,14 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
         return answer;
       }
     });
-    const scorer = createOldAttributionScorer();
-    const scoringCtx = { ...frameCtx, observeRecord: scorer.observe };
     const engine = createMeasurementEngine({ resolveModelPolicy, resolveResourcePolicy: SELECTED });
     let skills = /* @__PURE__ */ new Map();
     const effects = [];
     for (const observation of observations) {
-      if (observation.type === "step-start") {
-        scorer.startStep(observation.stepKey);
-        continue;
-      }
       completed = [];
-      const { records } = projection.project(observation, scoringCtx);
+      const { records } = projection.project(observation, frameCtx);
       engine.ingest(records.filter((record) => record.type === "effect" || record.type === "epoch"));
-      if (records.some((record) => record.type === "epoch")) {
-        skills = /* @__PURE__ */ new Map();
-        scorer.startEpoch();
-      }
+      if (records.some((record) => record.type === "epoch")) skills = /* @__PURE__ */ new Map();
       for (const { effects: answered, text, seq } of completed) {
         for (const { resourceKey } of answered.flatMap((effect) => effect.impacts)) {
           const isSkill = resourceKey.startsWith(SKILL_RESOURCE_PREFIX);
@@ -19775,7 +19690,7 @@ function createHeldView({ createProjection, completeToolResult, resolveModelPoli
       }
     }
     const paths = new Map([...engine.heldLines()].filter(([key]) => !key.startsWith(SKILL_RESOURCE_PREFIX)));
-    return { paths, skills, effects, oldReads: scorer.hits };
+    return { paths, skills, effects };
   };
 }
 
@@ -19833,7 +19748,7 @@ function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
 // package.json
 var package_default2 = {
   name: "@nomadop/session-watcher",
-  version: "0.11.3",
+  version: "0.11.4",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -20831,13 +20746,14 @@ function foldInto(scratch, recorded, effects) {
   recorded.forEach(({ impacts }, effectAt) => impacts.forEach(({ resourceKey, kind, entries }, impactAt) => {
     const { fragments } = effects[effectAt].impacts[impactAt].mutation;
     const held = kind === "replace-fragments" ? /* @__PURE__ */ new Map() : scratch.get(resourceKey) ?? /* @__PURE__ */ new Map();
-    entries.forEach(({ key, chars, cjk, fp }, entryAt) => {
+    entries.forEach(({ key, chars, cjk, fp, moved }, entryAt) => {
       if (fragments[entryAt].vacate === true) {
         held.delete(key);
         return;
       }
       const entry = { chars, cjk, tokens: fragments[entryAt].tokens };
       if (fp !== void 0) entry.fp = fp;
+      if (moved === true) entry.moved = true;
       held.set(key, entry);
     });
     scratch.set(resourceKey, held);
@@ -20951,10 +20867,10 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
   }
   function recordOf2(pending, observation, frameCtx, scratch) {
     const recalled = typeof frameCtx.recall === "function" ? readRecord(frameCtx.recall(pending.toolUseId)) : null;
-    if (recalled !== null) return { record: recalled, recalled: true };
+    if (recalled !== null) return recalled;
     const record = partition(pending, observation, scratch);
     if (typeof frameCtx.remember === "function") frameCtx.remember(pending.toolUseId, record);
-    return { record, recalled: false };
+    return record;
   }
   function emit(record, pending, observation, telemetry, scratch) {
     const effects = priced(record.effects, pending.issuingPolicy.ctp);
@@ -21016,8 +20932,7 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
     };
     if (pending.nonFile !== null) return completeNonFileResource(pending, observation, telemetry);
     const ctx = frameCtx ?? {};
-    const { record, recalled } = recordOf2(pending, observation, ctx, scratch);
-    if (typeof ctx.observeRecord === "function") ctx.observeRecord({ pending, observation, record, recalled, scratch });
+    const record = recordOf2(pending, observation, ctx, scratch);
     return emit(record, pending, observation, telemetry, scratch);
   }
   function resourceKeysOf(pair, capture) {
@@ -21034,6 +20949,27 @@ function createToolEvidenceInterpreter({ attribution, profile, limits } = {}) {
     }
   }
   return { interpretToolUse, completeToolResult, resourceKeysOf };
+}
+
+// lib/scratch-view.js
+function createScratchView() {
+  let scratch = null;
+  const note = (options) => {
+    scratch = options?.scratch ?? scratch;
+  };
+  return {
+    observing: ({ interpretToolUse, completeToolResult }) => ({
+      interpretToolUse: (observation, context, options) => {
+        note(options);
+        return interpretToolUse(observation, context, options);
+      },
+      completeToolResult: (pending, observation, context, options) => {
+        note(options);
+        return completeToolResult(pending, observation, context, options);
+      }
+    }),
+    read: () => scratch
+  };
 }
 
 // lib/harness/dsh/load-message.js
@@ -21074,7 +21010,7 @@ var CARRIED_WORDING = {
   skill: (name3, text) => `Skill ${name3}:
 ${text}`
 };
-var carriedNote = (wording) => `Evidence carried from the replaced context: file text as read from disk, and skill text as the log recorded it. Each entry changes what the evidence of any earlier summary or kept file excerpt here states. ${wording.editGuard}`;
+var carriedNote = () => "The text of the files and skills this work holds, as read returned it.";
 function runsOf(numbers) {
   const runs = [];
   for (const number of numbers) {
@@ -21172,12 +21108,12 @@ function entryParts({ displayPath, totalLines, state, reason, write = [], omit =
   if (runs.length > 0) parts2.push(renderFileEvidence(displayPath, { totalLines, runs }).text);
   return parts2;
 }
-function renderCarried(source, wording) {
+function renderCarried(source) {
   const carried = [
     ...source.paths.flatMap(entryParts),
     ...(source.skills ?? []).filter((skill) => skill.removed !== true).map((skill) => CARRIED_WORDING.skill(skill.name, skill.text))
   ];
-  return carried.length > 0 ? [carriedNote(wording), ...carried].join("\n\n") : null;
+  return carried.length > 0 ? [carriedNote(), ...carried].join("\n\n") : null;
 }
 function showsChange(entry) {
   const { state, write = [], withdraw = [] } = entry;
@@ -21197,10 +21133,26 @@ function carriedEvidence(source) {
   return files.length + removed.length + skills.length > 0 ? { files, removed, skills } : null;
 }
 
+// lib/system-reminder.js
+var REMINDER_OPEN = "<system-reminder>\n";
+var REMINDER_CLOSE = "</system-reminder>";
+var ESCAPED_CLOSE = "<\\/system-reminder>";
+var escapeReminder = (text) => text.replaceAll(REMINDER_CLOSE, ESCAPED_CLOSE);
+function frameReminder(blocks) {
+  const framed = blocks.map((block) => block.type === "text" ? { ...block, text: escapeReminder(block.text) } : block);
+  framed[0] = { ...framed[0], text: `${REMINDER_OPEN}${framed[0].text}` };
+  const last = framed.at(-1);
+  if (last.type === "text") framed[framed.length - 1] = { ...last, text: `${last.text}
+${REMINDER_CLOSE}` };
+  else framed.push({ type: "text", text: `
+${REMINDER_CLOSE}` });
+  return framed;
+}
+
 // lib/inner-seal/state-block.js
 var STATE_WORDING = {
   heading: () => "Session state:",
-  unchanged: "unchanged since the last summary that shows it",
+  unchanged: "unchanged since last shown",
   empty: "(empty)"
 };
 var checkedCut = (asOfSeq) => {
@@ -21247,7 +21199,7 @@ function renderState({ asOfSeq, items }, stateItems) {
 var INNER_SEAL_KIND = "session-watcher-inner-seal";
 var sourceEventSeqsOf = ({ callSeq, pruneSeq, replaced }) => [callSeq, pruneSeq, ...replaced];
 var callSeqOf = (seqs) => seqs[0];
-function assembleCarrierSource({ slots, summaries, questions, attachments, oldReads = [], sourceTokens = [], verbatimSeqs = [], changes, state }) {
+function assembleCarrierSource({ slots, summaries, questions, attachments, sourceTokens = [], verbatimSeqs = [], changes, state }) {
   const injected = [.../* @__PURE__ */ new Set([...verbatimSeqs, ...questions.flat().flatMap(({ seqs }) => seqs ?? [])])];
   return {
     kind: INNER_SEAL_KIND,
@@ -21257,7 +21209,6 @@ function assembleCarrierSource({ slots, summaries, questions, attachments, oldRe
       text: summaries[index],
       ...questions[index].length > 0 ? { questions: questions[index].map(({ question, user }) => ({ question, user })) } : {},
       ...attachments[index].length > 0 ? { attachments: attachments[index] } : {},
-      ...oldReads[index]?.length > 0 ? { oldReads: oldReads[index] } : {},
       ...Number.isFinite(sourceTokens[index]) ? { sourceTokens: sourceTokens[index] } : {}
     })),
     ...injected.length > 0 ? { verbatimSeqs: injected } : {},
@@ -21265,6 +21216,7 @@ function assembleCarrierSource({ slots, summaries, questions, attachments, oldRe
     ...state === null ? {} : { state }
   };
 }
+var carrierPrefixOf = (wording) => `${REMINDER_OPEN}${wording.addresses}`;
 var CARRIER_WORDING = {
   slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
   imageSaved: (name3, tool) => `The image ${name3} is not in the current context; ${tool} can read the file below when it is needed.`,
@@ -21290,16 +21242,16 @@ function renderCarrier(source, wording) {
     }
   }
   flush();
-  const carried = renderCarried(source, wording);
+  const carried = renderCarried(source);
   const carriedBlock = carried === null ? null : { type: "text", text: carried };
   const stateBlock = Object.hasOwn(source, "state") ? { type: "text", text: renderState(source.state, wording.stateItems) } : null;
   for (const block of [carriedBlock, stateBlock]) if (block !== null) blocks.push(block);
-  return blocks.map((block, index) => {
+  return frameReminder(blocks.map((block, index) => {
     if (block.type !== "text") return block;
     const before = index === 0 ? "" : block === carriedBlock || block === stateBlock ? "\n\n" : "\n";
     const after = blocks[index + 1]?.type === "file" ? "\n" : "";
     return { type: "text", text: `${before}${block.text}${after}` };
-  });
+  }));
 }
 
 // lib/harness/dsh/transcript-observation.js
@@ -21545,15 +21497,6 @@ function reduceDshSnapshot(events) {
   }
   return { batches, observations: batches.flat(), diagnostics };
 }
-var stepKeyOf = (data) => isIndex(data?.turn) && isIndex(data?.step) ? `${data.turn}:${data.step}` : null;
-function heldObservationsOf(events) {
-  return events.flatMap((event) => {
-    const stepKey3 = stepKeyOf(event.data);
-    if (event.type === "step/start") return stepKey3 === null ? [] : [{ type: "step-start", stepKey: stepKey3 }];
-    const { observations } = reduceDshEvent(event);
-    return event.type === "tool/result" ? observations.map((observation) => ({ ...observation, stepKey: stepKey3 })) : observations;
-  });
-}
 
 // lib/harness/dsh/dialogue-source.js
 function createDshDialogueSource({ readSession }) {
@@ -21677,7 +21620,9 @@ function createMeasurementProjection({
   let scratch = /* @__PURE__ */ new Map();
   let sidecarByStepId = /* @__PURE__ */ new Map();
   let mainCalls = 0;
-  let recallSince = { priced: 0, net: 0, unpriced: 0 };
+  let recallSince = { priced: 0, net: 0 };
+  let share = null;
+  let shareAtCall = null;
   function factsFor(stepId) {
     let facts = sidecarByStepId.get(stepId);
     if (!facts) {
@@ -21758,6 +21703,8 @@ function createMeasurementProjection({
       case "epoch-boundary":
         callByToolUseId = /* @__PURE__ */ new Map();
         scratch = /* @__PURE__ */ new Map();
+        share = null;
+        shareAtCall = null;
         records.push({ type: "epoch" });
         break;
       case "turn-boundary":
@@ -21765,15 +21712,17 @@ function createMeasurementProjection({
         break;
       case "main-call":
         mainCalls += 1;
-        if (observation.recall !== void 0) {
-          const { net } = observation.recall;
-          if (Number.isFinite(net) && net >= 0) recallSince = { ...recallSince, priced: recallSince.priced + 1, net: recallSince.net + net };
-          else recallSince = { ...recallSince, unpriced: recallSince.unpriced + 1 };
+        shareAtCall = share;
+        if (Number.isFinite(observation.recall?.net) && observation.recall.net >= 0) {
+          recallSince = { priced: recallSince.priced + 1, net: recallSince.net + observation.recall.net };
+        }
+        if (observation.verdict === "pure" || observation.verdict === "other") {
+          share = (1 - RECALL_SHARE_ALPHA) * (share ?? 0) + (observation.verdict === "pure" ? RECALL_SHARE_ALPHA : 0);
         }
         break;
       case "usage": {
         const recall = recallSince;
-        recallSince = { priced: 0, net: 0, unpriced: 0 };
+        recallSince = { priced: 0, net: 0 };
         records.push({
           type: "step",
           id: observation.messageId,
@@ -21786,7 +21735,8 @@ function createMeasurementProjection({
             cacheWrite: observation.usage.cacheWrite
           },
           mainCallOrdinal: mainCalls,
-          ...recall.priced + recall.unpriced > 0 ? { recall } : {}
+          ...recall.priced > 0 ? { recall } : {},
+          ...shareAtCall === null ? {} : { p: shareAtCall }
         });
         break;
       }
@@ -22106,6 +22056,7 @@ function composeWatcher({
   const dialogueSource = createDshDialogueSource({ readSession });
   const dialogueProjection = createDshDialogueProjection();
   const { interpretToolUse, completeToolResult, resourceKeysOf } = interpretersFor({ workingTree, cwd });
+  const scratchView = createScratchView();
   const policyFor = (modelId) => {
     const policy = modelPolicyFor(modelId, cacheTtl() ?? DEFAULT_CACHE_TTL);
     const saved = loadPricingOverride(modelId);
@@ -22130,8 +22081,7 @@ function composeWatcher({
       cwd,
       projectRoot: cwd,
       resolveModelPolicy,
-      interpretToolUse,
-      completeToolResult
+      ...scratchView.observing({ interpretToolUse, completeToolResult })
     }),
     resourceKeysOf,
     modelPolicyFor: policyFor
@@ -22155,8 +22105,8 @@ function composeWatcher({
     resolveModelPolicy: policyFor,
     frameCtx: sessionId ? { recall } : {}
   });
-  const heldView = (events) => view(heldObservationsOf(events));
-  return { watcher, dialogueSource, dialogueProjection, heldView };
+  const heldView = (events) => view(reduceDshSnapshot(events).observations);
+  return { watcher, dialogueSource, dialogueProjection, heldView, heldScratch: scratchView.read };
 }
 
 // dsh/src/observed-read.js
@@ -22245,7 +22195,12 @@ function sealedBatch(batch, selected) {
 }
 var changed = (before, after) => before.length !== after.length || before.some((observation, index) => observation !== after[index]);
 var sameRecall = (a, b) => a === void 0 || b === void 0 ? a === b : a.net === b.net;
-var mainCallFact = (seq, recall) => ({ type: "main-call", sourceOrdinal: seq, ...recall == null ? {} : { recall } });
+var mainCallFact = (seq, recall, verdict) => ({
+  type: "main-call",
+  sourceOrdinal: seq,
+  ...recall == null ? {} : { recall },
+  ...verdict == null ? {} : { verdict }
+});
 function createSourceFold() {
   const kept = [];
   const keptBySeq = /* @__PURE__ */ new Map();
@@ -22266,16 +22221,16 @@ function createSourceFold() {
         rewound = true;
       }
     }
-    for (const { seq, recall } of input.recall ?? []) {
+    for (const { seq, recall, verdict } of input.recall ?? []) {
       const entry2 = keptBySeq.get(seq);
       if (entry2 === void 0) continue;
       const at = entry2.batch.findIndex((observation) => observation.type === "main-call");
-      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0)) continue;
-      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall));
+      if (at < 0 || sameRecall(entry2.batch[at].recall, recall ?? void 0) && entry2.batch[at].verdict === (verdict ?? void 0)) continue;
+      entry2.batch = entry2.batch.with(at, mainCallFact(seq, recall, verdict));
       rewound = true;
     }
-    const own = input.recall?.find((stated) => stated.seq === input.seq)?.recall;
-    const batch = input.mainCall ? [mainCallFact(input.seq, own), ...observations] : observations;
+    const own = input.recall?.find((stated) => stated.seq === input.seq);
+    const batch = input.mainCall ? [mainCallFact(input.seq, own?.recall, own?.verdict), ...observations] : observations;
     if (batch.length === 0) return { batch: null, rewound, diagnostics };
     if (batch.some((observation) => observation.type === "epoch-boundary")) epochStart = kept.length;
     const entry = { seq: input.seq, batch };
@@ -22313,7 +22268,8 @@ function eventFactOf(event) {
     step: blocks.length > 0 ? { turn: event.data.turn, step: event.data.step } : null,
     owner: { turn: event.data?.turn, step: event.data?.step },
     assistant,
-    skeletonCall: blocks.some((block) => block?.type === "tool-call" && block.name === TURN_SKELETON_TOOL)
+    skeletonCall: blocks.some((block) => block?.type === "tool-call" && block.name === TURN_SKELETON_TOOL),
+    pruned: isPrunedResult(event) ? { turn: event.data?.turn, step: event.data?.step, callId: event.data?.message?.toolCallId } : null
   };
 }
 var isPrunedResult = (event) => event.type === "tool/result" && event.surfaceOp?.op === "replace";
@@ -22382,27 +22338,36 @@ function eventTextOf(event) {
 }
 var NO_TEXT = " | (no semantic text)";
 var CARRIER_KINDS = /* @__PURE__ */ new Set([LOAD_MESSAGE_KIND, INNER_SEAL_KIND, CHECKPOINT_KIND]);
-function neighborLine(event, textOf4) {
+function neighborLine(event, textOf5) {
   const identity = `- seq ${event.seq} | ${event.type} | ${new Date(event.time).toISOString()}`;
   if (event.type === "user/message" && CARRIER_KINDS.has(event.data?.source?.kind)) return identity;
-  const text = textOf4(event);
+  const text = textOf5(event);
   return `${identity}${text.length === 0 ? NO_TEXT : `
   ${text.replaceAll("\n", "\n  ")}`}`;
 }
-function formatEventRead({ sessionId, title, window: window2, textOf: textOf4 }) {
+function formatEventRead({ sessionId, title, window: window2, textOf: textOf5 }) {
   const { target } = window2;
   const lines = [`Session ${sessionId} \u2014 ${title}`, `Target event seq ${target.seq}:`, "```json", JSON.stringify(eventTextOf(target), null, 2), "```"];
   for (const [heading, neighbors] of [["Before:", window2.events.filter((event) => event.seq < target.seq)], ["After:", window2.events.filter((event) => event.seq > target.seq)]]) {
-    if (neighbors.length > 0) lines.push("", heading, ...neighbors.map((event) => neighborLine(event, textOf4)));
+    if (neighbors.length > 0) lines.push("", heading, ...neighbors.map((event) => neighborLine(event, textOf5)));
   }
   return lines.join("\n");
 }
 
+// lib/inner-seal/read-block-record.js
+var READ_BLOCK_RECORD_NAME = "inner-read-block";
+var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isIndex3 = (value) => Number.isSafeInteger(value) && value >= 0;
+var isText3 = (value) => typeof value === "string" && value !== "";
+var readBlockRecordOf = ({ turn, step, callId, path: path3, first, last }) => ({ v: 1, turn, step, callId, path: path3, first, last });
+var isReadBlockRecord = (data) => isObject4(data) && data.v === 1 && isIndex3(data.turn) && isIndex3(data.step) && isText3(data.callId) && isText3(data.path) && isIndex3(data.first) && isIndex3(data.last) && data.first <= data.last;
+
 // lib/harness/dsh/recall-judge.js
+var READ_BLOCK_TYPE = pluginRecordType(READ_BLOCK_RECORD_NAME);
 var ABORTED_BEFORE_DISPATCH = "ABORTED_BEFORE_DISPATCH";
 var stepKey = ({ turn, step } = {}) => `${turn}:${step}`;
 var isInitiated = ({ target, dispatched, skipped }) => target !== void 0 && dispatched && !skipped;
-var callRecallOf = (call = {}) => isInitiated(call) ? "recall" : call.target === void 0 || call.dispatched || call.resulted ? "other" : "unknown";
+var callRecallOf = (call = {}) => call.blocked === true || isInitiated(call) ? "recall" : call.target === void 0 || call.dispatched || call.resulted ? "other" : "unknown";
 function judgeOf({ tools, calls }) {
   const states = tools.map(({ id }) => callRecallOf(calls.get(id)));
   if (states.includes("other") || states.length === 0) return "other";
@@ -22419,7 +22384,7 @@ function createRecallJudge({ sessionId }) {
   function open(event) {
     const content = event.data?.message?.content;
     const tools = Array.isArray(content) ? content.filter((block) => block?.type === "tool-call") : [];
-    const calls = new Map(tools.map((block) => [block.id, { target: targetOf2(block, event.seq), dispatched: false, skipped: false, resulted: false }]));
+    const calls = new Map(tools.map((block) => [block.id, { target: targetOf2(block, event.seq), dispatched: false, skipped: false, resulted: false, blocked: false }]));
     return { seq: event.seq, step: stepKey(event.data), tools, calls };
   }
   function push(event, { track = true } = {}) {
@@ -22433,6 +22398,10 @@ function createRecallJudge({ sessionId }) {
       if (type === "tool/call" && stepKey(data) === latest.step) {
         const call = latest.calls.get(data.callId);
         if (call !== void 0) call.dispatched = true;
+        touched = { sample: latest, call };
+      } else if (type === READ_BLOCK_TYPE && event.ignorable === true && isReadBlockRecord(data) && stepKey(data) === latest.step) {
+        const call = latest.calls.get(data.callId);
+        if (call !== void 0) call.blocked = true;
         touched = { sample: latest, call };
       } else if (type === "tool/result") {
         const call = stepKey(data) === latest.step ? latest.calls.get(data.message?.toolCallId) : void 0;
@@ -22518,29 +22487,29 @@ function innerQuote({ n, estimate, cRatio, preset, summaryReadCost }) {
     trigger: quoted2 ? "quote" : null
   };
 }
-var isObject4 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isSeq = (value) => Number.isSafeInteger(value) && value >= 0;
 var orNull = (holds) => (value) => value === null || holds(value);
 var QUOTE_QUANTITIES = ["lA", "bEst", "cEst", "sEst", "cRatio", "nRef", "N", "jRef", "q"];
 function isQuote(value) {
-  return isObject4(value) && isSeq(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && value.trigger === "quote";
+  return isObject5(value) && isSeq(value.n) && QUOTE_QUANTITIES.every((key) => orNull(Number.isFinite)(value[key])) && Number.isFinite(value.fee) && Number.isFinite(value.kappa) && [null, "left", "right"].includes(value.arm) && value.trigger === "quote";
 }
 
 // lib/inner-seal/attempt-record.js
 var ATTEMPT_RECORD_NAME = "inner-attempt";
-var isObject5 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isSeq2 = (value) => Number.isSafeInteger(value) && value >= 0;
 var attemptRecordOf = ({ range, request, quote }) => ({ v: 1, range, request, quote });
-var isAttemptRecord = (data) => isObject5(data) && data.v === 1 && isObject5(data.range) && isSeq2(data.range.first) && isSeq2(data.range.last) && isSeq2(data.range.count) && isObject5(data.request) && isObject5(data.request.messages) && isObject5(data.request.messages.tail);
+var isAttemptRecord = (data) => isObject6(data) && data.v === 1 && isObject6(data.range) && isSeq2(data.range.first) && isSeq2(data.range.last) && isSeq2(data.range.count) && isObject6(data.request) && isObject6(data.request.messages) && isObject6(data.request.messages.tail);
 var attemptQuoteOf = (data) => isQuote(data.quote) ? data.quote : null;
 
 // lib/inner-seal/call-record.js
 var CALL_RECORD_NAME = "inner-call";
 var MAX_CARRIER_EVIDENCE = 8;
 var UNCACHED_SHARE_ALERT = 1 / 2;
-var isObject6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject7 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isSeq3 = (value) => Number.isSafeInteger(value) && value >= 0;
-var isText3 = (value) => typeof value === "string";
+var isText4 = (value) => typeof value === "string";
 function callRecordOf({ purpose, selection, input, range, stream, endedAt, attempt, carrierCache, thrown }) {
   return {
     v: 1,
@@ -22555,9 +22524,9 @@ function callRecordOf({ purpose, selection, input, range, stream, endedAt, attem
     ...attempt == null ? {} : { attempt }
   };
 }
-var isCallRecord = (data) => isObject6(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq3) && Array.isArray(data.stream) && isObject6(data.input) && isObject6(data.input.tail) && (data.thrown === void 0 || isObject6(data.thrown) && isText3(data.thrown.message));
-var isCarrierResult = (value) => isObject6(value) && isText3(value.result) && (value.reason === void 0 || isText3(value.reason));
-var isCarrierCache = (value) => isObject6(value) && Array.isArray(value.results) && value.results.length > 0 && value.results.length <= MAX_CARRIER_EVIDENCE && value.results.every(isCarrierResult) && Number.isSafeInteger(value.omitted) && value.omitted >= 0;
+var isCallRecord = (data) => isObject7(data) && data.v === 1 && Array.isArray(data.range) && data.range.length > 0 && data.range.every(isSeq3) && Array.isArray(data.stream) && isObject7(data.input) && isObject7(data.input.tail) && (data.thrown === void 0 || isObject7(data.thrown) && isText4(data.thrown.message));
+var isCarrierResult = (value) => isObject7(value) && isText4(value.result) && (value.reason === void 0 || isText4(value.reason));
+var isCarrierCache = (value) => isObject7(value) && Array.isArray(value.results) && value.results.length > 0 && value.results.length <= MAX_CARRIER_EVIDENCE && value.results.every(isCarrierResult) && Number.isSafeInteger(value.omitted) && value.omitted >= 0;
 
 // public/lib/requestPrice.js
 function requestCostOf(usage, ratio) {
@@ -22596,16 +22565,19 @@ function createRecallFacts({ sessionId }) {
     if (attempt !== void 0 && attempt.epoch === facts.epoch && attempt.callSeq === callSeqOf(input.sealed)) parent = { carrier: event.seq, ratio: attempt.ratio };
   }
   const isPost2 = (call, facts) => facts.carriers.find((carrier) => carrier.seq === call.parent.carrier)?.post?.seq === call.seq;
-  function factOf(call, facts) {
-    if (call.parent === null) return void 0;
-    const judged = judgeOf(call.sample);
-    if (judged === "unknown") return { net: null };
-    if (judged !== "pure") return void 0;
+  function recallOf(call, facts, verdict) {
+    if (verdict === "unknown") return { net: null };
+    if (verdict !== "pure") return null;
     const { usage, parent: seal } = call;
     if (usage === null || !isTrusted(seal.ratio)) return { net: null };
     const cost = requestCostOf(usage, seal.ratio);
     const net = isPost2(call, facts) ? cost - rebuildPremiumOf(uncachedOf(usage), seal.ratio) : cost;
     return Number.isFinite(net) && net >= 0 ? { net } : { net: null };
+  }
+  function factOf(call, facts) {
+    if (call.parent === null) return { recall: null, verdict: null };
+    const verdict = judgeOf(call.sample);
+    return { recall: recallOf(call, facts, verdict), verdict };
   }
   function push(event, input, facts) {
     if (startsEpoch(input)) {
@@ -22619,10 +22591,10 @@ function createRecallFacts({ sessionId }) {
     if (judged === void 0) return [];
     if (isMainCall(event)) {
       latest = { seq: event.seq, sample: judged.sample, usage: admittedUsageOf(input), parent };
-      const recall = factOf(latest, facts);
-      return recall === void 0 ? [] : [{ seq: event.seq, recall }];
+      const fact = factOf(latest, facts);
+      return fact.verdict === null ? [] : [{ seq: event.seq, ...fact }];
     }
-    return [{ seq: latest.seq, recall: factOf(latest, facts) ?? null }];
+    return [{ seq: latest.seq, ...factOf(latest, facts) }];
   }
   return { push };
 }
@@ -23239,12 +23211,12 @@ function createWatcherTable({
       facts: /* @__PURE__ */ new Map(),
       sourceReady: false
     };
-    const { watcher, dialogueSource, dialogueProjection, heldView: viewOf } = compose({
+    const { watcher, dialogueSource, dialogueProjection, heldView: viewOf, heldScratch: scratchOf } = compose({
       sessionId,
       cwd: session.header.cwd,
       cacheTtl: () => entry.cacheTtl
     });
-    Object.assign(entry, { watcher, dialogueSource, dialogueProjection, heldView: viewOf });
+    Object.assign(entry, { watcher, dialogueSource, dialogueProjection, heldView: viewOf, heldScratch: scratchOf });
     entry.driver = createDshSourceDriver({
       sessionId,
       onDiagnostics: (diagnostics) => writeAll(sessionId, diagnostics),
@@ -23333,7 +23305,11 @@ function createWatcherTable({
     const entry = entries.get(sessionId);
     return entry === void 0 ? null : entry.heldView(events);
   }
-  return { ensure, feed, dispose, disposeAll, get, waitLive, live: live2, onChange, eventFacts, heldView };
+  function heldScratch(sessionId) {
+    const entry = entries.get(sessionId);
+    return entry?.state === "live" ? entry.heldScratch?.() ?? null : null;
+  }
+  return { ensure, feed, dispose, disposeAll, get, waitLive, live: live2, onChange, eventFacts, heldView, heldScratch };
 }
 
 // dsh/src/model-names.js
@@ -23857,6 +23833,7 @@ function createRpcHandler({
 var PI_AI_SERVICE = "sessionWatcherPiAi";
 var ORIGINAL_ROW = "include:llm-pi-ai";
 var CARRIER_EVIDENCE_SERVICE = "sessionWatcherCarrierEvidence";
+var CARRIER_PREFIX_SERVICE = "sessionWatcherCarrierPrefix";
 var CARRIER_SETTINGS_SERVICE = "sessionWatcherCarrierSettings";
 
 // dsh/src/carrier-evidence.js
@@ -24620,7 +24597,7 @@ function createTurnReadService({
 }
 
 // lib/harness/dsh/turn-recovery.js
-var NOTICE = `Historical turns are evidence of what happened; read them to confirm or correct the handoff summary. Each session header names that session's id, and a row's T is that session's event seq; read it in full with ${EVENT_READ_TOOL}(session_id, T).`;
+var NOTICE = `Historical turns are the record of what happened; read them for detail the handoff summary leaves out. Each session header names that session's id, and a row's T is that session's event seq; read it in full with ${EVENT_READ_TOOL}(session_id, T).`;
 var SEARCH_HIT = `line is the event seq a match sits in, span the events of its fold from its anchor to its results, and transcript_path the session id; read ${EVENT_READ_TOOL} with transcript_path as session_id and line as seq for the full event. An entry's scope names its turn: pass it as scope to search that turn alone, or as turn_page's before to read the history leading up to it.`;
 var LOCATE_HIT = `A hit's transcript_path is the session id that holds its turn at event T of its scope; read ${EVENT_READ_TOOL} with transcript_path as session_id and T as seq for the full event. The other entries are the turns adjacent to a hit. Pass a scope as turn_search's scope to search that turn for a literal, or as turn_page's before to read the history leading up to it.`;
 function createDshTurnRecovery() {
@@ -24992,18 +24969,13 @@ async function loadHandoffInto({ agent, session, deliver, kit, signal, token, cw
     }
   };
 }
-var lineageStepOf = (listing, closing) => `1. Place the summary in its lineage. \`lineage\` in the payload runs oldest to newest. The sessions the budget left out are collapsed into runs marked \`omitted\`, ahead of the newest sessions' headlines, and the budget may keep none. When the next task or what is already in context needs the headlines of an omitted run, \`lineage_headlines\` with that run's numbers as \`k\` (\`S2-S5\` is \`2-5\`) reads them; read a run for that need only, not by default. The payload's turn page holds the newest turns. From the page, ${listing}. When a headline bears on the next task and the page does not reach that member, call \`turn_page\` with that member's label as \`before\`; a session inside an omitted run is \`S{k}\`, \`k\` being its own number.${closing}`;
-var presentStep = "3. Present, then hold. Run `git status --short && git log -1 --oneline` once, then write, from the kept paths and that output: the objective, in one line; the working state, each claim the summary makes about the current state set against what the kept paths and the git output show (matches, differs and how, or reaches neither and so unverified); the next task and its entry points, with where the names to place below sit and the turns step 1 named; blockers and risks; the kept paths now in context and the load token. Then stop and wait for the user to confirm or correct it. The next task's first act begins after the reply.";
-var resumeStep = "3. Resume. Run `git status --short && git log -1 --oneline` once and set each claim the summary makes about the current state against the kept paths and that output; a claim they do not reach counts as a deviation when your next step depends on it. Before your first step on the task, say in one sentence which task you are resuming and your next step, adding a deviation or risk only when it changes that step. Then carry the task on in this turn from the summary and the history, within what it was already authorized to do. A question, approval or permission the task left open still stands: ask it and wait. When a deviation from the summary leaves the task's direction or authorization, or a safe next step, undecided, ask one specific question about it and wait; otherwise carry on.";
+var TURN_PAGE_CLAUSE = "When a step needs a detail they leave out, `turn_page` reads older turns (an `S{k}:{T}` cursor or an `S{k}` label as `before`) and `lineage_headlines` the headlines of an omitted run (its numbers as `k`, `S2-S5` being `2-5`).";
+var presentBody = (invoke) => `Treat the summary, the kept files and the newest turns in the payload as the established current state of the task.${invoke} Then present, and hold: write the objective, in one line; the working state, as the summary states it; the next task and its entry points, with where the names to place below sit; blockers and risks; the kept paths now in context and the load token. Then stop and wait for the user to confirm or correct it. The next task's first act begins after the reply and builds on that state without checking or restating it. ${TURN_PAGE_CLAUSE}`;
+var resumeBody = (invoke) => `Treat the summary, the kept files and the newest turns in the payload as the established current state of the task, and build on them without checking or restating them.${invoke} Then continue the task directly from its next step, within what it was already authorized to do; a question, approval or permission it left open is still open: ask it and wait. ${TURN_PAGE_CLAUSE}`;
 function loadedText({ token, skipped, unread, toPlace, skills, empty, reads }, { resume = false } = {}) {
-  const placed = reads > 0 ? `${loadedLead(token)} The harness placed two messages before this one, in this order; no tool was run for them. The first holds the delivery, recorded as the \`load_handoff\` call, with its payload. The second holds the kept file excerpts. They are recorded as \`read\` calls, one per file, each shown from the working tree, except those listed as skipped below; a range listed below as not reached is shown in part or not at all. Do not repeat any of those calls; where a result says part of a range was cut, read the rest as that result says.` : `${loadedLead(token)} The harness placed one message before this one; no tool was run for it. It holds the delivery, recorded as the \`load_handoff\` call, with its payload. Do not repeat that call.`;
-  const summaryOnly = resume ? "when the task calls for it" : "after the user agrees";
-  const skillStep = skills.length > 0 ? `2. Load the kept skills: invoke ${skills.map(quoted).join(", ")} through the skill tool. A skill named only in the summary is invoked ${summaryOnly}.` : `2. The handoff keeps no skills; a skill named only in the summary is invoked through the skill tool ${summaryOnly}.`;
-  const lineageStep = resume ? lineageStepOf("read the turns whose `A:` note bears on the next task", "") : lineageStepOf("list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address", " That list is what step 3 reports.");
-  const sections = [
-    placed,
-    ["Then:", lineageStep, skillStep, resume ? resumeStep : presentStep].join("\n")
-  ];
+  const placed = reads > 0 ? `${loadedLead(token)} The two messages before this one are the handoff's \`load_handoff\` call with its payload, then the \`read\` calls of the kept files, one per file, each result the file's current text, except those listed as skipped below; a range listed below as not reached is shown in part or not at all. Do not repeat any of those calls; where a result says part of a range was cut, read the rest as that result says.` : `${loadedLead(token)} The message before this one is the handoff's \`load_handoff\` call with its payload. Do not repeat that call.`;
+  const invoke = skills.length > 0 ? ` First invoke ${skills.map(quoted).join(", ")} through the skill tool.` : "";
+  const sections = [placed, (resume ? resumeBody : presentBody)(invoke)];
   if (skipped.length > 0) {
     sections.push(["Skipped, not read:", ...skipped.map(({ path: path3, reason }) => `- ${quoted(path3)}: ${quoted(reason)}`)].join("\n"));
   }
@@ -25551,8 +25523,7 @@ function argumentsOf(call) {
   }
 }
 var CARRIER_TABLE = Object.freeze({
-  addresses: `These summaries stand in for earlier turns of this session; replacing them changed no file and no state, so the work carries on from them. Each summary line below opens with seq numbers: the addresses, in this session's log, of the events it summarizes, which the session history tools can read. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
-  editGuard: "The reads behind this file text still count in this session, so edit a file without reading it again.",
+  addresses: `Work done in this session. Each line opens with the seq numbers of its events in this session's log, which the session history tools can read for detail a line leaves out. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
   imageReadTool: "read_image",
   stateItems: Object.freeze([
     stateItem({
@@ -25637,11 +25608,11 @@ function touchedOf({ paths, skills, effects }, seqs) {
 
 // lib/inner-seal/end-record.js
 var END_RECORD_NAME = "inner-end";
-var isObject7 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject8 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isSeq4 = (value) => Number.isSafeInteger(value) && value >= 0;
-var isText4 = (value) => typeof value === "string";
+var isText5 = (value) => typeof value === "string";
 var endRecordOf = ({ attempt, outcome, reason }) => ({ v: 1, attempt, outcome, reason });
-var isEndRecord = (data) => isObject7(data) && data.v === 1 && isSeq4(data.attempt) && (data.outcome === "failed" || data.outcome === "cancelled") && isText4(data.reason);
+var isEndRecord = (data) => isObject8(data) && data.v === 1 && isSeq4(data.attempt) && (data.outcome === "failed" || data.outcome === "cancelled") && isText5(data.reason);
 
 // lib/inner-seal/ladder.js
 var FORMAT_FAILURE = "format";
@@ -26027,7 +25998,7 @@ async function quoteOf({ session, agent, signal, range, stepN, held, bySeq, read
       const message = session.deriveEventMessage(bySeq.get(seq));
       return message === null ? [] : [requestTextOf(message)];
     });
-    estimate = estimateInnerA({ n: stepN, texts, bText: renderCarried(carried, CARRIER_TABLE), ctp });
+    estimate = estimateInnerA({ n: stepN, texts, bText: renderCarried(carried), ctp });
   } catch (error) {
     writeDiagnostic(session.id, hostDiagnostic("inner_quote_failed", error));
   }
@@ -26158,7 +26129,6 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
           summaries: summary.summaries,
           questions: questionsOf({ slots, bySeq }),
           attachments: slotAttachments,
-          oldReads: slots.map(({ seqs }) => held.oldReads.filter(({ seq }) => seqs.includes(seq))),
           sourceTokens: summary.sourceTokens,
           verbatimSeqs: summary.verbatimSeqs,
           changes: carriedOf(earlier, current),
@@ -26186,6 +26156,136 @@ function createInnerSeal({ readMode, eventFacts, readSession, heldView, readFile
     attempt.committed();
     return next();
   };
+}
+
+// lib/held-read.js
+function heldReadOf({ lines, entryAt }) {
+  if (lines.length === 0) return null;
+  for (const line of lines) {
+    if (escapeReminder(line.text) !== line.text) return null;
+    const entry = entryAt(line.number);
+    if (entry?.fp !== fingerprintOf(normalizeLine(line.text)) || entry.moved === true) return null;
+    if (entry.chars !== line.text.length && entry.chars !== rowOf(line).length) return null;
+  }
+  return { first: lines[0].number, last: lines.at(-1).number };
+}
+
+// dsh/src/read-guard.js
+var READ_BLOCK_RECORD_TYPE = pluginRecordType(READ_BLOCK_RECORD_NAME);
+var NATIVE_READ = "read";
+var readBlockFeedback = ({ first, last, path: path3 }) => `Error: Lines ${first}-${last} of ${path3} are already in your context word for word; reading them gives the same text. Use it.`;
+var isObject9 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function linesOf2(value) {
+  if (!isObject9(value) || typeof value.path !== "string" || !Array.isArray(value.lines)) return null;
+  const sound = value.lines.every((line) => isObject9(line) && Number.isSafeInteger(line.number) && typeof line.text === "string");
+  return sound ? value.lines : null;
+}
+var textOf3 = (content) => Array.isArray(content) && content.every((block) => block?.type === "text") ? content.map((block) => block.text).join("") : null;
+function createReadGuard({ readMode, heldScratch, eventFacts, recallRecord, workingTree, fsOf, appendPluginRecord: appendPluginRecord2 }) {
+  const blocked = /* @__PURE__ */ new WeakMap();
+  const skip = (sessionId, code, reason) => {
+    writeDiagnostic(sessionId, hostDiagnostic(code, reason));
+    return null;
+  };
+  function prunedResourcesOf(session, facts) {
+    const keys = /* @__PURE__ */ new Set();
+    for (const seq of session.surface.nodes) {
+      const fact = facts.get(seq);
+      if (fact === void 0) return null;
+      const { pruned } = fact;
+      if (pruned === null) continue;
+      if (!isObject9(pruned) || !Number.isSafeInteger(pruned.turn) || !Number.isSafeInteger(pruned.step) || typeof pruned.callId !== "string") return null;
+      const record = readRecord(recallRecord(session.id, callIdOf(pruned.turn, pruned.step, pruned.callId)));
+      if (record === null) return null;
+      for (const { impacts } of record.effects) for (const { resourceKey } of impacts) keys.add(resourceKey);
+    }
+    return keys;
+  }
+  function carrierDoubt(session, key) {
+    const sources = session.deriveMessages().filter((message) => carriesEvidence(message.source)).map((message) => message.source);
+    const lines = /* @__PURE__ */ new Set();
+    let named = false;
+    for (const source of sources) {
+      for (const entry of source.paths ?? []) {
+        if (entry.path !== key) continue;
+        named = true;
+        for (const number of [...entry.omit ?? [], ...entry.withdraw ?? []]) lines.add(number);
+      }
+    }
+    if (!named) return { whole: false, lines };
+    const carried = foldCarried(sources).paths.get(key);
+    return { whole: carried === void 0 || carried.state === "unreadable" || carried.state === "empty", lines };
+  }
+  function currentStepOf(session, facts) {
+    for (let at = session.surface.nodes.length - 1; at >= 0; at -= 1) {
+      const step = facts.get(session.surface.nodes[at])?.step;
+      if (step !== null && step !== void 0) return step;
+    }
+    return null;
+  }
+  async function judge(exec, result) {
+    const { session } = exec.agent;
+    const returned = linesOf2(result.value);
+    if (returned === null) return null;
+    const file = exec.arguments?.file_path;
+    const key = workingTree.resolve(session.header?.cwd, file);
+    const scratch = heldScratch(session.id);
+    const facts = eventFacts(session.id);
+    if (scratch === null || facts === null) return null;
+    const held = scratch.get(key);
+    if (held === void 0) return null;
+    const range = heldReadOf({ lines: returned, entryAt: (number) => held.get(number) });
+    if (range === null) return null;
+    const pruned = prunedResourcesOf(session, facts);
+    if (pruned === null) return skip(session.id, "read_guard_unavailable", "a node of the surface has no fact, or a pruned result of it names no resource");
+    if (pruned.has(key)) return null;
+    const doubt = carrierDoubt(session, key);
+    if (doubt.whole || returned.some(({ number }) => doubt.lines.has(number))) return null;
+    const step = currentStepOf(session, facts);
+    if (step === null) return skip(session.id, "read_guard_unavailable", "the surface holds no counted step");
+    const fs3 = fsOf();
+    if (fs3 === void 0) return skip(session.id, "read_guard_unmapped", "the host has no fs service");
+    const found = await targetOf(fs3, key, exec.signal);
+    if (exec.signal.aborted) return null;
+    if (found === null || found.displayPath !== result.value.path) return skip(session.id, "read_guard_unmapped", `${file} is not the file the read printed`);
+    return {
+      text: readBlockFeedback({ ...range, path: file }),
+      record: { turn: step.turn, step: step.step, callId: exec.callId, path: file, ...range }
+    };
+  }
+  async function postExecute(exec, result, next) {
+    const decision = await next();
+    const session = exec.agent?.session;
+    try {
+      const direct = decision.kind === "accept" && decision.content === void 0 && !Object.hasOwn(decision, "value") && exec.parent === void 0 && exec.name === NATIVE_READ && result.isError === false;
+      if (!direct || session === void 0 || readMode(session).mode !== "on") return decision;
+      const verdict = await judge(exec, result);
+      if (verdict === null) return decision;
+      blocked.set(exec, verdict);
+      return {
+        kind: "block",
+        feedback: [{ type: "text", text: verdict.text }],
+        ...decision.additionalContexts === void 0 ? {} : { additionalContexts: decision.additionalContexts }
+      };
+    } catch (error) {
+      if (!exec.signal.aborted && session !== void 0) writeDiagnostic(session.id, hostDiagnostic("read_guard_failed", error));
+      return decision;
+    }
+  }
+  function observeResult(exec, result) {
+    const verdict = blocked.get(exec);
+    if (verdict === void 0) return;
+    blocked.delete(exec);
+    const { session } = exec.agent;
+    try {
+      if (result.isError === true && textOf3(result.content) === verdict.text) {
+        appendPluginRecord2(session, READ_BLOCK_RECORD_TYPE, readBlockRecordOf(verdict.record));
+      }
+    } catch (error) {
+      writeDiagnostic(session.id, hostDiagnostic("read_guard_record_failed", error));
+    }
+  }
+  return { postExecute, observeResult };
 }
 
 // dsh/src/inner-monitor.js
@@ -26317,7 +26417,7 @@ function blockText2(block, callText) {
     case "tool-call":
       return callText(block);
     case "tool-result":
-      return textOf3(block.blocks, callText);
+      return textOf4(block.blocks, callText);
     case "image":
     case "file":
       return placeholderOf(block);
@@ -26327,12 +26427,12 @@ function blockText2(block, callText) {
 }
 var rawCallText = (block) => [block.name, block.arguments].filter((part) => typeof part === "string" && part !== "").join(" ");
 var displayCallText = (block) => typeof block.name === "string" ? callLabel(block) : rawCallText(block);
-var textOf3 = (blocks, callText) => blocks.map((block) => blockText2(block, callText)).filter((text) => text !== "").join("\n");
+var textOf4 = (blocks, callText) => blocks.map((block) => blockText2(block, callText)).filter((text) => text !== "").join("\n");
 function eventPreviewText(event) {
-  return textOf3(sourceEventView(event, { visible: true }).blocks, rawCallText);
+  return textOf4(sourceEventView(event, { visible: true }).blocks, rawCallText);
 }
 function eventDisplayText(event) {
-  return textOf3(sourceEventView(event, { visible: true }).blocks, displayCallText);
+  return textOf4(sourceEventView(event, { visible: true }).blocks, displayCallText);
 }
 
 // dsh/src/monitor-settlement-recall.js
@@ -26451,6 +26551,7 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
       if (verdict === "pure") {
         for (const { id } of sample2.tools) {
           const { target } = sample2.calls.get(id);
+          if (target === void 0) continue;
           const landings = reads.get(target) ?? /* @__PURE__ */ new Map();
           reads.set(target, landings);
           if (at !== void 0) landings.set(at, { at, seq });
@@ -26486,9 +26587,7 @@ function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, s
 
 // dsh/src/inner-monitor-tools.js
 var STATE_WARNING = Object.freeze({ check: "state-check", mixed: "state-mixed", write: "state-write" });
-var OLD_ATTRIBUTION_WARNING = "old-attribution";
 var STEP_LEVEL = Object.values(STATE_WARNING);
-var THRESHOLD_PERCENT = Math.round(OLD_SHARE_ABOVE * 100);
 function groupBy(list, key) {
   const groups = /* @__PURE__ */ new Map();
   for (const item of list) groups.set(key(item), [...groups.get(key(item)) ?? [], item]);
@@ -26502,16 +26601,10 @@ function standsFor(event, seq, log) {
     return false;
   }
 }
-function shareOf({ oldLines, newLines }) {
-  const total = oldLines + newLines;
-  if (total === 0) return { percent: null, over: false };
-  const percent = Math.floor(oldLines * 100 / total);
-  return { percent, over: oldLines / total > OLD_SHARE_ABOVE && percent <= THRESHOLD_PERCENT };
-}
 var warn = (card, warning) => {
   if (!card.warnings.some(({ kind }) => kind === warning.kind)) card.warnings.push(warning);
 };
-function slotToolsOf({ events, range, log, kinds, dispatches, oldReads }) {
+function slotToolsOf({ events, range, log, kinds, dispatches }) {
   const calls = events.flatMap(toolCallsOf);
   const results = events.flatMap((event) => {
     const result = toolResultOf(event);
@@ -26548,13 +26641,6 @@ function slotToolsOf({ events, range, log, kinds, dispatches, oldReads }) {
     const exact = holders.length === 1 && holder.name === dispatched.data.name && holder.input === dispatched.data.arguments;
     settle(kind, exact ? holder : null, { kind });
   }
-  for (const hit of oldReads) {
-    settle(
-      OLD_ATTRIBUTION_WARNING,
-      all.find((card) => card.id === hit.toolUseId && card.result?.seq === hit.seq) ?? null,
-      { kind: OLD_ATTRIBUTION_WARNING, oldLines: hit.oldLines, newLines: hit.newLines, ...shareOf(hit) }
-    );
-  }
   const warnings = kinds.filter((kind) => STEP_LEVEL.includes(kind) || unplaced.has(kind));
   return { warnings, calls: all };
 }
@@ -26563,6 +26649,8 @@ function slotToolsOf({ events, range, log, kinds, dispatches, oldReads }) {
 var MONITOR_PROJECTION_KEY = "session-watcher/inner-monitor";
 var PREVIEW_SOURCE_CHARS = 500;
 var RECORD_TYPES = [INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, INNER_END_RECORD_TYPE];
+var READ_BLOCK_TYPE2 = pluginRecordType(READ_BLOCK_RECORD_NAME);
+var READ_BLOCK_WARNING = "read-block";
 var USAGE_FIELDS2 = ["input", "output", "cacheRead", "cacheWrite"];
 var isUserMessage = (event) => event.type === "user/message";
 var isCarrier2 = (event) => eventFactOf(event).marker === "carrier";
@@ -26572,13 +26660,11 @@ var isHandoffReads = (event) => isUserMessage(event) && event.data?.source?.kind
 var isHandoffFollowUp = (event) => isUserMessage(event) && loadedTokenOf(firstTextOf(event.data)) !== null;
 var isCheckpoint = (event) => eventFactOf(event).marker === "checkpoint";
 var isMonitorInput = (event) => RECORD_TYPES.includes(event.type) || isCarrier2(event) || isHandoffPayload(event) || isHandoffReads(event) || isHandoffFollowUp(event);
-var isObject8 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var isObject10 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var isSeq5 = (value) => Number.isSafeInteger(value) && value >= 0;
-var isText5 = (value) => typeof value === "string";
-var isMessage = (value) => isObject8(value) && Array.isArray(value.content);
+var isText6 = (value) => typeof value === "string";
+var isMessage = (value) => isObject10(value) && Array.isArray(value.content);
 var orNull2 = (holds) => (value) => value === null || holds(value);
-var isOldRead = (value) => isObject8(value) && isText5(value.toolUseId) && isSeq5(value.seq) && isSeq5(value.oldLines) && isSeq5(value.newLines);
-var oldReadsOf = (slot) => Array.isArray(slot?.oldReads) ? slot.oldReads.filter(isOldRead) : [];
 var isCarrierShape = (event) => Array.isArray(event.sourceEventSeqs) && isSeq5(callSeqOf(event.sourceEventSeqs)) && Array.isArray(event.data.source.slots);
 var bounded = (text) => text.length > PREVIEW_SOURCE_CHARS ? text.slice(0, PREVIEW_SOURCE_CHARS) : text;
 var messageTextOf = (message) => bounded(message.content.filter((block) => block.type === "text").map((block) => block.text).join(""));
@@ -26598,7 +26684,7 @@ function displayOf(text) {
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return text;
   const values = Object.values(parsed);
-  return values.every(isText5) ? values.join("\n") : text;
+  return values.every(isText6) ? values.join("\n") : text;
 }
 function streamSummaryOf(stream, kit) {
   const text = responseTextOf(stream, kit);
@@ -26690,7 +26776,6 @@ function foldCarrier(state, event) {
     if (!Array.isArray(seqs) || seqs.length === 0 || !seqs.every(isSeq5)) continue;
     const dispatches = seqs.flatMap((seq) => pending[seq] ?? []);
     const warnings = new Set(dispatches.map(({ kind }) => kind));
-    if (oldReadsOf(slot).length > 0) warnings.add(OLD_ATTRIBUTION_WARNING);
     if (warnings.size > 0) slotWarnings[seqs[0]] = [...warnings];
     if (dispatches.length > 0) slotDispatches[seqs[0]] = dispatches;
   }
@@ -26705,7 +26790,7 @@ function foldPostSealRequest(state, event) {
   if (postSeal === null) return state;
   const { turn, step, message } = event.data ?? {};
   const count = Array.isArray(message?.content) ? message.content.filter((block) => block?.type === "tool-call").length : 0;
-  const request = isMainCall(event) && isSeq5(turn) && isSeq5(step) && count > 0 ? { seq: event.seq, turn, step, count, first: postSeal.first } : null;
+  const request = isMainCall(event) && isSeq5(turn) && isSeq5(step) && count > 0 ? { seq: event.seq, turn, step, count, first: postSeal.first, calls: [] } : null;
   if (!postSeal.first && request === null && postSeal.request === null) return state;
   return { ...state, postSeal: { ...postSeal, first: false, request } };
 }
@@ -26725,14 +26810,23 @@ function stateWarningOf(request, call) {
   const operation = stateOperationOf(call);
   if (operation !== void 0) return operation === "write" ? STATE_WARNING.write : request.count === 1 ? STATE_WARNING.check : STATE_WARNING.mixed;
 }
+function withDispatch(postSeal, request, dispatch) {
+  return { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...postSeal.pending[request.seq] ?? [], dispatch] } };
+}
 function foldToolCall(state, event) {
   const { postSeal } = state;
   const request = postSeal?.request;
   if (!request || request.turn !== event.data?.turn || request.step !== event.data?.step) return state;
   const warning = recallWarningOf(state, event) ?? stateWarningOf(request, event.data);
-  if (warning === void 0) return state;
-  const dispatches = postSeal.pending[request.seq] ?? [];
-  return { ...state, postSeal: { ...postSeal, pending: { ...postSeal.pending, [request.seq]: [...dispatches, { kind: warning, seq: event.seq }] } } };
+  const seen = { ...postSeal, request: { ...request, calls: [...request.calls, { callId: event.data.callId, seq: event.seq }] } };
+  return { ...state, postSeal: warning === void 0 ? seen : withDispatch(seen, request, { kind: warning, seq: event.seq }) };
+}
+function foldReadBlock(state, record) {
+  const { postSeal } = state;
+  const request = postSeal?.request;
+  if (!isReadBlockRecord(record?.data) || !request || request.turn !== record.data.turn || request.step !== record.data.step) return state;
+  const dispatched = request.calls.find(({ callId }) => callId === record.data.callId);
+  return dispatched === void 0 ? state : { ...state, postSeal: withDispatch(postSeal, request, { kind: READ_BLOCK_WARNING, seq: dispatched.seq }) };
 }
 function payloadOf(message) {
   let payload;
@@ -26741,11 +26835,11 @@ function payloadOf(message) {
   } catch {
     return null;
   }
-  return isObject8(payload) && isText5(payload.load_token) ? payload : null;
+  return isObject10(payload) && isText6(payload.load_token) ? payload : null;
 }
 var LABEL_POSITION = /^S(\d+)(?:-S(\d+))?$/;
 var positionOf2 = (entry) => {
-  const match = isText5(entry?.label) ? LABEL_POSITION.exec(entry.label) : null;
+  const match = isText6(entry?.label) ? LABEL_POSITION.exec(entry.label) : null;
   return match === null ? [] : [Number(match[2] ?? match[1])].filter(isSeq5);
 };
 function lineageNumberOf(lineage) {
@@ -26789,21 +26883,22 @@ function foldFollowUp(state, { seq, data }) {
 function foldCheckpoint(state, { data }) {
   return { ...state, lastCheckpointToken: checkpointTokenOf(firstTextOf(data)), lastCheckpointCalls: state.openCalls, openCalls: 0 };
 }
-var isRange = (value) => isObject8(value) && isSeq5(value.first) && isSeq5(value.last) && isSeq5(value.count);
-var isUsageState = (value) => isObject8(value) && USAGE_FIELDS2.every((field) => Number.isFinite(value[field]));
-var isCallState = (value) => isObject8(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.endedAt) && orNull2(isText5)(value.thrown) && orNull2(isText5)(value.output) && orNull2(isText5)(value.outputDisplay) && orNull2(isText5)(value.finish) && orNull2(isUsageState)(value.usage) && (value.carrierCache === void 0 || isCarrierCache(value.carrierCache));
-var isEndState = (value) => isObject8(value) && isSeq5(value.seq) && Number.isFinite(value.time) && (value.outcome === "failed" || value.outcome === "cancelled") && isText5(value.reason);
-var isCarrierState = (value) => isObject8(value) && isSeq5(value.seq) && Number.isFinite(value.time) && isSeq5(value.slots);
-var isAfterState = (value) => isObject8(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.stock) && orNull2(Number.isFinite)(value.miss);
-var isHandoffState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.time) && (value.type === "load" || value.type === "continue") && isText5(value.token) && orNull2(isSeq5)(value.handoffId) && orNull2(Number.isFinite)(value.createdAt) && isSeq5(value.epoch) && orNull2(isSeq5)(value.kept) && isSeq5(value.skills) && orNull2(isSeq5)(value.lineage) && orNull2(isSeq5)(value.read) && orNull2(isSeq5)(value.readSeq) && orNull2(isSeq5)(value.followSeq) && orNull2(Number.isFinite)(value.before) && orNull2(isAfterState)(value.after) && orNull2(isSeq5)(value.tailCalls);
-var isWarningsBySeq = (value) => isObject8(value) && Object.entries(value).every(([seq, warnings]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(warnings) && warnings.length > 0 && warnings.every(isText5));
-var isDispatchesBySeq = (value) => isObject8(value) && Object.entries(value).every(([seq, dispatches]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(dispatches) && dispatches.length > 0 && dispatches.every((dispatch) => isObject8(dispatch) && isText5(dispatch.kind) && isSeq5(dispatch.seq)));
-var isAttemptState = (value) => isObject8(value) && isSeq5(value.id) && Number.isFinite(value.startedAt) && isRange(value.range) && isText5(value.input) && orNull2(isCallState)(value.call) && orNull2(isEndState)(value.end) && orNull2(isCarrierState)(value.carrier) && orNull2(Number.isFinite)(value.before) && (value.estimatedBefore === void 0 || Number.isFinite(value.estimatedBefore)) && orNull2(isQuote)(value.quote) && isSeq5(value.epoch) && (value.slotWarnings === void 0 || isWarningsBySeq(value.slotWarnings)) && (value.slotDispatches === void 0 || isDispatchesBySeq(value.slotDispatches));
-var isPostSealRequest = orNull2((value) => isObject8(value) && isSeq5(value.seq) && isSeq5(value.turn) && isSeq5(value.step) && isSeq5(value.count) && typeof value.first === "boolean");
-var isPostSeal = orNull2((value) => isObject8(value) && typeof value.first === "boolean" && isPostSealRequest(value.request) && isDispatchesBySeq(value.pending));
+var isRange = (value) => isObject10(value) && isSeq5(value.first) && isSeq5(value.last) && isSeq5(value.count);
+var isUsageState = (value) => isObject10(value) && USAGE_FIELDS2.every((field) => Number.isFinite(value[field]));
+var isCallState = (value) => isObject10(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.endedAt) && orNull2(isText6)(value.thrown) && orNull2(isText6)(value.output) && orNull2(isText6)(value.outputDisplay) && orNull2(isText6)(value.finish) && orNull2(isUsageState)(value.usage) && (value.carrierCache === void 0 || isCarrierCache(value.carrierCache));
+var isEndState = (value) => isObject10(value) && isSeq5(value.seq) && Number.isFinite(value.time) && (value.outcome === "failed" || value.outcome === "cancelled") && isText6(value.reason);
+var isCarrierState = (value) => isObject10(value) && isSeq5(value.seq) && Number.isFinite(value.time) && isSeq5(value.slots);
+var isAfterState = (value) => isObject10(value) && isSeq5(value.seq) && orNull2(Number.isFinite)(value.stock) && orNull2(Number.isFinite)(value.miss);
+var isHandoffState = (value) => isObject10(value) && isSeq5(value.id) && Number.isFinite(value.time) && (value.type === "load" || value.type === "continue") && isText6(value.token) && orNull2(isSeq5)(value.handoffId) && orNull2(Number.isFinite)(value.createdAt) && isSeq5(value.epoch) && orNull2(isSeq5)(value.kept) && isSeq5(value.skills) && orNull2(isSeq5)(value.lineage) && orNull2(isSeq5)(value.read) && orNull2(isSeq5)(value.readSeq) && orNull2(isSeq5)(value.followSeq) && orNull2(Number.isFinite)(value.before) && orNull2(isAfterState)(value.after) && orNull2(isSeq5)(value.tailCalls);
+var isWarningsBySeq = (value) => isObject10(value) && Object.entries(value).every(([seq, warnings]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(warnings) && warnings.length > 0 && warnings.every(isText6));
+var isDispatchesBySeq = (value) => isObject10(value) && Object.entries(value).every(([seq, dispatches]) => String(Number(seq)) === seq && isSeq5(Number(seq)) && Array.isArray(dispatches) && dispatches.length > 0 && dispatches.every((dispatch) => isObject10(dispatch) && isText6(dispatch.kind) && isSeq5(dispatch.seq)));
+var isAttemptState = (value) => isObject10(value) && isSeq5(value.id) && Number.isFinite(value.startedAt) && isRange(value.range) && isText6(value.input) && orNull2(isCallState)(value.call) && orNull2(isEndState)(value.end) && orNull2(isCarrierState)(value.carrier) && orNull2(Number.isFinite)(value.before) && (value.estimatedBefore === void 0 || Number.isFinite(value.estimatedBefore)) && orNull2(isQuote)(value.quote) && isSeq5(value.epoch) && (value.slotWarnings === void 0 || isWarningsBySeq(value.slotWarnings)) && (value.slotDispatches === void 0 || isDispatchesBySeq(value.slotDispatches));
+var isDispatchedCall = (value) => isObject10(value) && isText6(value.callId) && isSeq5(value.seq);
+var isPostSealRequest = orNull2((value) => isObject10(value) && isSeq5(value.seq) && isSeq5(value.turn) && isSeq5(value.step) && isSeq5(value.count) && typeof value.first === "boolean" && Array.isArray(value.calls) && value.calls.every(isDispatchedCall));
+var isPostSeal = orNull2((value) => isObject10(value) && typeof value.first === "boolean" && isPostSealRequest(value.request) && isDispatchesBySeq(value.pending));
 var stateSchema2 = {
   parse(value) {
-    if (!isObject8(value) || !Array.isArray(value.attempts) || !value.attempts.every(isAttemptState) || !orNull2(isUsageState)(value.lastMainUsage) || !isSourceFacts(value.source) || !Array.isArray(value.handoffs) || !value.handoffs.every(isHandoffState) || !orNull2(isText5)(value.lastCheckpointToken) || !isSeq5(value.lastCheckpointCalls) || !isSeq5(value.openCalls) || !orNull2(Number.isFinite)(value.settlementBefore) || !isPostSeal(value.postSeal) || !orNull2(isText5)(value.sessionId) || !Array.isArray(value.verbatimSeqs) || !value.verbatimSeqs.every(isSeq5)) {
+    if (!isObject10(value) || !Array.isArray(value.attempts) || !value.attempts.every(isAttemptState) || !orNull2(isUsageState)(value.lastMainUsage) || !isSourceFacts(value.source) || !Array.isArray(value.handoffs) || !value.handoffs.every(isHandoffState) || !orNull2(isText6)(value.lastCheckpointToken) || !isSeq5(value.lastCheckpointCalls) || !isSeq5(value.openCalls) || !orNull2(Number.isFinite)(value.settlementBefore) || !isPostSeal(value.postSeal) || !orNull2(isText6)(value.sessionId) || !Array.isArray(value.verbatimSeqs) || !value.verbatimSeqs.every(isSeq5)) {
       throw new Error("invalid inner monitor state");
     }
     return value;
@@ -26832,13 +26927,14 @@ function innerMonitorProjection(kit) {
   };
   return {
     key: MONITOR_PROJECTION_KEY,
-    stateVersion: 18,
+    stateVersion: 19,
     stateSchema: stateSchema2,
     init: (header) => ({ attempts: [], lastMainUsage: null, settlementBefore: null, source: initialSourceFacts(), handoffs: [], lastCheckpointToken: null, lastCheckpointCalls: 0, openCalls: 0, postSeal: null, verbatimSeqs: [], sessionId: header?.id ?? null }),
     apply(state, event) {
       if (!isSeq5(event.seq) || !Number.isFinite(event.time)) return state;
       try {
         if (event.type === "tool/call") return foldToolCall(state, event);
+        if (event.type === READ_BLOCK_TYPE2) return foldReadBlock(state, kit.pluginRecordOf(event));
         const source = foldSourceFacts(state.source, foldInputOf(event));
         const folded = isMonitorInput(event) || isMainCall(event) || event.type === "assistant/attempt" || isCheckpoint(event) ? fold(state, event) : state;
         if (source === state.source) return folded;
@@ -26925,7 +27021,7 @@ function handoffRowOf(handoff, nextTaskOf) {
     lineage: handoff.lineage,
     contextChange: handoff.type === "continue" ? contextChangeOf(handoff) : null,
     tailCalls: handoff.tailCalls,
-    nextTask: isText5(nextTask) ? bounded(nextTask) : null
+    nextTask: isText6(nextTask) ? bounded(nextTask) : null
   };
 }
 function handoffRowsOf(state, nextTaskOf) {
@@ -27018,7 +27114,7 @@ function recordedCall(attempt, log, kit) {
 }
 function carriedDetailOf(source) {
   const evidence = carriedEvidence(source);
-  return evidence === null ? null : { text: renderCarried(source, CARRIER_TABLE), note: carriedNote(CARRIER_TABLE), ...evidence };
+  return evidence === null ? null : { text: renderCarried(source), note: carriedNote(), ...evidence };
 }
 function carrierAt(log, seq) {
   const carrier = log.get(seq);
@@ -27123,7 +27219,7 @@ function settlementEvidenceOf(state, log, sessionId, segment, kit, { tailCalls, 
 }
 function plainTextOf(event) {
   const content = (event.data?.message ?? event.data)?.content;
-  const text = Array.isArray(content) ? content.filter((block) => block?.type === "text" && isText5(block.text)).map((block) => block.text).join("") : "";
+  const text = Array.isArray(content) ? content.filter((block) => block?.type === "text" && isText6(block.text)).map((block) => block.text).join("") : "";
   return text === "" ? null : text;
 }
 function filesOf(message) {
@@ -27136,7 +27232,7 @@ function filesOf(message) {
 }
 function followUpAt(log, seq) {
   const text = firstTextOf(loggedEvent(log, seq).data);
-  if (!isText5(text)) throw new Error(`the session log holds no follow-up text at seq ${seq}`);
+  if (!isText6(text)) throw new Error(`the session log holds no follow-up text at seq ${seq}`);
   return text;
 }
 function handoffDetailOf(handoff, row, log) {
@@ -27148,7 +27244,7 @@ function handoffDetailOf(handoff, row, log) {
     if (loadCallsOf(reads) === null) throw new Error(`the session log holds no load read message at seq ${handoff.readSeq}`);
     files = filesOf(reads);
   }
-  const turnPage = isText5(payload.turn_page) ? payload.turn_page : null;
+  const turnPage = isText6(payload.turn_page) ? payload.turn_page : null;
   return {
     row,
     summary: payload.summary,
@@ -27236,8 +27332,7 @@ function createMonitorAccess({ sessionOf, readMonitor, live: live2, kit, readSes
         range,
         log,
         kinds: attempt.slotWarnings?.[key] ?? [],
-        dispatches: attempt.slotDispatches?.[key] ?? [],
-        oldReads: oldReadsOf(slot)
+        dispatches: attempt.slotDispatches?.[key] ?? []
       });
       return {
         ...place,
@@ -27314,6 +27409,7 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
   const carrierEvidence = createCarrierEvidence();
   ctx.provide(CARRIER_EVIDENCE_SERVICE, carrierEvidence.service);
   ctx.provide(CARRIER_SETTINGS_SERVICE, { responsesBreakpoint: () => readSettings?.().carrierResponsesBreakpoint === true });
+  ctx.provide(CARRIER_PREFIX_SERVICE, { carrierPrefix: () => carrierPrefixOf(CARRIER_TABLE) });
   const hub = createSignalHub();
   table.onChange((sessionId) => hub.publish(sessionId));
   ctx.on("agent/pre-step", createEpochModelName({
@@ -27467,6 +27563,17 @@ function applyHost(ctx, { storePath, turnNotesRoot, loadIsIgnored: loadIsIgnored
         monitor,
         carrier: carrierEvidence
       }), { prepend: true });
+      const readGuard = createReadGuard({
+        readMode: (session) => handle2.stateOf(session),
+        heldScratch: (sessionId) => table.heldScratch(sessionId),
+        eventFacts: (sessionId) => table.eventFacts(sessionId),
+        recallRecord: (sessionId, toolUseId) => getStore().recallAttribution(sessionId, toolUseId),
+        workingTree,
+        fsOf: () => child.fs,
+        appendPluginRecord: innerKit.appendPluginRecord
+      });
+      child.on("tools/post-execute", readGuard.postExecute);
+      child.on("tools/result", readGuard.observeResult);
       modeAccess = createModeAccess({
         sessionOf,
         readMode: (session) => handle2.stateOf(session),

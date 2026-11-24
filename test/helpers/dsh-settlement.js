@@ -1,7 +1,7 @@
 // test/helpers/dsh-settlement.js — one session's settlement fixtures over `dsh-events.js`: the monitor's access over a synthetic log, a priced seal, a `/sw-continue` clear and the recall steps a segment holds, in the record shapes DSH writes.
 import { createMonitorAccess, innerMonitorProjection } from '../../dsh/src/inner-monitor-read.js';
 import {
-  assistantMessage, continueCheckpoint, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, stepEnd, stepStart, toolCall, toolResult, userMessage,
+  assistantMessage, continueCheckpoint, innerAttempt, innerCall, innerEnd, innerSealCarrier, loadFollowUp, loadPayload, readBlockRecord, stepEnd, stepStart, toolCall, toolResult, userMessage,
 } from './dsh-events.js';
 
 export const SESSION = 's-settlement-recall';
@@ -68,18 +68,19 @@ export const readCall = (id, seq, { name = 'sw_event_read', sessionId } = {}) =>
 
 /**
  * One step as the loop logs it: `step/start`, the user messages `admit` (texts) the step admits, the model request (an `assistant/message` of `calls`), then for each call its dispatch and its result unless `results` says otherwise.
- * `answer` is each result's text, `isError` marks every result a failure and `dispatch: false` leaves the dispatches out.
+ * `answer` is each result's text, `isError` marks every result a failure and `dispatch: false` leaves the dispatches out; `blocked` names the calls the read guard blocked, whose records stand between the dispatches and the results.
  */
 export function stepOf({
-  turn, step, admit = [], calls = [], text, usage = tokens(20, 5, 600), answer = 'abcdefghijkl', isError = false, dispatch = true, results = true, error,
+  turn, step, admit = [], calls = [], text, usage = tokens(20, 5, 600), answer = 'abcdefghijkl', isError = false, dispatch = true, results = true, error, blocked = [],
 } = {}) {
   const start = stepStart({ turn, step });
   const admitted = admit.map(each => userMessage({ text: each }));
   const request = assistantMessage({ turn, step, text, toolCalls: calls, usage });
   const dispatched = dispatch ? calls.map(({ id, name, arguments: args }) => toolCall({ turn, step, callId: id, name, arguments: args })) : [];
+  const records = blocked.map(callId => readBlockRecord({ turn, step, callId }));
   const answers = results ? calls.map(({ id }) => toolResult({ turn, step, callId: id, text: answer, isError, ...(error === undefined ? {} : { error }) })) : [];
   const end = stepEnd({ turn, step });
-  return { start, admitted, request, dispatched, answers, end, events: [start, ...admitted, request, ...dispatched, ...answers, end] };
+  return { start, admitted, request, dispatched, records, answers, end, events: [start, ...admitted, request, ...dispatched, ...records, ...answers, end] };
 }
 
 // Step 1 of turn 1 admits the task and answers it with a file read, and a seal sums that step up: the settlement's first range, `#0`. Everything a test adds comes after it.

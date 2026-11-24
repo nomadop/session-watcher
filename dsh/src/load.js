@@ -179,32 +179,24 @@ export async function loadHandoffInto({ agent, session, deliver, kit, signal, to
   };
 }
 
-const lineageStepOf = (listing, closing) => `1. Place the summary in its lineage. \`lineage\` in the payload runs oldest to newest. The sessions the budget left out are collapsed into runs marked \`omitted\`, ahead of the newest sessions' headlines, and the budget may keep none. When the next task or what is already in context needs the headlines of an omitted run, \`lineage_headlines\` with that run's numbers as \`k\` (\`S2-S5\` is \`2-5\`) reads them; read a run for that need only, not by default. The payload's turn page holds the newest turns. From the page, ${listing}. When a headline bears on the next task and the page does not reach that member, call \`turn_page\` with that member's label as \`before\`; a session inside an omitted run is \`S{k}\`, \`k\` being its own number.${closing}`;
+const TURN_PAGE_CLAUSE = 'When a step needs a detail they leave out, `turn_page` reads older turns (an `S{k}:{T}` cursor or an `S{k}` label as `before`) and `lineage_headlines` the headlines of an omitted run (its numbers as `k`, `S2-S5` being `2-5`).';
 
-const presentStep = '3. Present, then hold. Run `git status --short && git log -1 --oneline` once, then write, from the kept paths and that output: the objective, in one line; the working state, each claim the summary makes about the current state set against what the kept paths and the git output show (matches, differs and how, or reaches neither and so unverified); the next task and its entry points, with where the names to place below sit and the turns step 1 named; blockers and risks; the kept paths now in context and the load token. Then stop and wait for the user to confirm or correct it. The next task\'s first act begins after the reply.';
+// `invoke` is the sentence that has the kept skills invoked, or the empty text where there are none.
+const presentBody = invoke => `Treat the summary, the kept files and the newest turns in the payload as the established current state of the task.${invoke} Then present, and hold: write the objective, in one line; the working state, as the summary states it; the next task and its entry points, with where the names to place below sit; blockers and risks; the kept paths now in context and the load token. Then stop and wait for the user to confirm or correct it. The next task's first act begins after the reply and builds on that state without checking or restating it. ${TURN_PAGE_CLAUSE}`;
 
-const resumeStep = '3. Resume. Run `git status --short && git log -1 --oneline` once and set each claim the summary makes about the current state against the kept paths and that output; a claim they do not reach counts as a deviation when your next step depends on it. Before your first step on the task, say in one sentence which task you are resuming and your next step, adding a deviation or risk only when it changes that step. Then carry the task on in this turn from the summary and the history, within what it was already authorized to do. A question, approval or permission the task left open still stands: ask it and wait. When a deviation from the summary leaves the task\'s direction or authorization, or a safe next step, undecided, ask one specific question about it and wait; otherwise carry on.';
+const resumeBody = invoke => `Treat the summary, the kept files and the newest turns in the payload as the established current state of the task, and build on them without checking or restating them.${invoke} Then continue the task directly from its next step, within what it was already authorized to do; a question, approval or permission it left open is still open: ask it and wait. ${TURN_PAGE_CLAUSE}`;
 
 /**
- * The follow-up that wakes the model on a loaded handoff: the message the harness placed before it, or the two when `reads` is positive, and what they hold, the remaining steps of the load, and the `skipped`, `unread` and `toPlace` entries.
- * By default the steps end in a report the user confirms; with `resume`, the `/sw-continue` variant, they end in a one-sentence note and the task carried on.
+ * The follow-up that wakes the model on a loaded handoff: what the message before it holds, or the two before it when `reads` is positive, then one paragraph that treats the payload as the task's established state, and the `skipped`, `unread` and `toPlace` entries.
+ * The paragraph names the kept `skills` to invoke first. By default it then has the model present the state and wait for the user to confirm it; with `resume`, the `/sw-continue` variant, it has the model continue the task directly from its next step.
  * Every value goes through `quoted`, so none forms the whitespace-bounded `/name` token by which DSH's scan of a user message (`SKILL_GESTURE` in the DSH checkout's `packages/skill/tool-skill/src/index.ts`) injects a skill without a `skill` call.
  */
 export function loadedText({ token, skipped, unread, toPlace, skills, empty, reads }, { resume = false } = {}) {
   const placed = reads > 0
-    ? `${loadedLead(token)} The harness placed two messages before this one, in this order; no tool was run for them. The first holds the delivery, recorded as the \`load_handoff\` call, with its payload. The second holds the kept file excerpts. They are recorded as \`read\` calls, one per file, each shown from the working tree, except those listed as skipped below; a range listed below as not reached is shown in part or not at all. Do not repeat any of those calls; where a result says part of a range was cut, read the rest as that result says.`
-    : `${loadedLead(token)} The harness placed one message before this one; no tool was run for it. It holds the delivery, recorded as the \`load_handoff\` call, with its payload. Do not repeat that call.`;
-  const summaryOnly = resume ? 'when the task calls for it' : 'after the user agrees';
-  const skillStep = skills.length > 0
-    ? `2. Load the kept skills: invoke ${skills.map(quoted).join(', ')} through the skill tool. A skill named only in the summary is invoked ${summaryOnly}.`
-    : `2. The handoff keeps no skills; a skill named only in the summary is invoked through the skill tool ${summaryOnly}.`;
-  const lineageStep = resume
-    ? lineageStepOf('read the turns whose `A:` note bears on the next task', '')
-    : lineageStepOf('list the turns whose `A:` note bears on the next task, by their `S{k}:{T}` address', ' That list is what step 3 reports.');
-  const sections = [
-    placed,
-    ['Then:', lineageStep, skillStep, resume ? resumeStep : presentStep].join('\n'),
-  ];
+    ? `${loadedLead(token)} The two messages before this one are the handoff's \`load_handoff\` call with its payload, then the \`read\` calls of the kept files, one per file, each result the file's current text, except those listed as skipped below; a range listed below as not reached is shown in part or not at all. Do not repeat any of those calls; where a result says part of a range was cut, read the rest as that result says.`
+    : `${loadedLead(token)} The message before this one is the handoff's \`load_handoff\` call with its payload. Do not repeat that call.`;
+  const invoke = skills.length > 0 ? ` First invoke ${skills.map(quoted).join(', ')} through the skill tool.` : '';
+  const sections = [placed, (resume ? resumeBody : presentBody)(invoke)];
   if (skipped.length > 0) {
     sections.push(['Skipped, not read:', ...skipped.map(({ path, reason }) => `- ${quoted(path)}: ${quoted(reason)}`)].join('\n'));
   }

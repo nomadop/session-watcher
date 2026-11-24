@@ -93,37 +93,6 @@ describe('the held line keys', () => {
   });
 });
 
-// A third call reads the first call's lines again, unchanged.
-const REREAD = [...CALLS, CALLS[0]];
-const resultSeqOfStep = (events, step) => events.find(event => event.type === 'tool/result' && event.data.step === step).seq;
-
-describe('the file reads that returned mostly lines already held', () => {
-  test('with the live records they are the live calls\' own, however the tree has changed since, and a log replayed without records has none', (t) => {
-    const { watcher, heldView, tree } = composed(t);
-    const { events } = dshCallLog(REREAD);
-    feedLive(watcher, events);
-    tree.set({ '/repo/src/a.js': textOf(['// moved', '// down', ...A]), '/repo/src/b.js': textOf(['// moved', ...B]) });
-    assert.deepEqual(heldView(events).oldReads, [
-      { toolUseId: toolUseIdOf(3), seq: resultSeqOfStep(events, 3), oldLines: 3, newLines: 0 },
-    ]);
-
-    const replay = composed(t);
-    replay.watcher.applyHarnessFrame(createDshSourceDriver({ sessionId: SESSION, onDiagnostics: () => {} }).install(events));
-    assert.deepEqual(replay.heldView(events).oldReads, [], 'a call matched afresh is no evidence');
-    assert.deepEqual(sortedByPath(replay.heldView(events).paths), HELD, 'and the held view still renders what it matched');
-  });
-
-  test('a session with no id recalls no record, so no call is a hit', (t) => {
-    const store = openStore(':memory:');
-    t.after(() => closeStore(store));
-    const { heldView } = composeWatcher({
-      sessionId: null, cwd: '/repo', store, turnNotesRoot: join(tmpdir(), 'sw-held-view-notes'),
-      readSession: async () => ({ events: [] }), isIgnored: null, cacheTtl: () => null, workingTree: editableTree(FILES).workingTree,
-    });
-    assert.deepEqual(heldView(dshCallLog(REREAD).events).oldReads, []);
-  });
-});
-
 describe('apart from the watcher', () => {
   test('a watcher that has applied no frame yet, or whose frame failed, leaves the held view answering the slice', (t) => {
     const { events } = dshCallLog(CALLS);

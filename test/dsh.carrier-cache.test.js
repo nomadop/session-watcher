@@ -16,9 +16,9 @@ function providerDouble() {
   return provider;
 }
 
-// `responsesBreakpoint` is the owner's switch the wrapper hands the writer, on unless a test says otherwise; `observe` is told each result.
-const decorated = (provider, { report = () => {}, observe = () => {}, responsesBreakpoint = () => true } = {}) => {
-  const { decorateProfiles } = createCarrierCache({ carrierPrefix: PREFIX, report, observe, responsesBreakpoint });
+// `carrierPrefix` is what the host answers at each call of the hook, the prefix of `PREFIX` unless a test says otherwise; `responsesBreakpoint` is the owner's switch the wrapper hands the writer, on unless a test says otherwise; `observe` is told each result.
+const decorated = (provider, { report = () => {}, observe = () => {}, responsesBreakpoint = () => true, carrierPrefix = () => PREFIX } = {}) => {
+  const { decorateProfiles } = createCarrierCache({ carrierPrefix, report, observe, responsesBreakpoint });
   return decorateProfiles(new Map([['openai', { displayName: 'OpenAI', piProvider: provider }], ['bare', { displayName: 'Bare' }]]));
 };
 
@@ -137,4 +137,48 @@ test('the owner\'s switch and the diagnostic sink are the writer\'s: an off swit
   assert.deepEqual(results, [{ result: 'skipped', reason: 'responses-off' }, { result: 'skipped', reason: 'responses-off' }]);
   assert.equal(reports.length, 1);
   assert.match(reports[0], /Responses breakpoint setting could not be read/);
+});
+
+test('the prefix is asked of the host at each call of the hook, so a carrier is told by what the host answers then', async () => {
+  let prefix = PREFIX;
+  const asked = [];
+  const wrapped = decorated(providerDouble(), { carrierPrefix: () => { asked.push(prefix); return prefix; } }).get('openai').piProvider;
+  const first = responsesPayload();
+  assert.equal(await hookFor(wrapped, KEYED)(first, EXPLICIT_MODEL), first);
+  prefix = 'A reworded opening.';
+  const second = responsesPayload();
+  assert.equal(await hookFor(wrapped, KEYED)(second, EXPLICIT_MODEL), undefined, 'a carrier the host no longer opens with is none');
+  assert.deepEqual(second, responsesPayload());
+  const reworded = responsesPayload();
+  reworded.input[0].content[0].text = `${prefix}\nseq 1: a summary`;
+  assert.equal(await hookFor(wrapped, KEYED)(reworded, EXPLICIT_MODEL), reworded);
+  assert.deepEqual(asked, [PREFIX, 'A reworded opening.', 'A reworded opening.']);
+});
+
+// Each result and report of two requests sent through a wrapper whose host answers `carrierPrefix`; the payload of each is the serializer's.
+async function twoRequestsOver(carrierPrefix) {
+  const results = [];
+  const reports = [];
+  const wrapped = decorated(providerDouble(), { carrierPrefix, observe: result => results.push(result), report: message => reports.push(message) }).get('openai').piProvider;
+  for (let at = 0; at < 2; at += 1) {
+    const payload = responsesPayload();
+    assert.equal(await hookFor(wrapped, KEYED)(payload, EXPLICIT_MODEL), undefined);
+    assert.deepEqual(payload, responsesPayload(), 'the payload is the serializer\'s');
+  }
+  return { results, reports };
+}
+
+test('a host that answers no prefix leaves the request as the serializer wrote it with the result `unsupported` and no report: a service the host does not provide is not a failure', async () => {
+  const { results, reports } = await twoRequestsOver(() => undefined);
+  assert.deepEqual(results, [{ result: 'skipped', reason: 'unsupported' }, { result: 'skipped', reason: 'unsupported' }]);
+  assert.deepEqual(reports, []);
+});
+
+test('a host that answers a prefix that is no text, or that throws, leaves the request as the serializer wrote it with the result `unsupported` and one report for each request', async () => {
+  const answers = { 'an answer that is no text': () => 42, 'an empty text': () => '', 'a throw': () => { throw new Error('the host is gone'); } };
+  for (const [why, carrierPrefix] of Object.entries(answers)) {
+    const { results, reports } = await twoRequestsOver(carrierPrefix);
+    assert.deepEqual(results, [{ result: 'skipped', reason: 'unsupported' }, { result: 'skipped', reason: 'unsupported' }], why);
+    assert.equal(reports.length, 2, `${why}: one report for each request`);
+  }
 });

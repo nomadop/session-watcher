@@ -53,7 +53,7 @@ const placeOf = (seq, owners, { landing, sealAt }) => sealAt.get(seq) ?? landing
 /**
  * What a segment's log shows of recall, as `{ recall?, activity? }`, both absent where the segment holds no committed seal. The cut is the caller's: `events` are the segment's up to it.
  * `recall` is report evidence only: a pure request's usage and recorded ratio, the returned copies in other requests, and the copies already reflected in each seal's stock delta. An unplaceable step leaves the report partial.
- * `activity` is `{ covered, judged, pure, targets }`: the settlement steps after the first seal that are judged (a request that is a recall or is none, never one still unknown) and the pure recall ones among them, the share's terms; `covered` whether the counts prove every counted step after the first seal placed. `targets` are the originals the pure requests after the first seal read, ascending by seq, `{ seq, type, at, reads }`: `at` the step the original stands on where the log says so, else null, and `reads` the steps that read it, once each, `{ at, seq }` with the request's own seq. A pure request placed on no step still names its targets, with no read.
+ * `activity` is `{ covered, judged, pure, targets }`: the settlement steps after the first seal that are judged (a request that is a recall or is none, never one still unknown) and the pure recall ones among them, the share's terms; `covered` whether the counts prove every counted step after the first seal placed. `targets` are the originals the pure requests after the first seal read, ascending by seq (a read the guard blocked reads none), `{ seq, type, at, reads }`: `at` the step the original stands on where the log says so, else null, and `reads` the steps that read it, once each, `{ at, seq }` with the request's own seq. A pure request placed on no step still names its targets, with no read.
  */
 export function settlementRecallOf({ events, log, attempts, postByAttempt, tailCalls, sessionId, isNoise }) {
   const seals = new Map(attempts.map(attempt => {
@@ -136,6 +136,8 @@ export function settlementRecallOf({ events, log, attempts, postByAttempt, tailC
       if (verdict === 'pure') {
         for (const { id } of sample.tools) {
           const { target } = sample.calls.get(id);
+          // A read the guard blocked reads no event back.
+          if (target === undefined) continue;
           const landings = reads.get(target) ?? new Map();
           reads.set(target, landings);
           if (at !== undefined) landings.set(at, { at, seq });

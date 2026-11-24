@@ -13,6 +13,9 @@ import { modelPolicyFor } from '../lib/model-policy.js';
 import { DEFAULT_CACHE_TTL, LONG_CACHE_TTL } from '../lib/constants.js';
 import { reusedCallIdAcrossSteps, REUSED_CALL_ID_FILES, FIRST_STEP_END, requestHeader, sessionLog } from './helpers/dsh-events.js';
 import { createFakeContext, fakeSession } from './helpers/dsh-fake-context.js';
+import { CARRIER_PREFIX_SERVICE } from '../dsh/src/pi-ai-integration.js';
+import { INNER_SEAL_KIND, renderCarrier } from '../lib/inner-seal/carrier.js';
+import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { writeFilesUnder } from './helpers/attribution-fixtures.js';
 
 const SKILLS_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
@@ -287,6 +290,16 @@ test('disposal archives every live watcher and closes the store', async () => {
   for (const { id } of sessions) {
     assert.deepEqual(archivedSources(id), [{ segment: 0, capture_source: 'dsh-live' }], id);
   }
+});
+
+test('the host provides the carrier prefix service the pi-ai entry asks at each call of its hook: the text the first text block of a carrier it renders opens with', () => {
+  const { ctx } = mountHost();
+  const service = ctx.get(CARRIER_PREFIX_SERVICE);
+  const source = { kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] };
+  const prefix = service.carrierPrefix();
+  assert.equal(typeof prefix, 'string');
+  assert.ok(prefix.length > 0);
+  assert.equal(renderCarrier(source, CARRIER_TABLE)[0].text.startsWith(prefix), true);
 });
 
 test('a disposal after a failed apply still closes the store', () => {

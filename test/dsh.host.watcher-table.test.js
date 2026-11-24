@@ -1162,3 +1162,26 @@ test('an entry answers its own composition\'s held view of a slice whether its m
   table.dispose('s-held');
   assert.equal(table.heldView('s-held', log), null, 'disposal drops it with the entry');
 });
+
+// ── The held scratch ────────────────────────────────────────────────────────────────────────────────────────
+
+test('an entry answers its composition\'s held scratch only while it is live, and a session the table lacks and a composition that gives none have none', async (t) => {
+  captureStderr(t);
+  const log = reusedCallIdAcrossSteps();
+  const scratch = new Map([['/repo/src/a.js', new Map()]]);
+  const { table, reader } = buildTable({
+    adapt: (composition, sessionId) => (sessionId === 's-none' ? { ...composition, heldScratch: undefined } : { ...composition, heldScratch: () => scratch }),
+  });
+  assert.equal(table.heldScratch('s-lacking'), null);
+  for (const id of ['s-scratch', 's-scratch-failed', 's-none']) table.ensure(sessionOf(id));
+  assert.equal(table.heldScratch('s-scratch'), null, 'bootstrapping');
+  reader.settle('s-scratch', log);
+  reader.reject('s-scratch-failed', new Error('read refused'));
+  reader.settle('s-none', log);
+  await settled();
+  assert.equal(table.heldScratch('s-scratch'), scratch, 'live: the composition\'s own Map');
+  assert.equal(table.heldScratch('s-scratch-failed'), null, 'failed');
+  assert.equal(table.heldScratch('s-none'), null, 'a composition that gives none');
+  table.dispose('s-scratch');
+  assert.equal(table.heldScratch('s-scratch'), null, 'disposal drops it with the entry');
+});

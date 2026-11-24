@@ -9,7 +9,6 @@ import nodePath from 'node:path';
 import {
   CARRIED_WORDING, carriedEvidence, carriedNote, carriedOf, carryChanges, foldCarried, omitShown, renderCarried, runsOf,
 } from '../lib/carried-evidence.js';
-import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { readTreeWindows } from '../lib/working-tree-text.js';
 import { createMemoryWorkingTree } from '../lib/working-tree.js';
 
@@ -284,8 +283,8 @@ describe('renderCarried', () => {
   const W = CARRIED_WORDING;
 
   test('is the wording of what is carried, then each entry that is empty, unreadable or writes a line, and each written skill, separated by blank lines, a written run under its seal-time path and line count', () => {
-    assert.equal(renderCarried(SOURCE, CARRIER_TABLE), [
-      carriedNote(CARRIER_TABLE),
+    assert.equal(renderCarried(SOURCE), [
+      carriedNote(),
       '/shown/a.txt (total lines: 9)\n1: one\n2: two\n--\n5: five',
       W.empty('/shown/e.txt'),
       W.unreadable('/shown/m.txt', 'missing'),
@@ -296,15 +295,15 @@ describe('renderCarried', () => {
   test('a line in omit is left out with nothing in its place: the lines that remain are runs of their own under the path', () => {
     const DELTA = 'delta line of some length to show';
     const entry = entryOf('/r/a.txt', 6, [...BODY, DELTA], { displayPath: '/shown/a.txt' });
-    const text = renderCarried(carrier({ paths: [{ ...entry, write: [...entry.write, [12, 'twelfth line']], omit: [7, 8, 9] }] }), CARRIER_TABLE);
-    assert.equal(text, [carriedNote(CARRIER_TABLE), `/shown/a.txt (total lines: 40)\n6: ${BODY[0]}\n--\n12: twelfth line`].join('\n\n'));
+    const text = renderCarried(carrier({ paths: [{ ...entry, write: [...entry.write, [12, 'twelfth line']], omit: [7, 8, 9] }] }));
+    assert.equal(text, [carriedNote(), `/shown/a.txt (total lines: 40)\n6: ${BODY[0]}\n--\n12: twelfth line`].join('\n\n'));
     for (const left of [BODY[1], BODY[2], DELTA]) assert.ok(!text.includes(left), left);
   });
 
   test('is null where the source has no B to say: no entry, or a file whose written lines are all in omit', () => {
-    assert.equal(renderCarried({ kind: KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] }, CARRIER_TABLE), null);
+    assert.equal(renderCarried({ kind: KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] }), null);
     const omitting = entryOf('/r/a.txt', 6, BODY, { displayPath: '/shown/a.txt', omit: [6, 7, 8] });
-    assert.equal(renderCarried(carrier({ paths: [omitting] }), CARRIER_TABLE), null, 'a file whose written lines are all left out says nothing');
+    assert.equal(renderCarried(carrier({ paths: [omitting] })), null, 'a file whose written lines are all left out says nothing');
   });
 
   describe('what a carrier no longer carries', () => {
@@ -320,10 +319,10 @@ describe('renderCarried', () => {
         carrier({ skills: [{ name: 'grill', removed: true }] }),
         carrier({ paths: [withdrawing, readable], removed: ['/r/gone.txt'], skills: [{ name: 'grill', removed: true }] }),
       ];
-      for (const source of only) assert.equal(renderCarried(source, CARRIER_TABLE), null);
+      for (const source of only) assert.equal(renderCarried(source), null);
       const beside = carrier({ paths: [{ ...written, withdraw: [3, 4, 7] }, readable], removed: ['/r/gone.txt'], skills: [{ name: 'grill', removed: true }] });
-      assert.equal(renderCarried(beside, CARRIER_TABLE), renderCarried(carrier({ paths: [written] }), CARRIER_TABLE));
-      for (const name of ['/r/gone.txt', '/shown/back.txt', 'grill']) assert.ok(!renderCarried(beside, CARRIER_TABLE).includes(name), name);
+      assert.equal(renderCarried(beside), renderCarried(carrier({ paths: [written] })));
+      for (const name of ['/r/gone.txt', '/shown/back.txt', 'grill']) assert.ok(!renderCarried(beside).includes(name), name);
     });
   });
 });
@@ -380,7 +379,7 @@ describe('carriedEvidence', () => {
     for (const [source, expected, rendered] of changing) {
       const evidence = carriedEvidence(source);
       assert.deepEqual({ files: evidence.files.map(file => file.path), removed: evidence.removed, skills: evidence.skills }, expected);
-      assert.equal(renderCarried(source, CARRIER_TABLE) !== null, rendered, JSON.stringify(expected));
+      assert.equal(renderCarried(source) !== null, rendered, JSON.stringify(expected));
     }
     for (const source of [carrier(), carrier({ paths: [omitting()] })]) assert.equal(carriedEvidence(source), null, 'nothing changes');
   });

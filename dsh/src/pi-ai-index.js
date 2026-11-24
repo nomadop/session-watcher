@@ -1,11 +1,10 @@
 // dsh/src/pi-ai-index.js — the opt-in pi-ai adapter entry of the DSH package (`@nomadop/session-watcher-dsh/pi-ai`): the Harness's `llm-pi-ai` plugin, vendored under `dsh/vendor/dsh-llm-pi-ai`, mounted with the carrier cache point (`carrier-cache.js`) added to each route's pi-ai provider.
 // The one module besides `index.js` that imports a DSH package, through the vendored bootstrap; the host entry never loads it, and a profile that mounts it disables the original `llm-pi-ai` row (`dsh/README.md`).
 // The entry takes no configuration: its routes are the original row's, read once at startup from the Loader's composed entry for that row, so the profile holds the dictionary once and an edit of it takes effect at the next start.
-import { CARRIER_TABLE } from '../../lib/harness/dsh/carrier-table.js';
 import { resolveProfiles } from '../vendor/dsh-llm-pi-ai/src/config.ts';
 import { bootstrap, Config, name } from '../vendor/dsh-llm-pi-ai/src/index.ts';
 import { createCarrierCache } from './carrier-cache.js';
-import { CARRIER_EVIDENCE_SERVICE, CARRIER_SETTINGS_SERVICE, ORIGINAL_ROW, PI_AI_SERVICE } from './pi-ai-integration.js';
+import { CARRIER_EVIDENCE_SERVICE, CARRIER_PREFIX_SERVICE, CARRIER_SETTINGS_SERVICE, ORIGINAL_ROW, PI_AI_SERVICE } from './pi-ai-integration.js';
 
 export { name };
 export const inject = ['llm', 'loader'];
@@ -46,9 +45,9 @@ export function apply(ctx) {
     ctx.provide(PI_AI_SERVICE, { failure: { cause: source.cause } });
     return;
   }
-  // The host's services are read at each call: each stands only while the host entry does, and a call with none reports nowhere and finds the Responses switch off.
+  // The host's services are read at each call: each stands only while the host entry does, and a call with none reports nowhere, finds the Responses switch off and, with no prefix to tell a carrier by, gives no point and says nothing.
   const cache = createCarrierCache({
-    carrierPrefix: CARRIER_TABLE.addresses,
+    carrierPrefix: () => ctx.get(CARRIER_PREFIX_SERVICE)?.carrierPrefix(),
     report: message => ctx.logger.warn(message),
     observe: result => ctx.get(CARRIER_EVIDENCE_SERVICE)?.record(result),
     responsesBreakpoint: () => ctx.get(CARRIER_SETTINGS_SERVICE)?.responsesBreakpoint?.(),

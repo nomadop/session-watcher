@@ -16,6 +16,7 @@ import { foldCarried } from '../../lib/carried-evidence.js';
 import { closeStore, openStore } from '../../lib/store.js';
 import { splitLines } from '../../lib/line-align.js';
 import { watchedTree } from './attribution-fixtures.js';
+import { unframed } from './reminder-frame.js';
 import {
   CARRIER_KIND, fromCheckout, INNER_ATTEMPT_RECORD_TYPE, INNER_CALL_RECORD_TYPE, mountShippedLoop, REPLY_PADDING, SEAL_STEPS, SEAL_WAIT_TURNS, SLOT_COUNT, sleep, slotNotes, turnOf,
 } from './dsh-shipped-loop.js';
@@ -1374,7 +1375,7 @@ const SCENARIOS = {
     assert.deepEqual(state, { asOfSeq: record.seq - 1, items: { workingDirectory: { value: DIRECTORY }, todos: { value: LIST } } }, 'the directory the service holds and the list the official unit held at the commit, cut at the event before the call record, and no item of a tool that is not listed');
     assert.deepEqual(ctx.sessionProjections.snapshot(session, ['todos']).values, { todos: LIST }, 'the registry\'s own snapshot holds that list');
     const shown = blockOf(state.asOfSeq, DIRECTORY, JSON.stringify(LIST));
-    assert.equal(carrier.data.content.at(-1).text, `\n\n${shown}`, 'the block closes the body');
+    assert.equal(unframed(carrier.data.content).at(-1).text, `\n\n${shown}`, 'the block closes the body');
     assert.ok(carriersText(writing.requests.at(-1)).includes(shown), 'the next main request carries it');
     const attempt = session.snapshotEvents()[record.data.attempt];
     assert.equal(Object.hasOwn(attempt.data.quote, 'todoEst'), false, 'the quote prices no state block');
@@ -1392,7 +1393,7 @@ const SCENARIOS = {
     assert.ok(second.appended.findIndex(event => event.type === 'turn/start') < second.appended.indexOf(secondRecord), 'the turn started before the seal read the state');
     assert.deepEqual(secondCarrier.data.source.state, { asOfSeq: secondRecord.seq - 1, items: { workingDirectory: { value: DIRECTORY, unchanged: true }, todos: { value: [] } } }, 'the reset is a state of its own: the empty list, beside the directory as unchanged');
     const secondBlock = blockOf(secondCarrier.data.source.state.asOfSeq, W.unchanged, W.empty);
-    assert.equal(secondCarrier.data.content.at(-1).text, `\n\n${secondBlock}`);
+    assert.equal(unframed(secondCarrier.data.content).at(-1).text, `\n\n${secondBlock}`);
     assert.ok(carriersText(second.requests.at(-1)).includes(secondBlock));
     assert.ok(carriersText(second.requests.at(-1)).includes(shown), 'the first carrier still stands on the request');
 
@@ -1406,7 +1407,7 @@ const SCENARIOS = {
     const thirdCarrier = third.appended.find(isCarrierEvent);
     const thirdRecord = third.appended.find(event => event.type === INNER_CALL_RECORD_TYPE);
     assert.deepEqual(thirdCarrier.data.source.state, { asOfSeq: thirdRecord.seq - 1, items: { workingDirectory: { value: DIRECTORY, unchanged: true }, todos: { value: [] } } }, 'the directory is shown as unchanged, the empty list as empty');
-    assert.equal(thirdCarrier.data.content.at(-1).text, `\n\n${blockOf(thirdCarrier.data.source.state.asOfSeq, W.unchanged, W.empty)}`);
+    assert.equal(unframed(thirdCarrier.data.content).at(-1).text, `\n\n${blockOf(thirdCarrier.data.source.state.asOfSeq, W.unchanged, W.empty)}`);
     assert.deepEqual(stderrLines.filter(line => line.includes('inner_')), [], 'no inner diagnostic');
     console.log(JSON.stringify(evidence));
     await ctx.fiber.dispose();

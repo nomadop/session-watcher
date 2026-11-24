@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 
 import { createMeasurementProjection } from '../lib/measurement-projection.js';
 
+const near = (actual, expected, message = '') => assert.ok(Math.abs(actual - expected) < 1e-12, `${message} ${actual} ≈ ${expected}`.trim());
+
 // The correlation a use arms carries its path, and its completion prices that path and reports it on the
 // issuing step, so every effect and path event names the call it completed.
 function interpretToolUse(observation) {
@@ -290,6 +292,92 @@ describe('shared Measurement Projection', () => {
       assert.deepEqual(projection.project({ ...toolResult({ toolUseId: 't1' }), effectsOnly: true }).records, []);
       assert.deepEqual(typesOf(projection.project(toolUse({ toolUseId: 't1', messageId: 'msg-a', path: 'a.js' }))),
         ['effect']);
+    });
+  });
+
+  describe('the expected recall share', () => {
+    // A main call as the Source states it, with its verdict (`pure`, `other` or `unknown`) and the recall bill it states, and the usage step of its own request.
+    const call = (verdict, recall) => ({ type: 'main-call', sourceOrdinal: 1, ...(verdict === undefined ? {} : { verdict }), ...(recall === undefined ? {} : { recall }) });
+    const usage = id => ({
+      type: 'usage', messageId: id, model: 'fake-model', timestamp: 1000, provenance: 'assistant', sourceOrdinal: 1,
+      usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+    });
+    // The step record of a main call that reports a usage, after the call's own fact.
+    const stepOf = (projection, verdict, id, recall) => {
+      projection.project(call(verdict, recall));
+      return projection.project(usage(id)).records[0];
+    };
+    // The decay of one classified main call, from the half-life the contract names: a weight halves over 32 of them.
+    const alpha = 1 - 2 ** (-1 / 32);
+
+    test('a classified call moves the share its successors read: pure counts 1, other 0, unknown is skipped, from the zero before the first, and no call reads its own', () => {
+      const projection = makeProjection();
+      const read = [
+        stepOf(projection, 'pure', 'm1'),
+        stepOf(projection, 'other', 'm2'),
+        stepOf(projection, 'unknown', 'm3'),
+        stepOf(projection, 'pure', 'm4'),
+        stepOf(projection, 'other', 'm5'),
+      ].map(record => record.p);
+      const afterFirst = alpha;
+      const afterSecond = (1 - alpha) * afterFirst;
+      const afterFourth = (1 - alpha) * afterSecond + alpha;
+      assert.equal(read[0], undefined, 'the first call has no classified predecessor, and its own pure is read by none of its points');
+      near(read[1], afterFirst);
+      near(read[2], afterSecond);
+      near(read[3], afterSecond, 'the unknown call leaves the share where it stood');
+      near(read[4], afterFourth);
+    });
+
+    test('an unknown call before the first classified one leaves the share absent, and a call that classifies other first reads a share of zero', () => {
+      const projection = makeProjection();
+      assert.equal(stepOf(projection, 'unknown', 'm1').p, undefined);
+      assert.equal(stepOf(projection, 'other', 'm2').p, undefined, 'the call that classifies first has no estimate at its own point');
+      assert.equal(stepOf(projection, 'pure', 'm3').p, 0, 'zero is an estimate, not an absence');
+    });
+
+    test('the share advances on main calls, not on usage steps: a call that reported none, and a pure call whose bill is unknown, count as they are', () => {
+      const projection = makeProjection();
+      projection.project(call('pure', { net: null }));
+      projection.project(call('pure'));
+      near(stepOf(projection, 'other', 'm1').p, alpha + (1 - alpha) * alpha, 'two pure calls, neither with a usage or with a bill');
+    });
+
+    test('a Source that classifies no call states no share: nothing is carried until the first verdict, and the facts that carry none move nothing', () => {
+      const projection = makeProjection();
+      assert.equal(stepOf(projection, undefined, 'm1').p, undefined);
+      assert.equal(stepOf(projection, 'pure', 'm2').p, undefined);
+      near(stepOf(projection, undefined, 'm3').p, alpha, 'a call with no verdict reads the share and leaves it');
+      near(stepOf(projection, 'other', 'm4').p, alpha);
+    });
+
+    test('a true epoch restarts the estimate and keeps the count of main calls; finishing a segment alone does not', () => {
+      const projection = makeProjection();
+      stepOf(projection, 'pure', 'm1');
+      projection.finishSegment({ segment: 1, steps: [closedStep('m1', 1)] }, { captureMode: 'live' });
+      near(stepOf(projection, 'pure', 'm2').p, alpha, 'finishing a segment is no epoch');
+      projection.project(epochBoundary());
+      const first = stepOf(projection, 'other', 'm3');
+      assert.equal(first.p, undefined, 'a new epoch has no classified call yet');
+      assert.equal(first.mainCallOrdinal, 3, 'the count of main calls runs on');
+      assert.equal(stepOf(projection, 'pure', 'm4').p, 0);
+    });
+
+    test('two Projections hold two estimates', () => {
+      const first = makeProjection();
+      const second = makeProjection();
+      stepOf(first, 'pure', 'm1');
+      assert.equal(stepOf(second, 'pure', 'm1').p, undefined);
+    });
+
+    test('a request with a bill rides the next usage step with the bills of the calls that reported none; one with no bill rides none', () => {
+      const projection = makeProjection();
+      projection.project(call('pure', { net: 3 }));
+      projection.project(call('unknown', { net: null }));
+      const step = stepOf(projection, 'pure', 'm1', { net: 4 });
+      assert.deepEqual(step.recall, { priced: 2, net: 7 });
+      assert.equal('recall' in stepOf(projection, 'pure', 'm2', { net: null }), false);
+      assert.equal('recall' in stepOf(projection, 'other', 'm3'), false);
     });
   });
 });
