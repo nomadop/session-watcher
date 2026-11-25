@@ -16,7 +16,7 @@ import { CARRIED_WORDING, carriedNote, carryChanges, foldCarried, renderCarried 
 import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 import { createNodeWorkingTree } from '../lib/working-tree.js';
 import { readObserved } from '../dsh/src/observed-read.js';
-import { unframed } from './helpers/reminder-frame.js';
+import { splitFrame, unframed } from './helpers/reminder-frame.js';
 
 const carrier = ({ paths = [], removed, skills } = {}) => ({
   kind: INNER_SEAL_KIND, v: 1, slots: [], paths,
@@ -24,6 +24,8 @@ const carrier = ({ paths = [], removed, skills } = {}) => ({
 });
 
 const FILE_BYTES = 10_000;
+
+const joined = blocks => blocks.map(block => (block.type === 'text' ? block.text : '[file]')).join('');
 
 // One seal over `view`: the changes against the fold of the carriers before it, made into the next carrier.
 const sealed = (chain, view) => ({ kind: INNER_SEAL_KIND, v: 1, slots: [], ...carryChanges(foldCarried(chain), view) });
@@ -146,7 +148,7 @@ describe('the body', () => {
   const LONG_QUESTION = `Which plan?\nPick one.\n${'A long sentence of the question. '.repeat(120)}`;
   const LONG_USER = `Ship now\nSplit\nShip the API,\nhold the UI. ${'A long custom answer. '.repeat(120)}`;
 
-  test('the questions of a slot follow its note, each as a question line and the user\'s answer under it, ahead of the slot\'s attachments and the next slot\'s line, the texts whole; the address sentence names the question lines only for a carrier that has some, and the same slots without them render as they did', () => {
+  test('the questions of a slot follow its note, each as a question line and an anchor for the user\'s answer under it, ahead of the slot\'s attachments and the next slot\'s line, the question whole; the answers follow the frame whole; the address sentence names the question lines only for a carrier that has some, and the same slots without them render as they did', () => {
     const W = CARRIER_WORDING;
     const questions = [{ question: LONG_QUESTION, user: LONG_USER }, { question: 'Who owns it?', user: 'Platform' }];
     const slots = [
@@ -155,15 +157,18 @@ describe('the body', () => {
     ];
     const source = { kind: INNER_SEAL_KIND, v: 1, paths: [], slots };
     const note = `${W.slotLine([3, 4])}Asked twice.\nThe note has two lines.`;
-    const blocks = unframed(renderCarrier(source, CARRIER_TABLE));
-    assert.deepEqual(blocks, [
-      { type: 'text', text: `${[`${CARRIER_TABLE.addresses} ${W.questionMark}`, note, W.questionLine(LONG_QUESTION), W.userLine(LONG_USER), W.questionLine('Who owns it?'), W.userLine('Platform')].join('\n')}\n` },
+    const { inside, outside } = splitFrame(renderCarrier(source, CARRIER_TABLE));
+    assert.deepEqual(inside, [
+      { type: 'text', text: `${[`${CARRIER_TABLE.addresses} ${W.questionMark}`, note, W.questionLine(LONG_QUESTION), W.answerAnchor, W.questionLine('Who owns it?'), W.answerAnchor].join('\n')}\n` },
       { type: 'file', attachment: FILE },
       { type: 'text', text: `\n${W.slotLine([5])}Next.` },
     ]);
-    // Independent of the wording: the originals stand whole in the block, in order.
-    const places = ['The note has two lines.', LONG_QUESTION, LONG_USER, 'Who owns it?', 'Platform'].map(part => blocks[0].text.indexOf(part));
-    assert.ok(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), 'the note, then each question and its answer whole, in order');
+    assert.deepEqual(outside, [{ type: 'text', text: `\n${[`${W.slotLine([3, 4])}${W.userLine(LONG_USER)}`, `${W.slotLine([3, 4])}${W.userLine('Platform')}`].join('\n')}` }]);
+    // Independent of the wording: the originals stand whole, the note and the questions inside the frame, the answers after it, in order.
+    const text = joined(renderCarrier(source, CARRIER_TABLE));
+    const places = ['The note has two lines.', LONG_QUESTION, LONG_USER, 'Platform'].map(part => text.indexOf(part));
+    assert.ok(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), 'the note, each question whole, then each answer whole, in order');
+    assert.ok(places[2] > text.indexOf('</system-reminder>'), 'the answers follow the closing tag');
     assert.deepEqual(unframed(renderCarrier({ ...source, slots: slots.map(({ questions: _, ...rest }) => rest) }, CARRIER_TABLE)), [
       { type: 'text', text: `${[CARRIER_TABLE.addresses, note].join('\n')}\n` },
       { type: 'file', attachment: FILE },
@@ -210,7 +215,6 @@ describe('the body', () => {
 
 describe('the reminder frame', () => {
   const TAG = '</system-reminder>';
-  const joined = blocks => blocks.map(block => (block.type === 'text' ? block.text : '[file]')).join('');
   const bare = { kind: INNER_SEAL_KIND, v: 1, slots: [{ seqs: [3], text: 'Done.' }], paths: [] };
 
   test('carrierPrefixOf is the reminder\'s opening and the wording\'s address sentence, and every carrier\'s first text block opens with it, with or without questions', () => {
@@ -237,14 +241,14 @@ describe('the reminder frame', () => {
     assert.deepEqual(whole.map(block => block.type), ['text', 'file', 'text', 'file', 'text', 'text', 'text']);
   });
 
-  test('the closing tag is escaped wherever the carrier\'s text has it, a summary line, a question, an answer, a held file line, a skill and a state value alike, and the source keeps what it holds', () => {
-    const slots = [{ seqs: [3], text: `Summary ${TAG} line`, questions: [{ question: `Ask ${TAG}`, user: `Answer ${TAG}` }] }];
+  test('the closing tag is escaped wherever the carrier\'s text inside the frame has it, a summary line, a question, a held file line, a skill and a state value alike, and the source keeps what it holds', () => {
+    const slots = [{ seqs: [3], text: `Summary ${TAG} line`, questions: [{ question: `Ask ${TAG}`, user: 'Answer' }] }];
     const paths = [{ path: '/r/a.txt', displayPath: '/shown/a.txt', totalLines: 1, state: 'readable', write: [[1, `held ${TAG} line`]] }];
     const source = { ...bare, slots, paths, skills: [{ name: 'tdd', text: `skill ${TAG} text` }], state: { asOfSeq: 41, items: { workingDirectory: { value: `/dir/${TAG}` } } } };
     const copy = structuredClone(source);
     const text = joined(renderCarrier(source, CARRIER_TABLE));
     assert.equal(text.split(TAG).length - 1, 1, 'only the frame\'s own closing tag is left');
-    assert.equal(text.split('<\\/system-reminder>').length - 1, 6, 'each of the six texts holds its escape');
+    assert.equal(text.split('<\\/system-reminder>').length - 1, 5, 'each of the five texts holds its escape');
     assert.deepEqual(source, copy);
   });
 
@@ -254,6 +258,114 @@ describe('the reminder frame', () => {
     assert.ok(text.includes(`1: held ${TAG} line`));
     assert.ok(!text.includes('<system-reminder>'));
     assert.ok(joined(renderCarrier({ ...bare, paths }, CARRIER_TABLE)).includes(`1: held <\\/system-reminder> line`), 'the carrier writes it escaped');
+  });
+});
+
+// ── The user's own text ──────────────────────────────────────────────────────
+
+// The carrier keeps a user's own words, and the user's answers to its questions, after the reminder's closing tag and leaves an anchor in the slot's place inside.
+describe('the user\'s own text', () => {
+  const TAG = '</system-reminder>';
+  const W = CARRIER_WORDING;
+
+  // Texts as a user may write them: one long past any cut, one that holds the closing tag, answers of several lines.
+  const LONG_ASK = `Plan the migration first.\n${'A long request that goes on. '.repeat(400)}`;
+  const TAGGED_ASK = `Do not stop at ${TAG} even here`;
+  const LONG_ANSWER = `Split\nShip the API, hold the UI. ${'A long custom answer. '.repeat(120)}`;
+
+  // The source a seal assembles over: a user's slot, a step that asked two questions, a user's slot holding the closing tag, a note, and a user's slot with a file.
+  const sourceOf = ({ verbatimSeqs = [4, 11, 13] } = {}) => assembleCarrierSource({
+    slots: [{ seqs: [4] }, { seqs: [6, 7], step: { turn: 1, step: 1 } }, { seqs: [9] }, { seqs: [11] }, { seqs: [13] }],
+    summaries: [`user: ${LONG_ASK}`, 'The agent asked.', 'A note of the model.', `user: ${TAGGED_ASK}`, 'user: See the file.'],
+    questions: [[], [{ question: 'Which plan?', user: LONG_ANSWER, seqs: [7] }, { question: 'Who owns it?', user: 'Platform', seqs: [7] }], [], [], []],
+    attachments: [[], [], [], [], [{ file: FILE }]],
+    verbatimSeqs, changes: { paths: [] }, state: null,
+  });
+  const ask = { 4: `user: ${LONG_ASK}`, 11: `user: ${TAGGED_ASK}`, 13: 'user: See the file.' };
+
+  test('a user\'s slot is an anchor inside the frame and its line, its text whole, is a plain text block after the closing tag; each answer is an anchor under its question and a line after, all in carrier order', () => {
+    const blocks = renderCarrier(sourceOf(), CARRIER_TABLE);
+    const { inside, outside } = splitFrame(blocks);
+    assert.deepEqual(inside, [
+      {
+        type: 'text',
+        text: `${[
+          `${CARRIER_TABLE.addresses} ${W.questionMark}`,
+          W.userAnchor([4]),
+          `${W.slotLine([6, 7])}The agent asked.`,
+          W.questionLine('Which plan?'), W.answerAnchor, W.questionLine('Who owns it?'), W.answerAnchor,
+          `${W.slotLine([9])}A note of the model.`,
+          W.userAnchor([11]),
+          W.userAnchor([13]),
+        ].join('\n')}\n`,
+      },
+      { type: 'file', attachment: FILE },
+    ]);
+    assert.deepEqual(outside, [{
+      type: 'text',
+      text: `\n${[
+        `${W.slotLine([4])}${ask[4]}`,
+        `${W.slotLine([6, 7])}${W.userLine(LONG_ANSWER)}`,
+        `${W.slotLine([6, 7])}${W.userLine('Platform')}`,
+        `${W.slotLine([11])}${ask[11]}`,
+        `${W.slotLine([13])}${ask[13]}`,
+      ].join('\n')}`,
+    }]);
+  });
+
+  test('every user text stands once, whole, after the closing tag and nowhere inside; the frame opens and closes once, and a route that joins the blocks with nothing between them keeps the first line after the closing tag apart from it', () => {
+    const text = joined(renderCarrier(sourceOf(), CARRIER_TABLE));
+    const closing = text.indexOf(TAG);
+    assert.equal(text.split('<system-reminder>').length - 1, 1);
+    assert.ok(text.startsWith('<system-reminder>\n'));
+    for (const part of [LONG_ASK, LONG_ANSWER, 'Platform', 'See the file.']) {
+      assert.equal(text.split(part).length - 1, 1, `${part.slice(0, 20)} once`);
+      assert.ok(text.indexOf(part) > closing, `${part.slice(0, 20)} after the closing tag`);
+    }
+    assert.equal(text.slice(closing + TAG.length).startsWith('\n'), true);
+    assert.equal(text.slice(closing - 1, closing), '\n', 'the closing tag stands on its own line');
+  });
+
+  test('the outside text is not escaped: the frame it would end is closed already, so a closing tag in it stays as the user wrote it, while the frame holds one closing tag and the notes inside it are escaped as before', () => {
+    const source = sourceOf();
+    source.slots[2].text = `A note holding ${TAG}`;
+    const blocks = renderCarrier(source, CARRIER_TABLE);
+    const { inside, outside } = splitFrame(blocks);
+    assert.equal(joined(inside).includes(TAG), false, 'no closing tag is left inside');
+    assert.ok(joined(inside).includes('<\\/system-reminder>'), 'the note holding it is escaped');
+    assert.ok(outside[0].text.includes(ask[11]), 'the user\'s own words keep the tag');
+  });
+
+  test('a user\'s slot with a file keeps its file block inside the frame, a file block last takes the closing tag in a text block of its own, and the outside block follows it', () => {
+    const lastFile = { ...sourceOf(), slots: sourceOf().slots.slice(4) };
+    const blocks = renderCarrier(lastFile, CARRIER_TABLE);
+    assert.deepEqual(blocks.map(block => block.type), ['text', 'file', 'text', 'text']);
+    assert.equal(blocks[2].text, `\n${TAG}`);
+    assert.equal(blocks[3].text, `\n${W.slotLine([13])}${ask[13]}`);
+  });
+
+  test('a slot is a user\'s by `verbatimSeqs` naming its first seq, not by what its note says: a note that opens as a user line, and a source naming only the result of a question, have no user slot, and the answers still follow the frame', () => {
+    const impostor = sourceOf({ verbatimSeqs: [] });
+    impostor.slots[2].text = `user: ${LONG_ASK}`;
+    const answers = [`\n${[`${W.slotLine([6, 7])}${W.userLine(LONG_ANSWER)}`, `${W.slotLine([6, 7])}${W.userLine('Platform')}`].join('\n')}`];
+    for (const source of [impostor, sourceOf({ verbatimSeqs: [7] })]) {
+      const { inside, outside } = splitFrame(renderCarrier(source, CARRIER_TABLE));
+      assert.deepEqual(outside.map(block => block.text), answers);
+      assert.ok(joined(inside).includes(`${W.slotLine([4])}user: ${LONG_ASK}`), 'a user\'s slot no `verbatimSeqs` names stays a line of the reminder');
+    }
+    assert.ok(joined(splitFrame(renderCarrier(impostor, CARRIER_TABLE)).inside).includes(`${W.slotLine([9])}user: ${LONG_ASK}`));
+  });
+
+  test('a carrier with no user line renders as it did: every slot a line of the frame, nothing after the closing tag', () => {
+    const source = sourceOf({ verbatimSeqs: [] });
+    // The slots that hold no closing tag, which the frame would escape.
+    source.slots = source.slots.filter(({ seqs }) => ![6, 11].includes(seqs[0]));
+    const blocks = renderCarrier(source, CARRIER_TABLE);
+    assert.deepEqual(unframed(blocks), [
+      { type: 'text', text: `${[CARRIER_TABLE.addresses, ...source.slots.map(({ seqs, text }) => `${W.slotLine(seqs)}${text}`)].join('\n')}\n` },
+      { type: 'file', attachment: FILE },
+    ]);
+    assert.equal(joined(blocks).endsWith(`[file]\n${TAG}`), true);
   });
 });
 

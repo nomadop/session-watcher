@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.5 (2026-11-25) — A user's own words kept whole after the carrier's reminder
+
+### DSH plugin
+
+- **A user's own words follow the carrier's reminder** — a model does not take text inside the carrier's `<system-reminder>` for the user speaking: after a seal it carried out an earlier plain instruction of the user, to stop and wait for confirmation, although the user's later confirmation stood in the carrier. The carrier now writes a user's message, and the user's answer to each question a step asked, as a marker inside the reminder that says the text is below, and the text itself, whole and unescaped, as lines of one more block after the reminder's closing tag in the same message, each under the seqs of its slot. The model's own notes, the questions, the held files and the state stay inside the reminder, and a carrier with no user line is written as before. The DSH page describes it.
+- **A long user message is kept whole** — the carrier no longer cuts a user's message at the turn note's storage cap with a truncation marker, which sent the model to read the original again after every seal. A slot is the user's by the first seq the seal recorded for it, not by how its note opens.
+- **The carrier's address sentence and question sentence are reworded** — a carrier written by an earlier release does not open with the new carrier opening, so the carrier cache adapter gives it no cache point; the next seal writes a carrier that opens with it. The adapter asks the host what a carrier opens with at each request, so `@nomadop/session-watcher-dsh-carrier-cache` stays at 0.3.0 and needs no update.
+
+---
+
 ## 0.11.4 (2026-11-24) — A repeat read of held lines blocked, the carrier as one system reminder, and an expected recall stock in the position
 
 ### DSH plugin

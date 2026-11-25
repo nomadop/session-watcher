@@ -78,7 +78,7 @@ export async function summarizeSlots({ llm, session, index, events, selection, s
   const chosen = { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
   const tools = session.requestHeader()?.tools;
   const perSlot = slotMessagesOf({ slots, session, events, range });
-  const { tailText, verbatim, askedCues, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
+  const { tailText, verbatim, askedCues, userSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
   const tail = { role: 'user', content: [{ type: 'text', text: tailText }] };
   const input = { throughSeq: session.seq - 1, headerSeq: headerSeqIn(index, { latest: true }), tail };
   const options = {
@@ -140,5 +140,5 @@ export async function summarizeSlots({ llm, session, index, events, selection, s
     return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${askedCount} strings keyed "1" to "${askedCount}"`, call };
   }
   const sourceTokens = ctp === null ? undefined : perSlot.map(messages => messages.reduce((sum, message) => sum + charsToTokens(requestTextOf(message), ctp), 0));
-  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: wholeUserSlots.map(at => slots[at].seqs[0]), sourceTokens, call };
+  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: userSlots.map(at => slots[at].seqs[0]), sourceTokens, call };
 }

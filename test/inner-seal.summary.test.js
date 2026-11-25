@@ -3,7 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { mergeNotes, parseNotes, planSummary } from '../lib/inner-seal/summary.js';
-import { storedUText } from '../lib/turn.js';
 
 const NO_HELD = { paths: new Map(), skills: new Map() };
 
@@ -59,12 +58,18 @@ test('the held list names each held file then each skill by its key, and reads `
   assert.deepEqual(heldLinesOf(planSummary([user('hi')], NO_HELD).tailText), ['none']);
 });
 
-test('a user slot takes `user: ` and its text whole, or cut as a turn note cuts its U with the counted truncation marker; any other slot is asked', () => {
-  const long = 'word '.repeat(400);
+test('a user slot takes `user: ` and its text whole, however long it is; any other slot is asked', () => {
+  const long = 'word '.repeat(4000);
   const { verbatim } = planSummary([user('short ask'), { own: false, kind: 'other', text: 'note' }, user(long)], NO_HELD);
   assert.deepEqual(verbatim.slice(0, 2), ['user: short ask', null]);
-  assert.equal(verbatim[2], `user: ${storedUText(long).uText} [truncated; ${long.length} chars]`);
-  assert.ok(storedUText(long).uText.length < long.length);
+  assert.equal(verbatim[2], `user: ${long}`);
+});
+
+test('the user slots are those of a user\'s own message with text, which the seal records so the monitor knows what a carrier holds; a user\'s message with no text and every other slot are none', () => {
+  const facts = [user('first'), { own: false, kind: 'other', text: 'note' }, user(''), user('word '.repeat(4000)), { own: false, kind: 'result', text: 'x', toolCallId: 'c' }];
+  const plan = planSummary(facts, NO_HELD);
+  assert.deepEqual(plan.userSlots, [0, 3]);
+  assert.equal(plan.askedCount, 2, 'the empty user slot takes its verbatim note and no number');
 });
 
 test('the notes are an object keyed "1" to the asked count with a string under each key and no other key', () => {

@@ -23,7 +23,7 @@ import { createNodeWorkingTree } from '../lib/working-tree.js';
 import { readTreeWindows } from '../lib/working-tree-text.js';
 import { fakeTokenMeter } from './helpers/dsh-fake-context.js';
 import { withoutEventAt } from './helpers/dsh-mode-kit.js';
-import { unframed } from './helpers/reminder-frame.js';
+import { splitFrame, unframed } from './helpers/reminder-frame.js';
 import {
   assistantMessage, compactCheckpoint, innerSealCarrier, prunedResult, requestHeader, sessionLog, stepEnd, stepStart, systemMessage, toolCall,
   toolResult, turnEnd, turnStart, userMessage,
@@ -1729,6 +1729,7 @@ const notingSlots = notes => recordingLlm((options) => {
 
 // The positions of `parts` in `text`, each from `indexOf`, which an assertion holds present and ascending.
 const placesIn = (text, parts) => parts.map(part => text.indexOf(part));
+const textOfBlocks = blocks => blocks.map(block => (block.type === 'text' ? block.text : '')).join('');
 const ascending = places => places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1]));
 
 test('a step that asked the user carries each question\'s original text and the user\'s own answer beside its note, in the step\'s place among the notes: the labels the user selected and the custom text whole, the options, their descriptions and the detail left out, and the note the model wrote, restating the answer, stays as written', { skip }, async () => {
@@ -1752,13 +1753,41 @@ test('a step that asked the user carries each question\'s original text and the 
   assert.equal(slots[2].text, restated, 'the note is the model\'s, nothing taken out of it');
   assert.deepEqual(slots.map(slot => Object.hasOwn(slot, 'questions')), slots.map((_, index) => index === 2), 'no other slot has the field');
   assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
-  // Independent of the wording: whatever frames them, the originals stand in the body whole, in the order note, question, answer, question, answer, next note.
-  const body = carrier.data.content[0].text;
-  assert.ok(ascending(placesIn(body, [restated, LONG_QUESTION, 'Ship now\nSplit\n', PLAN_CUSTOM, 'Who owns the rollout?', 'Platform', slots[3].text])), 'the originals follow the step\'s note, before the next note');
+  // Independent of the wording: the note and the questions stand in the reminder whole in their order, the answers whole after its closing tag in theirs, and no answer inside it.
+  const { inside, outside } = splitFrame(carrier.data.content);
+  const [inner, after] = [inside, outside].map(textOfBlocks);
+  assert.ok(ascending(placesIn(inner, [restated, LONG_QUESTION, 'Who owns the rollout?', slots[3].text])), 'the questions follow the step\'s note, before the next note');
+  assert.ok(ascending(placesIn(after, ['Ship now\nSplit\n', PLAN_CUSTOM, 'Platform'])), 'the answers follow the frame whole, in the order asked');
+  assert.ok(!inner.includes(PLAN_CUSTOM) && !inner.includes('Platform'), 'no answer stands inside the reminder');
+  const body = `${inner}${after}`;
   for (const explanation of EXPLANATIONS) assert.ok(!body.includes(explanation), `the model's explanation is no part of the body: ${explanation}`);
   assert.ok(!body.includes('Wait') && !body.includes('Product'), 'the options the user did not select are no part of the body');
-  assert.ok(body.startsWith(`${carrierPrefixOf(CARRIER_TABLE)} ${CARRIER_WORDING.questionMark}`), 'the address sentence names the question lines');
+  assert.ok(carrier.data.content[0].text.startsWith(`${carrierPrefixOf(CARRIER_TABLE)} ${CARRIER_WORDING.questionMark}`), 'the address sentence names the question lines');
   assert.equal(llm.calls.length, 1, 'one summary call, over the slots as before');
+});
+
+test('a user\'s own message of the range is kept whole at any length and stands after the frame, an anchor in its place inside, while the model\'s notes stay inside', { skip }, async () => {
+  const LONG = `Long input. ${'A long request that goes on. '.repeat(5000)}`;
+  const opening = turnOf({ steps: 1 });
+  const long = turnOf({ turn: 2, steps: LONG_STEPS, bulk: BULK, ask: LONG });
+  const { session, seqOf } = sessionOver([systemMessage(), ...opening.events, ...long.events]);
+  const before = session.seq;
+  const { seal } = sealOver(session);
+
+  await preStep(seal, session);
+
+  const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
+  const { slots, verbatimSeqs } = carrier.data.source;
+  const own = slots.find(slot => slot.seqs.includes(seqOf(long.request)));
+  assert.deepEqual(own.seqs, [seqOf(long.request)], 'the user\'s message is a slot of its own');
+  assert.equal(own.text, `user: ${LONG}`, 'the note is the text whole, with no marker of a cut');
+  assert.ok(verbatimSeqs.includes(own.seqs[0]), 'the seal records the slot as holding the text whole');
+  assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
+  const { inside, outside } = splitFrame(carrier.data.content);
+  const [inner, after] = [inside, outside].map(textOfBlocks);
+  assert.equal(after, `\n${CARRIER_WORDING.slotLine(own.seqs)}${own.text}`, 'the user\'s line alone follows the closing tag');
+  assert.ok(!inner.includes(LONG) && inner.includes(CARRIER_WORDING.userAnchor(own.seqs)), 'inside, an anchor stands in its place');
+  for (const slot of slots.filter(each => each !== own)) assert.ok(inner.includes(`${CARRIER_WORDING.slotLine(slot.seqs)}${slot.text}`), 'the model\'s notes stay inside');
 });
 
 // One ask answered as `result`, with `arguments`, at the third step of a range that seals; answers the carrier the seal committed and the session's appended types.
@@ -1843,9 +1872,12 @@ test('a refusal, a custom answer with no selection and a question the user left 
     { question: 'Who owns the rollout?\nName one team.', user: 'Neither;\nask the infra team.' },
     { question: 'Notify on-call?', user: 'No' },
   ], 'the questions in the order they were asked, each with the answer of its own id');
-  const body = carrier.data.content[0].text;
-  assert.ok(ascending(placesIn(body, ['Ship today?', `No\n${REFUSAL}`, 'Who owns the rollout?\nName one team.', 'Neither;\nask the infra team.', 'Notify on-call?'])), 'the originals stand whole in the body, in order');
-  assert.ok(!body.includes('Anything else?'), 'the question the user gave no words to is no part of the body');
+  const { inside, outside } = splitFrame(carrier.data.content);
+  const [inner, after] = [inside, outside].map(textOfBlocks);
+  assert.ok(ascending(placesIn(inner, ['Ship today?', 'Who owns the rollout?\nName one team.', 'Notify on-call?'])), 'the questions stand whole in the reminder, in order');
+  assert.ok(ascending(placesIn(after, [`No\n${REFUSAL}`, 'Neither;\nask the infra team.'])) && after.includes(CARRIER_WORDING.userLine('No')), 'the answers stand whole after the closing tag, in order');
+  assert.ok(!inner.includes(REFUSAL), 'no answer is inside the reminder');
+  assert.ok(!`${inner}${after}`.includes('Anything else?'), 'the question the user gave no words to is no part of the body');
 });
 
 test('a result the pruner replaced twice gives its answer from the original it stands for, from the frozen events, never from the pruned text that stood in the range: the slot keeps the replacement beside the original in its seqs, and the pairing is by call id', { skip }, async () => {
@@ -1899,10 +1931,12 @@ test('several question calls keep their own pairing and order: two asks of one s
   assert.deepEqual(slots.map(slot => Object.hasOwn(slot, 'questions')), slots.map((_, index) => index === 3 || index === 5));
   assert.deepEqual(slots.map(slot => slot.text), slots.map((_, index) => `summary ${index + 1}`), 'every step has its note, the asking ones included');
   assert.deepEqual(carrier.data.content, renderCarrier(carrier.data.source, CARRIER_TABLE), 'the body is the source rendered');
-  const body = carrier.data.content[0].text;
-  assert.ok(ascending(placesIn(body, [
-    slots[3].text, 'Question a?\nWith a second line.', 'Yes', 'Question b?\nWith a second line.', 'No\nNot before Friday', slots[4].text, slots[5].text, 'Question c?\nWith a second line.', 'Later', slots[6].text,
-  ])), 'each question and answer follow their own note, in the order the calls were made');
+  const { inside, outside } = splitFrame(carrier.data.content);
+  const [inner, after] = [inside, outside].map(textOfBlocks);
+  assert.ok(ascending(placesIn(inner, [
+    slots[3].text, 'Question a?\nWith a second line.', 'Question b?\nWith a second line.', slots[4].text, slots[5].text, 'Question c?\nWith a second line.', slots[6].text,
+  ])), 'each question follows its own note, in the order the calls were made');
+  assert.ok(ascending(placesIn(after, [CARRIER_WORDING.userLine('Yes'), 'No\nNot before Friday', CARRIER_WORDING.userLine('Later')])), 'the answers follow the frame in the order the calls were made');
 });
 
 test('a seal over steps that asked nothing, tool calls of other tools among them, leaves every slot with its seqs and note alone and renders the address sentence and one line per note, as a carrier did before the exchanges', { skip }, async () => {
@@ -2014,7 +2048,7 @@ test('a carrier in the range, replaced by the new one, is no carrier on the requ
 
   const carrier = appendedSince(session, before).find(event => event.type === 'user/message');
   assert.equal(carrier.data.source.paths[0].omit, undefined);
-  for (const text of SHOWN_BODY) assert.ok(carrier.data.content.at(-1).text.includes(text), text);
+  for (const text of SHOWN_BODY) assert.ok(splitFrame(carrier.data.content).inside.at(-1).text.includes(text), text);
 });
 
 test('when the cheap check and the frozen slice disagree, the slice\'s range, count and pause decide the summary and the commit', { skip }, async () => {
@@ -2706,7 +2740,8 @@ test('the monitor warns only when a later slot seals a direct read of text the r
   assert.deepEqual(await warnings(), [undefined, {
     [recallSlots[0]]: ['verbatim-recall'],
     [recallSlots[2]]: ['verbatim-recall'],
-  }], 'mark whole user text and the result of an injected question; not the message that asked it, whose own text the carrier does not hold, nor truncated, unsealed or other result text');
+    [recallSlots[3]]: ['verbatim-recall'],
+  }], 'mark user text, however long, and the result of an injected question; not the message that asked it, whose own text the carrier does not hold, nor unsealed or other result text');
 });
 
 test('the details of a sealed attempt read from the facts the seal wrote: the request as it was sent with the definitions of the header\'s tools, the response and its usage, and slots that tell the sources the call saw from the original a pruner replaced', { skip }, async () => {

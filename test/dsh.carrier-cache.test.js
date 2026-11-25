@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 import { createCarrierCache } from '../dsh/src/carrier-cache.js';
 import { isCarrierResult } from '../lib/llm-adapter/carrier-results.js';
+import { assembleCarrierSource, carrierPrefixOf, renderCarrier } from '../lib/inner-seal/carrier.js';
+import { CARRIER_TABLE } from '../lib/harness/dsh/carrier-table.js';
 
 const PREFIX = 'These summaries stand in for the earlier turns.';
 
@@ -153,6 +155,28 @@ test('the prefix is asked of the host at each call of the hook, so a carrier is 
   reworded.input[0].content[0].text = `${prefix}\nseq 1: a summary`;
   assert.equal(await hookFor(wrapped, KEYED)(reworded, EXPLICIT_MODEL), reworded);
   assert.deepEqual(asked, [PREFIX, 'A reworded opening.', 'A reworded opening.']);
+});
+
+test('a carrier whose user\'s own text follows its reminder is told by its first block and given the point at the end of its message, after that text', async () => {
+  const source = assembleCarrierSource({
+    slots: [{ seqs: [4] }, { seqs: [5], step: { turn: 1, step: 1 } }], summaries: ['user: Stop and wait.', 'A note.'], questions: [[], []], attachments: [[], []],
+    verbatimSeqs: [4], changes: { paths: [] }, state: null,
+  });
+  const blocks = renderCarrier(source, CARRIER_TABLE);
+  assert.ok(blocks.length > 1, 'the user\'s text is a block of its own');
+  const payload = {
+    model: 'gpt-fixture',
+    input: [
+      { role: 'user', content: blocks.map(({ text }) => ({ type: 'input_text', text })) },
+      { role: 'assistant', content: [{ type: 'output_text', text: 'a step' }] },
+      { role: 'user', content: [{ type: 'input_text', text: 'a follow-up' }] },
+    ],
+  };
+  const results = [];
+  const wrapped = decorated(providerDouble(), { carrierPrefix: () => carrierPrefixOf(CARRIER_TABLE), observe: result => results.push(result) }).get('openai').piProvider;
+  assert.equal(await hookFor(wrapped, KEYED)(payload, EXPLICIT_MODEL), payload);
+  assert.deepEqual(results, [{ result: 'added' }]);
+  assert.deepEqual(payload.input[0].content.map(part => part.prompt_cache_breakpoint !== undefined), blocks.map((_, at) => at === blocks.length - 1), 'the point is on the last block alone');
 });
 
 // Each result and report of two requests sent through a wrapper whose host answers `carrierPrefix`; the payload of each is the serializer's.

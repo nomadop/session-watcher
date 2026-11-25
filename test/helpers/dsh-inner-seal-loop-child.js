@@ -1309,10 +1309,10 @@ const SCENARIOS = {
       { question: QUESTIONS.questions[0].question, user: `Ship now\nSplit\n${CUSTOM_ANSWER}` },
       { question: 'Who owns the rollout?', user: 'Platform' },
     ]);
-    // Whatever the bundled renderer's wording, the body stored and the body the model's request carries hold the originals whole in order, and none of the model's explanation.
+    // Whatever the bundled renderer's wording, the body stored and the body the model's request carries hold each question whole in order inside the reminder and each answer whole in order after its closing tag, and none of the model's explanation.
     for (const [where, body] of [['the stored carrier', textsIn(logged.carrier.data)], ['the request\'s carrier', textsIn(logged.message)]]) {
-      const places = [QUESTIONS.questions[0].question, `Ship now\nSplit\n${CUSTOM_ANSWER}`, 'Who owns the rollout?', 'Platform'].map(part => body.indexOf(part));
-      assert.ok(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), `${where} holds each question and the user's answer whole, in order`);
+      const places = [QUESTIONS.questions[0].question, 'Who owns the rollout?', '</system-reminder>', `Ship now\nSplit\n${CUSTOM_ANSWER}`, 'Platform'].map(part => body.indexOf(part));
+      assert.ok(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), `${where} holds each question whole in the reminder and the user's answer whole after it, in order`);
       for (const explanation of EXPLANATIONS) assert.ok(!body.includes(explanation), `${where} leaves out the model's explanation: ${explanation}`);
       assert.ok(!body.includes('Product'), `${where} leaves out the option the user did not select`);
     }

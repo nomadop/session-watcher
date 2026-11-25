@@ -19748,7 +19748,7 @@ function resolveProjectKey({ claudeProjectDir, cwd } = {}) {
 // package.json
 var package_default2 = {
   name: "@nomadop/session-watcher",
-  version: "0.11.4",
+  version: "0.11.5",
   description: "Local Claude Code context-cost monitor, transcript replay, buckets, and handoff",
   type: "module",
   license: "MIT",
@@ -21217,12 +21217,15 @@ function assembleCarrierSource({ slots, summaries, questions, attachments, sourc
   };
 }
 var carrierPrefixOf = (wording) => `${REMINDER_OPEN}${wording.addresses}`;
+var slotLine = (seqs) => `seq ${seqs.join(", ")}: `;
 var CARRIER_WORDING = {
-  slotLine: (seqs) => `seq ${seqs.join(", ")}: `,
+  slotLine,
   imageSaved: (name3, tool) => `The image ${name3} is not in the current context; ${tool} can read the file below when it is needed.`,
-  questionMark: "A line marked question: holds the question as it was asked, and the user: line under it the user's whole answer.",
+  questionMark: "A line marked question: holds the question as it was asked; the user's whole answer is given below under the same seq.",
   questionLine: (question) => `question: ${question}`,
-  userLine: (user) => `user: ${user}`
+  userLine: (user) => `user: ${user}`,
+  userAnchor: (seqs) => `${slotLine(seqs)}[user message, below]`,
+  answerAnchor: "user: [answer, below]"
 };
 function renderCarrier(source, wording) {
   const W = CARRIER_WORDING;
@@ -21232,9 +21235,17 @@ function renderCarrier(source, wording) {
     if (lines.length > 0) blocks.push({ type: "text", text: lines.join("\n") });
     lines = [];
   };
+  const verbatim = new Set(source.verbatimSeqs);
+  const outside = [];
   for (const { seqs, text, questions = [], attachments = [] } of source.slots) {
-    lines.push(`${W.slotLine(seqs)}${text}`);
-    for (const { question, user } of questions) lines.push(W.questionLine(question), W.userLine(user));
+    if (verbatim.has(seqs[0])) {
+      lines.push(W.userAnchor(seqs));
+      outside.push(`${W.slotLine(seqs)}${text}`);
+    } else lines.push(`${W.slotLine(seqs)}${text}`);
+    for (const { question, user } of questions) {
+      lines.push(W.questionLine(question), W.answerAnchor);
+      outside.push(`${W.slotLine(seqs)}${W.userLine(user)}`);
+    }
     for (const { file, image } of attachments) {
       if (image !== void 0) lines.push(W.imageSaved(image.name ?? image.attachmentId, wording.imageReadTool));
       flush();
@@ -21246,12 +21257,14 @@ function renderCarrier(source, wording) {
   const carriedBlock = carried === null ? null : { type: "text", text: carried };
   const stateBlock = Object.hasOwn(source, "state") ? { type: "text", text: renderState(source.state, wording.stateItems) } : null;
   for (const block of [carriedBlock, stateBlock]) if (block !== null) blocks.push(block);
-  return frameReminder(blocks.map((block, index) => {
+  const framed = frameReminder(blocks.map((block, index) => {
     if (block.type !== "text") return block;
     const before = index === 0 ? "" : block === carriedBlock || block === stateBlock ? "\n\n" : "\n";
     const after = blocks[index + 1]?.type === "file" ? "\n" : "";
     return { type: "text", text: `${before}${block.text}${after}` };
   }));
+  return outside.length === 0 ? framed : [...framed, { type: "text", text: `
+${outside.join("\n")}` }];
 }
 
 // lib/harness/dsh/transcript-observation.js
@@ -25523,7 +25536,7 @@ function argumentsOf(call) {
   }
 }
 var CARRIER_TABLE = Object.freeze({
-  addresses: `Work done in this session. Each line opens with the seq numbers of its events in this session's log, which the session history tools can read for detail a line leaves out. A line marked user: is that message's full text, word for word unless a marker says where it is cut.`,
+  addresses: `Work done in this session. Each line opens with the seq numbers of its events in this session's log, which the session history tools can read for detail a line leaves out. A line marked user: is that message's full text, word for word.`,
   imageReadTool: "read_image",
   stateItems: Object.freeze([
     stateItem({
@@ -25647,11 +25660,7 @@ function cueText(text) {
   return JSON.stringify(folded.length <= C_CUE_TEXT_CHARS ? folded : `${safePrefix(folded, half)}\u2026${safeSuffix(folded, half)}`);
 }
 function verbatimNoteOf(facts) {
-  if (!facts.own) return null;
-  const { uText, uOriginalChars } = storedUText(facts.text);
-  const truncated = uOriginalChars > uText.length;
-  const u = truncated ? `${uText}${truncationMarker(uOriginalChars)}` : uText;
-  return { text: `user: ${u}`, whole: !truncated && uText !== "" };
+  return facts.own ? `user: ${facts.text}` : null;
 }
 function valuesOf(value, key, found = []) {
   if (typeof value === "string") found.push(value);
@@ -25721,14 +25730,13 @@ Held, beside the notes:
 
 Name an identifier, path, command, version, number or error text only when the next step needs it and the held text does not give it. Copy exactly whatever a note names. Take a number from the slot; never recount it. Keep every scope word: not, never, only, except, unless, if; \u4E0D, \u6CA1, \u53EA, \u9664, \u82E5. Write each note in the dominant language of its slot. Fragments are fine, as in a commit message body; write a full sentence where a fragment would leave order, cause or scope unclear. Notes speak about the task's work, not about slots, notes or this request.`;
 function planSummary(slotFacts, held) {
-  const notes = slotFacts.map(verbatimNoteOf);
-  const verbatim = notes.map((note) => note?.text ?? null);
-  const wholeUserSlots = notes.flatMap((note, at) => note?.whole ? [at] : []);
+  const verbatim = slotFacts.map(verbatimNoteOf);
+  const userSlots = slotFacts.flatMap((facts, at) => facts.own && facts.text !== "" ? [at] : []);
   const askedCount = verbatim.filter((note) => note === null).length;
   const heldList = [...[...held.paths.keys()].map((key) => `- file ${key}`), ...[...held.skills.keys()].map((name3) => `- skill ${name3}`)].join("\n") || "none";
   const values = { rows: rowsOf(slotFacts, verbatim), N: String(askedCount), held: heldList };
   const askedCues = slotFacts.filter((_, at) => verbatim[at] === null).map(actionCueOf);
-  return { tailText: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]), verbatim, askedCues, wholeUserSlots, askedCount };
+  return { tailText: TAIL_TEMPLATE.replace(/\{(rows|N|held)\}/gu, (_, key) => values[key]), verbatim, askedCues, userSlots, askedCount };
 }
 function notesOf(parsed, count) {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || Object.keys(parsed).length !== count) return void 0;
@@ -25789,7 +25797,7 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
   const chosen = { provider, model, ...reasoningEffort === void 0 ? {} : { reasoningEffort } };
   const tools = session.requestHeader()?.tools;
   const perSlot = slotMessagesOf({ slots, session, events, range });
-  const { tailText, verbatim, askedCues, wholeUserSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
+  const { tailText, verbatim, askedCues, userSlots, askedCount } = planSummary(slots.map((slot, at) => slotFactsOf(slot, perSlot[at])), held);
   const tail = { role: "user", content: [{ type: "text", text: tailText }] };
   const input = { throughSeq: session.seq - 1, headerSeq: headerSeqIn(index, { latest: true }), tail };
   const options = {
@@ -25846,7 +25854,7 @@ async function summarizeSlots({ llm, session, index, events, selection, slots, r
     return { ok: false, failure: FORMAT_FAILURE, reason: `the summary text is not a JSON object of ${askedCount} strings keyed "1" to "${askedCount}"`, call };
   }
   const sourceTokens = ctp === null ? void 0 : perSlot.map((messages) => messages.reduce((sum, message) => sum + charsToTokens(requestTextOf(message), ctp), 0));
-  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: wholeUserSlots.map((at) => slots[at].seqs[0]), sourceTokens, call };
+  return { ok: true, summaries: mergeNotes(verbatim, notes, askedCues), verbatimSeqs: userSlots.map((at) => slots[at].seqs[0]), sourceTokens, call };
 }
 
 // dsh/src/inner-seal.js
